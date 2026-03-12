@@ -25,7 +25,7 @@ Focus on deterministic parsing and reproducible generated artifacts.
 - Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>
 
 ## Current Phase
-- Parser supports: comments, aliases, flat maps, flat arrays, size constraints (`.size N`), integer-keyed map fields, optional fields (`?`), variable-length arrays (`[* type]`), nil alternatives (`type / nil`), named array fields, and multi-line definitions.
-- Generator maps: `uint .size N` → `u8/u16/u32/u64`, `bytes .size N` → `[u8; N]`, `[* type]` → `Vec<T>`, optional → `Option<T>`, integer keys → `field_N`, named array fields → named struct fields.
-- Pinned fixture: `specs/mini-ledger.cddl` derived from upstream Shelley CDDL at IntersectMBO/cardano-ledger revision `ed5017c8`.
-- Not yet supported: CBOR tag annotations (`#6.n`), group choices (`//`), inline tuples/groups, range constraints (`N..M`, `.le`), generic type parameters.
+- Parser supports: comments, aliases, flat maps, flat arrays, size constraints (`.size N`), integer-keyed map fields, optional fields (`?`), variable-length arrays (`[* type]`), nil alternatives (`type / nil`), named array fields, multi-line definitions, CBOR tag annotations (`#6.N(type)`), and group choices (`//`).
+- Generator maps: `uint .size N` → `u8/u16/u32/u64`, `bytes .size N` → `[u8; N]`, `[* type]` → `Vec<T>`, optional → `Option<T>`, integer keys → `field_N`, named array fields → named struct fields, tagged types → inner type (tag is serialization-only), group choices → `enum` with named or indexed variants.
+- Pinned fixture: `specs/mini-ledger.cddl` derived from upstream Shelley CDDL at IntersectMBO/cardano-ledger revision `ed5017c8`. Includes tagged sets (`#6.258`) and group-choice certificates.
+- Not yet supported: inline tuples/groups, range constraints (`N..M`, `.le`), generic type parameters.

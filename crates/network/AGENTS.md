@@ -26,7 +26,8 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 
 ## Current Phase
 - Multiplexer framing (SDU header encode/decode, MiniProtocolNum, MiniProtocolDir) is implemented and tested.
-- Handshake protocol types and state machine (ProposeVersions/AcceptVersion/Refuse/QueryReply, RefuseReason, NodeToNodeVersionData) are in place.
-- ChainSync and BlockFetch have full message enums and validated state machines with transition tests.
-- Wire tags match upstream CDDL; payload types remain opaque (`Vec<u8>`) pending CBOR codec work.
-- Next: CBOR codec layer for handshake/protocol messages, async transport integration, peer management.
+- Async bearer transport (Bearer trait, TcpBearer, Sdu framing) is implemented and tested over TCP loopback.
+- Handshake protocol types, state machine, and CBOR wire codec (ProposeVersions/AcceptVersion/Refuse/QueryReply) are complete.
+- ChainSync, BlockFetch, KeepAlive, and TxSubmission2 have full message enums, validated state machines, transition tests, and CBOR wire codecs.
+- Wire tags match upstream CDDL; payload types remain opaque (`Vec<u8>`) pending typed CBOR payloads.
+- Next: Multiplexer demuxer (route incoming SDUs to protocol channels), peer lifecycle, and typed protocol payloads.

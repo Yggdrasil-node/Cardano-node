@@ -316,3 +316,45 @@ fn cbor_raw_passthrough() {
     assert_eq!(slot, SlotNo(999));
     assert_eq!(dec.unsigned().expect("trailing uint"), 1);
 }
+
+// ===========================================================================
+// CBOR tag encode/decode
+// ===========================================================================
+
+#[test]
+fn cbor_tag_round_trip() {
+    // Encode tag 258 wrapping an array of two uints (simulating a tagged set).
+    let mut enc = Encoder::new();
+    enc.tag(258).array(2).unsigned(10).unsigned(20);
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    let tag_num = dec.tag().expect("decode tag");
+    assert_eq!(tag_num, 258);
+    let count = dec.array().expect("decode array");
+    assert_eq!(count, 2);
+    assert_eq!(dec.unsigned().expect("first"), 10);
+    assert_eq!(dec.unsigned().expect("second"), 20);
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn cbor_tag_24_encoded_cbor() {
+    // Tag 24 wraps an embedded CBOR byte string.
+    let inner_cbor = {
+        let mut e = Encoder::new();
+        e.unsigned(42);
+        e.into_bytes()
+    };
+
+    let mut enc = Encoder::new();
+    enc.tag(24).bytes(&inner_cbor);
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    let tag = dec.tag().expect("tag");
+    assert_eq!(tag, 24);
+    let embedded = dec.bytes().expect("embedded bytes");
+    let mut inner_dec = Decoder::new(embedded);
+    assert_eq!(inner_dec.unsigned().expect("inner uint"), 42);
+}

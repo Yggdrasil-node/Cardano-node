@@ -1,6 +1,6 @@
 use yggdrasil_cddl_codegen::{
-    FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr, generate_module,
-    parse_schema,
+    FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr,
+    generate_module, parse_schema,
 };
 
 #[test]
@@ -216,4 +216,111 @@ fn assert_module_contains(module: &GeneratedModule, needle: &str) {
         "generated module missing expected content: {needle}\n{}",
         module.source
     );
+}
+
+// ===========================================================================
+// CBOR tag annotations (#6.N)
+// ===========================================================================
+
+#[test]
+fn parses_cbor_tag_annotation() {
+    let schema = "tagged_set = #6.258([* uint])\n";
+    let parsed = parse_schema(schema).expect("CBOR tag annotation should parse");
+
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::Tagged(
+            258,
+            Box::new(TypeExpr::VarArray(Box::new(TypeExpr::Named(
+                String::from("uint")
+            ))))
+        ))
+    );
+
+    let generated = generate_module(&parsed);
+    // Tagged types unwrap to the inner type in generated code.
+    assert_module_contains(&generated, "pub type TaggedSet = Vec<u64>;");
+}
+
+#[test]
+fn parses_cbor_tag_with_named_type() {
+    let schema = "encoded = #6.24(bytes)\n";
+    let parsed = parse_schema(schema).expect("tag 24 should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::Tagged(
+            24,
+            Box::new(TypeExpr::Named(String::from("bytes")))
+        ))
+    );
+
+    let generated = generate_module(&parsed);
+    assert_module_contains(&generated, "pub type Encoded = Vec<u8>;");
+}
+
+// ===========================================================================
+// Group choices (//)
+// ===========================================================================
+
+#[test]
+fn parses_group_choice() {
+    let schema = "cert = [tag: uint, key: bytes] // [tag: uint, pool: bytes, vrf: bytes]\n";
+    let parsed = parse_schema(schema).expect("group choice should parse");
+
+    let TypeDefinition::GroupChoice(variants) = &parsed[0].definition else {
+        panic!("expected GroupChoice, got {:?}", parsed[0].definition);
+    };
+    assert_eq!(variants.len(), 2);
+    assert_eq!(variants[0].len(), 2);
+    assert_eq!(variants[1].len(), 3);
+    assert_eq!(variants[0][0].name.as_deref(), Some("tag"));
+    assert_eq!(variants[1][2].name.as_deref(), Some("vrf"));
+}
+
+#[test]
+fn generates_enum_from_group_choice() {
+    let schema = "cert = [reg: uint, cred: bytes] // [dereg: uint, cred: bytes]\n";
+    let parsed = parse_schema(schema).expect("group choice should parse");
+    let generated = generate_module(&parsed);
+
+    assert_module_contains(&generated, "pub enum Cert {");
+    assert_module_contains(&generated, "Reg {");
+    assert_module_contains(&generated, "Dereg {");
+}
+
+#[test]
+fn generates_variant_index_fallback() {
+    let schema = "choice = [uint, bytes] // [uint, uint, bytes]\n";
+    let parsed = parse_schema(schema).expect("unnamed group choice should parse");
+    let generated = generate_module(&parsed);
+
+    assert_module_contains(&generated, "pub enum Choice {");
+    assert_module_contains(&generated, "Variant0 {");
+    assert_module_contains(&generated, "Variant1 {");
+}
+
+// ===========================================================================
+// Shelley fixture — extended definitions
+// ===========================================================================
+
+#[test]
+fn parses_shelley_fixture_tagged_and_choice() {
+    let fixture = std::fs::read_to_string("../../specs/mini-ledger.cddl")
+        .expect("pinned Shelley fixture should exist");
+    let parsed = parse_schema(&fixture).expect("fixture should parse without errors");
+
+    let names: Vec<&str> = parsed.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"set_of_inputs"));
+    assert!(names.contains(&"certificate"));
+
+    let generated = generate_module(&parsed);
+
+    // Tagged set → Vec<TransactionInput>
+    assert_module_contains(&generated, "pub type SetOfInputs = Vec<TransactionInput>;");
+
+    // Group choice → enum Certificate
+    assert_module_contains(&generated, "pub enum Certificate {");
+    assert_module_contains(&generated, "Reg {");
+    assert_module_contains(&generated, "Dereg {");
+    assert_module_contains(&generated, "Delegate {");
 }

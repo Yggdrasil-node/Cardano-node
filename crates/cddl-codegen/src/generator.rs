@@ -1,4 +1,4 @@
-use crate::parser::{FieldKey, ParsedType, TypeDefinition, TypeExpr};
+use crate::parser::{ArrayItem, FieldKey, ParsedType, TypeDefinition, TypeExpr};
 
 /// A generated Rust module represented as source text.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,6 +65,35 @@ pub fn generate_module(types: &[ParsedType]) -> GeneratedModule {
 
                 source.push_str("}\n\n");
             }
+            TypeDefinition::GroupChoice(variants) => {
+                let type_name = to_rust_type_name(&parsed.name);
+                source.push_str("#[derive(Clone, Debug, Eq, PartialEq)]\n");
+                source.push_str(&format!("pub enum {type_name} {{\n"));
+
+                for (vi, fields) in variants.iter().enumerate() {
+                    let variant_name = group_choice_variant_name(vi, fields);
+                    if fields.is_empty() {
+                        source.push_str(&format!("    {variant_name},\n"));
+                    } else {
+                        source.push_str(&format!("    {variant_name} {{\n"));
+                        for (fi, item) in fields.iter().enumerate() {
+                            let field_name = if let Some(name) = &item.name {
+                                to_snake_case(name)
+                            } else {
+                                format!("item_{fi}")
+                            };
+                            source.push_str(&format!(
+                                "        {}: {},\n",
+                                field_name,
+                                map_type_expr(&item.ty)
+                            ));
+                        }
+                        source.push_str("    },\n");
+                    }
+                }
+
+                source.push_str("}\n\n");
+            }
         }
     }
 
@@ -78,6 +107,9 @@ fn map_type_expr(expr: &TypeExpr) -> String {
         TypeExpr::Sized(base, size) => map_sized_type(base, *size),
         TypeExpr::VarArray(inner) => format!("Vec<{}>", map_type_expr(inner)),
         TypeExpr::Optional(inner) => format!("Option<{}>", map_type_expr(inner)),
+        // CBOR tags are a serialization concern; the Rust type is the inner
+        // type.  CBOR encode/decode implementations will emit/check the tag.
+        TypeExpr::Tagged(_, inner) => map_type_expr(inner),
     }
 }
 
@@ -140,4 +172,17 @@ fn map_cddl_builtin(ty: &str) -> String {
         "bytes" | "bstr" => "Vec<u8>".to_string(),
         other => to_rust_type_name(other),
     }
+}
+
+/// Derives a variant name for a group-choice alternative.
+///
+/// If the first field is a named field, use its name in PascalCase. Otherwise
+/// fall back to `Variant{index}`.
+fn group_choice_variant_name(index: usize, fields: &[ArrayItem]) -> String {
+    if let Some(first) = fields.first() {
+        if let Some(name) = &first.name {
+            return to_rust_type_name(name);
+        }
+    }
+    format!("Variant{index}")
 }

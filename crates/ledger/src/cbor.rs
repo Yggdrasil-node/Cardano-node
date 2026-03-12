@@ -24,6 +24,8 @@ const MAJOR_TEXT: u8 = 3;
 const MAJOR_ARRAY: u8 = 4;
 /// Major type 5: map.
 const MAJOR_MAP: u8 = 5;
+/// Major type 6: tagged data item.
+const MAJOR_TAG: u8 = 6;
 /// Major type 7: simple values and floats.
 const MAJOR_SIMPLE: u8 = 7;
 
@@ -138,6 +140,17 @@ impl Encoder {
     /// The caller must encode exactly `len` key-value pairs after this.
     pub fn map(&mut self, len: u64) -> &mut Self {
         self.write_type_and_arg(MAJOR_MAP, len);
+        self
+    }
+
+    /// Encodes a CBOR tag (major type 6).
+    ///
+    /// The caller must encode exactly one data item after this call.
+    /// Common tags: 258 (set), 24 (encoded CBOR), 2/3 (bignum).
+    ///
+    /// Reference: RFC 8949 §3.4.
+    pub fn tag(&mut self, tag_number: u64) -> &mut Self {
+        self.write_type_and_arg(MAJOR_TAG, tag_number);
         self
     }
 
@@ -315,6 +328,15 @@ impl<'a> Decoder<'a> {
         self.expect_major(MAJOR_MAP)
     }
 
+    /// Decodes a CBOR tag (major type 6) and returns the tag number.
+    ///
+    /// The caller must then decode exactly one data item after this.
+    ///
+    /// Reference: RFC 8949 §3.4.
+    pub fn tag(&mut self) -> Result<u64, LedgerError> {
+        self.expect_major(MAJOR_TAG)
+    }
+
     /// Decodes a CBOR boolean (simple value 20 = false, 21 = true).
     pub fn bool(&mut self) -> Result<bool, LedgerError> {
         let b = self.read_byte()?;
@@ -367,7 +389,7 @@ impl<'a> Decoder<'a> {
                 }
             }
             // Major type 6 (tags)
-            6 => {
+            MAJOR_TAG => {
                 let _ = self.read_argument(initial)?;
                 self.skip()?;
             }

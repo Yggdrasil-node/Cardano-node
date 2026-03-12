@@ -16,6 +16,12 @@ pub enum TypeDefinition {
     Array(Vec<ArrayItem>),
     /// A map/record: `name = { key: type, ... }`
     Map(Vec<ParsedField>),
+    /// A group choice (sum type): `name = [tag, ...] // [tag, ...] // ...`
+    ///
+    /// Each variant is an array alternative separated by `//`.
+    ///
+    /// Reference: RFC 8610 §2.2 — group choices.
+    GroupChoice(Vec<Vec<ArrayItem>>),
 }
 
 /// A parsed type expression, capturing the base type and optional constraints.
@@ -29,6 +35,10 @@ pub enum TypeExpr {
     VarArray(Box<TypeExpr>),
     /// An optional alternative with nil: `type / nil`.
     Optional(Box<TypeExpr>),
+    /// A CBOR-tagged type: `#6.N(inner_type)`.
+    ///
+    /// Reference: RFC 8949 §3.4 — CBOR tags.
+    Tagged(u64, Box<TypeExpr>),
 }
 
 /// An item in a CDDL array definition, which may be named or positional.
@@ -119,26 +129,37 @@ pub fn parse_schema(schema: &str) -> Result<Vec<ParsedType>, ParseError> {
 }
 
 /// Collects logical CDDL statements from raw source, joining multi-line
-/// definitions by tracking brace/bracket nesting depth.
+/// definitions by tracking brace/bracket nesting depth and group-choice
+/// continuation (`//`).
 fn collect_statements(schema: &str) -> Vec<String> {
+    // First pass: strip comments and collect non-empty lines.
+    let lines: Vec<&str> = schema
+        .lines()
+        .map(|l| strip_comment(l).trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut nesting_depth = 0_i32;
 
-    for line in schema.lines() {
-        let line = strip_comment(line).trim();
-
-        if line.is_empty() {
-            continue;
-        }
-
+    for (i, &line) in lines.iter().enumerate() {
         if !current.is_empty() {
             current.push(' ');
         }
         current.push_str(line);
         nesting_depth += nesting_delta(line);
 
-        if nesting_depth <= 0 && !current.trim().ends_with('=') {
+        // Check if the next non-empty line starts with `//` (group-choice
+        // continuation). If so, don't flush yet.
+        let next_is_continuation = lines
+            .get(i + 1)
+            .is_some_and(|next| next.starts_with("//"));
+
+        if nesting_depth <= 0
+            && !current.trim().ends_with('=')
+            && !next_is_continuation
+        {
             statements.push(current.trim().to_string());
             current.clear();
             nesting_depth = 0;
@@ -168,6 +189,12 @@ fn parse_definition(definition: &str) -> Result<TypeDefinition, ParseError> {
         return parse_map(definition);
     }
 
+    // Group choice: `[a, b] // [c, d] // ...`
+    // Must check before single array.
+    if definition.contains("//") {
+        return parse_group_choice(definition);
+    }
+
     if definition.starts_with('[') && definition.ends_with(']') {
         let inner = definition[1..definition.len() - 1].trim();
         // [* type] is a variable-length array type, not a fixed-position tuple.
@@ -186,6 +213,11 @@ fn parse_definition(definition: &str) -> Result<TypeDefinition, ParseError> {
 /// and `type / nil` optionals.
 fn parse_type_expr(expr: &str) -> Result<TypeExpr, ParseError> {
     let expr = expr.trim();
+
+    // CBOR tag annotation: #6.N(inner_type)
+    if let Some(rest) = expr.strip_prefix("#6.") {
+        return parse_tagged_type(rest);
+    }
 
     // Variable-length array: [* type]
     if expr.starts_with('[') && expr.ends_with(']') {
@@ -212,6 +244,23 @@ fn parse_type_expr(expr: &str) -> Result<TypeExpr, ParseError> {
     }
 
     Ok(TypeExpr::Named(expr.to_string()))
+}
+
+/// Parses the remainder after `#6.` — expects `N(inner_type)`.
+fn parse_tagged_type(rest: &str) -> Result<TypeExpr, ParseError> {
+    let open = rest
+        .find('(')
+        .ok_or_else(|| ParseError::InvalidSize(format!("#6.{rest}")))?;
+    if !rest.ends_with(')') {
+        return Err(ParseError::InvalidSize(format!("#6.{rest}")));
+    }
+    let tag_str = &rest[..open];
+    let tag: u64 = tag_str
+        .parse()
+        .map_err(|_| ParseError::InvalidSize(format!("#6.{rest}")))?;
+    let inner_str = &rest[open + 1..rest.len() - 1];
+    let inner = parse_type_expr(inner_str)?;
+    Ok(TypeExpr::Tagged(tag, Box::new(inner)))
 }
 
 /// Splits `type / nil` alternatives. Only recognizes the simple case
@@ -281,6 +330,84 @@ fn try_split_named_field(item: &str) -> Option<(&str, &str)> {
     }
 
     Some((name, ty))
+}
+
+/// Parses a group choice: `[a, b] // [c, d] // ...`
+///
+/// Each alternative must be a bracket-delimited array. The `//` separator
+/// is only recognized at the top level (not inside brackets).
+fn parse_group_choice(definition: &str) -> Result<TypeDefinition, ParseError> {
+    let alternatives = split_group_alternatives(definition);
+    let mut variants = Vec::new();
+
+    for alt in &alternatives {
+        let alt = alt.trim();
+        if !alt.starts_with('[') || !alt.ends_with(']') {
+            return Err(ParseError::EmptyDefinition(format!(
+                "group choice alternative must be an array: {alt}"
+            )));
+        }
+        let inner = alt[1..alt.len() - 1].trim();
+        let items = split_items(inner);
+        let mut fields = Vec::new();
+        for item in items {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            if let Some((name, ty_str)) = try_split_named_field(item) {
+                fields.push(ArrayItem {
+                    name: Some(name.to_string()),
+                    ty: parse_type_expr(ty_str)?,
+                });
+            } else {
+                fields.push(ArrayItem {
+                    name: None,
+                    ty: parse_type_expr(item)?,
+                });
+            }
+        }
+        variants.push(fields);
+    }
+
+    Ok(TypeDefinition::GroupChoice(variants))
+}
+
+/// Splits a definition on `//` delimiters, respecting bracket nesting.
+fn split_group_alternatives(definition: &str) -> Vec<String> {
+    let mut alternatives = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    let chars: Vec<char> = definition.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        match ch {
+            '[' | '{' | '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ']' | '}' | ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            '/' if depth == 0 && i + 1 < chars.len() && chars[i + 1] == '/' => {
+                alternatives.push(current.trim().to_string());
+                current.clear();
+                i += 2; // skip both '/'
+                continue;
+            }
+            _ => current.push(ch),
+        }
+        i += 1;
+    }
+
+    if !current.trim().is_empty() {
+        alternatives.push(current.trim().to_string());
+    }
+
+    alternatives
 }
 
 fn parse_map(definition: &str) -> Result<TypeDefinition, ParseError> {

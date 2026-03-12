@@ -1,9 +1,10 @@
 use yggdrasil_network::{
-    BlockFetchMessage, BlockFetchState, ChainRange, ChainSyncMessage,
+    Bearer, BearerError, BlockFetchMessage, BlockFetchState, ChainRange, ChainSyncMessage,
     ChainSyncState, HandshakeMessage, HandshakeRequest, HandshakeState,
     HandshakeVersion, KeepAliveMessage, KeepAliveState,
     MiniProtocolDir, MiniProtocolNum, MuxChannel,
-    NodeToNodeVersionData, RefuseReason, SduDecodeError, SduHeader,
+    NodeToNodeVersionData, RefuseReason, Sdu, SduDecodeError, SduHeader,
+    TcpBearer, TxIdAndSize, TxSubmissionMessage, TxSubmissionState,
     SDU_HEADER_SIZE,
 };
 
@@ -691,4 +692,313 @@ fn handshake_transition_illegal_from_done() {
         .transition(&HandshakeMessage::ProposeVersions(vec![]))
         .expect_err("ProposeVersions should be illegal from StDone");
     assert_eq!(err.to_string(), "illegal handshake transition from StDone via ProposeVersions");
+}
+
+// ===========================================================================
+// TxSubmission2 — state machine transitions
+// ===========================================================================
+
+#[test]
+fn tx_submission_happy_path() {
+    let mut state = TxSubmissionState::StInit;
+    state = state
+        .transition(&TxSubmissionMessage::MsgInit)
+        .expect("MsgInit from StInit");
+    assert_eq!(state, TxSubmissionState::StIdle);
+
+    state = state
+        .transition(&TxSubmissionMessage::MsgRequestTxIds {
+            blocking: false,
+            ack: 0,
+            req: 3,
+        })
+        .expect("MsgRequestTxIds from StIdle");
+    assert_eq!(state, TxSubmissionState::StTxIds { blocking: false });
+
+    state = state
+        .transition(&TxSubmissionMessage::MsgReplyTxIds {
+            txids: vec![TxIdAndSize {
+                txid: vec![1, 2, 3],
+                size: 100,
+            }],
+        })
+        .expect("MsgReplyTxIds from StTxIds");
+    assert_eq!(state, TxSubmissionState::StIdle);
+
+    state = state
+        .transition(&TxSubmissionMessage::MsgRequestTxs {
+            txids: vec![vec![1, 2, 3]],
+        })
+        .expect("MsgRequestTxs from StIdle");
+    assert_eq!(state, TxSubmissionState::StTxs);
+
+    state = state
+        .transition(&TxSubmissionMessage::MsgReplyTxs {
+            txs: vec![vec![0xAA, 0xBB]],
+        })
+        .expect("MsgReplyTxs from StTxs");
+    assert_eq!(state, TxSubmissionState::StIdle);
+}
+
+#[test]
+fn tx_submission_blocking_done() {
+    let state = TxSubmissionState::StTxIds { blocking: true };
+    let next = state
+        .transition(&TxSubmissionMessage::MsgDone)
+        .expect("MsgDone from blocking StTxIds");
+    assert_eq!(next, TxSubmissionState::StDone);
+}
+
+#[test]
+fn tx_submission_nonblocking_cannot_done() {
+    let state = TxSubmissionState::StTxIds { blocking: false };
+    state
+        .transition(&TxSubmissionMessage::MsgDone)
+        .expect_err("MsgDone should be illegal from non-blocking StTxIds");
+}
+
+#[test]
+fn tx_submission_illegal_from_init() {
+    TxSubmissionState::StInit
+        .transition(&TxSubmissionMessage::MsgRequestTxIds {
+            blocking: false,
+            ack: 0,
+            req: 1,
+        })
+        .expect_err("MsgRequestTxIds should be illegal from StInit");
+}
+
+#[test]
+fn tx_submission_illegal_from_done() {
+    TxSubmissionState::StDone
+        .transition(&TxSubmissionMessage::MsgInit)
+        .expect_err("MsgInit should be illegal from StDone");
+}
+
+// ===========================================================================
+// TxSubmission2 — CBOR round-trip
+// ===========================================================================
+
+#[test]
+fn tx_submission_cbor_init() {
+    let msg = TxSubmissionMessage::MsgInit;
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode MsgInit");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_request_txids() {
+    let msg = TxSubmissionMessage::MsgRequestTxIds {
+        blocking: true,
+        ack: 5,
+        req: 10,
+    };
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode MsgRequestTxIds");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_reply_txids() {
+    let msg = TxSubmissionMessage::MsgReplyTxIds {
+        txids: vec![
+            TxIdAndSize {
+                txid: vec![0xDE, 0xAD],
+                size: 256,
+            },
+            TxIdAndSize {
+                txid: vec![0xBE, 0xEF],
+                size: 512,
+            },
+        ],
+    };
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode MsgReplyTxIds");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_reply_txids_empty() {
+    let msg = TxSubmissionMessage::MsgReplyTxIds { txids: vec![] };
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode empty MsgReplyTxIds");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_request_txs() {
+    let msg = TxSubmissionMessage::MsgRequestTxs {
+        txids: vec![vec![1, 2, 3], vec![4, 5, 6]],
+    };
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode MsgRequestTxs");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_reply_txs() {
+    let msg = TxSubmissionMessage::MsgReplyTxs {
+        txs: vec![vec![0xAA, 0xBB], vec![0xCC, 0xDD, 0xEE]],
+    };
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode MsgReplyTxs");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_reply_txs_empty() {
+    let msg = TxSubmissionMessage::MsgReplyTxs { txs: vec![] };
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode empty MsgReplyTxs");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_done() {
+    let msg = TxSubmissionMessage::MsgDone;
+    let bytes = msg.to_cbor();
+    let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode MsgDone");
+    assert_eq!(msg, decoded);
+}
+
+// ===========================================================================
+// Bearer — SDU round-trip over TCP loopback
+// ===========================================================================
+
+#[tokio::test]
+async fn tcp_bearer_sdu_round_trip() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("local addr");
+
+    let payload = b"hello mux".to_vec();
+    let sdu = Sdu::new(
+        MiniProtocolNum::CHAIN_SYNC,
+        MiniProtocolDir::Initiator,
+        payload.clone(),
+    );
+
+    let send_handle = tokio::spawn(async move {
+        let mut client = TcpBearer::connect(addr).await.expect("connect");
+        client.send(&sdu).await.expect("send");
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let mut server = TcpBearer::new(stream);
+    let received = server.recv().await.expect("recv");
+
+    send_handle.await.expect("join send task");
+
+    assert_eq!(received.header.protocol_num, MiniProtocolNum::CHAIN_SYNC);
+    assert_eq!(received.header.direction, MiniProtocolDir::Initiator);
+    assert_eq!(received.payload, payload);
+}
+
+#[tokio::test]
+async fn tcp_bearer_multiple_sdus() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("local addr");
+
+    let messages: Vec<(MiniProtocolNum, Vec<u8>)> = vec![
+        (MiniProtocolNum::HANDSHAKE, vec![0x01, 0x02]),
+        (MiniProtocolNum::CHAIN_SYNC, vec![0xAA, 0xBB, 0xCC]),
+        (MiniProtocolNum::BLOCK_FETCH, vec![]),
+        (MiniProtocolNum::KEEP_ALIVE, vec![0xFF; 100]),
+    ];
+
+    let send_msgs = messages.clone();
+    let send_handle = tokio::spawn(async move {
+        let mut client = TcpBearer::connect(addr).await.expect("connect");
+        for (proto, payload) in &send_msgs {
+            let sdu = Sdu::new(*proto, MiniProtocolDir::Initiator, payload.clone());
+            client.send(&sdu).await.expect("send");
+        }
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let mut server = TcpBearer::new(stream);
+
+    for (expected_proto, expected_payload) in &messages {
+        let received = server.recv().await.expect("recv");
+        assert_eq!(received.header.protocol_num, *expected_proto);
+        assert_eq!(received.payload, *expected_payload);
+    }
+
+    send_handle.await.expect("join send task");
+}
+
+#[tokio::test]
+async fn tcp_bearer_connection_closed_on_eof() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("local addr");
+
+    // Client connects and immediately drops.
+    let send_handle = tokio::spawn(async move {
+        let _client = TcpBearer::connect(addr).await.expect("connect");
+        // Drop immediately.
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let mut server = TcpBearer::new(stream);
+
+    send_handle.await.expect("join send task");
+
+    let err = server.recv().await.expect_err("should get connection closed");
+    assert!(
+        matches!(err, BearerError::ConnectionClosed),
+        "expected ConnectionClosed, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn tcp_bearer_responder_direction() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("local addr");
+
+    let sdu = Sdu::new(
+        MiniProtocolNum::BLOCK_FETCH,
+        MiniProtocolDir::Responder,
+        vec![0xDE, 0xAD],
+    );
+
+    let send_handle = tokio::spawn({
+        let sdu = sdu.clone();
+        async move {
+            let mut client = TcpBearer::connect(addr).await.expect("connect");
+            client.send(&sdu).await.expect("send");
+        }
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let mut server = TcpBearer::new(stream);
+    let received = server.recv().await.expect("recv");
+
+    send_handle.await.expect("join send task");
+
+    assert_eq!(received.header.direction, MiniProtocolDir::Responder);
+    assert_eq!(received.header.protocol_num, MiniProtocolNum::BLOCK_FETCH);
+    assert_eq!(received.payload, vec![0xDE, 0xAD]);
+}
+
+#[test]
+fn sdu_new_sets_payload_length() {
+    let payload = vec![1, 2, 3, 4, 5];
+    let sdu = Sdu::new(
+        MiniProtocolNum::TX_SUBMISSION,
+        MiniProtocolDir::Initiator,
+        payload.clone(),
+    );
+    assert_eq!(sdu.header.payload_length, 5);
+    assert_eq!(sdu.header.protocol_num, MiniProtocolNum::TX_SUBMISSION);
+    assert_eq!(sdu.header.direction, MiniProtocolDir::Initiator);
+    assert_eq!(sdu.header.timestamp, 0);
+    assert_eq!(sdu.payload, payload);
 }

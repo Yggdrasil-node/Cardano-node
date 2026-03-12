@@ -48,3 +48,16 @@ block-header = {
 
 ; --- Top-level array ---
 tx-seq = [transaction_body, block-header]
+
+; --- CBOR tagged types ---
+; Upstream uses tag 258 for set semantics (deterministic encoding).
+; Reference: cardano-ledger shelley.cddl — `set<a>`.
+set_of_inputs = #6.258([* transaction_input])
+
+; --- Group choices ---
+; Simplified version of upstream `certificate` for parser validation.
+; Reference: cardano-ledger shelley.cddl — `certificate`.
+certificate =
+    [reg: uint, credential: addr_keyhash]
+ // [dereg: uint, credential: addr_keyhash]
+ // [delegate: uint, delegator: addr_keyhash, pool: pool_keyhash]

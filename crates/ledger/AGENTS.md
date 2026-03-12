@@ -26,5 +26,6 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 ## Current Phase
 - Core protocol types (`SlotNo`, `BlockNo`, `EpochNo`, `HeaderHash`, `TxId`, `Point`) are landed in `types.rs`.
 - `Block` and `BlockHeader` use typed identifiers; `LedgerState` tracks tip via `Point`.
+- CBOR codec (`cbor.rs`) supports all 8 major types: unsigned (0), negative (1), bytes (2), text (3), array (4), map (5), tag (6), and simple/bool (7). Includes `skip()` for recursive item skipping and `CborEncode`/`CborDecode` traits.
 - Keep the full era roadmap visible, but land only narrow reusable slices.
 - Prefer types and harnesses that will survive later era expansion.
