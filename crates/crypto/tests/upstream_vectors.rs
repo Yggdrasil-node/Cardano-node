@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use yggdrasil_crypto::{vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors};
+use yggdrasil_crypto::{
+    vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors, VrfBatchCompatProof, VrfOutput,
+    VrfVerificationKey,
+};
 
 const CARDANO_BASE_SHA: &str = "db52f43b38ba5d8927feb2199d4913fe6c0f974d";
 
@@ -110,6 +113,56 @@ fn embedded_vrf_vectors_match_vendored_standard_examples() {
     assert_eq!(hex(&embedded_ver13.output), vendored_ver13["beta"], "ver13 output mismatch");
 }
 
+#[test]
+fn vendored_batchcompat_praos_vectors_verify_against_implementation() {
+    let dir = vendored_root().join("cardano-crypto-praos/test_vectors");
+    let embedded_names: Vec<String> = vrf_praos_batchcompat_test_vectors()
+        .into_iter()
+        .map(|vector| vector.name.replace('-', "_"))
+        .collect();
+
+    let mut checked = 0_usize;
+    for name in embedded_names {
+        let path = dir.join(&name);
+        let content = fs::read_to_string(&path).expect("vector file should be readable as UTF-8");
+        let kv = parse_kv(&content);
+        assert_eq!(kv.get("vrf").map(String::as_str), Some("PraosBatchCompatVRF"));
+
+        let public_key = decode_hex_array::<32>(
+            kv.get("pk")
+                .expect("pk key should be present for batch-compatible vectors"),
+        );
+        let proof_bytes = decode_hex_array::<128>(
+            kv.get("pi")
+                .expect("pi key should be present for batch-compatible vectors"),
+        );
+        let output_bytes = decode_hex_array::<64>(
+            kv.get("beta")
+                .expect("beta key should be present for batch-compatible vectors"),
+        );
+        let message = match kv
+            .get("alpha")
+            .expect("alpha key should be present for batch-compatible vectors")
+            .as_str()
+        {
+            "empty" => Vec::new(),
+            hex_value => decode_hex_vec(hex_value),
+        };
+
+        let verification_key = VrfVerificationKey::from_bytes(public_key);
+        let proof = VrfBatchCompatProof::from_bytes(proof_bytes);
+        let expected = VrfOutput::from_bytes(output_bytes);
+        let actual = verification_key
+            .verify_batchcompat(&message, &proof)
+            .unwrap_or_else(|error| panic!("{} should verify: {error:?}", path.display()));
+
+        assert_eq!(actual, expected, "output mismatch for {}", path.display());
+        checked += 1;
+    }
+
+    assert!(checked > 0, "at least one mirrored batch-compatible vector should be verified");
+}
+
 fn parse_kv(content: &str) -> HashMap<String, String> {
     content
         .lines()
@@ -138,6 +191,31 @@ fn is_hex(value: &str) -> bool {
     !value.is_empty()
         && value.len() % 2 == 0
         && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn decode_hex_vec(value: &str) -> Vec<u8> {
+    assert!(
+        is_hex(value),
+        "hex string should be non-empty and have even-length hex digits"
+    );
+
+    let mut out = Vec::with_capacity(value.len() / 2);
+    let mut index = 0_usize;
+    while index < value.len() {
+        let byte = u8::from_str_radix(&value[index..index + 2], 16)
+            .expect("hex value should decode into a byte");
+        out.push(byte);
+        index += 2;
+    }
+    out
+}
+
+fn decode_hex_array<const N: usize>(value: &str) -> [u8; N] {
+    assert_eq!(value.len(), N * 2, "hex value length should match output array");
+    let bytes = decode_hex_vec(value);
+    bytes
+        .try_into()
+        .expect("decoded hex length should match the fixed array size")
 }
 
 fn hex(bytes: &[u8]) -> String {
