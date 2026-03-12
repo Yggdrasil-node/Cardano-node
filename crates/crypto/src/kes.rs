@@ -1,4 +1,5 @@
 use crate::{CryptoError, Signature, SigningKey, VerificationKey};
+use std::fmt;
 
 /// Serialized size of the single-period KES signing key.
 pub const KES_SIGNING_KEY_SIZE: usize = 32;
@@ -8,6 +9,8 @@ pub const KES_VERIFICATION_KEY_SIZE: usize = 32;
 pub const KES_SIGNATURE_SIZE: usize = 64;
 /// Serialized size of the compact single-period KES signature.
 pub const COMPACT_KES_SIGNATURE_SIZE: usize = KES_SIGNATURE_SIZE + KES_VERIFICATION_KEY_SIZE;
+/// Serialized size of the multi-period SimpleKES signature.
+pub const SIMPLE_KES_SIGNATURE_SIZE: usize = 4 + KES_SIGNATURE_SIZE;
 /// Total supported periods for the current single-period KES baseline.
 pub const KES_TOTAL_PERIODS: u32 = 1;
 
@@ -36,6 +39,33 @@ pub struct KesSignature(pub [u8; KES_SIGNATURE_SIZE]);
 /// signature followed by the verification key needed to validate it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CompactKesSignature(pub [u8; COMPACT_KES_SIGNATURE_SIZE]);
+
+/// A byte-backed multi-period signing key for a `SimpleKES`-style baseline.
+///
+/// The key stores one 32-byte seed per period and signs by selecting the key
+/// corresponding to the requested period index.
+#[derive(Clone, Eq, PartialEq)]
+pub struct SimpleKesSigningKey(pub Vec<KesSigningKey>);
+
+/// A byte-backed multi-period verification key for a `SimpleKES`-style baseline.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SimpleKesVerificationKey(pub Vec<KesVerificationKey>);
+
+/// A byte-backed multi-period signature for a `SimpleKES`-style baseline.
+///
+/// The serialized form is `period (u32 big-endian) || signature`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SimpleKesSignature(pub [u8; SIMPLE_KES_SIGNATURE_SIZE]);
+
+impl fmt::Debug for SimpleKesSigningKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SimpleKesSigningKey")
+            .field("total_periods", &self.total_periods())
+            .field("key_material", &"[REDACTED]")
+            .finish()
+    }
+}
 
 impl KesPeriod {
     /// Advances the period by one slot, returning an error on overflow.
@@ -164,6 +194,187 @@ impl CompactKesSignature {
             self.0[KES_SIGNATURE_SIZE..]
                 .try_into()
                 .expect("compact KES signature suffix should match the fixed key length"),
+        )
+    }
+}
+
+impl SimpleKesSigningKey {
+    /// Constructs a multi-period signing key from one seed per period.
+    pub fn from_seeds(seeds: Vec<[u8; KES_SIGNING_KEY_SIZE]>) -> Result<Self, CryptoError> {
+        if seeds.is_empty() {
+            return Err(CryptoError::InvalidKesDepth(0));
+        }
+
+        Ok(Self(
+            seeds
+                .into_iter()
+                .map(KesSigningKey::from_bytes)
+                .collect(),
+        ))
+    }
+
+    /// Constructs a multi-period signing key from concatenated raw seed bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.is_empty() {
+            return Err(CryptoError::InvalidKesDepth(0));
+        }
+        if bytes.len() % KES_SIGNING_KEY_SIZE != 0 {
+            return Err(CryptoError::InvalidKesKeyMaterialLength(bytes.len()));
+        }
+
+        let seeds = bytes
+            .chunks_exact(KES_SIGNING_KEY_SIZE)
+            .map(|chunk| {
+                chunk
+                    .try_into()
+                    .expect("KES signing key chunks should match fixed seed length")
+            })
+            .collect();
+        Self::from_seeds(seeds)
+    }
+
+    /// Returns concatenated raw seed bytes in period order.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0
+            .iter()
+            .flat_map(|key| key.to_bytes())
+            .collect()
+    }
+
+    /// Returns the number of supported periods.
+    pub fn total_periods(&self) -> u32 {
+        self.0
+            .len()
+            .try_into()
+            .expect("SimpleKES depth should fit into u32")
+    }
+
+    /// Derives period-indexed verification keys.
+    pub fn verification_key(&self) -> Result<SimpleKesVerificationKey, CryptoError> {
+        Ok(SimpleKesVerificationKey(
+            self.0
+                .iter()
+                .map(KesSigningKey::verification_key)
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
+    }
+
+    /// Signs a message with the period-specific key.
+    pub fn sign(&self, period: KesPeriod, message: &[u8]) -> Result<KesSignature, CryptoError> {
+        let key = self
+            .0
+            .get(period.0 as usize)
+            .ok_or(CryptoError::InvalidKesPeriod(period.0))?;
+        key.sign(KesPeriod(0), message)
+    }
+
+    /// Signs a message and returns a typed multi-period signature that embeds the period.
+    pub fn sign_indexed(
+        &self,
+        period: KesPeriod,
+        message: &[u8],
+    ) -> Result<SimpleKesSignature, CryptoError> {
+        let signature = self.sign(period, message)?;
+        let mut bytes = [0_u8; SIMPLE_KES_SIGNATURE_SIZE];
+        bytes[..4].copy_from_slice(&period.0.to_be_bytes());
+        bytes[4..].copy_from_slice(&signature.to_bytes());
+        Ok(SimpleKesSignature(bytes))
+    }
+}
+
+impl SimpleKesVerificationKey {
+    /// Constructs a multi-period verification key from concatenated raw bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.is_empty() {
+            return Err(CryptoError::InvalidKesDepth(0));
+        }
+        if bytes.len() % KES_VERIFICATION_KEY_SIZE != 0 {
+            return Err(CryptoError::InvalidKesKeyMaterialLength(bytes.len()));
+        }
+
+        let keys = bytes
+            .chunks_exact(KES_VERIFICATION_KEY_SIZE)
+            .map(|chunk| {
+                KesVerificationKey::from_bytes(
+                    chunk
+                        .try_into()
+                        .expect("KES verification key chunks should match fixed key length"),
+                )
+            })
+            .collect::<Vec<_>>();
+        if keys.is_empty() {
+            return Err(CryptoError::InvalidKesDepth(0));
+        }
+
+        Ok(Self(keys))
+    }
+
+    /// Returns concatenated raw verification key bytes in period order.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0
+            .iter()
+            .flat_map(|key| key.to_bytes())
+            .collect()
+    }
+
+    /// Returns the number of supported periods.
+    pub fn total_periods(&self) -> u32 {
+        self.0
+            .len()
+            .try_into()
+            .expect("SimpleKES depth should fit into u32")
+    }
+
+    /// Verifies a message with the period-specific key.
+    pub fn verify(
+        &self,
+        period: KesPeriod,
+        message: &[u8],
+        signature: &KesSignature,
+    ) -> Result<(), CryptoError> {
+        let key = self
+            .0
+            .get(period.0 as usize)
+            .ok_or(CryptoError::InvalidKesPeriod(period.0))?;
+        key.verify(KesPeriod(0), message, signature)
+    }
+
+    /// Verifies a typed multi-period signature by using its embedded period.
+    pub fn verify_indexed(
+        &self,
+        message: &[u8],
+        signature: &SimpleKesSignature,
+    ) -> Result<(), CryptoError> {
+        self.verify(signature.period(), message, &signature.signature())
+    }
+}
+
+impl SimpleKesSignature {
+    /// Constructs a multi-period signature from its 68-byte serialized form.
+    pub fn from_bytes(bytes: [u8; SIMPLE_KES_SIGNATURE_SIZE]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the 68-byte serialized multi-period signature.
+    pub fn to_bytes(&self) -> [u8; SIMPLE_KES_SIGNATURE_SIZE] {
+        self.0
+    }
+
+    /// Returns the embedded signing period.
+    pub fn period(&self) -> KesPeriod {
+        KesPeriod(u32::from_be_bytes(
+            self.0[..4]
+                .try_into()
+                .expect("SimpleKES signature prefix should match fixed period length"),
+        ))
+    }
+
+    /// Returns the embedded Ed25519-like signature bytes.
+    pub fn signature(&self) -> KesSignature {
+        KesSignature(
+            self.0[4..]
+                .try_into()
+                .expect("SimpleKES signature suffix should match fixed signature length"),
         )
     }
 }

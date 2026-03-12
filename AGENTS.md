@@ -37,7 +37,9 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `node`: <https://github.com/IntersectMBO/cardano-node> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration>
 
 ## Non-Negotiable Rules
-- Always Read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation.
+- Always write typesafe Rust code.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation.
+- Always research the official relevant upstream IntersectMBO repositories before introducing any local terminology, behavior, or design that is not directly traceable to an upstream source.
 - New dependencies MUST be justified in `docs/DEPENDENCIES.md` before they are treated as accepted.
 - FFI-backed cryptography and hidden native dependencies MUST NOT be introduced.
 - Generated artifacts MUST remain reproducible and generated code MUST NOT be edited by hand.

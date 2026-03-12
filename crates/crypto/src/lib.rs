@@ -21,6 +21,7 @@ pub use error::CryptoError;
 /// Key-evolving signature period, key, and signature wrappers.
 pub use kes::{
 	CompactKesSignature, KesPeriod, KesSignature, KesSigningKey, KesVerificationKey,
+	SimpleKesSignature, SimpleKesSigningKey, SimpleKesVerificationKey,
 };
 /// RFC-backed Ed25519 test vector structures and fixtures.
 pub use test_vectors::{

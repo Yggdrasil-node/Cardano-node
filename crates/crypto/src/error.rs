@@ -9,6 +9,10 @@ pub enum CryptoError {
     SignatureVerificationFailed,
     #[error("invalid kes period: {0}")]
     InvalidKesPeriod(u32),
+    #[error("invalid kes key material length: {0}")]
+    InvalidKesKeyMaterialLength(usize),
+    #[error("invalid kes depth: {0}")]
+    InvalidKesDepth(usize),
     #[error("kes verification key does not match compact signature")]
     KesVerificationKeyMismatch,
     #[error("invalid vrf proof")]

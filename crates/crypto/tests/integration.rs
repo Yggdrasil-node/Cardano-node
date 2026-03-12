@@ -1,6 +1,7 @@
 use yggdrasil_crypto::{
     Blake2bHash, CompactKesSignature, CryptoError, KesPeriod, KesSigningKey,
-    Signature, SigningKey, VerificationKey, VrfBatchCompatProof, VrfOutput,
+    Signature, SigningKey, SimpleKesSignature, SimpleKesSigningKey,
+    SimpleKesVerificationKey, VerificationKey, VrfBatchCompatProof, VrfOutput,
     VrfProof, VrfSecretKey,
     ed25519_rfc8032_vectors, hash_bytes, vrf_praos_batchcompat_test_vectors,
     vrf_praos_test_vectors,
@@ -254,6 +255,121 @@ fn compact_single_kes_from_bytes_round_trips() {
 
     assert_eq!(decoded, signature);
     assert_eq!(decoded.signature().to_bytes().as_slice(), &compact_bytes[..64]);
+}
+
+#[test]
+fn simple_kes_round_trip_sign_and_verify_across_periods() {
+    let signing_key = SimpleKesSigningKey::from_seeds(vec![[31_u8; 32], [32_u8; 32], [33_u8; 32]])
+        .expect("SimpleKES should accept non-empty seed sets");
+    let verification_key = signing_key
+        .verification_key()
+        .expect("SimpleKES verification key derivation should succeed");
+
+    for period in [KesPeriod(0), KesPeriod(1), KesPeriod(2)] {
+        let signature = signing_key
+            .sign(period, b"simple-kes")
+            .expect("SimpleKES should sign within range");
+        verification_key
+            .verify(period, b"simple-kes", &signature)
+            .expect("SimpleKES should verify within range");
+    }
+}
+
+#[test]
+fn simple_kes_rejects_out_of_range_periods() {
+    let signing_key = SimpleKesSigningKey::from_seeds(vec![[41_u8; 32], [42_u8; 32]])
+        .expect("SimpleKES should accept non-empty seed sets");
+    let verification_key = signing_key
+        .verification_key()
+        .expect("SimpleKES verification key derivation should succeed");
+    let signature = signing_key
+        .sign(KesPeriod(1), b"in-range")
+        .expect("period one should be in-range for depth two");
+
+    let sign_error = signing_key
+        .sign(KesPeriod(2), b"out-of-range")
+        .expect_err("SimpleKES should reject out-of-range signing periods");
+    let verify_error = verification_key
+        .verify(KesPeriod(2), b"in-range", &signature)
+        .expect_err("SimpleKES should reject out-of-range verification periods");
+
+    assert_eq!(sign_error, CryptoError::InvalidKesPeriod(2));
+    assert_eq!(verify_error, CryptoError::InvalidKesPeriod(2));
+}
+
+#[test]
+fn simple_kes_signing_and_verification_keys_round_trip_bytes() {
+    let signing_key = SimpleKesSigningKey::from_seeds(vec![[51_u8; 32], [52_u8; 32], [53_u8; 32]])
+        .expect("SimpleKES should accept non-empty seed sets");
+    let signing_bytes = signing_key.to_bytes();
+    let signing_decoded = SimpleKesSigningKey::from_bytes(&signing_bytes)
+        .expect("SimpleKES signing key bytes should round-trip");
+
+    assert_eq!(signing_decoded, signing_key);
+
+    let verification_key = signing_key
+        .verification_key()
+        .expect("SimpleKES verification key derivation should succeed");
+    let verification_bytes = verification_key.to_bytes();
+    let verification_decoded = SimpleKesVerificationKey::from_bytes(&verification_bytes)
+        .expect("SimpleKES verification key bytes should round-trip");
+
+    assert_eq!(verification_decoded, verification_key);
+    assert_eq!(verification_decoded.total_periods(), 3);
+}
+
+#[test]
+fn simple_kes_rejects_invalid_depth_or_length() {
+    let empty = SimpleKesSigningKey::from_seeds(vec![])
+        .expect_err("SimpleKES should reject zero-depth key material");
+    let malformed_signing = SimpleKesSigningKey::from_bytes(&[0_u8; 31])
+        .expect_err("SimpleKES should reject malformed signing key byte lengths");
+    let malformed_verification = SimpleKesVerificationKey::from_bytes(&[0_u8; 31])
+        .expect_err("SimpleKES should reject malformed verification key byte lengths");
+
+    assert_eq!(empty, CryptoError::InvalidKesDepth(0));
+    assert_eq!(malformed_signing, CryptoError::InvalidKesKeyMaterialLength(31));
+    assert_eq!(malformed_verification, CryptoError::InvalidKesKeyMaterialLength(31));
+}
+
+#[test]
+fn simple_kes_indexed_signature_round_trips_and_verifies() {
+    let signing_key = SimpleKesSigningKey::from_seeds(vec![[61_u8; 32], [62_u8; 32]])
+        .expect("SimpleKES should accept non-empty seed sets");
+    let verification_key = signing_key
+        .verification_key()
+        .expect("SimpleKES verification key derivation should succeed");
+    let signature = signing_key
+        .sign_indexed(KesPeriod(1), b"indexed")
+        .expect("SimpleKES should produce indexed signatures in-range");
+    let decoded = SimpleKesSignature::from_bytes(signature.to_bytes());
+
+    assert_eq!(decoded, signature);
+    assert_eq!(decoded.period(), KesPeriod(1));
+    verification_key
+        .verify_indexed(b"indexed", &decoded)
+        .expect("SimpleKES indexed signatures should verify");
+}
+
+#[test]
+fn simple_kes_indexed_signature_rejects_tampered_period() {
+    let signing_key = SimpleKesSigningKey::from_seeds(vec![[71_u8; 32], [72_u8; 32]])
+        .expect("SimpleKES should accept non-empty seed sets");
+    let verification_key = signing_key
+        .verification_key()
+        .expect("SimpleKES verification key derivation should succeed");
+    let signature = signing_key
+        .sign_indexed(KesPeriod(1), b"indexed-tamper")
+        .expect("SimpleKES should produce indexed signatures in-range");
+
+    let mut tampered_bytes = signature.to_bytes();
+    tampered_bytes[..4].copy_from_slice(&5_u32.to_be_bytes());
+    let tampered = SimpleKesSignature::from_bytes(tampered_bytes);
+    let error = verification_key
+        .verify_indexed(b"indexed-tamper", &tampered)
+        .expect_err("SimpleKES indexed verification should reject out-of-range embedded periods");
+
+    assert_eq!(error, CryptoError::InvalidKesPeriod(5));
 }
 
 #[test]
