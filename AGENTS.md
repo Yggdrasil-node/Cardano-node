@@ -24,7 +24,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `crates/consensus` owns chain selection, leader election, and rollback rules.
 - `crates/mempool` owns transaction intake and ordering.
 - `crates/network` owns multiplexing, mini-protocols, and peer management.
-- `node` owns orchestration, CLI, and runtime integration.
+- `node/` owns orchestration, CLI, and runtime integration.
 - `specs/upstream-test-vectors` officially test-vectors from the `IntersectMBO` repositories.
 
 ## Upstream References (add or update as needed)
@@ -35,7 +35,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `crates/consensus`: <https://github.com/IntersectMBO/ouroboros-consensus/> and <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec>
 - `crates/mempool`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/> and <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
 - `crates/network`: <https://github.com/IntersectMBO/ouroboros-network/> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
-- `node`: <https://github.com/IntersectMBO/cardano-node/> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
+- `node/`: <https://github.com/IntersectMBO/cardano-node/> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
 
 ## Non-Negotiable Rules
 - Always write typesafe Rust code.

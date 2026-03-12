@@ -8,6 +8,8 @@
 pub mod bearer;
 /// Handshake negotiation types and state machine.
 pub mod handshake;
+/// Multiplexer / demultiplexer — SDU routing between bearer and protocol channels.
+pub mod mux;
 /// Multiplexer framing, SDU header, and protocol numbering.
 pub mod multiplexer;
 /// Mini-protocol state machine modules.
@@ -26,6 +28,9 @@ pub use handshake::{
 pub use multiplexer::{
     MiniProtocolDir, MiniProtocolNum, MuxChannel, SduDecodeError, SduHeader, SDU_HEADER_SIZE,
 };
+
+// -- Mux re-exports -----------------------------------------------------------
+pub use mux::{MuxError, MuxHandle, ProtocolHandle, start as start_mux};
 
 // -- Protocol re-exports ------------------------------------------------------
 pub use protocols::{

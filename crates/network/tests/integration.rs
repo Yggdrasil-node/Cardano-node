@@ -6,6 +6,7 @@ use yggdrasil_network::{
     NodeToNodeVersionData, RefuseReason, Sdu, SduDecodeError, SduHeader,
     TcpBearer, TxIdAndSize, TxSubmissionMessage, TxSubmissionState,
     SDU_HEADER_SIZE,
+    start_mux,
 };
 
 // ===========================================================================
@@ -1001,4 +1002,268 @@ fn sdu_new_sets_payload_length() {
     assert_eq!(sdu.header.direction, MiniProtocolDir::Initiator);
     assert_eq!(sdu.header.timestamp, 0);
     assert_eq!(sdu.payload, payload);
+}
+
+// ===========================================================================
+// Mux — single-protocol round-trip
+// ===========================================================================
+
+#[tokio::test]
+async fn mux_single_protocol_round_trip() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::CHAIN_SYNC];
+    let payload = vec![0xCA, 0xFE];
+
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+        ch.send(vec![0xCA, 0xFE]).await.expect("send");
+        // Wait briefly for the server to process, then abort.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+    let received = ch.recv().await.expect("recv payload");
+    assert_eq!(received, payload);
+    mux.abort();
+
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// Mux — multi-protocol routing
+// ===========================================================================
+
+#[tokio::test]
+async fn mux_multi_protocol_routing() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [
+        MiniProtocolNum::CHAIN_SYNC,
+        MiniProtocolNum::BLOCK_FETCH,
+        MiniProtocolNum::KEEP_ALIVE,
+    ];
+
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+
+        // Send on each protocol in a specific order.
+        let cs = handles.get(&MiniProtocolNum::CHAIN_SYNC).expect("cs");
+        let bf = handles.get(&MiniProtocolNum::BLOCK_FETCH).expect("bf");
+        let ka = handles.get(&MiniProtocolNum::KEEP_ALIVE).expect("ka");
+
+        cs.send(vec![0x01]).await.expect("send cs");
+        bf.send(vec![0x02]).await.expect("send bf");
+        ka.send(vec![0x03]).await.expect("send ka");
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+
+    let cs = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("cs");
+    assert_eq!(cs.recv().await.expect("cs payload"), vec![0x01]);
+
+    let bf = handles.get_mut(&MiniProtocolNum::BLOCK_FETCH).expect("bf");
+    assert_eq!(bf.recv().await.expect("bf payload"), vec![0x02]);
+
+    let ka = handles.get_mut(&MiniProtocolNum::KEEP_ALIVE).expect("ka");
+    assert_eq!(ka.recv().await.expect("ka payload"), vec![0x03]);
+
+    mux.abort();
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// Mux — bidirectional exchange
+// ===========================================================================
+
+#[tokio::test]
+async fn mux_bidirectional_exchange() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::KEEP_ALIVE];
+
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let ch = handles.get_mut(&MiniProtocolNum::KEEP_ALIVE).expect("handle");
+
+        // Client sends ping.
+        ch.send(vec![0xAA]).await.expect("send ping");
+
+        // Client receives pong.
+        let pong = ch.recv().await.expect("recv pong");
+        assert_eq!(pong, vec![0xBB]);
+
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let ch = handles.get_mut(&MiniProtocolNum::KEEP_ALIVE).expect("handle");
+
+    // Server receives ping.
+    let ping = ch.recv().await.expect("recv ping");
+    assert_eq!(ping, vec![0xAA]);
+
+    // Server sends pong.
+    ch.send(vec![0xBB]).await.expect("send pong");
+
+    // Wait for client to receive and finish.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    mux.abort();
+
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// Mux — connection close detected
+// ===========================================================================
+
+#[tokio::test]
+async fn mux_connection_close_detected() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::CHAIN_SYNC];
+
+    // Client connects and immediately drops.
+    let client_handle = tokio::spawn(async move {
+        let _stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        // Drop without starting mux.
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (_handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+
+    client_handle.await.expect("client task");
+
+    // The reader task should detect connection close.
+    let result = mux.reader.await.expect("reader task should not panic");
+    assert!(result.is_err(), "reader should detect connection close");
+}
+
+// ===========================================================================
+// Mux — empty payload round-trip
+// ===========================================================================
+
+#[tokio::test]
+async fn mux_empty_payload_round_trip() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::HANDSHAKE];
+
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let h = handles.get(&MiniProtocolNum::HANDSHAKE).expect("handle");
+        h.send(vec![]).await.expect("send empty");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let h = handles.get_mut(&MiniProtocolNum::HANDSHAKE).expect("handle");
+    let received = h.recv().await.expect("recv empty payload");
+    assert!(received.is_empty());
+    mux.abort();
+
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// Mux — multiple messages on one protocol
+// ===========================================================================
+
+#[tokio::test]
+async fn mux_multiple_messages_same_protocol() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::BLOCK_FETCH];
+    let messages: Vec<Vec<u8>> = vec![
+        vec![0x01, 0x02],
+        vec![0x03, 0x04, 0x05],
+        vec![0x06],
+        vec![0x07, 0x08, 0x09, 0x0A],
+    ];
+
+    let send_msgs = messages.clone();
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let bf = handles.get(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+        for msg in &send_msgs {
+            bf.send(msg.clone()).await.expect("send");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let bf = handles.get_mut(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+    for expected in &messages {
+        let received = bf.recv().await.expect("recv");
+        assert_eq!(&received, expected);
+    }
+    mux.abort();
+
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// Mux — clean shutdown when all handles dropped
+// ===========================================================================
+
+#[tokio::test]
+async fn mux_clean_shutdown_on_handle_drop() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::CHAIN_SYNC];
+
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        // Drop all protocol handles — writer should exit cleanly.
+        drop(handles);
+        let writer_result = mux.writer.await.expect("writer should not panic");
+        assert!(writer_result.is_ok(), "writer should exit cleanly on handle drop");
+        mux.reader.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    // Just keep the connection alive until client finishes.
+    let (_handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    client_handle.await.expect("client task");
+    mux.abort();
 }
