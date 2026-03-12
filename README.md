@@ -12,7 +12,7 @@ Implemented in this milestone:
 - Compileable Rust skeletons and smoke tests across the workspace.
 
 Not implemented yet:
-- Real Cardano cryptography, VRF, or KES logic.
+- Full Cardano cryptographic parity: VRF proving and verification paths are still pending, and KES remains a staged baseline rather than the final production scheme.
 - Era-accurate ledger rules.
 - Ouroboros consensus implementation.
 - Mini-protocol networking and sync.

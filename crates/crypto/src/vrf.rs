@@ -2,6 +2,7 @@ use crate::{CryptoError, SigningKey};
 use curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar};
 use sha2::{Digest, Sha512};
 use std::fmt;
+use subtle::ConstantTimeEq;
 
 const SUITE: u8 = 0x04;
 const THREE: u8 = 0x03;
@@ -24,7 +25,7 @@ pub const VRF_SEED_SIZE: usize = 32;
 ///
 /// Cardano serializes this key as the 32-byte seed followed by the 32-byte
 /// verification key, matching the upstream `cardano-crypto-praos` layout.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct VrfSecretKey(pub [u8; VRF_SIGNING_KEY_SIZE]);
 
 /// A byte-backed Praos VRF verification key.
@@ -105,6 +106,14 @@ impl fmt::Debug for VrfSecretKey {
         formatter.write_str("VrfSecretKey([REDACTED])")
     }
 }
+
+impl PartialEq for VrfSecretKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ct_eq(&other.0).into()
+    }
+}
+
+impl Eq for VrfSecretKey {}
 
 impl VrfVerificationKey {
     /// Derives a VRF verification key directly from a 32-byte seed.

@@ -33,6 +33,16 @@ fn ed25519_round_trip_sign_and_verify() {
 }
 
 #[test]
+fn ed25519_signing_key_equality_is_byte_exact() {
+    let left = SigningKey::from_bytes([7_u8; 32]);
+    let same = SigningKey::from_bytes([7_u8; 32]);
+    let different = SigningKey::from_bytes([8_u8; 32]);
+
+    assert_eq!(left, same);
+    assert_ne!(left, different);
+}
+
+#[test]
 fn ed25519_rejects_modified_message() {
     let signing_key = SigningKey::from_bytes([9_u8; 32]);
     let verification_key = signing_key
@@ -155,6 +165,16 @@ fn vrf_from_bytes_normalizes_to_seed_derived_layout() {
     let signing_key = VrfSecretKey::from_bytes(vector.secret_key);
 
     assert_eq!(signing_key.normalized().to_bytes(), vector.secret_key);
+}
+
+#[test]
+fn vrf_secret_key_equality_is_byte_exact() {
+    let left = VrfSecretKey::from_seed([1_u8; 32]);
+    let same = VrfSecretKey::from_seed([1_u8; 32]);
+    let different = VrfSecretKey::from_seed([2_u8; 32]);
+
+    assert_eq!(left, same);
+    assert_ne!(left, different);
 }
 
 #[test]

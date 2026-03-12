@@ -1,13 +1,14 @@
 use crate::CryptoError;
 use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey as DalekSigningKey, VerifyingKey};
 use std::fmt;
+use subtle::ConstantTimeEq;
 
 /// A byte-backed Ed25519 signing key.
 ///
 /// This wrapper stores the 32-byte signing seed and derives the verification key
 /// using `ed25519-dalek`, matching the usual Ed25519 seed-based API shape used by
 /// upstream Cardano components.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct SigningKey(pub [u8; 32]);
 
 /// A byte-backed Ed25519 verification key.
@@ -47,6 +48,14 @@ impl fmt::Debug for SigningKey {
         formatter.write_str("SigningKey([REDACTED])")
     }
 }
+
+impl PartialEq for SigningKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ct_eq(&other.0).into()
+    }
+}
+
+impl Eq for SigningKey {}
 
 impl VerificationKey {
     /// Constructs a verification key from its 32-byte encoding.
