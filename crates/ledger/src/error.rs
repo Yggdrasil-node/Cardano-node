@@ -22,4 +22,27 @@ pub enum LedgerError {
 
     #[error("CBOR: {0} trailing bytes after value")]
     CborTrailingBytes(usize),
+
+    // -- UTxO validation errors ---------------------------------------------
+
+    #[error("transaction expired: TTL {ttl} < current slot {slot}")]
+    TxExpired { ttl: u64, slot: u64 },
+
+    #[error("input not found in UTxO set")]
+    InputNotInUtxo,
+
+    #[error(
+        "value not preserved: consumed {consumed} lovelace != produced {produced} + fee {fee}"
+    )]
+    ValueNotPreserved {
+        consumed: u64,
+        produced: u64,
+        fee: u64,
+    },
+
+    #[error("no inputs in transaction")]
+    NoInputs,
+
+    #[error("no outputs in transaction")]
+    NoOutputs,
 }

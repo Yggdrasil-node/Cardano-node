@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/Yggdrasil-node/.github/blob/main/images/Yggdrasil_node_full_logo.png" alt="Yggdrasil Node Logo" width="100%"/>
+  <img src="https://github.com/Yggdrasil-node/.github/blob/main/images/Yggdrasil_node_full_logo.png" alt="Yggdrasil CardanoNode Logo" width="100%"/>
 </p>
 
 # Yggdrasil Cardano Node in Rust

@@ -61,4 +61,4 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - Active implementation work has started in `crates/crypto` and `crates/cddl-codegen`.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
 
-Refer to `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details.
+Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.

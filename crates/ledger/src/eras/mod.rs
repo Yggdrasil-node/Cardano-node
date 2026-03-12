@@ -14,7 +14,8 @@ pub use conway::CONWAY_NAME;
 pub use mary::MARY_NAME;
 pub use shelley::SHELLEY_NAME;
 pub use shelley::{
-    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVkeyWitness, ShelleyWitnessSet,
+    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness,
+    ShelleyWitnessSet,
 };
 
 /// Supported Cardano eras in canonical order from Byron through Conway.

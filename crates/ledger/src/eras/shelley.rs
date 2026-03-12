@@ -3,6 +3,8 @@
 //! Types match the Shelley CDDL specification:
 //! <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/shelley/impl/cddl/data/shelley.cddl>
 
+use std::collections::HashMap;
+
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::error::LedgerError;
 
@@ -436,5 +438,118 @@ impl CborDecode for ShelleyTx {
             witness_set,
             auxiliary_data,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UTxO set and state transition
+// ---------------------------------------------------------------------------
+
+/// The Shelley-era UTxO set: unspent transaction outputs indexed by their
+/// producing input reference.
+///
+/// Reference: `Cardano.Ledger.UTxO` — `UTxO`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ShelleyUtxo {
+    entries: HashMap<ShelleyTxIn, ShelleyTxOut>,
+}
+
+impl ShelleyUtxo {
+    /// Creates an empty UTxO set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inserts a UTxO entry.
+    pub fn insert(&mut self, txin: ShelleyTxIn, txout: ShelleyTxOut) {
+        self.entries.insert(txin, txout);
+    }
+
+    /// Looks up a UTxO entry.
+    pub fn get(&self, txin: &ShelleyTxIn) -> Option<&ShelleyTxOut> {
+        self.entries.get(txin)
+    }
+
+    /// Returns the number of entries in the UTxO set.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` when the set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Applies a Shelley transaction body to this UTxO set.
+    ///
+    /// Validates the Shelley UTXO transition rules (simplified — no
+    /// certificates, withdrawals, or deposit accounting in this slice):
+    ///
+    /// 1. The transaction must have at least one input and one output.
+    /// 2. TTL check: `current_slot ≤ tx.ttl`.
+    /// 3. All inputs must exist in the UTxO set.
+    /// 4. Value preservation: `sum(consumed inputs) = sum(outputs) + fee`.
+    /// 5. On success: inputs removed, new outputs added.
+    ///
+    /// `tx_id` is the hash that identifies this transaction (normally
+    /// Blake2b-256 of the serialized body).
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — UTXO STS.
+    pub fn apply_tx(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &ShelleyTxBody,
+        current_slot: u64,
+    ) -> Result<(), LedgerError> {
+        // 1. Non-empty inputs / outputs.
+        if body.inputs.is_empty() {
+            return Err(LedgerError::NoInputs);
+        }
+        if body.outputs.is_empty() {
+            return Err(LedgerError::NoOutputs);
+        }
+
+        // 2. TTL check.
+        if current_slot > body.ttl {
+            return Err(LedgerError::TxExpired {
+                ttl: body.ttl,
+                slot: current_slot,
+            });
+        }
+
+        // 3. Input existence and consumed value.
+        let mut consumed: u64 = 0;
+        for input in &body.inputs {
+            let utxo_entry = self.get(input).ok_or(LedgerError::InputNotInUtxo)?;
+            consumed = consumed.saturating_add(utxo_entry.amount);
+        }
+
+        // 4. Value preservation.
+        let produced: u64 = body
+            .outputs
+            .iter()
+            .map(|o| o.amount)
+            .fold(0u64, u64::saturating_add);
+        if consumed != produced.saturating_add(body.fee) {
+            return Err(LedgerError::ValueNotPreserved {
+                consumed,
+                produced,
+                fee: body.fee,
+            });
+        }
+
+        // 5. State update: remove inputs, add outputs.
+        for input in &body.inputs {
+            self.entries.remove(input);
+        }
+        for (idx, output) in body.outputs.iter().enumerate() {
+            let new_txin = ShelleyTxIn {
+                transaction_id: tx_id,
+                index: idx as u16,
+            };
+            self.entries.insert(new_txin, output.clone());
+        }
+
+        Ok(())
     }
 }
