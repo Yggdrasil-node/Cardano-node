@@ -12,6 +12,8 @@ pub mod handshake;
 pub mod mux;
 /// Multiplexer framing, SDU header, and protocol numbering.
 pub mod multiplexer;
+/// Peer connection lifecycle — handshake negotiation and data-protocol setup.
+pub mod peer;
 /// Mini-protocol state machine modules.
 pub mod protocols;
 
@@ -31,6 +33,9 @@ pub use multiplexer::{
 
 // -- Mux re-exports -----------------------------------------------------------
 pub use mux::{MuxError, MuxHandle, ProtocolHandle, start as start_mux};
+
+// -- Peer re-exports ----------------------------------------------------------
+pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
 
 // -- Protocol re-exports ------------------------------------------------------
 pub use protocols::{

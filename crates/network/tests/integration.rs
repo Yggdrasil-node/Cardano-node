@@ -6,7 +6,7 @@ use yggdrasil_network::{
     NodeToNodeVersionData, RefuseReason, Sdu, SduDecodeError, SduHeader,
     TcpBearer, TxIdAndSize, TxSubmissionMessage, TxSubmissionState,
     SDU_HEADER_SIZE,
-    start_mux,
+    start_mux, peer_connect, peer_accept, PeerError,
 };
 
 // ===========================================================================
@@ -1266,4 +1266,198 @@ async fn mux_clean_shutdown_on_handle_drop() {
     let (_handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
     client_handle.await.expect("client task");
     mux.abort();
+}
+
+// ===========================================================================
+// Peer connection — successful handshake
+// ===========================================================================
+
+fn mainnet_magic() -> u32 {
+    764824073
+}
+
+fn mainnet_proposals() -> Vec<(HandshakeVersion, NodeToNodeVersionData)> {
+    vec![(
+        HandshakeVersion::V14,
+        NodeToNodeVersionData {
+            network_magic: mainnet_magic(),
+            initiator_only_diffusion_mode: false,
+            peer_sharing: 0,
+            query: false,
+        },
+    )]
+}
+
+#[tokio::test]
+async fn peer_connect_accept_happy_path() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let conn = peer_accept(stream, mainnet_magic(), &[HandshakeVersion::V14])
+            .await
+            .expect("accept handshake");
+        assert_eq!(conn.version, HandshakeVersion::V14);
+        assert_eq!(conn.version_data.network_magic, mainnet_magic());
+        assert!(conn.protocols.contains_key(&MiniProtocolNum::CHAIN_SYNC));
+        assert!(conn.protocols.contains_key(&MiniProtocolNum::BLOCK_FETCH));
+        assert!(conn.protocols.contains_key(&MiniProtocolNum::TX_SUBMISSION));
+        assert!(conn.protocols.contains_key(&MiniProtocolNum::KEEP_ALIVE));
+        // Allow the mux writer to flush the AcceptVersion SDU before shutdown.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        conn.mux.abort();
+    });
+
+    let conn = peer_connect(addr, mainnet_proposals())
+        .await
+        .expect("connect handshake");
+    assert_eq!(conn.version, HandshakeVersion::V14);
+    assert_eq!(conn.version_data.network_magic, mainnet_magic());
+    assert!(conn.protocols.contains_key(&MiniProtocolNum::CHAIN_SYNC));
+    conn.mux.abort();
+
+    server_handle.await.expect("server task");
+}
+
+// ===========================================================================
+// Peer connection — data exchange after handshake
+// ===========================================================================
+
+#[tokio::test]
+async fn peer_data_exchange_after_handshake() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut conn = peer_accept(stream, mainnet_magic(), &[HandshakeVersion::V14])
+            .await
+            .expect("accept handshake");
+
+        // Server receives a KeepAlive ping from client.
+        let ka = conn
+            .protocols
+            .get_mut(&MiniProtocolNum::KEEP_ALIVE)
+            .expect("ka");
+        let ping = ka.recv().await.expect("recv ping");
+        assert_eq!(ping, vec![0xAA, 0xBB]);
+
+        // Server sends a response.
+        ka.send(vec![0xCC, 0xDD]).await.expect("send pong");
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        conn.mux.abort();
+    });
+
+    let mut conn = peer_connect(addr, mainnet_proposals())
+        .await
+        .expect("connect handshake");
+
+    let ka = conn
+        .protocols
+        .get_mut(&MiniProtocolNum::KEEP_ALIVE)
+        .expect("ka");
+
+    // Client sends a KeepAlive ping.
+    ka.send(vec![0xAA, 0xBB]).await.expect("send ping");
+
+    // Client receives the server's response.
+    let pong = ka.recv().await.expect("recv pong");
+    assert_eq!(pong, vec![0xCC, 0xDD]);
+
+    conn.mux.abort();
+    server_handle.await.expect("server task");
+}
+
+// ===========================================================================
+// Peer connection — handshake refused (wrong magic)
+// ===========================================================================
+
+#[tokio::test]
+async fn peer_handshake_refused_wrong_magic() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    // Server expects mainnet magic.
+    let server_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let result = peer_accept(stream, mainnet_magic(), &[HandshakeVersion::V14]).await;
+        assert!(result.is_err(), "accept should fail with wrong magic");
+    });
+
+    // Client proposes with wrong magic (testnet).
+    let wrong_proposals = vec![(
+        HandshakeVersion::V14,
+        NodeToNodeVersionData {
+            network_magic: 1097911063, // preprod magic, not mainnet
+            initiator_only_diffusion_mode: false,
+            peer_sharing: 0,
+            query: false,
+        },
+    )];
+
+    let result = peer_connect(addr, wrong_proposals).await;
+    assert!(
+        matches!(&result, Err(PeerError::Refused { .. })),
+        "connect should get Refused"
+    );
+
+    server_handle.await.expect("server task");
+}
+
+// ===========================================================================
+// Peer connection — version negotiation picks highest
+// ===========================================================================
+
+#[tokio::test]
+async fn peer_version_negotiation_picks_highest() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let vdata = NodeToNodeVersionData {
+        network_magic: mainnet_magic(),
+        initiator_only_diffusion_mode: false,
+        peer_sharing: 0,
+        query: false,
+    };
+
+    // Server supports V14 and V15.
+    let server_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let conn = peer_accept(
+            stream,
+            mainnet_magic(),
+            &[HandshakeVersion::V14, HandshakeVersion::V15],
+        )
+        .await
+        .expect("accept handshake");
+        // Should have picked V15 (highest common version).
+        assert_eq!(conn.version, HandshakeVersion::V15);
+        // Allow the mux writer to flush the AcceptVersion SDU before shutdown.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        conn.mux.abort();
+    });
+
+    // Client proposes V14 and V15.
+    let proposals = vec![
+        (HandshakeVersion::V14, vdata.clone()),
+        (HandshakeVersion::V15, vdata),
+    ];
+
+    let conn = peer_connect(addr, proposals)
+        .await
+        .expect("connect handshake");
+    assert_eq!(conn.version, HandshakeVersion::V15);
+    conn.mux.abort();
+
+    server_handle.await.expect("server task");
 }
