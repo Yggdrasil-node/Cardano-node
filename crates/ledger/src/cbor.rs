@@ -196,6 +196,17 @@ impl<'a> Decoder<'a> {
         self.pos >= self.data.len()
     }
 
+    /// Returns a borrowed sub-slice of the underlying input data.
+    ///
+    /// Useful for capturing a range of raw CBOR bytes (e.g. after using
+    /// `position()` before and after a `skip()` call).
+    pub fn slice(&self, start: usize, end: usize) -> Result<&'a [u8], LedgerError> {
+        if end > self.data.len() || start > end {
+            return Err(LedgerError::CborUnexpectedEof);
+        }
+        Ok(&self.data[start..end])
+    }
+
     // ── primitive readers ──────────────────────────────────────────────
 
     fn peek_byte(&self) -> Result<u8, LedgerError> {

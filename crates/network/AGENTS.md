@@ -32,4 +32,4 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Handshake protocol types, state machine, and CBOR wire codec (ProposeVersions/AcceptVersion/Refuse/QueryReply) are complete.
 - ChainSync, BlockFetch, KeepAlive, and TxSubmission2 have full message enums, validated state machines, transition tests, and CBOR wire codecs.
 - Wire tags match upstream CDDL; payload types remain opaque (`Vec<u8>`) pending typed CBOR payloads.
-- Next: Peer lifecycle (connection setup → handshake → protocol dispatch loop), typed protocol payloads, and SDU segmentation for large messages.
+- Next: SDU segmentation for large messages, typed protocol payloads, and peer lifecycle management (reconnection, peer registry).

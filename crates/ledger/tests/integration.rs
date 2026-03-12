@@ -1,6 +1,7 @@
 use yggdrasil_ledger::{
     Block, BlockHeader, BlockNo, CborDecode, CborEncode, Decoder, Encoder, Era, HeaderHash,
-    LedgerState, Nonce, Point, SlotNo, TxId,
+    LedgerState, Nonce, Point, SlotNo, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyVkeyWitness, ShelleyWitnessSet, TxId,
 };
 
 #[test]
@@ -357,4 +358,266 @@ fn cbor_tag_24_encoded_cbor() {
     let embedded = dec.bytes().expect("embedded bytes");
     let mut inner_dec = Decoder::new(embedded);
     assert_eq!(inner_dec.unsigned().expect("inner uint"), 42);
+}
+
+// ===========================================================================
+// Shelley transaction types — CBOR round-trip tests
+// ===========================================================================
+
+#[test]
+fn shelley_txin_cbor_round_trip() {
+    let txin = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 7,
+    };
+    let bytes = txin.to_cbor_bytes();
+    let decoded = ShelleyTxIn::from_cbor_bytes(&bytes).expect("ShelleyTxIn round-trip");
+    assert_eq!(txin, decoded);
+}
+
+#[test]
+fn shelley_txin_encoding_structure() {
+    // CDDL: transaction_input = [transaction_id, index]
+    // Must encode as a 2-element array.
+    let txin = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let bytes = txin.to_cbor_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let len = dec.array().expect("array header");
+    assert_eq!(len, 2, "transaction_input must be a 2-element array");
+    let _ = dec.bytes().expect("transaction_id bytes");
+    let _ = dec.unsigned().expect("index uint");
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn shelley_txout_cbor_round_trip() {
+    let txout = ShelleyTxOut {
+        address: vec![0x61, 0x00, 0x11, 0x22, 0x33],
+        amount: 2_000_000,
+    };
+    let bytes = txout.to_cbor_bytes();
+    let decoded = ShelleyTxOut::from_cbor_bytes(&bytes).expect("ShelleyTxOut round-trip");
+    assert_eq!(txout, decoded);
+}
+
+#[test]
+fn shelley_txout_encoding_structure() {
+    // CDDL: transaction_output = [address, amount : coin]
+    let txout = ShelleyTxOut {
+        address: vec![0x00; 57],
+        amount: 1_000_000,
+    };
+    let bytes = txout.to_cbor_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let len = dec.array().expect("array header");
+    assert_eq!(len, 2, "transaction_output must be a 2-element array");
+    let addr = dec.bytes().expect("address bytes");
+    assert_eq!(addr.len(), 57);
+    let amount = dec.unsigned().expect("coin amount");
+    assert_eq!(amount, 1_000_000);
+}
+
+#[test]
+fn shelley_tx_body_cbor_round_trip_required_fields() {
+    let body = ShelleyTxBody {
+        inputs: vec![
+            ShelleyTxIn {
+                transaction_id: [0xAA; 32],
+                index: 0,
+            },
+            ShelleyTxIn {
+                transaction_id: [0xBB; 32],
+                index: 1,
+            },
+        ],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 28],
+            amount: 5_000_000,
+        }],
+        fee: 180_000,
+        ttl: 50_000_000,
+        auxiliary_data_hash: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = ShelleyTxBody::from_cbor_bytes(&bytes).expect("ShelleyTxBody round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn shelley_tx_body_cbor_with_metadata_hash() {
+    let body = ShelleyTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xCC; 32],
+            index: 3,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x00; 57],
+            amount: 10_000_000,
+        }],
+        fee: 200_000,
+        ttl: 100_000_000,
+        auxiliary_data_hash: Some([0xDD; 32]),
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = ShelleyTxBody::from_cbor_bytes(&bytes).expect("ShelleyTxBody with metadata hash");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn shelley_tx_body_encoding_is_map() {
+    // CDDL: transaction_body = { 0: ..., 1: ..., 2: ..., 3: ... }
+    let body = ShelleyTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        ttl: 0,
+        auxiliary_data_hash: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let count = dec.map().expect("must encode as CBOR map");
+    assert_eq!(count, 4, "4 required fields when no metadata hash");
+}
+
+#[test]
+fn shelley_tx_body_map_has_5_entries_with_metadata_hash() {
+    let body = ShelleyTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        ttl: 0,
+        auxiliary_data_hash: Some([0xFF; 32]),
+    };
+    let bytes = body.to_cbor_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let count = dec.map().expect("map header");
+    assert_eq!(count, 5, "5 entries when metadata hash is present");
+}
+
+#[test]
+fn shelley_vkey_witness_cbor_round_trip() {
+    let witness = ShelleyVkeyWitness {
+        vkey: [0x11; 32],
+        signature: [0x22; 64],
+    };
+    let bytes = witness.to_cbor_bytes();
+    let decoded =
+        ShelleyVkeyWitness::from_cbor_bytes(&bytes).expect("ShelleyVkeyWitness round-trip");
+    assert_eq!(witness, decoded);
+}
+
+#[test]
+fn shelley_witness_set_cbor_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![
+            ShelleyVkeyWitness {
+                vkey: [0xAA; 32],
+                signature: [0xBB; 64],
+            },
+            ShelleyVkeyWitness {
+                vkey: [0xCC; 32],
+                signature: [0xDD; 64],
+            },
+        ],
+        bootstrap_witnesses: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("ShelleyWitnessSet round-trip");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn shelley_witness_set_empty_cbor_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        bootstrap_witnesses: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    // Empty witness set: map(0)
+    let mut dec = Decoder::new(&bytes);
+    let count = dec.map().expect("map header");
+    assert_eq!(count, 0, "empty witness set encodes as map(0)");
+
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("empty ShelleyWitnessSet round-trip");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn shelley_tx_cbor_round_trip_no_metadata() {
+    let tx = ShelleyTx {
+        body: ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x01; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 28],
+                amount: 2_000_000,
+            }],
+            fee: 170_000,
+            ttl: 30_000_000,
+            auxiliary_data_hash: None,
+        },
+        witness_set: ShelleyWitnessSet {
+            vkey_witnesses: vec![ShelleyVkeyWitness {
+                vkey: [0xAA; 32],
+                signature: [0xBB; 64],
+            }],
+            bootstrap_witnesses: vec![],
+        },
+        auxiliary_data: None,
+    };
+    let bytes = tx.to_cbor_bytes();
+    let decoded = ShelleyTx::from_cbor_bytes(&bytes).expect("ShelleyTx round-trip no metadata");
+    assert_eq!(tx, decoded);
+}
+
+#[test]
+fn shelley_tx_encoding_is_three_element_array() {
+    // CDDL: transaction = [transaction_body, transaction_witness_set, metadata / nil]
+    let tx = ShelleyTx {
+        body: ShelleyTxBody {
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            ttl: 0,
+            auxiliary_data_hash: None,
+        },
+        witness_set: ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            bootstrap_witnesses: vec![],
+        },
+        auxiliary_data: None,
+    };
+    let bytes = tx.to_cbor_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let len = dec.array().expect("top-level array");
+    assert_eq!(len, 3, "Shelley tx must be a 3-element array");
+}
+
+#[test]
+fn shelley_tx_body_unknown_keys_skipped() {
+    // Encode a body with an extra key 99 carrying a text value.
+    // Decoder should skip unknown keys gracefully.
+    let mut enc = Encoder::new();
+    enc.map(5);
+    enc.unsigned(0).array(0); // inputs (empty)
+    enc.unsigned(1).array(0); // outputs (empty)
+    enc.unsigned(2).unsigned(100); // fee
+    enc.unsigned(3).unsigned(200); // ttl
+    enc.unsigned(99).text("future extension"); // unknown key
+
+    let bytes = enc.into_bytes();
+    let decoded =
+        ShelleyTxBody::from_cbor_bytes(&bytes).expect("should skip unknown map key");
+    assert_eq!(decoded.fee, 100);
+    assert_eq!(decoded.ttl, 200);
+    assert!(decoded.inputs.is_empty());
+    assert!(decoded.outputs.is_empty());
+    assert!(decoded.auxiliary_data_hash.is_none());
 }
