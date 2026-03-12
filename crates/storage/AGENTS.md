@@ -23,6 +23,9 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Node integration reference for operational storage concerns: <https://github.com/IntersectMBO/cardano-node/>
 
 ## Current Phase
-- Keep implementations simple and in-memory friendly while interfaces stabilize.
+- Traits `ImmutableStore`, `VolatileStore`, and `LedgerStore` are landed and exported.
+- In-memory implementations (`InMemoryImmutable`, `InMemoryVolatile`, `InMemoryLedgerStore`) back each trait.
+- Storage operates on typed `Block`, `HeaderHash`, `SlotNo`, and `Point` from `yggdrasil-ledger`.
+- Keep implementations in-memory friendly while interfaces stabilize.
 - Delay irreversible file-format decisions until consensus and ledger expectations are clearer.
 

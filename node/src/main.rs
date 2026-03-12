@@ -3,7 +3,7 @@ use yggdrasil_consensus::{ChainCandidate, select_preferred};
 use yggdrasil_ledger::Era;
 use yggdrasil_mempool::Mempool;
 use yggdrasil_network::HandshakeVersion;
-use yggdrasil_storage::ImmutableBlockStore;
+use yggdrasil_storage::InMemoryImmutable;
 
 /// Boots the current Yggdrasil foundation binary and reports a minimal runtime banner.
 fn main() -> Result<()> {
@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     );
 
     let _mempool = Mempool::default();
-    let _storage = ImmutableBlockStore::default();
+    let _storage = InMemoryImmutable::default();
 
     println!(
         "Yggdrasil foundation ready: era roadmap starts at {:?}, preferred tip {}, handshake v{}",

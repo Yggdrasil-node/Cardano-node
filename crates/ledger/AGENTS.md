@@ -24,5 +24,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site/>
 
 ## Current Phase
+- Core protocol types (`SlotNo`, `BlockNo`, `EpochNo`, `HeaderHash`, `TxId`, `Point`) are landed in `types.rs`.
+- `Block` and `BlockHeader` use typed identifiers; `LedgerState` tracks tip via `Point`.
 - Keep the full era roadmap visible, but land only narrow reusable slices.
 - Prefer types and harnesses that will survive later era expansion.
