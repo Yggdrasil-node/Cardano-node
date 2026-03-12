@@ -6,8 +6,14 @@
 
 /// Async multiplexer bearer — transport abstraction for SDU-framed I/O.
 pub mod bearer;
+/// BlockFetch client driver — typed, state-machine-correct protocol loop.
+pub mod blockfetch_client;
+/// ChainSync client driver — typed, state-machine-correct protocol loop.
+pub mod chainsync_client;
 /// Handshake negotiation types and state machine.
 pub mod handshake;
+/// KeepAlive client driver — typed, state-machine-correct protocol loop.
+pub mod keepalive_client;
 /// Multiplexer / demultiplexer — SDU routing between bearer and protocol channels.
 pub mod mux;
 /// Multiplexer framing, SDU header, and protocol numbering.
@@ -16,6 +22,8 @@ pub mod multiplexer;
 pub mod peer;
 /// Mini-protocol state machine modules.
 pub mod protocols;
+/// TxSubmission2 client driver — typed, state-machine-correct protocol loop.
+pub mod txsubmission_client;
 
 // -- Bearer re-exports --------------------------------------------------------
 pub use bearer::{Bearer, BearerError, Sdu, TcpBearer, MAX_SDU_PAYLOAD};
@@ -43,4 +51,24 @@ pub use protocols::{
     ChainSyncMessage, ChainSyncState, ChainSyncTransitionError,
     KeepAliveMessage, KeepAliveState, KeepAliveTransitionError,
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
+};
+
+// -- ChainSync client re-exports ----------------------------------------------
+pub use chainsync_client::{
+    ChainSyncClient, ChainSyncClientError, IntersectResponse, NextResponse,
+};
+
+// -- BlockFetch client re-exports ---------------------------------------------
+pub use blockfetch_client::{
+    BatchResponse, BlockFetchClient, BlockFetchClientError,
+};
+
+// -- KeepAlive client re-exports ----------------------------------------------
+pub use keepalive_client::{
+    KeepAliveClient, KeepAliveClientError,
+};
+
+// -- TxSubmission client re-exports -------------------------------------------
+pub use txsubmission_client::{
+    TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
 };

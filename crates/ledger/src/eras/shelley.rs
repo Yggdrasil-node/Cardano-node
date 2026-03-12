@@ -553,3 +553,424 @@ impl ShelleyUtxo {
         Ok(())
     }
 }
+
+// ---------------------------------------------------------------------------
+// VRF certificate (output + proof)
+// ---------------------------------------------------------------------------
+
+/// A VRF certificate: the output hash followed by the 80-byte VRF proof.
+///
+/// CDDL: `vrf_cert = [bytes, bytes .size 80]`
+///
+/// Reference: `Cardano.Protocol.TPraos.BHeader` — `CertifiedVRF`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyVrfCert {
+    /// VRF output (hash of the VRF proof — typically 32 bytes).
+    pub output: Vec<u8>,
+    /// VRF proof (80 bytes for ECVRF).
+    pub proof: [u8; 80],
+}
+
+impl CborEncode for ShelleyVrfCert {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2).bytes(&self.output).bytes(&self.proof);
+    }
+}
+
+impl CborDecode for ShelleyVrfCert {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let output = dec.bytes()?.to_vec();
+        let proof_raw = dec.bytes()?;
+        let proof: [u8; 80] =
+            proof_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 80,
+                    actual: proof_raw.len(),
+                })?;
+        Ok(Self { output, proof })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Operational certificate (wire format)
+// ---------------------------------------------------------------------------
+
+/// A Shelley-era operational certificate in wire format.
+///
+/// CDDL (inlined group in header_body):
+/// ```text
+/// operational_cert = (
+///   hot_vkey    : kes_vkey,          ; 32 bytes
+///   sequence_number : uint .size 8,
+///   kes_period  : uint .size 8,
+///   sigma       : ed25519_signature  ; 64 bytes
+/// )
+/// ```
+///
+/// Reference: `Cardano.Ledger.OCert`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyOpCert {
+    /// Hot KES verification key (32 bytes).
+    pub hot_vkey: [u8; 32],
+    /// Monotonically increasing counter.
+    pub sequence_number: u64,
+    /// KES period in which the certificate starts.
+    pub kes_period: u64,
+    /// Ed25519 signature of (hot_vkey || sequence_number || kes_period)
+    /// by the cold key.
+    pub sigma: [u8; 64],
+}
+
+impl ShelleyOpCert {
+    /// Encode the group fields into a parent array encoder (no array
+    /// header — group is inlined).
+    pub fn encode_fields(&self, enc: &mut Encoder) {
+        enc.bytes(&self.hot_vkey)
+            .unsigned(self.sequence_number)
+            .unsigned(self.kes_period)
+            .bytes(&self.sigma);
+    }
+
+    /// Decode the group fields from a parent array decoder (no array
+    /// header — group is inlined).
+    pub fn decode_fields(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let hot_raw = dec.bytes()?;
+        let hot_vkey: [u8; 32] =
+            hot_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: hot_raw.len(),
+                })?;
+        let sequence_number = dec.unsigned()?;
+        let kes_period = dec.unsigned()?;
+        let sig_raw = dec.bytes()?;
+        let sigma: [u8; 64] =
+            sig_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 64,
+                    actual: sig_raw.len(),
+                })?;
+        Ok(Self {
+            hot_vkey,
+            sequence_number,
+            kes_period,
+            sigma,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shelley header body
+// ---------------------------------------------------------------------------
+
+/// The body of a Shelley-era block header — all chain-indexing fields.
+///
+/// CDDL:
+/// ```text
+/// header_body = [
+///   block_number, slot, prev_hash,
+///   issuer_vkey, vrf_vkey,
+///   nonce_vrf, leader_vrf,
+///   block_body_size, block_body_hash,
+///   operational_cert,  ; 4 inlined group fields
+///   protocol_version   ; 2 inlined group fields
+/// ]
+/// ```
+///
+/// Total: 15 elements in the CBOR array.
+///
+/// Reference: `Cardano.Protocol.TPraos.BHeader` — `BHBody`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyHeaderBody {
+    /// Block height.
+    pub block_number: u64,
+    /// Slot in which this block was issued.
+    pub slot: u64,
+    /// Hash of the previous block header (`None` for genesis successor).
+    pub prev_hash: Option<[u8; 32]>,
+    /// Block issuer's Ed25519 verification key (32 bytes).
+    pub issuer_vkey: [u8; 32],
+    /// Block issuer's VRF verification key (32 bytes).
+    pub vrf_vkey: [u8; 32],
+    /// VRF certificate for the nonce contribution.
+    pub nonce_vrf: ShelleyVrfCert,
+    /// VRF certificate for the leader election proof.
+    pub leader_vrf: ShelleyVrfCert,
+    /// Size of the block body in bytes.
+    pub body_size: u32,
+    /// Blake2b-256 hash of the block body.
+    pub body_hash: [u8; 32],
+    /// Operational certificate.
+    pub opcert: ShelleyOpCert,
+    /// Protocol version (major, minor).
+    pub protocol_version: (u64, u64),
+}
+
+impl CborEncode for ShelleyHeaderBody {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(15);
+
+        enc.unsigned(self.block_number);
+        enc.unsigned(self.slot);
+
+        // prev_hash: hash32 / nil
+        match &self.prev_hash {
+            Some(h) => { enc.bytes(h); }
+            None => { enc.null(); }
+        }
+
+        enc.bytes(&self.issuer_vkey);
+        enc.bytes(&self.vrf_vkey);
+
+        self.nonce_vrf.encode_cbor(enc);
+        self.leader_vrf.encode_cbor(enc);
+
+        enc.unsigned(u64::from(self.body_size));
+        enc.bytes(&self.body_hash);
+
+        // operational_cert group (4 fields inlined)
+        self.opcert.encode_fields(enc);
+
+        // protocol_version group (2 fields inlined)
+        enc.unsigned(self.protocol_version.0);
+        enc.unsigned(self.protocol_version.1);
+    }
+}
+
+impl CborDecode for ShelleyHeaderBody {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 15 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 15,
+                actual: len as usize,
+            });
+        }
+
+        let block_number = dec.unsigned()?;
+        let slot = dec.unsigned()?;
+
+        // prev_hash: hash32 / nil
+        let prev_hash = if dec.peek_major()? == 7 {
+            dec.null()?;
+            None
+        } else {
+            let raw = dec.bytes()?;
+            let h: [u8; 32] =
+                raw.try_into()
+                    .map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 32,
+                        actual: raw.len(),
+                    })?;
+            Some(h)
+        };
+
+        let iv_raw = dec.bytes()?;
+        let issuer_vkey: [u8; 32] =
+            iv_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: iv_raw.len(),
+                })?;
+
+        let vv_raw = dec.bytes()?;
+        let vrf_vkey: [u8; 32] =
+            vv_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: vv_raw.len(),
+                })?;
+
+        let nonce_vrf = ShelleyVrfCert::decode_cbor(dec)?;
+        let leader_vrf = ShelleyVrfCert::decode_cbor(dec)?;
+
+        let body_size = dec.unsigned()? as u32;
+
+        let bh_raw = dec.bytes()?;
+        let body_hash: [u8; 32] =
+            bh_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: bh_raw.len(),
+                })?;
+
+        let opcert = ShelleyOpCert::decode_fields(dec)?;
+
+        let proto_major = dec.unsigned()?;
+        let proto_minor = dec.unsigned()?;
+
+        Ok(Self {
+            block_number,
+            slot,
+            prev_hash,
+            issuer_vkey,
+            vrf_vkey,
+            nonce_vrf,
+            leader_vrf,
+            body_size,
+            body_hash,
+            opcert,
+            protocol_version: (proto_major, proto_minor),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shelley header (header_body + KES signature)
+// ---------------------------------------------------------------------------
+
+/// A signed Shelley-era block header: the body plus a KES signature.
+///
+/// CDDL: `header = [header_body, body_signature : kes_signature]`
+///
+/// The KES signature is stored as opaque bytes (448 bytes for depth-6
+/// SumKES) because the verification logic lives in the consensus crate.
+///
+/// Reference: `Cardano.Protocol.TPraos.BHeader` — `BHeader`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyHeader {
+    /// The header body (chain-indexing + VRF + opcert + version).
+    pub body: ShelleyHeaderBody,
+    /// KES signature bytes over the serialized header body.
+    pub signature: Vec<u8>,
+}
+
+impl CborEncode for ShelleyHeader {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        self.body.encode_cbor(enc);
+        enc.bytes(&self.signature);
+    }
+}
+
+impl CborDecode for ShelleyHeader {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let body = ShelleyHeaderBody::decode_cbor(dec)?;
+        let signature = dec.bytes()?.to_vec();
+        Ok(Self { body, signature })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Full Shelley block
+// ---------------------------------------------------------------------------
+
+/// A complete Shelley-era block as it appears on the wire.
+///
+/// CDDL:
+/// ```text
+/// block = [
+///   header,
+///   transaction_bodies   : [* transaction_body],
+///   transaction_witness_sets : [* transaction_witness_set],
+///   transaction_metadata_set : {* uint => metadata}
+/// ]
+/// ```
+///
+/// Metadata is stored opaquely per-index for now.
+///
+/// Reference: `Cardano.Ledger.Shelley.Block`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyBlock {
+    /// The signed block header.
+    pub header: ShelleyHeader,
+    /// Transaction bodies (parallel to witness_sets).
+    pub transaction_bodies: Vec<ShelleyTxBody>,
+    /// Witness sets (parallel to transaction_bodies).
+    pub witness_sets: Vec<ShelleyWitnessSet>,
+    /// Metadata map: transaction index → raw CBOR metadata bytes.
+    pub transaction_metadata: HashMap<u64, Vec<u8>>,
+}
+
+impl CborEncode for ShelleyBlock {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(4);
+        self.header.encode_cbor(enc);
+
+        // transaction_bodies
+        enc.array(self.transaction_bodies.len() as u64);
+        for body in &self.transaction_bodies {
+            body.encode_cbor(enc);
+        }
+
+        // transaction_witness_sets
+        enc.array(self.witness_sets.len() as u64);
+        for ws in &self.witness_sets {
+            ws.encode_cbor(enc);
+        }
+
+        // transaction_metadata_set
+        enc.map(self.transaction_metadata.len() as u64);
+        for (&idx, meta) in &self.transaction_metadata {
+            enc.unsigned(idx);
+            enc.raw(meta);
+        }
+    }
+}
+
+impl CborDecode for ShelleyBlock {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 4 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 4,
+                actual: len as usize,
+            });
+        }
+
+        let header = ShelleyHeader::decode_cbor(dec)?;
+
+        // transaction_bodies
+        let tb_count = dec.array()?;
+        let mut transaction_bodies = Vec::with_capacity(tb_count as usize);
+        for _ in 0..tb_count {
+            transaction_bodies.push(ShelleyTxBody::decode_cbor(dec)?);
+        }
+
+        // transaction_witness_sets
+        let ws_count = dec.array()?;
+        let mut witness_sets = Vec::with_capacity(ws_count as usize);
+        for _ in 0..ws_count {
+            witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
+        }
+
+        // transaction_metadata_set
+        let meta_count = dec.map()?;
+        let mut transaction_metadata = HashMap::with_capacity(meta_count as usize);
+        for _ in 0..meta_count {
+            let idx = dec.unsigned()?;
+            let start = dec.position();
+            dec.skip()?;
+            let end = dec.position();
+            let raw = dec.slice(start, end)?.to_vec();
+            transaction_metadata.insert(idx, raw);
+        }
+
+        Ok(Self {
+            header,
+            transaction_bodies,
+            witness_sets,
+            transaction_metadata,
+        })
+    }
+}

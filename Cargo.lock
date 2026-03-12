@@ -511,6 +511,7 @@ name = "yggdrasil-node"
 version = "0.1.0"
 dependencies = [
  "eyre",
+ "tokio",
  "yggdrasil-consensus",
  "yggdrasil-ledger",
  "yggdrasil-mempool",

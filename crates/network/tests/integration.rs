@@ -1,11 +1,13 @@
 use yggdrasil_network::{
-    Bearer, BearerError, BlockFetchMessage, BlockFetchState, ChainRange, ChainSyncMessage,
-    ChainSyncState, HandshakeMessage, HandshakeRequest, HandshakeState,
-    HandshakeVersion, KeepAliveMessage, KeepAliveState,
+    BatchResponse, Bearer, BearerError, BlockFetchClient, BlockFetchMessage, BlockFetchState,
+    ChainRange, ChainSyncMessage,
+    ChainSyncState, ChainSyncClient, IntersectResponse, NextResponse,
+    HandshakeMessage, HandshakeRequest, HandshakeState,
+    HandshakeVersion, KeepAliveClient, KeepAliveMessage, KeepAliveState,
     MiniProtocolDir, MiniProtocolNum, MuxChannel,
     NodeToNodeVersionData, RefuseReason, Sdu, SduDecodeError, SduHeader,
-    TcpBearer, TxIdAndSize, TxSubmissionMessage, TxSubmissionState,
-    SDU_HEADER_SIZE,
+    TcpBearer, TxIdAndSize, TxServerRequest, TxSubmissionClient, TxSubmissionMessage,
+    TxSubmissionState, SDU_HEADER_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
 
@@ -1460,4 +1462,1060 @@ async fn peer_version_negotiation_picks_highest() {
     conn.mux.abort();
 
     server_handle.await.expect("server task");
+}
+
+// ===========================================================================
+// ChainSync client driver tests
+// ===========================================================================
+
+/// Helper: set up a mux pair over TCP loopback with a single ChainSync
+/// protocol, returning (client_handle, server_handle, client_mux, server_mux).
+async fn chainsync_mux_pair() -> (
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::MuxHandle,
+    yggdrasil_network::MuxHandle,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    let client_stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let (server_stream, _) = listener.accept().await.expect("accept");
+
+    let protocols = [MiniProtocolNum::CHAIN_SYNC];
+
+    let (mut c_handles, c_mux) =
+        start_mux(client_stream, MiniProtocolDir::Initiator, &protocols, 16);
+    let (mut s_handles, s_mux) =
+        start_mux(server_stream, MiniProtocolDir::Responder, &protocols, 16);
+
+    let c_handle = c_handles
+        .remove(&MiniProtocolNum::CHAIN_SYNC)
+        .expect("client chain_sync handle");
+    let s_handle = s_handles
+        .remove(&MiniProtocolNum::CHAIN_SYNC)
+        .expect("server chain_sync handle");
+
+    (c_handle, s_handle, c_mux, s_mux)
+}
+
+#[tokio::test]
+async fn chainsync_client_request_next_roll_forward() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv request");
+        let msg = ChainSyncMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, ChainSyncMessage::MsgRequestNext);
+
+        let reply = ChainSyncMessage::MsgRollForward {
+            header: b"header-1".to_vec(),
+            tip: b"tip-1".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client.request_next().await.expect("request_next");
+    assert_eq!(
+        resp,
+        NextResponse::RollForward {
+            header: b"header-1".to_vec(),
+            tip: b"tip-1".to_vec(),
+        }
+    );
+    assert_eq!(client.state(), ChainSyncState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_request_next_roll_backward() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv request");
+        let reply = ChainSyncMessage::MsgRollBackward {
+            point: b"point-0".to_vec(),
+            tip: b"tip-0".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client.request_next().await.expect("request_next");
+    assert_eq!(
+        resp,
+        NextResponse::RollBackward {
+            point: b"point-0".to_vec(),
+            tip: b"tip-0".to_vec(),
+        }
+    );
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_request_next_await_reply() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv request");
+
+        // Send MsgAwaitReply first, then MsgRollForward.
+        let await_msg = ChainSyncMessage::MsgAwaitReply;
+        sh.send(await_msg.to_cbor()).await.expect("send await");
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let reply = ChainSyncMessage::MsgRollForward {
+            header: b"awaited-header".to_vec(),
+            tip: b"awaited-tip".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client.request_next().await.expect("request_next with await");
+    assert_eq!(
+        resp,
+        NextResponse::AwaitRollForward {
+            header: b"awaited-header".to_vec(),
+            tip: b"awaited-tip".to_vec(),
+        }
+    );
+    assert_eq!(client.state(), ChainSyncState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_find_intersect_found() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv find_intersect");
+        let msg = ChainSyncMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            ChainSyncMessage::MsgFindIntersect { points } => {
+                assert_eq!(points.len(), 2);
+            }
+            _ => panic!("expected MsgFindIntersect"),
+        }
+
+        let reply = ChainSyncMessage::MsgIntersectFound {
+            point: b"found-point".to_vec(),
+            tip: b"found-tip".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client
+        .find_intersect(vec![b"pt-a".to_vec(), b"pt-b".to_vec()])
+        .await
+        .expect("find_intersect");
+    assert_eq!(
+        resp,
+        IntersectResponse::Found {
+            point: b"found-point".to_vec(),
+            tip: b"found-tip".to_vec(),
+        }
+    );
+    assert_eq!(client.state(), ChainSyncState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_find_intersect_not_found() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+        let reply = ChainSyncMessage::MsgIntersectNotFound {
+            tip: b"not-found-tip".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client
+        .find_intersect(vec![b"nonexistent".to_vec()])
+        .await
+        .expect("find_intersect");
+    assert_eq!(
+        resp,
+        IntersectResponse::NotFound {
+            tip: b"not-found-tip".to_vec(),
+        }
+    );
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_done() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let client = ChainSyncClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv done");
+        let msg = ChainSyncMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, ChainSyncMessage::MsgDone);
+    });
+
+    client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_full_sync_sequence() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        // 1. FindIntersect
+        let _raw = sh.recv().await.expect("recv find_intersect");
+        let reply = ChainSyncMessage::MsgIntersectFound {
+            point: b"genesis".to_vec(),
+            tip: b"tip-3".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send intersect");
+
+        // 2. RequestNext -> RollForward
+        let _raw = sh.recv().await.expect("recv request1");
+        let reply = ChainSyncMessage::MsgRollForward {
+            header: b"block-1".to_vec(),
+            tip: b"tip-3".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send rf1");
+
+        // 3. RequestNext -> RollForward
+        let _raw = sh.recv().await.expect("recv request2");
+        let reply = ChainSyncMessage::MsgRollForward {
+            header: b"block-2".to_vec(),
+            tip: b"tip-3".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send rf2");
+
+        // 4. RequestNext -> AwaitReply -> RollForward
+        let _raw = sh.recv().await.expect("recv request3");
+        sh.send(ChainSyncMessage::MsgAwaitReply.to_cbor())
+            .await
+            .expect("send await");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let reply = ChainSyncMessage::MsgRollForward {
+            header: b"block-3".to_vec(),
+            tip: b"tip-3".to_vec(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send rf3");
+
+        // 5. Done
+        let _raw = sh.recv().await.expect("recv done");
+    });
+
+    // Client side: full sync sequence.
+    let intersect = client
+        .find_intersect(vec![b"genesis".to_vec()])
+        .await
+        .expect("find_intersect");
+    assert!(matches!(intersect, IntersectResponse::Found { .. }));
+
+    let r1 = client.request_next().await.expect("request 1");
+    assert!(matches!(r1, NextResponse::RollForward { .. }));
+
+    let r2 = client.request_next().await.expect("request 2");
+    assert!(matches!(r2, NextResponse::RollForward { .. }));
+
+    let r3 = client.request_next().await.expect("request 3");
+    assert!(matches!(r3, NextResponse::AwaitRollForward { .. }));
+
+    client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+// ===========================================================================
+// BlockFetch client driver tests
+// ===========================================================================
+
+/// Helper: set up a mux pair over TCP loopback with a single BlockFetch
+/// protocol, returning (client_handle, server_handle, client_mux, server_mux).
+async fn blockfetch_mux_pair() -> (
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::MuxHandle,
+    yggdrasil_network::MuxHandle,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    let client_stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let (server_stream, _) = listener.accept().await.expect("accept");
+
+    let protocols = [MiniProtocolNum::BLOCK_FETCH];
+
+    let (mut c_handles, c_mux) =
+        start_mux(client_stream, MiniProtocolDir::Initiator, &protocols, 16);
+    let (mut s_handles, s_mux) =
+        start_mux(server_stream, MiniProtocolDir::Responder, &protocols, 16);
+
+    let c_handle = c_handles
+        .remove(&MiniProtocolNum::BLOCK_FETCH)
+        .expect("client block_fetch handle");
+    let s_handle = s_handles
+        .remove(&MiniProtocolNum::BLOCK_FETCH)
+        .expect("server block_fetch handle");
+
+    (c_handle, s_handle, c_mux, s_mux)
+}
+
+#[tokio::test]
+async fn blockfetch_client_request_range_no_blocks() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv request_range");
+        let msg = BlockFetchMessage::from_cbor(&raw).expect("decode");
+        assert!(matches!(msg, BlockFetchMessage::MsgRequestRange(_)));
+
+        sh.send(BlockFetchMessage::MsgNoBlocks.to_cbor())
+            .await
+            .expect("send no_blocks");
+    });
+
+    let resp = client
+        .request_range(ChainRange {
+            lower: b"pt-a".to_vec(),
+            upper: b"pt-b".to_vec(),
+        })
+        .await
+        .expect("request_range");
+    assert_eq!(resp, BatchResponse::NoBlocks);
+    assert_eq!(client.state(), BlockFetchState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_request_range_single_block() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("send start_batch");
+        sh.send(
+            BlockFetchMessage::MsgBlock {
+                block: b"block-data-1".to_vec(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send block");
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("send batch_done");
+    });
+
+    let resp = client
+        .request_range(ChainRange {
+            lower: b"a".to_vec(),
+            upper: b"b".to_vec(),
+        })
+        .await
+        .expect("request_range");
+    assert_eq!(resp, BatchResponse::StartedBatch);
+
+    let blk = client.recv_block().await.expect("recv_block");
+    assert_eq!(blk, Some(b"block-data-1".to_vec()));
+
+    let done = client.recv_block().await.expect("recv_block batch_done");
+    assert_eq!(done, None);
+    assert_eq!(client.state(), BlockFetchState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_request_range_multiple_blocks() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("start_batch");
+        for i in 0u8..5 {
+            sh.send(
+                BlockFetchMessage::MsgBlock {
+                    block: vec![i; 16],
+                }
+                .to_cbor(),
+            )
+            .await
+            .expect("send block");
+        }
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("batch_done");
+    });
+
+    let resp = client
+        .request_range(ChainRange {
+            lower: b"lo".to_vec(),
+            upper: b"hi".to_vec(),
+        })
+        .await
+        .expect("request_range");
+    assert_eq!(resp, BatchResponse::StartedBatch);
+
+    let mut blocks = Vec::new();
+    while let Some(b) = client.recv_block().await.expect("recv_block") {
+        blocks.push(b);
+    }
+    assert_eq!(blocks.len(), 5);
+    for (i, b) in blocks.iter().enumerate() {
+        assert_eq!(b, &vec![i as u8; 16]);
+    }
+    assert_eq!(client.state(), BlockFetchState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_driver_done() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv done");
+        let msg = BlockFetchMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, BlockFetchMessage::MsgClientDone);
+    });
+
+    client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_multi_range_session() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        // Range 1: start batch with 2 blocks.
+        let _raw = sh.recv().await.expect("recv range1");
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("start_batch 1");
+        sh.send(
+            BlockFetchMessage::MsgBlock {
+                block: b"blk-1a".to_vec(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("block 1a");
+        sh.send(
+            BlockFetchMessage::MsgBlock {
+                block: b"blk-1b".to_vec(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("block 1b");
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("batch_done 1");
+
+        // Range 2: no blocks.
+        let _raw = sh.recv().await.expect("recv range2");
+        sh.send(BlockFetchMessage::MsgNoBlocks.to_cbor())
+            .await
+            .expect("no_blocks 2");
+
+        // Range 3: single block.
+        let _raw = sh.recv().await.expect("recv range3");
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("start_batch 3");
+        sh.send(
+            BlockFetchMessage::MsgBlock {
+                block: b"blk-3".to_vec(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("block 3");
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("batch_done 3");
+
+        // Done.
+        let raw = sh.recv().await.expect("recv done");
+        let msg = BlockFetchMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, BlockFetchMessage::MsgClientDone);
+    });
+
+    // Range 1: 2 blocks.
+    let r1 = client
+        .request_range(ChainRange {
+            lower: b"lo1".to_vec(),
+            upper: b"hi1".to_vec(),
+        })
+        .await
+        .expect("range 1");
+    assert_eq!(r1, BatchResponse::StartedBatch);
+    assert_eq!(
+        client.recv_block().await.expect("blk"),
+        Some(b"blk-1a".to_vec())
+    );
+    assert_eq!(
+        client.recv_block().await.expect("blk"),
+        Some(b"blk-1b".to_vec())
+    );
+    assert_eq!(client.recv_block().await.expect("done"), None);
+
+    // Range 2: no blocks.
+    let r2 = client
+        .request_range(ChainRange {
+            lower: b"lo2".to_vec(),
+            upper: b"hi2".to_vec(),
+        })
+        .await
+        .expect("range 2");
+    assert_eq!(r2, BatchResponse::NoBlocks);
+
+    // Range 3: 1 block.
+    let r3 = client
+        .request_range(ChainRange {
+            lower: b"lo3".to_vec(),
+            upper: b"hi3".to_vec(),
+        })
+        .await
+        .expect("range 3");
+    assert_eq!(r3, BatchResponse::StartedBatch);
+    assert_eq!(
+        client.recv_block().await.expect("blk"),
+        Some(b"blk-3".to_vec())
+    );
+    assert_eq!(client.recv_block().await.expect("done"), None);
+
+    client.done().await.expect("client done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+// ===========================================================================
+// KeepAlive client driver tests
+// ===========================================================================
+
+/// Helper: set up a mux pair over TCP loopback with a single KeepAlive
+/// protocol.
+async fn keepalive_mux_pair() -> (
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::MuxHandle,
+    yggdrasil_network::MuxHandle,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    let client_stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let (server_stream, _) = listener.accept().await.expect("accept");
+
+    let protocols = [MiniProtocolNum::KEEP_ALIVE];
+
+    let (mut c_handles, c_mux) =
+        start_mux(client_stream, MiniProtocolDir::Initiator, &protocols, 16);
+    let (mut s_handles, s_mux) =
+        start_mux(server_stream, MiniProtocolDir::Responder, &protocols, 16);
+
+    let c_handle = c_handles
+        .remove(&MiniProtocolNum::KEEP_ALIVE)
+        .expect("client keep_alive handle");
+    let s_handle = s_handles
+        .remove(&MiniProtocolNum::KEEP_ALIVE)
+        .expect("server keep_alive handle");
+
+    (c_handle, s_handle, c_mux, s_mux)
+}
+
+#[tokio::test]
+async fn keepalive_client_single_ping() {
+    let (c_handle, s_handle, c_mux, s_mux) = keepalive_mux_pair().await;
+    let mut client = KeepAliveClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv keep_alive");
+        let msg = KeepAliveMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            KeepAliveMessage::MsgKeepAlive { cookie } => {
+                let reply = KeepAliveMessage::MsgKeepAliveResponse { cookie };
+                sh.send(reply.to_cbor()).await.expect("send response");
+            }
+            _ => panic!("expected MsgKeepAlive"),
+        }
+    });
+
+    client.keep_alive(42).await.expect("keep_alive");
+    assert_eq!(client.state(), KeepAliveState::StClient);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn keepalive_client_multiple_pings() {
+    let (c_handle, s_handle, c_mux, s_mux) = keepalive_mux_pair().await;
+    let mut client = KeepAliveClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        for _ in 0..3 {
+            let raw = sh.recv().await.expect("recv");
+            let msg = KeepAliveMessage::from_cbor(&raw).expect("decode");
+            if let KeepAliveMessage::MsgKeepAlive { cookie } = msg {
+                let reply = KeepAliveMessage::MsgKeepAliveResponse { cookie };
+                sh.send(reply.to_cbor()).await.expect("send response");
+            } else {
+                panic!("expected MsgKeepAlive");
+            }
+        }
+        // Expect MsgDone.
+        let raw = sh.recv().await.expect("recv done");
+        let msg = KeepAliveMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, KeepAliveMessage::MsgDone);
+    });
+
+    for i in 0..3 {
+        client.keep_alive(100 + i).await.expect("keep_alive");
+    }
+    client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn keepalive_client_cookie_mismatch() {
+    let (c_handle, s_handle, c_mux, s_mux) = keepalive_mux_pair().await;
+    let mut client = KeepAliveClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv");
+        let _msg = KeepAliveMessage::from_cbor(&raw).expect("decode");
+        // Echo back a different cookie.
+        let reply = KeepAliveMessage::MsgKeepAliveResponse { cookie: 9999 };
+        sh.send(reply.to_cbor()).await.expect("send response");
+    });
+
+    let err = client.keep_alive(1234).await;
+    assert!(err.is_err());
+    let err_str = format!("{}", err.expect_err("should be cookie mismatch"));
+    assert!(err_str.contains("cookie mismatch"), "got: {err_str}");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn keepalive_client_driver_done() {
+    let (c_handle, s_handle, c_mux, s_mux) = keepalive_mux_pair().await;
+    let client = KeepAliveClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv done");
+        let msg = KeepAliveMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, KeepAliveMessage::MsgDone);
+    });
+
+    client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+// ===========================================================================
+// TxSubmission client driver tests
+// ===========================================================================
+
+/// Helper: set up a mux pair over TCP loopback with a single TxSubmission
+/// protocol.
+async fn txsubmission_mux_pair() -> (
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::ProtocolHandle,
+    yggdrasil_network::MuxHandle,
+    yggdrasil_network::MuxHandle,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    let client_stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let (server_stream, _) = listener.accept().await.expect("accept");
+
+    let protocols = [MiniProtocolNum::TX_SUBMISSION];
+
+    let (mut c_handles, c_mux) =
+        start_mux(client_stream, MiniProtocolDir::Initiator, &protocols, 16);
+    let (mut s_handles, s_mux) =
+        start_mux(server_stream, MiniProtocolDir::Responder, &protocols, 16);
+
+    let c_handle = c_handles
+        .remove(&MiniProtocolNum::TX_SUBMISSION)
+        .expect("client tx_submission handle");
+    let s_handle = s_handles
+        .remove(&MiniProtocolNum::TX_SUBMISSION)
+        .expect("server tx_submission handle");
+
+    (c_handle, s_handle, c_mux, s_mux)
+}
+
+#[tokio::test]
+async fn txsubmission_client_init_and_reply_txids() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        // Receive MsgInit.
+        let raw = sh.recv().await.expect("recv init");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, TxSubmissionMessage::MsgInit);
+
+        // Send MsgRequestTxIds (non-blocking).
+        let req = TxSubmissionMessage::MsgRequestTxIds {
+            blocking: false,
+            ack: 0,
+            req: 3,
+        };
+        sh.send(req.to_cbor()).await.expect("send request_tx_ids");
+
+        // Receive MsgReplyTxIds.
+        let raw = sh.recv().await.expect("recv reply");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            TxSubmissionMessage::MsgReplyTxIds { txids } => {
+                assert_eq!(txids.len(), 2);
+                assert_eq!(txids[0].txid, b"tx-1");
+                assert_eq!(txids[0].size, 100);
+                assert_eq!(txids[1].txid, b"tx-2");
+                assert_eq!(txids[1].size, 200);
+            }
+            _ => panic!("expected MsgReplyTxIds"),
+        }
+    });
+
+    client.init().await.expect("init");
+    assert_eq!(client.state(), TxSubmissionState::StIdle);
+
+    let req = client.recv_request().await.expect("recv_request");
+    assert_eq!(
+        req,
+        TxServerRequest::RequestTxIds {
+            blocking: false,
+            ack: 0,
+            req: 3,
+        }
+    );
+
+    client
+        .reply_tx_ids(vec![
+            TxIdAndSize {
+                txid: b"tx-1".to_vec(),
+                size: 100,
+            },
+            TxIdAndSize {
+                txid: b"tx-2".to_vec(),
+                size: 200,
+            },
+        ])
+        .await
+        .expect("reply_tx_ids");
+    assert_eq!(client.state(), TxSubmissionState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_reply_txs() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        // MsgInit.
+        let _raw = sh.recv().await.expect("recv init");
+
+        // MsgRequestTxs.
+        let req = TxSubmissionMessage::MsgRequestTxs {
+            txids: vec![b"tx-a".to_vec(), b"tx-b".to_vec()],
+        };
+        sh.send(req.to_cbor()).await.expect("send request_txs");
+
+        // MsgReplyTxs.
+        let raw = sh.recv().await.expect("recv reply_txs");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            TxSubmissionMessage::MsgReplyTxs { txs } => {
+                assert_eq!(txs.len(), 2);
+                assert_eq!(txs[0], b"body-a");
+                assert_eq!(txs[1], b"body-b");
+            }
+            _ => panic!("expected MsgReplyTxs"),
+        }
+    });
+
+    client.init().await.expect("init");
+
+    let req = client.recv_request().await.expect("recv_request");
+    assert!(matches!(req, TxServerRequest::RequestTxs { .. }));
+
+    client
+        .reply_txs(vec![b"body-a".to_vec(), b"body-b".to_vec()])
+        .await
+        .expect("reply_txs");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_done_from_blocking() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        // MsgInit.
+        let _raw = sh.recv().await.expect("recv init");
+
+        // Blocking MsgRequestTxIds.
+        let req = TxSubmissionMessage::MsgRequestTxIds {
+            blocking: true,
+            ack: 0,
+            req: 1,
+        };
+        sh.send(req.to_cbor()).await.expect("send");
+
+        // Expect MsgDone.
+        let raw = sh.recv().await.expect("recv done");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, TxSubmissionMessage::MsgDone);
+    });
+
+    client.init().await.expect("init");
+
+    let req = client.recv_request().await.expect("recv_request");
+    assert!(matches!(
+        req,
+        TxServerRequest::RequestTxIds {
+            blocking: true,
+            ..
+        }
+    ));
+
+    client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_full_session() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        // 1. MsgInit.
+        let _raw = sh.recv().await.expect("recv init");
+
+        // 2. Non-blocking MsgRequestTxIds.
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: false,
+                ack: 0,
+                req: 5,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send");
+
+        // 3. Receive MsgReplyTxIds.
+        let raw = sh.recv().await.expect("recv reply_txids");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        let txids = match msg {
+            TxSubmissionMessage::MsgReplyTxIds { txids } => txids,
+            _ => panic!("expected MsgReplyTxIds"),
+        };
+        assert_eq!(txids.len(), 1);
+
+        // 4. MsgRequestTxs for that tx.
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxs {
+                txids: vec![txids[0].txid.clone()],
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send request_txs");
+
+        // 5. Receive MsgReplyTxs.
+        let raw = sh.recv().await.expect("recv reply_txs");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            TxSubmissionMessage::MsgReplyTxs { txs } => {
+                assert_eq!(txs.len(), 1);
+                assert_eq!(txs[0], b"full-tx-body");
+            }
+            _ => panic!("expected MsgReplyTxs"),
+        }
+
+        // 6. Blocking MsgRequestTxIds (client will send MsgDone).
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 1,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send blocking");
+
+        // 7. Expect MsgDone.
+        let raw = sh.recv().await.expect("recv done");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, TxSubmissionMessage::MsgDone);
+    });
+
+    // Client side.
+    client.init().await.expect("init");
+
+    // Non-blocking: reply with one tx id.
+    let req = client.recv_request().await.expect("1");
+    assert!(matches!(req, TxServerRequest::RequestTxIds { .. }));
+    client
+        .reply_tx_ids(vec![TxIdAndSize {
+            txid: b"my-tx".to_vec(),
+            size: 50,
+        }])
+        .await
+        .expect("reply_tx_ids");
+
+    // Fetch request: reply with the tx body.
+    let req = client.recv_request().await.expect("2");
+    assert!(matches!(req, TxServerRequest::RequestTxs { .. }));
+    client
+        .reply_txs(vec![b"full-tx-body".to_vec()])
+        .await
+        .expect("reply_txs");
+
+    // Blocking: we have nothing, send Done.
+    let req = client.recv_request().await.expect("3");
+    assert!(matches!(
+        req,
+        TxServerRequest::RequestTxIds {
+            blocking: true,
+            ..
+        }
+    ));
+    client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
 }
