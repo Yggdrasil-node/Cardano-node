@@ -6,6 +6,10 @@ use yggdrasil_crypto::{
     VrfVerificationKey,
     ed25519_rfc8032_vectors, hash_bytes, simple_kes_two_period_test_vectors,
     vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
+    // SumKES
+    SumKesSignature, SumKesSigningKey, SumKesVerificationKey,
+    derive_sum_kes_vk, gen_sum_kes_signing_key, sign_sum_kes,
+    update_sum_kes, verify_sum_kes,
 };
 use yggdrasil_crypto::vrf::VRF_SEED_SIZE;
 
@@ -794,4 +798,206 @@ fn kes_period_evolution_advances_or_overflows() {
 
     assert_eq!(next, KesPeriod(8));
     assert_eq!(overflow, CryptoError::KesPeriodOverflow);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SumKES tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn sum_kes_depth0_sign_verify() {
+    let seed = [0x42u8; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 0).expect("depth-0 key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("depth-0 VK derivation");
+
+    assert_eq!(sk.total_periods(), 1);
+
+    let sig = sign_sum_kes(&sk, 0, b"hello depth-0").expect("depth-0 sign");
+    verify_sum_kes(&vk, 0, b"hello depth-0", &sig).expect("depth-0 verify");
+}
+
+#[test]
+fn sum_kes_depth0_wrong_message_fails() {
+    let seed = [0x42u8; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 0).expect("depth-0 key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("depth-0 VK derivation");
+
+    let sig = sign_sum_kes(&sk, 0, b"good message").expect("depth-0 sign");
+    verify_sum_kes(&vk, 0, b"bad message", &sig)
+        .expect_err("wrong message should fail verification");
+}
+
+#[test]
+fn sum_kes_depth1_both_periods() {
+    let seed = [0xAA; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 1).expect("depth-1 key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("depth-1 VK derivation");
+
+    assert_eq!(sk.total_periods(), 2);
+
+    // Period 0: sign with the initial key
+    let sig0 = sign_sum_kes(&sk, 0, b"period zero").expect("depth-1 sign period 0");
+    verify_sum_kes(&vk, 0, b"period zero", &sig0).expect("depth-1 verify period 0");
+
+    // Evolve to period 1
+    let sk1 = update_sum_kes(&sk, 0)
+        .expect("depth-1 update")
+        .expect("depth-1 should evolve to period 1");
+
+    let sig1 = sign_sum_kes(&sk1, 1, b"period one").expect("depth-1 sign period 1");
+    verify_sum_kes(&vk, 1, b"period one", &sig1).expect("depth-1 verify period 1");
+
+    // Cannot evolve past last period
+    let expired = update_sum_kes(&sk1, 1).expect("depth-1 update at last period");
+    assert!(expired.is_none(), "should be None at final period");
+}
+
+#[test]
+fn sum_kes_depth2_four_periods() {
+    let seed = [0xBB; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 2).expect("depth-2 key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("depth-2 VK derivation");
+
+    assert_eq!(sk.total_periods(), 4);
+
+    let mut current_sk = sk;
+    for period in 0u32..4 {
+        let msg = format!("message for period {period}");
+        let sig = sign_sum_kes(&current_sk, period, msg.as_bytes())
+            .expect("depth-2 sign should succeed");
+        verify_sum_kes(&vk, period, msg.as_bytes(), &sig)
+            .expect("depth-2 verify should succeed");
+
+        if period < 3 {
+            current_sk = update_sum_kes(&current_sk, period)
+                .expect("depth-2 update should succeed")
+                .expect("depth-2 should produce evolved key");
+        }
+    }
+}
+
+#[test]
+fn sum_kes_depth3_full_lifecycle() {
+    let seed = [0xCC; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 3).expect("depth-3 key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("depth-3 VK derivation");
+
+    assert_eq!(sk.total_periods(), 8);
+
+    let mut current_sk = sk;
+    for period in 0u32..8 {
+        let msg = format!("depth3-period-{period}");
+        let sig = sign_sum_kes(&current_sk, period, msg.as_bytes())
+            .expect("depth-3 sign should succeed for all 8 periods");
+        verify_sum_kes(&vk, period, msg.as_bytes(), &sig)
+            .expect("depth-3 verify should succeed for all 8 periods");
+
+        if period < 7 {
+            current_sk = update_sum_kes(&current_sk, period)
+                .expect("depth-3 update should succeed")
+                .expect("depth-3 should produce evolved key");
+        }
+    }
+
+    let expired = update_sum_kes(&current_sk, 7).expect("depth-3 final update");
+    assert!(expired.is_none(), "depth-3 key should be exhausted at period 7");
+}
+
+#[test]
+fn sum_kes_vk_is_deterministic() {
+    let seed = [0xDD; 32];
+    let sk1 = gen_sum_kes_signing_key(&seed, 2).expect("key gen 1");
+    let sk2 = gen_sum_kes_signing_key(&seed, 2).expect("key gen 2");
+
+    let vk1 = derive_sum_kes_vk(&sk1).expect("VK 1");
+    let vk2 = derive_sum_kes_vk(&sk2).expect("VK 2");
+
+    assert_eq!(vk1, vk2, "same seed should produce same VK");
+}
+
+#[test]
+fn sum_kes_different_seeds_produce_different_vks() {
+    let sk1 = gen_sum_kes_signing_key(&[0x01; 32], 2).expect("key gen 1");
+    let sk2 = gen_sum_kes_signing_key(&[0x02; 32], 2).expect("key gen 2");
+
+    let vk1 = derive_sum_kes_vk(&sk1).expect("VK 1");
+    let vk2 = derive_sum_kes_vk(&sk2).expect("VK 2");
+
+    assert_ne!(vk1, vk2, "different seeds should produce different VKs");
+}
+
+#[test]
+fn sum_kes_cross_period_forgery_fails() {
+    let seed = [0xEE; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 2).expect("key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("VK");
+
+    // Sign at period 0
+    let sig0 = sign_sum_kes(&sk, 0, b"cross-period test").expect("sign period 0");
+
+    // Verify at period 1 should fail
+    verify_sum_kes(&vk, 1, b"cross-period test", &sig0)
+        .expect_err("signature from period 0 should not verify at period 1");
+}
+
+#[test]
+fn sum_kes_invalid_period_rejected() {
+    let seed = [0xFF; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 1).expect("key gen");
+
+    // Only 2 periods (0, 1) are valid for depth 1
+    let err = sign_sum_kes(&sk, 2, b"oob period")
+        .expect_err("period 2 should be rejected for depth-1 key");
+    assert_eq!(err, CryptoError::InvalidKesPeriod(2));
+}
+
+#[test]
+fn sum_kes_signature_size() {
+    assert_eq!(SumKesSignature::expected_size(0), 64);
+    assert_eq!(SumKesSignature::expected_size(1), 128);
+    assert_eq!(SumKesSignature::expected_size(2), 192);
+    assert_eq!(SumKesSignature::expected_size(6), 448);
+}
+
+#[test]
+fn sum_kes_depth6_key_gen_and_sign() {
+    // Mainnet uses Sum6KES — verify it works with 64 periods.
+    let seed = [0x99; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 6).expect("depth-6 key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("depth-6 VK derivation");
+
+    assert_eq!(sk.total_periods(), 64);
+
+    // Sign at period 0 and verify.
+    let sig = sign_sum_kes(&sk, 0, b"mainnet depth-6").expect("depth-6 sign");
+    assert_eq!(sig.to_bytes().len(), 448);
+    verify_sum_kes(&vk, 0, b"mainnet depth-6", &sig).expect("depth-6 verify");
+
+    // Evolve to period 1 and verify.
+    let sk1 = update_sum_kes(&sk, 0)
+        .expect("depth-6 update")
+        .expect("depth-6 should evolve to period 1");
+    let sig1 = sign_sum_kes(&sk1, 1, b"mainnet depth-6 p1").expect("depth-6 sign p1");
+    verify_sum_kes(&vk, 1, b"mainnet depth-6 p1", &sig1).expect("depth-6 verify p1");
+}
+
+#[test]
+fn sum_kes_signature_round_trip() {
+    let seed = [0x77; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 2).expect("key gen");
+    let sig = sign_sum_kes(&sk, 0, b"round-trip test").expect("sign");
+
+    let bytes = sig.to_bytes();
+    let restored = SumKesSignature::from_bytes(2, bytes).expect("from_bytes");
+    assert_eq!(sig, restored);
+}
+
+#[test]
+fn sum_kes_vk_round_trip() {
+    let seed = [0x88; 32];
+    let sk = gen_sum_kes_signing_key(&seed, 3).expect("key gen");
+    let vk = derive_sum_kes_vk(&sk).expect("VK");
+
+    let restored = SumKesVerificationKey::from_bytes(vk.to_bytes());
+    assert_eq!(vk, restored);
 }

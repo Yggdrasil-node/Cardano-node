@@ -4,6 +4,8 @@
 //! `HeaderHash`, `TxId`, `Point`) alongside era modeling, block/transaction
 //! structures, and ledger state tracking.
 
+/// Minimal hand-rolled CBOR encoder/decoder for protocol-level types.
+pub mod cbor;
 /// Era modeling and era-local modules.
 pub mod eras;
 mod error;
@@ -13,6 +15,10 @@ pub mod state;
 pub mod tx;
 /// Core protocol-level types shared across ledger, storage, and consensus.
 pub mod types;
+
+// -- CBOR re-exports ----------------------------------------------------------
+/// CBOR encoding and decoding traits and primitives.
+pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 
 // -- Era re-exports -----------------------------------------------------------
 /// Supported Cardano eras represented in the workspace.

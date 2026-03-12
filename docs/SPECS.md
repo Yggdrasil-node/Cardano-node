@@ -8,7 +8,7 @@ Yggdrasil is specification-driven. When sources disagree, use them in this order
 3. Accepted CIPs that define era or protocol behavior.
 4. Haskell node behavior for compatibility checks and fixture validation.
 
-## Core References
+## Core References (add or update as needed)
 - Cardano ledger CDDL schemas: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>
 - Formal ledger specifications: <https://github.com/IntersectMBO/formal-ledger-specifications>
 - Ouroboros papers: <https://iohk.io/research/papers/>

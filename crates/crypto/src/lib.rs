@@ -7,13 +7,15 @@ pub mod ed25519;
 mod error;
 /// Key-evolving signature helpers and shared types.
 pub mod kes;
+/// Sum-composition Key-Evolving Signatures (SumKES).
+pub mod sum_kes;
 /// Published compatibility vectors used by crypto tests.
 pub mod test_vectors;
 /// Verifiable random function key, proof, and output helpers.
 pub mod vrf;
 
 /// Blake2b hash output and hashing entry point.
-pub use blake2b::{Blake2bHash, hash_bytes};
+pub use blake2b::{Blake2b256Hash, Blake2bHash, hash_bytes, hash_bytes_256};
 /// Ed25519 byte-backed key and signature types.
 pub use ed25519::{Signature, SigningKey, VerificationKey};
 /// Errors surfaced by the crypto crate.
@@ -22,6 +24,11 @@ pub use error::CryptoError;
 pub use kes::{
 	CompactKesSignature, KesPeriod, KesSignature, KesSigningKey, KesVerificationKey,
 	SimpleCompactKesSignature, SimpleKesSignature, SimpleKesSigningKey, SimpleKesVerificationKey,
+};
+/// SumKES key-evolving signature types and operations.
+pub use sum_kes::{
+	SumKesSignature, SumKesSigningKey, SumKesVerificationKey, derive_sum_kes_vk,
+	gen_sum_kes_signing_key, sign_sum_kes, update_sum_kes, verify_sum_kes,
 };
 /// RFC-backed Ed25519 test vector structures and fixtures.
 pub use test_vectors::{
