@@ -1,5 +1,6 @@
 use crate::{CryptoError, SigningKey};
 use curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar};
+use curve25519_dalek::traits::IsIdentity;
 use sha2::{Digest, Sha512};
 use std::fmt;
 use subtle::ConstantTimeEq;
@@ -131,11 +132,31 @@ impl VrfVerificationKey {
         self.0
     }
 
+    /// Validates this verification key encoding.
+    ///
+    /// The key must decode to an Edwards point and must not be a
+    /// low-order point after multiplying by the curve cofactor.
+    pub fn validate(&self) -> Result<(), CryptoError> {
+        let point = CompressedEdwardsY(self.0)
+            .decompress()
+            .ok_or(CryptoError::InvalidVrfVerificationKey)?;
+
+        if point.mul_by_cofactor().is_identity() {
+            return Err(CryptoError::InvalidVrfVerificationKey);
+        }
+
+        Ok(())
+    }
+
     /// Verifies a VRF proof for a message.
     ///
     /// Full Praos verification remains unimplemented until the workspace has a
     /// pure Rust ECVRF path with upstream vector parity.
-    pub fn verify(&self, _message: &[u8], _proof: &VrfProof) -> Result<VrfOutput, CryptoError> {
+    pub fn verify(&self, message: &[u8], proof: &VrfProof) -> Result<VrfOutput, CryptoError> {
+        self.validate()?;
+        proof.validate()?;
+        let _ = message;
+
         Err(CryptoError::Unimplemented("VRF verification"))
     }
 }

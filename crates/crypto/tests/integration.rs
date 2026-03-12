@@ -3,6 +3,7 @@ use yggdrasil_crypto::{
     Signature, SigningKey, SimpleCompactKesSignature, SimpleKesSignature,
     SimpleKesSigningKey, SimpleKesVerificationKey, VerificationKey,
     VrfBatchCompatProof, VrfOutput, VrfProof, VrfSecretKey,
+    VrfVerificationKey,
     ed25519_rfc8032_vectors, hash_bytes, simple_kes_two_period_test_vectors,
     vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
 };
@@ -175,6 +176,55 @@ fn vrf_validate_rejects_malformed_proofs() {
 
     assert_eq!(praos_error, CryptoError::InvalidVrfProof);
     assert_eq!(batch_error, CryptoError::InvalidVrfProof);
+}
+
+#[test]
+fn vrf_verification_key_validate_accepts_published_keys() {
+    for vector in vrf_praos_test_vectors() {
+        let verification_key = VrfVerificationKey::from_bytes(vector.public_key);
+        verification_key
+            .validate()
+            .expect("published Praos VRF verification keys should validate");
+    }
+
+    for vector in vrf_praos_batchcompat_test_vectors() {
+        let verification_key = VrfVerificationKey::from_bytes(vector.public_key);
+        verification_key
+            .validate()
+            .expect("published batch-compatible VRF verification keys should validate");
+    }
+}
+
+#[test]
+fn vrf_verification_key_validate_rejects_invalid_bytes() {
+    let error = VrfVerificationKey::from_bytes([0_u8; 32])
+        .validate()
+        .expect_err("identity-style VRF verification key bytes should be rejected");
+
+    assert_eq!(error, CryptoError::InvalidVrfVerificationKey);
+}
+
+#[test]
+fn vrf_verify_rejects_invalid_key_before_unimplemented_path() {
+    let proof = VrfProof::from_bytes([0_u8; 80]);
+    let error = VrfVerificationKey::from_bytes([0_u8; 32])
+        .verify(b"", &proof)
+        .expect_err("invalid VRF key bytes should fail before full verification path");
+
+    assert_eq!(error, CryptoError::InvalidVrfVerificationKey);
+}
+
+#[test]
+fn vrf_verify_rejects_invalid_proof_before_unimplemented_path() {
+    let vector = vrf_praos_test_vectors()
+        .into_iter()
+        .next()
+        .expect("at least one Praos VRF vector should be available");
+    let error = VrfVerificationKey::from_bytes(vector.public_key)
+        .verify(&vector.message, &VrfProof::from_bytes([0xff; 80]))
+        .expect_err("invalid VRF proof bytes should fail before full verification path");
+
+    assert_eq!(error, CryptoError::InvalidVrfProof);
 }
 
 #[test]
