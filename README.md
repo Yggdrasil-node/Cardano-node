@@ -1,6 +1,7 @@
 <p align="center">
   <img src="https://github.com/Yggdrasil-node/.github/blob/main/images/Yggdrasil_node_full_logo.png" alt="Yggdrasil Node Logo" width="600"/>
 </p>
+
 # Yggdrasil Cardano Node in Rust
 
 Yggdrasil is a pure Rust Cardano node workspace. The current repository state is the foundation milestone: workspace scaffolding, crate boundaries, project policy, agent instructions, CI, and compileable crate skeletons.
