@@ -203,6 +203,149 @@ fn batchcompat_vrf_verify_rejects_modified_message() {
 }
 
 #[test]
+fn standard_vrf_prove_produces_byte_exact_proofs() {
+    for vector in vrf_praos_test_vectors() {
+        let signing_key = VrfSecretKey::from_bytes(vector.secret_key);
+        let (output, proof) = signing_key
+            .prove(&vector.message)
+            .expect("proof generation should succeed for published vector");
+
+        assert_eq!(
+            proof.to_bytes(),
+            vector.proof,
+            "proof bytes mismatch for {}",
+            vector.name
+        );
+        assert_eq!(
+            output.to_bytes(),
+            vector.output,
+            "output mismatch for {}",
+            vector.name
+        );
+    }
+}
+
+#[test]
+fn standard_vrf_prove_then_verify_round_trips() {
+    for vector in vrf_praos_test_vectors() {
+        let signing_key = VrfSecretKey::from_bytes(vector.secret_key);
+        let verification_key = signing_key.verification_key();
+        let (output, proof) = signing_key
+            .prove(&vector.message)
+            .expect("proof generation should succeed");
+
+        let verified_output = verification_key
+            .verify(&vector.message, &proof)
+            .expect("verify should accept a freshly generated proof");
+
+        assert_eq!(
+            verified_output, output,
+            "round-trip output mismatch for {}",
+            vector.name
+        );
+    }
+}
+
+#[test]
+fn batchcompat_vrf_prove_produces_byte_exact_proofs() {
+    for vector in vrf_praos_batchcompat_test_vectors() {
+        let signing_key = VrfSecretKey::from_bytes(vector.secret_key);
+        let (output, proof) = signing_key
+            .prove_batchcompat(&vector.message)
+            .expect("batchcompat proof generation should succeed for published vector");
+
+        assert_eq!(
+            proof.to_bytes(),
+            vector.proof,
+            "batchcompat proof bytes mismatch for {}",
+            vector.name
+        );
+        assert_eq!(
+            output.to_bytes(),
+            vector.output,
+            "batchcompat output mismatch for {}",
+            vector.name
+        );
+    }
+}
+
+#[test]
+fn batchcompat_vrf_prove_then_verify_round_trips() {
+    for vector in vrf_praos_batchcompat_test_vectors() {
+        let signing_key = VrfSecretKey::from_bytes(vector.secret_key);
+        let verification_key = signing_key.verification_key();
+        let (output, proof) = signing_key
+            .prove_batchcompat(&vector.message)
+            .expect("batchcompat proof generation should succeed");
+
+        let verified_output = verification_key
+            .verify_batchcompat(&vector.message, &proof)
+            .expect("verify_batchcompat should accept a freshly generated proof");
+
+        assert_eq!(
+            verified_output, output,
+            "batchcompat round-trip output mismatch for {}",
+            vector.name
+        );
+    }
+}
+
+#[test]
+fn standard_vrf_verify_rejects_modified_message() {
+    let vector = vrf_praos_test_vectors()
+        .into_iter()
+        .next()
+        .expect("at least one standard Praos VRF vector should be available");
+    let verification_key = VrfVerificationKey::from_bytes(vector.public_key);
+    let proof = VrfProof::from_bytes(vector.proof);
+    let error = verification_key
+        .verify(b"modified", &proof)
+        .expect_err("standard VRF verification should fail for a modified message");
+
+    assert_eq!(error, CryptoError::InvalidVrfProof);
+}
+
+#[test]
+fn standard_vrf_verify_rejects_tampered_proof_components() {
+    let vector = vrf_praos_test_vectors()
+        .into_iter()
+        .next()
+        .expect("at least one standard Praos VRF vector should be available");
+    let vk = VrfVerificationKey::from_bytes(vector.public_key);
+
+    // Flip a bit in each proof region: gamma (byte 0), challenge (byte 32), response (byte 48).
+    for flip_offset in [0_usize, 32, 48] {
+        let mut tampered = vector.proof;
+        tampered[flip_offset] ^= 0x01;
+        let result = vk.verify(&vector.message, &VrfProof::from_bytes(tampered));
+        assert!(
+            result.is_err(),
+            "standard proof tampered at byte {flip_offset} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn batchcompat_vrf_verify_rejects_tampered_proof_components() {
+    let vector = vrf_praos_batchcompat_test_vectors()
+        .into_iter()
+        .next()
+        .expect("at least one batchcompat VRF vector should be available");
+    let vk = VrfVerificationKey::from_bytes(vector.public_key);
+
+    // Flip a bit in each proof region: gamma (byte 0), ann1 (byte 32), ann2 (byte 64), response (byte 96).
+    for flip_offset in [0_usize, 32, 64, 96] {
+        let mut tampered = vector.proof;
+        tampered[flip_offset] ^= 0x01;
+        let result = vk.verify_batchcompat(&vector.message, &VrfBatchCompatProof::from_bytes(tampered));
+        assert!(
+            result.is_err(),
+            "batchcompat proof tampered at byte {flip_offset} should be rejected"
+        );
+    }
+}
+
+#[test]
 fn vrf_validate_accepts_published_proofs() {
     for vector in vrf_praos_test_vectors() {
         let proof = VrfProof::from_bytes(vector.proof);
@@ -259,7 +402,7 @@ fn vrf_verification_key_validate_rejects_invalid_bytes() {
 }
 
 #[test]
-fn vrf_verify_rejects_invalid_key_before_unimplemented_path() {
+fn vrf_verify_rejects_invalid_key_bytes() {
     let proof = VrfProof::from_bytes([0_u8; 80]);
     let error = VrfVerificationKey::from_bytes([0_u8; 32])
         .verify(b"", &proof)
@@ -269,7 +412,7 @@ fn vrf_verify_rejects_invalid_key_before_unimplemented_path() {
 }
 
 #[test]
-fn vrf_verify_rejects_invalid_proof_before_unimplemented_path() {
+fn vrf_verify_rejects_invalid_proof_bytes() {
     let vector = vrf_praos_test_vectors()
         .into_iter()
         .next()

@@ -13,6 +13,7 @@ This file defines how dependencies are introduced into Yggdrasil.
 - `serde`: structured data interchange where handwritten or generated types require it.
 - `subtle`: constant-time comparisons for secret material.
 - `tokio`: async runtime for networking and orchestration work.
+- `zeroize`: deterministic zeroing of secret material on drop; already a transitive dependency via `curve25519-dalek` and `ed25519-dalek`, so adding it directly introduces no new supply chain surface.
 
 ## Review Required
 - Any new cryptography crate.

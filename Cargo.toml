@@ -27,6 +27,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 sha2 = "0.10.8"
 subtle = "2.6.1"
 thiserror = "2.0.12"
+zeroize = { version = "1.8.2", features = ["derive"] }
 tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 yggdrasil-consensus = { path = "crates/consensus" }

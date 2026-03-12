@@ -23,6 +23,4 @@ pub enum CryptoError {
     InvalidVrfVerificationKey,
     #[error("kes period overflow")]
     KesPeriodOverflow,
-    #[error("feature not implemented: {0}")]
-    Unimplemented(&'static str),
 }

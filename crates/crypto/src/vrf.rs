@@ -9,6 +9,7 @@ use curve25519_dalek::traits::IsIdentity;
 use sha2::{Digest, Sha512};
 use std::fmt;
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const SUITE: u8 = 0x04;
 const ONE: u8 = 0x01;
@@ -35,7 +36,7 @@ const VRF_CHALLENGE_SIZE: usize = 16;
 ///
 /// Cardano serializes this key as the 32-byte seed followed by the 32-byte
 /// verification key, matching the upstream `cardano-crypto-praos` layout.
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct VrfSecretKey(pub [u8; VRF_SIGNING_KEY_SIZE]);
 
 /// A byte-backed Praos VRF verification key.
@@ -119,13 +120,94 @@ impl VrfSecretKey {
         Ok(())
     }
 
-    /// Produces a VRF proof for a message.
+    /// Produces a standard (draft03) VRF proof for a message.
     ///
-    /// Full Praos proof generation remains unimplemented until the workspace has
-    /// a pure Rust ECVRF path that can be validated against upstream vectors.
-    pub fn prove(&self, _message: &[u8]) -> Result<(VrfOutput, VrfProof), CryptoError> {
+    /// Mirrors the upstream `crypto_vrf_ietfdraft03_prove` from
+    /// `cardano-crypto-praos`.  Returns the deterministic VRF output
+    /// and the 80-byte proof `(Gamma || challenge || response)`.
+    pub fn prove(&self, message: &[u8]) -> Result<(VrfOutput, VrfProof), CryptoError> {
         self.validate()?;
-        Err(CryptoError::Unimplemented("VRF proof generation"))
+        let vk_bytes = self.verification_key().to_bytes();
+        let (mut secret_scalar, mut nonce_prefix) = derive_secret_scalar_and_nonce(&self.0);
+
+        let h_point = encode_standard_hash_point(&vk_bytes, message)?;
+        let h_bytes = h_point.compress().to_bytes();
+
+        let gamma = secret_scalar * h_point;
+        let gamma_bytes = gamma.compress().to_bytes();
+
+        let mut nonce = derive_nonce(&nonce_prefix, &h_bytes);
+        let k_b = nonce * curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+        let k_h = nonce * h_point;
+        let k_b_bytes = k_b.compress().to_bytes();
+        let k_h_bytes = k_h.compress().to_bytes();
+
+        let challenge = standard_challenge(&h_bytes, &gamma_bytes, &k_b_bytes, &k_h_bytes);
+        let challenge_scalar = truncated_challenge_scalar(challenge);
+        let response = challenge_scalar * secret_scalar + nonce;
+
+        secret_scalar.zeroize();
+        nonce_prefix.zeroize();
+        nonce.zeroize();
+
+        let mut proof_bytes = [0_u8; VRF_PROOF_SIZE];
+        proof_bytes[..32].copy_from_slice(&gamma_bytes);
+        proof_bytes[32..48].copy_from_slice(&challenge);
+        proof_bytes[48..].copy_from_slice(&response.to_bytes());
+
+        let proof = VrfProof(proof_bytes);
+        let output = proof.output()?;
+        Ok((output, proof))
+    }
+
+    /// Produces a batch-compatible (draft13) VRF proof for a message.
+    ///
+    /// Mirrors the upstream `crypto_vrf_ietfdraft13_prove_batchcompat` from
+    /// `cardano-crypto-praos`.  Returns the deterministic VRF output
+    /// and the 128-byte proof `(Gamma || kB || kH || response)`.
+    pub fn prove_batchcompat(
+        &self,
+        message: &[u8],
+    ) -> Result<(VrfOutput, VrfBatchCompatProof), CryptoError> {
+        self.validate()?;
+        let vk_bytes = self.verification_key().to_bytes();
+        let (mut secret_scalar, mut nonce_prefix) = derive_secret_scalar_and_nonce(&self.0);
+
+        let h_point = encode_batchcompat_hash_point(&vk_bytes, message)?;
+        let h_bytes = h_point.compress().to_bytes();
+
+        let gamma = secret_scalar * h_point;
+        let gamma_bytes = gamma.compress().to_bytes();
+
+        let mut nonce = derive_nonce(&nonce_prefix, &h_bytes);
+        let k_b = nonce * curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+        let k_h = nonce * h_point;
+        let k_b_bytes = k_b.compress().to_bytes();
+        let k_h_bytes = k_h.compress().to_bytes();
+
+        let challenge = batchcompat_challenge(
+            &vk_bytes,
+            &h_bytes,
+            &gamma_bytes,
+            &k_b_bytes,
+            &k_h_bytes,
+        );
+        let challenge_scalar = truncated_challenge_scalar(challenge);
+        let response = challenge_scalar * secret_scalar + nonce;
+
+        secret_scalar.zeroize();
+        nonce_prefix.zeroize();
+        nonce.zeroize();
+
+        let mut proof_bytes = [0_u8; VRF_BATCHCOMPAT_PROOF_SIZE];
+        proof_bytes[..32].copy_from_slice(&gamma_bytes);
+        proof_bytes[32..64].copy_from_slice(&k_b_bytes);
+        proof_bytes[64..96].copy_from_slice(&k_h_bytes);
+        proof_bytes[96..].copy_from_slice(&response.to_bytes());
+
+        let proof = VrfBatchCompatProof(proof_bytes);
+        let output = proof.output()?;
+        Ok((output, proof))
     }
 }
 
@@ -614,6 +696,42 @@ fn truncated_challenge_scalar(challenge: [u8; VRF_CHALLENGE_SIZE]) -> Scalar {
     let mut scalar = [0_u8; 32];
     scalar[..VRF_CHALLENGE_SIZE].copy_from_slice(&challenge);
     Scalar::from_bytes_mod_order(scalar)
+}
+
+/// Derives the Ed25519-style secret scalar and nonce prefix from a signing key.
+///
+/// Mirrors the upstream C convention: `SHA-512(seed)` → first 32 bytes get
+/// clamped to produce the secret scalar `x`; bytes 32..64 are the nonce prefix
+/// used in deterministic nonce generation.
+fn derive_secret_scalar_and_nonce(signing_key: &[u8; VRF_SIGNING_KEY_SIZE]) -> (Scalar, [u8; 32]) {
+    let mut az: [u8; 64] = Sha512::digest(&signing_key[..32]).into();
+
+    let mut clamped = [0_u8; 32];
+    clamped.copy_from_slice(&az[..32]);
+    clamped[0] &= 248;
+    clamped[31] &= 127;
+    clamped[31] |= 64;
+
+    let secret_scalar = Scalar::from_bytes_mod_order(clamped);
+    let nonce_prefix: [u8; 32] = az[32..].try_into()
+        .expect("nonce prefix slice should match 32 bytes");
+
+    az.zeroize();
+    clamped.zeroize();
+
+    (secret_scalar, nonce_prefix)
+}
+
+/// Derives the deterministic nonce scalar from the nonce prefix and H point.
+///
+/// Mirrors the upstream C convention: `SHA-512(nonce_prefix || H_string)` →
+/// 64-byte output → `sc25519_reduce` → scalar `k`.
+fn derive_nonce(nonce_prefix: &[u8; 32], h_bytes: &[u8; 32]) -> Scalar {
+    let mut hash = Sha512::new();
+    hash.update(nonce_prefix);
+    hash.update(h_bytes);
+    let nonce_hash: [u8; 64] = hash.finalize().into();
+    Scalar::from_bytes_mod_order_wide(&nonce_hash)
 }
 
 fn decode_standard_proof(proof: &[u8; VRF_PROOF_SIZE]) -> Result<DecodedStandardProof, CryptoError> {

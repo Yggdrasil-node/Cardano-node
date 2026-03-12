@@ -31,5 +31,12 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
   - H2C uses `SHA-512(SUITE||ONE||pk||alpha)` → first 32 bytes → clear bit 255 → Elligator2 `from_representative::<Legacy>` → normalize Edwards X sign (clear bit 7 of compressed byte 31) → decompress → cofactor multiply.
   - Challenge uses `SHA-512(SUITE||TWO||H_string||gamma||U||V)` → first 16 bytes (no pk, no trailing ZERO — differs from batchcompat).
   - Sign normalization is required because `from_representative::<Legacy>` does NOT force non-negative X, unlike upstream C `ge25519_from_uniform`.
-- VRF proof generation (`prove`) is not yet implemented.
-- Next priority: VRF proof generation.
+- VRF proof generation (`prove` and `prove_batchcompat`) is complete and produces byte-exact proofs for all 14 upstream vectors.
+  - Secret scalar: `SHA-512(seed)` → clamp first 32 bytes (Ed25519 convention); bytes 32..64 are the nonce prefix.
+  - Nonce: `SHA-512(nonce_prefix || H_string)` → `Scalar::from_bytes_mod_order_wide` (matches `sc25519_reduce`).
+  - Response: `s = c * x + k mod l` using Dalek scalar arithmetic (matches `sc25519_muladd`).
+  - Standard proof layout: Gamma(32) || challenge(16) || response(32) = 80 bytes.
+  - Batchcompat proof layout: Gamma(32) || kB(32) || kH(32) || response(32) = 128 bytes.
+- Zeroize hardening applied: `VrfSecretKey` derives `ZeroizeOnDrop`; secret scalar, nonce prefix, and nonce temporaries are zeroized in `prove()`, `prove_batchcompat()`, and `derive_secret_scalar_and_nonce()`.
+- Tampering rejection tests cover bit-flips across all proof components for both standard and batchcompat formats.
+- Next priorities: cddl-codegen expansion, network mini-protocol groundwork.
