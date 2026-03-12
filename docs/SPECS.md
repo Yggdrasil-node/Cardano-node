@@ -18,3 +18,4 @@ Yggdrasil is specification-driven. When sources disagree, use them in this order
 - Pin the exact upstream revision used for generated artifacts.
 - Keep generated code reproducible from checked-in source specifications.
 - Add fixture provenance for any Haskell parity test data.
+- The current `crates/crypto` 80-byte Praos VRF fixtures are draft03-era vectors mirrored from `cardano-crypto-praos`; do not treat them as RFC 9381 final-format verification fixtures without explicit translation or replacement.

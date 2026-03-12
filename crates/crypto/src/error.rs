@@ -17,6 +17,8 @@ pub enum CryptoError {
     KesVerificationKeyMismatch,
     #[error("invalid vrf proof")]
     InvalidVrfProof,
+    #[error("invalid vrf signing key")]
+    InvalidVrfSigningKey,
     #[error("invalid vrf verification key")]
     InvalidVrfVerificationKey,
     #[error("kes period overflow")]

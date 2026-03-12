@@ -7,6 +7,7 @@ use yggdrasil_crypto::{
     ed25519_rfc8032_vectors, hash_bytes, simple_kes_two_period_test_vectors,
     vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
 };
+use yggdrasil_crypto::vrf::VRF_SEED_SIZE;
 
 #[test]
 fn blake2b_hash_is_deterministic() {
@@ -255,6 +256,30 @@ fn vrf_secret_key_equality_is_byte_exact() {
 
     assert_eq!(left, same);
     assert_ne!(left, different);
+}
+
+#[test]
+fn vrf_signing_key_validate_accepts_seed_derived_layout() {
+    let vector = vrf_praos_test_vectors()
+        .into_iter()
+        .next()
+        .expect("at least one Praos VRF vector should be available");
+
+    VrfSecretKey::from_bytes(vector.secret_key)
+        .validate()
+        .expect("seed-derived Praos signing key layout should validate");
+}
+
+#[test]
+fn vrf_signing_key_validate_rejects_mismatched_embedded_key() {
+    let mut malformed = VrfSecretKey::from_seed([3_u8; 32]).to_bytes();
+    malformed[VRF_SEED_SIZE] ^= 0x01;
+
+    let error = VrfSecretKey::from_bytes(malformed)
+        .validate()
+        .expect_err("malformed signing key layout should be rejected");
+
+    assert_eq!(error, CryptoError::InvalidVrfSigningKey);
 }
 
 #[test]

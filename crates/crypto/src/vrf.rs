@@ -35,6 +35,10 @@ pub struct VrfSecretKey(pub [u8; VRF_SIGNING_KEY_SIZE]);
 pub struct VrfVerificationKey(pub [u8; VRF_VERIFICATION_KEY_SIZE]);
 
 /// A byte-backed Praos VRF proof using the 80-byte draft03 layout.
+///
+/// The current standard proof fixtures in this workspace follow the older
+/// draft03-era Cardano Praos layout mirrored from `cardano-crypto-praos`, not
+/// the final RFC 9381 Edwards25519 proof and challenge conventions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VrfProof(pub [u8; VRF_PROOF_SIZE]);
 
@@ -94,11 +98,25 @@ impl VrfSecretKey {
         Self::from_seed(self.seed_bytes())
     }
 
+    /// Validates that the embedded verification key matches the seed prefix.
+    ///
+    /// Cardano serializes Praos signing keys as `seed || vk`. This rejects
+    /// malformed key material whose verification-key suffix does not match the
+    /// verification key deterministically derived from the seed.
+    pub fn validate(&self) -> Result<(), CryptoError> {
+        if self.normalized() != *self {
+            return Err(CryptoError::InvalidVrfSigningKey);
+        }
+
+        Ok(())
+    }
+
     /// Produces a VRF proof for a message.
     ///
     /// Full Praos proof generation remains unimplemented until the workspace has
     /// a pure Rust ECVRF path that can be validated against upstream vectors.
     pub fn prove(&self, _message: &[u8]) -> Result<(VrfOutput, VrfProof), CryptoError> {
+        self.validate()?;
         Err(CryptoError::Unimplemented("VRF proof generation"))
     }
 }
