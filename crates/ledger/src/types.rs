@@ -116,3 +116,52 @@ fn hex_short(bytes: &[u8; 32]) -> String {
         .collect::<String>()
         + "…"
 }
+
+// ---------------------------------------------------------------------------
+// Nonce
+// ---------------------------------------------------------------------------
+
+/// A nonce used in the Praos leader election lottery.
+///
+/// The neutral nonce is an identity element for nonce combination (XOR):
+/// combining any nonce with `Neutral` yields that nonce unchanged.
+///
+/// Reference: `Cardano.Ledger.BaseTypes` — `Nonce` (`NeutralNonce` |
+/// `Nonce Hash`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Nonce {
+    /// Identity element — does not contribute entropy.
+    Neutral,
+    /// A 32-byte hash carrying entropy.
+    Hash([u8; 32]),
+}
+
+impl Nonce {
+    /// Combines two nonces by XOR-ing their bytes.
+    ///
+    /// Reference: upstream `(⭒)` operator on `Nonce`.
+    ///
+    /// Rules:
+    /// * `Neutral ⊕ n = n`
+    /// * `n ⊕ Neutral = n`
+    /// * `Hash(a) ⊕ Hash(b) = Hash(a XOR b)`
+    pub fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Neutral, n) | (n, Self::Neutral) => n,
+            (Self::Hash(a), Self::Hash(b)) => {
+                let mut out = [0u8; 32];
+                for i in 0..32 {
+                    out[i] = a[i] ^ b[i];
+                }
+                Self::Hash(out)
+            }
+        }
+    }
+
+    /// Creates a nonce from a 32-byte header hash.
+    ///
+    /// Reference: `hashHeaderToNonce` in `BHeader.hs`.
+    pub fn from_header_hash(hash: HeaderHash) -> Self {
+        Self::Hash(hash.0)
+    }
+}

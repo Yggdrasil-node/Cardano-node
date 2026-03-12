@@ -24,5 +24,9 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Cardano-specific consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/>
 
 ## Current Phase
-- Keep interfaces small and deterministic.
+- Epoch math (`slot_to_epoch`, `epoch_first_slot`, `is_new_epoch`) operates on typed `SlotNo`/`EpochNo`/`EpochSize` from `yggdrasil-ledger`.
+- Chain selection uses typed `BlockNo`/`SlotNo` with optional VRF tiebreaker (lower wins).
+- Praos leader election pipeline is implemented: `vrf_input` → `check_is_leader` → `verify_leader_proof`, backed by the crypto crate's VRF batchcompat prove/verify.
+- `Nonce` type (neutral + hash, XOR combination) lives in `yggdrasil-ledger::types`.
+- Leadership threshold uses f64 arithmetic for now; deterministic fixed-point math is a future hardening target.
 - Do not add Cardano-specific protocol detail until ledger and crypto inputs are stable enough to support it.

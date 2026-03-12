@@ -1,6 +1,6 @@
 use eyre::Result;
 use yggdrasil_consensus::{ChainCandidate, select_preferred};
-use yggdrasil_ledger::Era;
+use yggdrasil_ledger::{BlockNo, Era, SlotNo};
 use yggdrasil_mempool::Mempool;
 use yggdrasil_network::HandshakeVersion;
 use yggdrasil_storage::InMemoryImmutable;
@@ -9,12 +9,14 @@ use yggdrasil_storage::InMemoryImmutable;
 fn main() -> Result<()> {
     let preferred = select_preferred(
         ChainCandidate {
-            block_no: 0,
-            slot_no: 0,
+            block_no: BlockNo(0),
+            slot_no: SlotNo(0),
+            vrf_tiebreaker: None,
         },
         ChainCandidate {
-            block_no: 1,
-            slot_no: 1,
+            block_no: BlockNo(1),
+            slot_no: SlotNo(1),
+            vrf_tiebreaker: None,
         },
     );
 
@@ -22,7 +24,7 @@ fn main() -> Result<()> {
     let _storage = InMemoryImmutable::default();
 
     println!(
-        "Yggdrasil foundation ready: era roadmap starts at {:?}, preferred tip {}, handshake v{}",
+        "Yggdrasil foundation ready: era roadmap starts at {:?}, preferred tip {:?}, handshake v{}",
         Era::Byron,
         preferred.block_no,
         HandshakeVersion(12).0,

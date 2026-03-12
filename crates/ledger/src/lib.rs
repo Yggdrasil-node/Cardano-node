@@ -31,4 +31,4 @@ pub use state::LedgerState;
 pub use tx::{Block, BlockHeader, Tx};
 
 // -- Type re-exports ----------------------------------------------------------
-pub use types::{BlockNo, EpochNo, HeaderHash, Point, SlotNo, TxId};
+pub use types::{BlockNo, EpochNo, HeaderHash, Nonce, Point, SlotNo, TxId};
