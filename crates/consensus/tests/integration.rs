@@ -1,10 +1,15 @@
 use yggdrasil_consensus::{
-    ActiveSlotCoeff, ChainCandidate, ConsensusError, EpochSize, check_is_leader,
-    check_leader_value, epoch_first_slot, is_new_epoch, leadership_threshold, select_preferred,
-    slot_to_epoch, verify_leader_proof, vrf_input,
+    ActiveSlotCoeff, ChainCandidate, ConsensusError, EpochSize, Header, HeaderBody, OpCert,
+    check_is_leader, check_kes_period, check_leader_value, epoch_first_slot, is_new_epoch,
+    kes_period_of_slot, leadership_threshold, select_preferred, slot_to_epoch, verify_header,
+    verify_leader_proof, verify_opcert_only, vrf_input,
+};
+use yggdrasil_crypto::ed25519::SigningKey;
+use yggdrasil_crypto::sum_kes::{
+    derive_sum_kes_vk, gen_sum_kes_signing_key, sign_sum_kes, update_sum_kes,
 };
 use yggdrasil_crypto::vrf::{VrfOutput, VrfSecretKey, VRF_SEED_SIZE};
-use yggdrasil_ledger::{BlockNo, EpochNo, Nonce, SlotNo};
+use yggdrasil_ledger::{BlockNo, EpochNo, HeaderHash, Nonce, SlotNo};
 
 // ---------------------------------------------------------------------------
 // Chain selection
@@ -283,4 +288,387 @@ fn verify_leader_proof_rejects_truncated_proof() {
 
     let result = verify_leader_proof(&vk, slot, epoch_nonce, &[0u8; 10], sigma, asc);
     assert_eq!(result, Err(ConsensusError::InvalidVrfProof));
+}
+
+// ---------------------------------------------------------------------------
+// OpCert
+// ---------------------------------------------------------------------------
+
+/// Helper: create a valid OpCert signed by the given cold key for the given
+/// KES verification key.
+fn make_opcert(
+    cold_sk: &SigningKey,
+    hot_vk: &yggdrasil_crypto::sum_kes::SumKesVerificationKey,
+    counter: u64,
+    kes_period: u64,
+) -> OpCert {
+    let mut signable = [0u8; 48];
+    signable[..32].copy_from_slice(&hot_vk.to_bytes());
+    signable[32..40].copy_from_slice(&counter.to_be_bytes());
+    signable[40..48].copy_from_slice(&kes_period.to_be_bytes());
+
+    let sigma = cold_sk.sign(&signable).expect("signing should succeed");
+
+    OpCert {
+        hot_vk: *hot_vk,
+        cert_counter: counter,
+        kes_period,
+        sigma,
+    }
+}
+
+#[test]
+fn opcert_verify_valid() {
+    let cold_sk = SigningKey::from_bytes([0x01; 32]);
+    let cold_vk = cold_sk.verification_key().expect("valid vk");
+
+    let kes_seed = [0xAA; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid kes sk");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid kes vk");
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 0);
+    opcert
+        .verify(&cold_vk)
+        .expect("valid cold-key signature should verify");
+}
+
+#[test]
+fn opcert_verify_wrong_cold_key_fails() {
+    let cold_sk = SigningKey::from_bytes([0x01; 32]);
+    let wrong_vk = SigningKey::from_bytes([0x02; 32])
+        .verification_key()
+        .expect("valid vk");
+
+    let kes_seed = [0xBB; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 1, 100);
+    assert_eq!(
+        opcert.verify(&wrong_vk),
+        Err(ConsensusError::InvalidOpCertSignature),
+        "wrong cold key should reject"
+    );
+}
+
+#[test]
+fn opcert_verify_tampered_counter_fails() {
+    let cold_sk = SigningKey::from_bytes([0x03; 32]);
+    let cold_vk = cold_sk.verification_key().expect("valid");
+
+    let kes_seed = [0xCC; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+
+    let mut opcert = make_opcert(&cold_sk, &kes_vk, 5, 0);
+    // Tamper with the counter after signing.
+    opcert.cert_counter = 6;
+    assert_eq!(
+        opcert.verify(&cold_vk),
+        Err(ConsensusError::InvalidOpCertSignature),
+        "tampered counter should invalidate signature"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// KES period checks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kes_period_of_slot_basic() {
+    assert_eq!(kes_period_of_slot(0, 100).expect("valid"), 0);
+    assert_eq!(kes_period_of_slot(99, 100).expect("valid"), 0);
+    assert_eq!(kes_period_of_slot(100, 100).expect("valid"), 1);
+    assert_eq!(kes_period_of_slot(250, 100).expect("valid"), 2);
+}
+
+#[test]
+fn kes_period_of_slot_zero_divisor() {
+    assert_eq!(
+        kes_period_of_slot(42, 0),
+        Err(ConsensusError::InvalidSlotsPerKesPeriod)
+    );
+}
+
+#[test]
+fn check_kes_period_valid_window() {
+    let kes_seed = [0xDD; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+    let cold_sk = SigningKey::from_bytes([0x04; 32]);
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 10);
+    // max_kes_evolutions = 62 for mainnet depth-6 SumKES (2^6 - 2 = 62... no, 2^6 = 64 periods)
+    // KES periods: valid from 10 to 10+64 = 74 (exclusive)
+    check_kes_period(&opcert, 10, 64).expect("start of window should be valid");
+    check_kes_period(&opcert, 73, 64).expect("last valid period should be valid");
+}
+
+#[test]
+fn check_kes_period_too_early() {
+    let kes_seed = [0xEE; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+    let cold_sk = SigningKey::from_bytes([0x05; 32]);
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 10);
+    assert_eq!(
+        check_kes_period(&opcert, 9, 64),
+        Err(ConsensusError::KesPeriodTooEarly {
+            current: 9,
+            cert_start: 10,
+        })
+    );
+}
+
+#[test]
+fn check_kes_period_expired() {
+    let kes_seed = [0xFF; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+    let cold_sk = SigningKey::from_bytes([0x06; 32]);
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 10);
+    // Window is [10, 74).  Period 74 is past the window.
+    assert_eq!(
+        check_kes_period(&opcert, 74, 64),
+        Err(ConsensusError::KesPeriodExpired {
+            current: 74,
+            cert_end: 74,
+        })
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Full header verification
+// ---------------------------------------------------------------------------
+
+/// Helper: build a valid Header (with full OpCert + KES signature chain).
+fn make_signed_header(
+    cold_sk: &SigningKey,
+    kes_seed: &[u8; 32],
+    kes_depth: u32,
+    slot: u64,
+    slots_per_kes_period: u64,
+    cert_kes_period: u64,
+) -> Header {
+    let cold_vk = cold_sk.verification_key().expect("valid cold vk");
+    let kes_sk = gen_sum_kes_signing_key(kes_seed, kes_depth).expect("valid kes sk");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid kes vk");
+    let vrf_sk = VrfSecretKey::from_seed([0x77; 32]);
+
+    let opcert = make_opcert(cold_sk, &kes_vk, 0, cert_kes_period);
+
+    let body = HeaderBody {
+        block_no: BlockNo(1),
+        slot_no: SlotNo(slot),
+        prev_hash: Some(HeaderHash([0xAB; 32])),
+        issuer_vk: cold_vk,
+        vrf_vk: vrf_sk.verification_key(),
+        body_size: 1024,
+        body_hash: [0xCD; 32],
+        opcert,
+        protocol_version: (10, 0),
+    };
+
+    let signable = body.to_signable_bytes();
+    let current_kes_period = slot / slots_per_kes_period;
+    let kes_offset = (current_kes_period - cert_kes_period) as u32;
+
+    // Evolve the KES key to the target period.
+    let mut evolved_sk = kes_sk;
+    for p in 0..kes_offset {
+        evolved_sk = update_sum_kes(&evolved_sk, p)
+            .expect("kes update should succeed")
+            .expect("kes key should not be exhausted yet");
+    }
+
+    let kes_sig = sign_sum_kes(&evolved_sk, kes_offset, &signable).expect("signing should succeed");
+
+    Header {
+        body,
+        kes_signature: kes_sig,
+    }
+}
+
+#[test]
+fn verify_header_valid_depth0() {
+    // depth-0 SumKES: 1 period, slot falls in KES period 0, cert starts at 0.
+    let cold_sk = SigningKey::from_bytes([0x10; 32]);
+    let header = make_signed_header(&cold_sk, &[0x20; 32], 0, 50, 100, 0);
+
+    verify_header(&header, 100, 1).expect("valid header should verify");
+}
+
+#[test]
+fn verify_header_valid_depth2() {
+    // depth-2 SumKES: 4 periods. Slot 250 / 100 = KES period 2, cert starts at 0.
+    // KES offset = 2 - 0 = 2.
+    let cold_sk = SigningKey::from_bytes([0x30; 32]);
+    let header = make_signed_header(&cold_sk, &[0x40; 32], 2, 250, 100, 0);
+
+    verify_header(&header, 100, 4).expect("valid depth-2 header should verify");
+}
+
+#[test]
+fn verify_header_valid_depth6_mainnet_scale() {
+    // depth-6 SumKES: 64 periods.  Slot 259200, slots_per_kes = 129600.
+    // KES period = 259200 / 129600 = 2. OpCert starts at period 0. KES offset = 2.
+    let cold_sk = SigningKey::from_bytes([0x50; 32]);
+    let header = make_signed_header(&cold_sk, &[0x60; 32], 6, 259_200, 129_600, 0);
+
+    verify_header(&header, 129_600, 64).expect("valid depth-6 mainnet-scale header should verify");
+}
+
+#[test]
+fn verify_header_rejects_wrong_cold_key() {
+    let cold_sk = SigningKey::from_bytes([0x70; 32]);
+    let mut header = make_signed_header(&cold_sk, &[0x80; 32], 0, 50, 100, 0);
+
+    // Swap the issuer_vk with a different cold key.
+    let wrong_vk = SigningKey::from_bytes([0x71; 32])
+        .verification_key()
+        .expect("valid");
+    header.body.issuer_vk = wrong_vk;
+
+    assert_eq!(
+        verify_header(&header, 100, 1),
+        Err(ConsensusError::InvalidOpCertSignature),
+    );
+}
+
+#[test]
+fn verify_header_rejects_expired_kes() {
+    // depth-0: only 1 period.  Slot 150 / 100 = KES period 1, cert starts at 0.
+    // Window [0, 1), period 1 is past the window.
+    let cold_sk = SigningKey::from_bytes([0x90; 32]);
+
+    // Build the header manually at period 0 (valid) but set slot so period = 1.
+    let kes_seed = [0xA0; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+    let cold_vk = cold_sk.verification_key().expect("valid");
+    let vrf_sk = VrfSecretKey::from_seed([0xB0; 32]);
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 0);
+
+    let body = HeaderBody {
+        block_no: BlockNo(1),
+        slot_no: SlotNo(150), // KES period 1 with slots_per_kes = 100
+        prev_hash: None,
+        issuer_vk: cold_vk,
+        vrf_vk: vrf_sk.verification_key(),
+        body_size: 0,
+        body_hash: [0; 32],
+        opcert,
+        protocol_version: (10, 0),
+    };
+
+    // Sign at period 0 (the only valid one for depth-0).
+    let signable = body.to_signable_bytes();
+    let kes_sig = sign_sum_kes(&kes_sk, 0, &signable).expect("valid");
+
+    let header = Header {
+        body,
+        kes_signature: kes_sig,
+    };
+
+    assert_eq!(
+        verify_header(&header, 100, 1),
+        Err(ConsensusError::KesPeriodExpired {
+            current: 1,
+            cert_end: 1,
+        }),
+    );
+}
+
+#[test]
+fn verify_header_rejects_tampered_body() {
+    let cold_sk = SigningKey::from_bytes([0xC0; 32]);
+    let mut header = make_signed_header(&cold_sk, &[0xD0; 32], 1, 50, 100, 0);
+
+    // Tamper with the body after signing.
+    header.body.body_size = 9999;
+
+    assert_eq!(
+        verify_header(&header, 100, 2),
+        Err(ConsensusError::InvalidKesSignature),
+    );
+}
+
+#[test]
+fn verify_opcert_only_valid() {
+    let cold_sk = SigningKey::from_bytes([0xE0; 32]);
+    let cold_vk = cold_sk.verification_key().expect("valid");
+
+    let kes_seed = [0xF0; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 0);
+
+    verify_opcert_only(&opcert, &cold_vk, SlotNo(50), 100, 1)
+        .expect("valid opcert should pass pre-validation");
+}
+
+#[test]
+fn header_body_signable_bytes_deterministic() {
+    let cold_sk = SigningKey::from_bytes([0x11; 32]);
+    let cold_vk = cold_sk.verification_key().expect("valid");
+    let kes_seed = [0x22; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+    let vrf_sk = VrfSecretKey::from_seed([0x33; 32]);
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 42, 7);
+
+    let body = HeaderBody {
+        block_no: BlockNo(100),
+        slot_no: SlotNo(5000),
+        prev_hash: Some(HeaderHash([0xEE; 32])),
+        issuer_vk: cold_vk,
+        vrf_vk: vrf_sk.verification_key(),
+        body_size: 2048,
+        body_hash: [0xDD; 32],
+        opcert,
+        protocol_version: (10, 1),
+    };
+
+    let bytes1 = body.to_signable_bytes();
+    let bytes2 = body.to_signable_bytes();
+    assert_eq!(bytes1, bytes2, "signable bytes should be deterministic");
+    // Check expected length:
+    // block_no(8) + slot_no(8) + prev_hash(1+32) + issuer_vk(32) + vrf_vk(32) +
+    // body_size(4) + body_hash(32) + opcert_signable(48) + opcert_sigma(64) +
+    // protocol_version(16) = 277
+    assert_eq!(bytes1.len(), 277);
+}
+
+#[test]
+fn header_body_signable_bytes_genesis_prev() {
+    let cold_sk = SigningKey::from_bytes([0x44; 32]);
+    let cold_vk = cold_sk.verification_key().expect("valid");
+    let kes_seed = [0x55; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+    let vrf_sk = VrfSecretKey::from_seed([0x66; 32]);
+
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 0);
+
+    let body = HeaderBody {
+        block_no: BlockNo(0),
+        slot_no: SlotNo(0),
+        prev_hash: None, // genesis
+        issuer_vk: cold_vk,
+        vrf_vk: vrf_sk.verification_key(),
+        body_size: 0,
+        body_hash: [0; 32],
+        opcert,
+        protocol_version: (1, 0),
+    };
+
+    let bytes = body.to_signable_bytes();
+    // Same as above but prev_hash is None: tag byte only (1 byte instead of 33).
+    // 8 + 8 + 1 + 32 + 32 + 4 + 32 + 48 + 64 + 16 = 245
+    assert_eq!(bytes.len(), 245);
 }

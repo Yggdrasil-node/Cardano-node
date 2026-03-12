@@ -7,7 +7,7 @@ use yggdrasil_crypto::{
     ed25519_rfc8032_vectors, hash_bytes, simple_kes_two_period_test_vectors,
     vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
     // SumKES
-    SumKesSignature, SumKesSigningKey, SumKesVerificationKey,
+    SumKesSignature, SumKesVerificationKey,
     derive_sum_kes_vk, gen_sum_kes_signing_key, sign_sum_kes,
     update_sum_kes, verify_sum_kes,
 };
