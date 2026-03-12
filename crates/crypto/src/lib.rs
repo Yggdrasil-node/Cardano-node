@@ -9,7 +9,7 @@ mod error;
 pub mod kes;
 /// Published compatibility vectors used by crypto tests.
 pub mod test_vectors;
-/// Verifiable random function placeholders and shared types.
+/// Verifiable random function key, proof, and output helpers.
 pub mod vrf;
 
 /// Blake2b hash output and hashing entry point.

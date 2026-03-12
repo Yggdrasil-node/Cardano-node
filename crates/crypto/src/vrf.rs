@@ -151,6 +151,15 @@ impl VrfProof {
         self.0
     }
 
+    /// Validates the structural encoding constraints of this proof.
+    ///
+    /// This checks point and scalar encoding constraints that are required
+    /// before proof verification can proceed.
+    pub fn validate(&self) -> Result<(), CryptoError> {
+        parse_gamma_bytes(&self.0)?;
+        Ok(())
+    }
+
     /// Computes the Praos VRF output hash encoded by this proof.
     pub fn output(&self) -> Result<VrfOutput, CryptoError> {
         proof_to_output(&self.0, false)
@@ -166,6 +175,15 @@ impl VrfBatchCompatProof {
     /// Returns the 128-byte serialized batch-compatible Praos proof.
     pub fn to_bytes(&self) -> [u8; VRF_BATCHCOMPAT_PROOF_SIZE] {
         self.0
+    }
+
+    /// Validates the structural encoding constraints of this proof.
+    ///
+    /// This checks point and scalar encoding constraints that are required
+    /// before proof verification can proceed.
+    pub fn validate(&self) -> Result<(), CryptoError> {
+        parse_gamma_bytes(&self.0)?;
+        Ok(())
     }
 
     /// Computes the batch-compatible Praos VRF output hash encoded by this proof.
@@ -187,6 +205,18 @@ impl VrfOutput {
 }
 
 fn proof_to_output<const N: usize>(proof: &[u8; N], batch_compat: bool) -> Result<VrfOutput, CryptoError> {
+    let gamma_bytes = parse_gamma_bytes(proof)?;
+    let mut hash = Sha512::new();
+    hash.update([SUITE, THREE]);
+    hash.update(gamma_bytes);
+    if batch_compat {
+        hash.update([ZERO]);
+    }
+
+    Ok(VrfOutput(hash.finalize().into()))
+}
+
+fn parse_gamma_bytes<const N: usize>(proof: &[u8; N]) -> Result<[u8; 32], CryptoError> {
     let scalar_offset = N - 32;
     let scalar_bytes: [u8; 32] = proof[scalar_offset..]
         .try_into()
@@ -208,13 +238,5 @@ fn proof_to_output<const N: usize>(proof: &[u8; N], batch_compat: bool) -> Resul
         .ok_or(CryptoError::InvalidVrfProof)?
         .mul_by_cofactor();
 
-    let gamma_bytes = gamma.compress().to_bytes();
-    let mut hash = Sha512::new();
-    hash.update([SUITE, THREE]);
-    hash.update(gamma_bytes);
-    if batch_compat {
-        hash.update([ZERO]);
-    }
-
-    Ok(VrfOutput(hash.finalize().into()))
+    Ok(gamma.compress().to_bytes())
 }

@@ -148,6 +148,36 @@ fn batchcompat_vrf_vectors_match_embedded_key_layout_and_output_hash() {
 }
 
 #[test]
+fn vrf_validate_accepts_published_proofs() {
+    for vector in vrf_praos_test_vectors() {
+        let proof = VrfProof::from_bytes(vector.proof);
+        proof
+            .validate()
+            .expect("published Praos proof should pass structural validation");
+    }
+
+    for vector in vrf_praos_batchcompat_test_vectors() {
+        let proof = VrfBatchCompatProof::from_bytes(vector.proof);
+        proof
+            .validate()
+            .expect("published batch-compatible Praos proof should pass structural validation");
+    }
+}
+
+#[test]
+fn vrf_validate_rejects_malformed_proofs() {
+    let praos_error = VrfProof::from_bytes([0xff; 80])
+        .validate()
+        .expect_err("invalid Praos proof bytes should fail structural validation");
+    let batch_error = VrfBatchCompatProof::from_bytes([0xff; 128])
+        .validate()
+        .expect_err("invalid batch-compatible proof bytes should fail structural validation");
+
+    assert_eq!(praos_error, CryptoError::InvalidVrfProof);
+    assert_eq!(batch_error, CryptoError::InvalidVrfProof);
+}
+
+#[test]
 fn vrf_output_rejects_invalid_proof_bytes() {
     let error = VrfProof::from_bytes([0xff; 80])
         .output()
