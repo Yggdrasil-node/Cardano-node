@@ -9,10 +9,13 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Era modeling, transaction and block state transitions, and ledger state evolution.
 - Separation between generated wire types and handwritten rules.
 
-## Rules
-- Keep specification provenance close to each ledger rule.
-- Separate generated data types from handwritten transition logic.
-- Build a full era roadmap, but implement one narrow slice at a time.
+## Non-Negotiable Rules
+- Specification provenance MUST stay close to each ledger rule.
+- Generated data types and handwritten transition logic MUST remain separated.
+- The project MUST keep a full era roadmap visible, but implementation MUST proceed one narrow slice at a time.
+- Public ledger modules, types, and state-transition functions MUST have Rustdocs where rule intent or invariants are not obvious from the signature.
+- Era, transaction, and rule naming MUST stay close to official ledger and `cardano-node` terminology.
+- Ledger behavior MUST be explained by reference to the official node, the ledger repository, and the formal ledger specifications rather than only local interpretation.
 
 ## Upstream References
 - Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger>

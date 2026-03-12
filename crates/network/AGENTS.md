@@ -9,10 +9,13 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Handshake, multiplexing, mini-protocol state machines, and peer lifecycle.
 - Node-to-node and node-to-client protocol surfaces.
 
-## Rules
-- Keep handshake and multiplexing interfaces independent from specific peer policies.
-- Introduce mini-protocols incrementally, starting with ChainSync and BlockFetch.
-- Prefer testable state transitions over implicit runtime behavior.
+## Non-Negotiable Rules
+- Handshake and multiplexing interfaces MUST remain independent from peer policy logic.
+- Mini-protocols MUST be introduced incrementally, starting with ChainSync and BlockFetch.
+- Testable state transitions MUST be preferred over implicit runtime behavior.
+- Public protocol types, handshake surfaces, and state-machine functions MUST have Rustdocs where message flow or invariants are not self-evident.
+- Naming MUST mirror the official node and Ouroboros network specs so protocol traces and docs line up cleanly.
+- Wire behavior and protocol sequencing MUST be explained by reference to the official node and upstream Ouroboros network sources.
 
 ## Upstream References
 - Networking repository root: <https://github.com/IntersectMBO/ouroboros-network>

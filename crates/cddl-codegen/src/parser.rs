@@ -1,11 +1,13 @@
 use thiserror::Error;
 
+/// A named CDDL type definition parsed from the supported schema subset.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParsedType {
     pub name: String,
     pub definition: TypeDefinition,
 }
 
+/// The supported CDDL shapes understood by the current parser.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TypeDefinition {
     Alias(String),
@@ -13,12 +15,14 @@ pub enum TypeDefinition {
     Map(Vec<ParsedField>),
 }
 
+/// A parsed map field within a CDDL map definition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParsedField {
     pub name: String,
     pub ty: String,
 }
 
+/// Errors surfaced while parsing the supported CDDL subset.
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum ParseError {
     #[error("schema input is empty")]
@@ -33,6 +37,10 @@ pub enum ParseError {
     InvalidField(String),
 }
 
+/// Parses a restricted, deterministic subset of CDDL into named definitions.
+///
+/// The current parser supports comments, aliases, flat arrays, and flat maps,
+/// including multi-line definitions for those shapes.
 pub fn parse_schema(schema: &str) -> Result<Vec<ParsedType>, ParseError> {
     let mut parsed = Vec::new();
     let mut statements = Vec::new();

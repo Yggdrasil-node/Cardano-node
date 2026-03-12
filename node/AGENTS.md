@@ -9,11 +9,14 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Runtime orchestration, CLI, sync lifecycle, and top-level process behavior.
 - Integration of storage, consensus, ledger, mempool, and network crates.
 
-## Rules
-- Treat the node crate as an integration layer, not a place for ledger or consensus business logic.
-- Keep configuration, runtime startup, and sync orchestration explicit.
-- Prefer composition over cross-crate shortcuts.
-- Add smoke coverage for major runtime entry points.
+## Non-Negotiable Rules
+- The node crate MUST remain an integration layer and MUST NOT absorb ledger or consensus business logic.
+- Configuration, runtime startup, and sync orchestration MUST stay explicit.
+- Composition MUST be preferred over cross-crate shortcuts.
+- Major runtime entry points MUST have smoke coverage.
+- Public node-facing integration types and runtime helpers MUST have Rustdocs when startup, shutdown, configuration, or sync semantics are not obvious.
+- Naming and terminology MUST remain close to the official `cardano-node` so operational concepts map cleanly.
+- Integration behavior MUST always be explained by anchoring it in the official node and the relevant upstream IntersectMBO implementation.
 
 ## Upstream References
 - Node integration repository: <https://github.com/IntersectMBO/cardano-node>

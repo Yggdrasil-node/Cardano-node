@@ -9,10 +9,12 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Era-specific data, behavior differences, and transition markers.
 - Shared naming and boundary consistency across Byron through Conway.
 
-## Rules
-- Keep one file or module focused on one era concern when possible.
-- Do not duplicate generic ledger logic that belongs above `eras/`.
-- Record when an era module is only a placeholder versus when it reflects a real upstream rule set.
+## Non-Negotiable Rules
+- One file or module SHOULD stay focused on one era concern whenever possible.
+- Generic ledger logic MUST NOT be duplicated inside `eras/`.
+- Each era module MUST make it clear whether it is a placeholder or reflects a real upstream rule set.
+- Public era-specific types or helpers MUST have Rustdocs when the era difference is not obvious from naming alone.
+- Official era names, rule labels, and transition terminology from upstream ledger and node sources MUST be preferred.
 
 ## Upstream References
 - Era sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>

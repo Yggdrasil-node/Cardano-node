@@ -9,10 +9,12 @@ Focus on small parser and generator internals that are deterministic, testable, 
 - Parser modules, generator modules, builtin type mapping, and fixture-driven behavior.
 - Internal structure that supports reproducible generation from pinned schemas.
 
-## Rules
-- Keep parsing and generation concerns separated.
-- Add supported syntax only with focused tests and explicit output expectations.
-- Prefer conservative failures over permissive guessing when schema input is ambiguous.
+## Non-Negotiable Rules
+- Parsing and generation concerns MUST remain separated.
+- Supported syntax MUST only be added with focused tests and explicit output expectations.
+- Conservative failures MUST be preferred over permissive guessing when schema input is ambiguous.
+- Public parser and generator internals that define supported syntax boundaries, normalization rules, or output guarantees MUST have Rustdocs.
+- Names MUST remain traceable to upstream schema terminology and official node-adjacent ledger naming wherever practical.
 
 ## Upstream References
 - Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>

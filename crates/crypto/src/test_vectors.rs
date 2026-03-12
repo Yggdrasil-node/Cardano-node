@@ -1,3 +1,4 @@
+/// An Ed25519 compatibility vector.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Ed25519TestVector {
     pub name: &'static str,
@@ -7,6 +8,8 @@ pub struct Ed25519TestVector {
     pub signature: [u8; 64],
 }
 
+/// Returns a small set of published RFC 8032 Ed25519 vectors used as baseline
+/// compatibility fixtures.
 pub fn ed25519_rfc8032_vectors() -> Vec<Ed25519TestVector> {
     vec![
         Ed25519TestVector {

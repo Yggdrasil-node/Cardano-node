@@ -9,10 +9,13 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Praos and future Genesis-specific consensus behavior.
 - Chain selection, rollback coordination, and epoch or slot math.
 
-## Rules
-- Prefer explicit types for slots, epochs, and density inputs.
-- Keep Praos-specific logic separate from future Genesis extensions.
-- Require reproducible fixtures before claiming parity with Cardano behavior.
+## Non-Negotiable Rules
+- Slots, epochs, density inputs, and other protocol values MUST use explicit types.
+- Praos-specific logic MUST stay separate from future Genesis extensions.
+- Reproducible fixtures MUST exist before any claim of parity with Cardano behavior is accepted.
+- Public consensus types and functions MUST have Rustdocs when they encode protocol math, chain selection rules, or rollback semantics.
+- Names MUST track official consensus and `cardano-node` terminology so traces, fixtures, and parity checks remain comparable.
+- Consensus behavior MUST be explained by reference to the official node and upstream Ouroboros consensus sources before any local terminology is introduced.
 
 ## Upstream References
 - Core consensus implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus>

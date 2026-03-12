@@ -9,11 +9,14 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Transaction admission, prioritization, eviction, and rollback-aware removal.
 - Boundaries between queue policy, ledger validation, and network submission.
 
-## Rules
-- Keep admission checks and prioritization logic explicit and testable.
-- Avoid coupling mempool ordering to networking concerns.
-- Treat ledger validation as an input contract, not a hidden side effect.
-- Design for rollback and block-application eviction from the start.
+## Non-Negotiable Rules
+- Admission checks and prioritization logic MUST remain explicit and testable.
+- Mempool ordering MUST NOT be coupled to networking concerns.
+- Ledger validation MUST be treated as an input contract, not a hidden side effect.
+- Rollback and block-application eviction MUST be accounted for from the start.
+- Public mempool types and functions MUST have Rustdocs when queue semantics, ordering rules, or eviction behavior matter to callers.
+- Naming MUST stay close to official node and consensus mempool terminology.
+- Transaction flow and admission policy MUST be explained with reference to the official node and upstream mempool-adjacent sources such as Ouroboros consensus and `cardano-submit-api`.
 
 ## Upstream References
 - Consensus core package, including mempool design context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus>

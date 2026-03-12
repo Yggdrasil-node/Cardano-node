@@ -14,6 +14,7 @@ pub use conway::CONWAY_NAME;
 pub use mary::MARY_NAME;
 pub use shelley::SHELLEY_NAME;
 
+/// Supported Cardano eras in canonical order from Byron through Conway.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Era {
     Byron,

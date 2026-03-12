@@ -36,12 +36,16 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `crates/network`: <https://github.com/IntersectMBO/ouroboros-network> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
 - `node`: <https://github.com/IntersectMBO/cardano-node> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration>
 
-## Working Rules
-- Keep `**/AGENTS.md` files updated and focused on operational guidance, not long-form documentation.
-- Add new dependencies only when they are justified in `docs/DEPENDENCIES.md`.
-- Do not add FFI-backed cryptography or hidden native dependencies.
-- Keep generated artifacts reproducible and avoid editing generated code by hand.
-- Prefer incremental milestones that compile and test cleanly.
+## Non-Negotiable Rules
+- `**/AGENTS.md` files MUST stay current and MUST remain operational rather than long-form documentation.
+- New dependencies MUST be justified in `docs/DEPENDENCIES.md` before they are treated as accepted.
+- FFI-backed cryptography and hidden native dependencies MUST NOT be introduced.
+- Generated artifacts MUST remain reproducible and generated code MUST NOT be edited by hand.
+- Implementation work MUST favor incremental milestones that compile and test cleanly.
+- Public modules, types, and functions MUST have proper Rustdocs whenever behavior is non-obvious or externally consumed.
+- Explanations of behavior or naming MUST be cross-checked against the official `cardano-node` and the relevant upstream IntersectMBO repositories.
+- Type and function naming MUST stay as close to upstream terminology as practical so parity work and fixture comparison remain tractable.
+- Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
 
 ## Verification Expectations
 - `cargo check-all`

@@ -9,10 +9,12 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - ChainSync, BlockFetch, and later operational mini-protocols.
 - Protocol states, legal transitions, and shared naming conventions.
 
-## Rules
-- Keep each protocol module self-contained around one protocol state machine.
-- Model legal transitions explicitly before adding transport or peer policy concerns.
-- Prefer protocol terminology that matches the upstream network spec.
+## Non-Negotiable Rules
+- Each protocol module MUST stay self-contained around one protocol state machine.
+- Legal transitions MUST be modeled explicitly before transport or peer policy concerns are added.
+- Protocol terminology MUST match the upstream network spec.
+- Public protocol states, message helpers, and transition functions MUST have Rustdocs when the legal flow is not obvious from the type shape.
+- Naming MUST stay aligned with the official node and network spec so the implementation remains easy to compare against upstream traces and docs.
 
 ## Upstream References
 - Protocol implementations: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols>

@@ -9,11 +9,15 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Hashing, signing, VRF, KES, and cryptographic encodings.
 - Stable interfaces used by ledger, consensus, and networking code.
 
-## Rules
-- Keep secret comparisons constant-time.
-- Audit dependencies for hidden FFI or native build steps.
-- Preserve stable public interfaces for downstream crates.
-- Add test vectors before claiming protocol compatibility.
+## Non-Negotiable Rules
+- Secret comparisons MUST remain constant-time.
+- Dependencies MUST be audited for hidden FFI, native build steps, and parity risks before adoption.
+- Public interfaces MUST remain stable unless a breaking change is clearly justified by protocol correctness.
+- Test vectors MUST exist before any claim of protocol compatibility is accepted.
+- Every public cryptographic type and function that defines protocol-relevant behavior, encoding, or security expectations MUST have proper Rustdocs.
+- Names MUST stay close to the official node, Cardano specs, and upstream crypto terminology unless a Rust-specific deviation is clearly justified.
+- Parity-sensitive choices MUST be explained by reference to the official `cardano-node` ecosystem and the relevant upstream IntersectMBO crypto packages.
+- Full cryptographic parity, vector coverage, and encoding compatibility are non-negotiable long-term targets.
 
 ## Upstream References
 - Crypto abstractions and shared utilities: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class>
