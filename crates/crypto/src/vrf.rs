@@ -1,13 +1,19 @@
 use crate::{CryptoError, SigningKey};
-use curve25519_dalek::{edwards::{CompressedEdwardsY, EdwardsPoint}, scalar::Scalar};
+use curve25519_dalek::{
+    edwards::{CompressedEdwardsY, EdwardsPoint},
+    scalar::Scalar,
+    traits::VartimeMultiscalarMul,
+};
 use curve25519_dalek::traits::IsIdentity;
 use sha2::{Digest, Sha512};
 use std::fmt;
 use subtle::ConstantTimeEq;
 
 const SUITE: u8 = 0x04;
+const TWO: u8 = 0x02;
 const THREE: u8 = 0x03;
 const ZERO: u8 = 0x00;
+const RFC9380_EDWARDS25519_ELL2_NU_SUITE: &[u8] = b"ECVRF_edwards25519_XMD:SHA-512_ELL2_NU_\x04";
 
 /// Serialized size of a Praos VRF signing key.
 pub const VRF_SIGNING_KEY_SIZE: usize = 64;
@@ -178,6 +184,56 @@ impl VrfVerificationKey {
 
         Err(CryptoError::Unimplemented("VRF verification"))
     }
+
+    /// Verifies a batch-compatible VRF proof for a message.
+    ///
+    /// This follows the upstream `crypto_vrf_ietfdraft13_verify_batchcompat`
+    /// relation used by `cardano-crypto-praos`.
+    pub fn verify_batchcompat(
+        &self,
+        message: &[u8],
+        proof: &VrfBatchCompatProof,
+    ) -> Result<VrfOutput, CryptoError> {
+        self.validate()?;
+
+        let decoded = decode_batchcompat_proof(&proof.0)?;
+        let public_key = parse_point(&self.0).map_err(|_| CryptoError::InvalidVrfVerificationKey)?;
+        let h_point = encode_batchcompat_hash_point(&self.0, message);
+
+        let challenge = batchcompat_challenge(
+            &self.0,
+            &h_point.compress().to_bytes(),
+            &decoded.gamma.compress().to_bytes(),
+            &decoded.announcement_1.compress().to_bytes(),
+            &decoded.announcement_2.compress().to_bytes(),
+        );
+
+        let challenge_scalar = truncated_challenge_scalar(challenge);
+        let neg_challenge = -challenge_scalar;
+
+        let expected_u = EdwardsPoint::vartime_double_scalar_mul_basepoint(
+            &neg_challenge,
+            &public_key,
+            &decoded.response,
+        )
+        .compress()
+        .to_bytes();
+
+        let expected_v = EdwardsPoint::vartime_multiscalar_mul(
+            [&neg_challenge, &decoded.response],
+            [&decoded.gamma, &h_point],
+        )
+        .compress()
+        .to_bytes();
+
+        if expected_u != decoded.announcement_1.compress().to_bytes()
+            || expected_v != decoded.announcement_2.compress().to_bytes()
+        {
+            return Err(CryptoError::InvalidVrfProof);
+        }
+
+        proof.output()
+    }
 }
 
 impl VrfProof {
@@ -225,7 +281,11 @@ impl VrfBatchCompatProof {
     /// This checks point and scalar encoding constraints that are required
     /// before proof verification can proceed.
     pub fn validate(&self) -> Result<(), CryptoError> {
-        parse_gamma_bytes(&self.0)?;
+        let decoded = decode_batchcompat_proof(&self.0)?;
+        let _ = decoded.gamma;
+        let _ = decoded.announcement_1;
+        let _ = decoded.announcement_2;
+        let _ = decoded.response;
         Ok(())
     }
 
@@ -259,6 +319,50 @@ fn proof_to_output<const N: usize>(proof: &[u8; N], batch_compat: bool) -> Resul
     Ok(VrfOutput(hash.finalize().into()))
 }
 
+fn encode_batchcompat_hash_point(
+    verification_key: &[u8; VRF_VERIFICATION_KEY_SIZE],
+    message: &[u8],
+) -> EdwardsPoint {
+    let mut input = Vec::with_capacity(
+        RFC9380_EDWARDS25519_ELL2_NU_SUITE.len() + verification_key.len() + message.len(),
+    );
+    input.extend_from_slice(RFC9380_EDWARDS25519_ELL2_NU_SUITE);
+    input.extend_from_slice(verification_key);
+    input.extend_from_slice(message);
+    #[allow(deprecated)]
+    {
+        EdwardsPoint::nonspec_map_to_curve::<Sha512>(&input)
+    }
+}
+
+fn batchcompat_challenge(
+    verification_key: &[u8; VRF_VERIFICATION_KEY_SIZE],
+    hash_point: &[u8; 32],
+    gamma: &[u8; 32],
+    announcement_1: &[u8; 32],
+    announcement_2: &[u8; 32],
+) -> [u8; VRF_CHALLENGE_SIZE] {
+    let mut hash = Sha512::new();
+    hash.update([SUITE, TWO]);
+    hash.update(verification_key);
+    hash.update(hash_point);
+    hash.update(gamma);
+    hash.update(announcement_1);
+    hash.update(announcement_2);
+    hash.update([ZERO]);
+
+    let digest = hash.finalize();
+    digest[..VRF_CHALLENGE_SIZE]
+        .try_into()
+        .expect("challenge hash prefix should match the fixed truncated challenge size")
+}
+
+fn truncated_challenge_scalar(challenge: [u8; VRF_CHALLENGE_SIZE]) -> Scalar {
+    let mut scalar = [0_u8; 32];
+    scalar[..VRF_CHALLENGE_SIZE].copy_from_slice(&challenge);
+    Scalar::from_bytes_mod_order(scalar)
+}
+
 fn decode_standard_proof(proof: &[u8; VRF_PROOF_SIZE]) -> Result<DecodedStandardProof, CryptoError> {
     let gamma = parse_point(
         &proof[..32]
@@ -278,6 +382,39 @@ fn decode_standard_proof(proof: &[u8; VRF_PROOF_SIZE]) -> Result<DecodedStandard
     Ok(DecodedStandardProof {
         gamma,
         challenge,
+        response,
+    })
+}
+
+fn decode_batchcompat_proof(
+    proof: &[u8; VRF_BATCHCOMPAT_PROOF_SIZE],
+) -> Result<DecodedBatchCompatProof, CryptoError> {
+    let gamma = parse_point(
+        &proof[..32]
+            .try_into()
+            .expect("gamma slice should match the fixed point length"),
+    )?;
+    let announcement_1 = parse_point(
+        &proof[32..64]
+            .try_into()
+            .expect("announcement_1 slice should match the fixed point length"),
+    )?;
+    let announcement_2 = parse_point(
+        &proof[64..96]
+            .try_into()
+            .expect("announcement_2 slice should match the fixed point length"),
+    )?;
+    let response_bytes: [u8; 32] = proof[96..]
+        .try_into()
+        .expect("response slice should match the fixed scalar length");
+    let response = Scalar::from_canonical_bytes(response_bytes)
+        .into_option()
+        .ok_or(CryptoError::InvalidVrfProof)?;
+
+    Ok(DecodedBatchCompatProof {
+        gamma,
+        announcement_1,
+        announcement_2,
         response,
     })
 }
@@ -313,6 +450,13 @@ fn parse_point(bytes: &[u8; 32]) -> Result<EdwardsPoint, CryptoError> {
 struct DecodedStandardProof {
     gamma: EdwardsPoint,
     challenge: [u8; VRF_CHALLENGE_SIZE],
+    response: Scalar,
+}
+
+struct DecodedBatchCompatProof {
+    gamma: EdwardsPoint,
+    announcement_1: EdwardsPoint,
+    announcement_2: EdwardsPoint,
     response: Scalar,
 }
 
