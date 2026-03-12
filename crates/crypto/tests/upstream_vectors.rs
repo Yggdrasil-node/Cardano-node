@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use yggdrasil_crypto::{
     vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors, VrfBatchCompatProof, VrfOutput,
-    VrfVerificationKey,
+    VrfProof, VrfVerificationKey,
 };
 
 const CARDANO_BASE_SHA: &str = "db52f43b38ba5d8927feb2199d4913fe6c0f974d";
@@ -173,10 +173,66 @@ fn vendored_batchcompat_praos_vectors_verify_against_implementation() {
 }
 
 #[test]
-#[ignore = "tracks parity against full official batchcompat corpus while implementation is still incremental"]
+fn vendored_standard_praos_vectors_verify_against_implementation() {
+    let dir = vendored_root().join("cardano-crypto-praos/test_vectors");
+    let embedded_names: Vec<String> = vrf_praos_test_vectors()
+        .into_iter()
+        .map(|vector| vector.name.replace('-', "_"))
+        .collect();
+
+    let mut checked = 0_usize;
+    let mut failures: Vec<String> = Vec::new();
+    for name in embedded_names {
+        let path = dir.join(&name);
+        let content = fs::read_to_string(&path).expect("vector file should be readable as UTF-8");
+        let kv = parse_kv(&content);
+        assert_eq!(kv.get("vrf").map(String::as_str), Some("PraosVRF"));
+
+        let public_key = decode_hex_array::<32>(
+            kv.get("pk")
+                .expect("pk key should be present for standard vectors"),
+        );
+        let proof_bytes = decode_hex_array::<80>(
+            kv.get("pi")
+                .expect("pi key should be present for standard vectors"),
+        );
+        let output_bytes = decode_hex_array::<64>(
+            kv.get("beta")
+                .expect("beta key should be present for standard vectors"),
+        );
+        let message = match kv
+            .get("alpha")
+            .expect("alpha key should be present for standard vectors")
+            .as_str()
+        {
+            "empty" => Vec::new(),
+            hex_value => decode_hex_vec(hex_value),
+        };
+
+        let verification_key = VrfVerificationKey::from_bytes(public_key);
+        let proof = VrfProof::from_bytes(proof_bytes);
+        let expected = VrfOutput::from_bytes(output_bytes);
+        match verification_key.verify(&message, &proof) {
+            Ok(actual) => {
+                if actual != expected {
+                    failures.push(format!("{} output mismatch", path.display()));
+                }
+            }
+            Err(error) => failures.push(format!("{} verify failed: {error:?}", path.display())),
+        }
+        checked += 1;
+    }
+
+    assert!(checked > 0, "at least one mirrored standard vector should be verified");
+    assert!(
+        failures.is_empty(),
+        "mirrored standard vectors should verify cleanly, failures: {}",
+        failures.join("; ")
+    );
+}
+
+#[test]
 fn vendored_batchcompat_full_corpus_probe() {
-    // Current known gap: `vrf_ver13_standard_12` from cardano-base fails with
-    // `InvalidVrfProof` under the pure-Rust verifier and is tracked by this probe.
     let mut failures: Vec<String> = Vec::new();
     let mut checked = 0_usize;
 
@@ -226,6 +282,61 @@ fn vendored_batchcompat_full_corpus_probe() {
     assert!(
         failures.is_empty(),
         "full batch-compatible corpus parity failures: {}",
+        failures.join("; ")
+    );
+}
+
+#[test]
+fn vendored_standard_full_corpus_probe() {
+    let mut failures: Vec<String> = Vec::new();
+    let mut checked = 0_usize;
+
+    for path in vendored_praos_files() {
+        let content = fs::read_to_string(&path).expect("vector file should be readable as UTF-8");
+        let kv = parse_kv(&content);
+        if kv.get("vrf").map(String::as_str) != Some("PraosVRF") {
+            continue;
+        }
+
+        let public_key = decode_hex_array::<32>(
+            kv.get("pk")
+                .expect("pk key should be present for standard vectors"),
+        );
+        let proof_bytes = decode_hex_array::<80>(
+            kv.get("pi")
+                .expect("pi key should be present for standard vectors"),
+        );
+        let output_bytes = decode_hex_array::<64>(
+            kv.get("beta")
+                .expect("beta key should be present for standard vectors"),
+        );
+        let message = match kv
+            .get("alpha")
+            .expect("alpha key should be present for standard vectors")
+            .as_str()
+        {
+            "empty" => Vec::new(),
+            hex_value => decode_hex_vec(hex_value),
+        };
+
+        let verification_key = VrfVerificationKey::from_bytes(public_key);
+        let proof = VrfProof::from_bytes(proof_bytes);
+        let expected = VrfOutput::from_bytes(output_bytes);
+        match verification_key.verify(&message, &proof) {
+            Ok(actual) => {
+                if actual != expected {
+                    failures.push(format!("{} output mismatch", path.display()));
+                }
+            }
+            Err(error) => failures.push(format!("{} verify failed: {error:?}", path.display())),
+        }
+        checked += 1;
+    }
+
+    assert!(checked > 0, "full standard corpus should contain vectors");
+    assert!(
+        failures.is_empty(),
+        "full standard corpus parity failures: {}",
         failures.join("; ")
     );
 }

@@ -150,6 +150,25 @@ fn batchcompat_vrf_vectors_match_embedded_key_layout_and_output_hash() {
 }
 
 #[test]
+fn standard_vrf_verify_accepts_published_vectors() {
+    for vector in vrf_praos_test_vectors() {
+        let verification_key = VrfVerificationKey::from_bytes(vector.public_key);
+        let proof = VrfProof::from_bytes(vector.proof);
+        let expected_output = VrfOutput::from_bytes(vector.output);
+
+        let verified_output = verification_key
+            .verify(&vector.message, &proof)
+            .expect("published standard Praos proof should verify");
+
+        assert_eq!(
+            verified_output, expected_output,
+            "verified output mismatch for {}",
+            vector.name
+        );
+    }
+}
+
+#[test]
 fn batchcompat_vrf_verify_accepts_published_vectors() {
     for vector in vrf_praos_batchcompat_test_vectors() {
         let verification_key = VrfVerificationKey::from_bytes(vector.public_key);

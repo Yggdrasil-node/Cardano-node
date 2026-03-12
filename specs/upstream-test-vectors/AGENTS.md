@@ -1,6 +1,10 @@
+---
+name: Upstream Test Vectors
+description: The official upstream vector and golden artifacts used for parity validation.
+---
 # Upstream Test Vectors
 
-This directory vendors official upstream vector and golden artifacts used for parity validation.
+This directory vendors official upstream vector and golden artifacts used for parity validation. you need to research the official IntersectMBO/Cardano repositories to find the relevant files and paths for your implementation work, and you can use the `AGENTS.md` files in each crate for guidance on where to look for new vectors.
 
 ## Source Policy
 

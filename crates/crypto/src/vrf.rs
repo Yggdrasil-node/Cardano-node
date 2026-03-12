@@ -11,6 +11,7 @@ use std::fmt;
 use subtle::ConstantTimeEq;
 
 const SUITE: u8 = 0x04;
+const ONE: u8 = 0x01;
 const TWO: u8 = 0x02;
 const THREE: u8 = 0x03;
 const ZERO: u8 = 0x00;
@@ -176,14 +177,49 @@ impl VrfVerificationKey {
 
     /// Verifies a VRF proof for a message.
     ///
-    /// Full Praos verification remains unimplemented until the workspace has a
-    /// pure Rust ECVRF path with upstream vector parity.
+    /// Follows the upstream `crypto_vrf_ietfdraft03_verify` relation used
+    /// by `cardano-crypto-praos`.
     pub fn verify(&self, message: &[u8], proof: &VrfProof) -> Result<VrfOutput, CryptoError> {
         self.validate()?;
         proof.validate()?;
-        let _ = message;
 
-        Err(CryptoError::Unimplemented("VRF verification"))
+        let decoded = decode_standard_proof(&proof.0)?;
+        let public_key =
+            parse_point(&self.0).map_err(|_| CryptoError::InvalidVrfVerificationKey)?;
+        let h_point = encode_standard_hash_point(&self.0, message)?;
+        let h_bytes = h_point.compress().to_bytes();
+
+        let challenge_scalar =
+            truncated_challenge_scalar(decoded.challenge);
+        let neg_challenge = -challenge_scalar;
+
+        let u_point = EdwardsPoint::vartime_double_scalar_mul_basepoint(
+            &neg_challenge,
+            &public_key,
+            &decoded.response,
+        );
+
+        let v_point = EdwardsPoint::vartime_multiscalar_mul(
+            [&neg_challenge, &decoded.response],
+            [&decoded.gamma, &h_point],
+        );
+
+        let gamma_bytes: [u8; 32] = proof.0[..32]
+            .try_into()
+            .expect("gamma slice should match the fixed point length");
+
+        let recomputed = standard_challenge(
+            &h_bytes,
+            &gamma_bytes,
+            &u_point.compress().to_bytes(),
+            &v_point.compress().to_bytes(),
+        );
+
+        if recomputed != decoded.challenge {
+            return Err(CryptoError::InvalidVrfProof);
+        }
+
+        proof.output()
     }
 
     /// Verifies a batch-compatible VRF proof for a message.
@@ -361,6 +397,54 @@ fn encode_batchcompat_hash_point(
     parse_point(&mapped)
 }
 
+/// Computes the standard (draft03) VRF hash-to-curve point.
+///
+/// Mirrors `cardano_ge25519_from_uniform` from `ed25519_ref10.c`:
+/// `SHA-512(SUITE || ONE || pk || alpha)` → take first 32 bytes → clear
+/// bit 255 → elligator2 map → normalize Edwards X sign → cofactor
+/// multiply → compress → decompress to Edwards point.
+///
+/// The upstream C code extracts bit 255 as the target sign bit (always 0
+/// since `verify.c` clears it beforehand), runs elligator2, then
+/// conditionally negates the Edwards X coordinate so that
+/// `is_negative(X) == x_sign`.  Because `x_sign` is always 0, this
+/// forces X to be non-negative.  The Rust elligator2 crate does **not**
+/// apply this normalization, so we replicate it by clearing the sign bit
+/// (bit 7 of byte 31) in the compressed encoding before decompressing.
+fn encode_standard_hash_point(
+    verification_key: &[u8; VRF_VERIFICATION_KEY_SIZE],
+    message: &[u8],
+) -> Result<EdwardsPoint, CryptoError> {
+    let mut hash = Sha512::new();
+    hash.update([SUITE, ONE]);
+    hash.update(verification_key);
+    hash.update(message);
+    let digest: [u8; 64] = hash.finalize().into();
+
+    let mut r_bytes = [0_u8; 32];
+    r_bytes.copy_from_slice(&digest[..32]);
+    r_bytes[31] &= 0x7f;
+
+    let mapped = LegacyEdwardsPoint::from_representative::<Legacy>(&r_bytes)
+        .ok_or(CryptoError::InvalidVrfProof)?;
+
+    // Normalize: the C code forces Edwards X to be non-negative (sign=0).
+    // Compressed Edwards Y encodes the sign of X in bit 7 of byte 31.
+    // Clearing that bit ensures X is non-negative after decompression.
+    let mut normalized = mapped.compress().to_bytes();
+    normalized[31] &= 0x7f;
+
+    let normalized_point = curve25519_elligator2::edwards::CompressedEdwardsY(normalized)
+        .decompress()
+        .ok_or(CryptoError::InvalidVrfProof)?;
+
+    // Cofactor multiply, matching cardano_ge25519_clear_cofactor.
+    let cofactored = normalized_point.mul_by_cofactor();
+    let final_bytes = cofactored.compress().to_bytes();
+
+    parse_point(&final_bytes)
+}
+
 fn cardano_h2c_string_to_hash_sha512(h_len: u8, dst: &[u8], message: &[u8]) -> Vec<u8> {
     let mut effective_dst = dst.to_vec();
     if effective_dst.len() > u8::MAX as usize {
@@ -407,84 +491,75 @@ fn cardano_h2c_string_to_hash_sha512(h_len: u8, dst: &[u8], message: &[u8]) -> V
     output
 }
 
+/// Reduces a 64-byte hash to a 32-byte field element representative.
+///
+/// Mirrors `cardano_fe25519_reduce64` from cardano-base `ed25519_ref10.c`:
+/// splits the 64-byte input into low and high 32-byte halves, clears bit 255
+/// of each, adds the bit-255 corrections (`19 * low_bit255 + 722 * high_bit255`),
+/// adds `38 * high` to `low`, and folds any resulting bit 255 by adding 19
+/// (since `2^255 ≡ 19 mod p` where `p = 2^255 − 19`).
 fn reduce_hash_input_to_representative(hash_input: &[u8; 64]) -> [u8; 32] {
     let mut lower = [0_u8; 32];
     let mut upper = [0_u8; 32];
     lower.copy_from_slice(&hash_input[..32]);
     upper.copy_from_slice(&hash_input[32..]);
+
+    // Extract and clear bit 255 from each half.
     let lower_high_bit = (lower[31] >> 7) as u16;
     let upper_high_bit = (upper[31] >> 7) as u16;
     lower[31] &= 0x7f;
     upper[31] &= 0x7f;
 
+    // Compute lower + 38 * upper in a 33-byte accumulator.
     let mut reduced = [0_u8; 33];
     let mut carry: u16 = 0;
-    for index in 0..32 {
-        let value = u16::from(lower[index]) + (u16::from(upper[index]) * 38) + carry;
-        reduced[index] = (value & 0xff) as u8;
-        carry = value >> 8;
+    for i in 0..32 {
+        let v = u16::from(lower[i]) + u16::from(upper[i]) * 38 + carry;
+        reduced[i] = (v & 0xff) as u8;
+        carry = v >> 8;
     }
     reduced[32] = carry as u8;
 
-    let extra = (lower_high_bit * 19) + (upper_high_bit * 722);
+    // Add the bit-255 corrections: 2^255 ≡ 19 (mod p), 2^511 ≡ 722 (mod p).
+    let extra = lower_high_bit * 19 + upper_high_bit * 722;
     let mut carry_extra = extra;
-    let mut index = 0_usize;
+    let mut i = 0_usize;
     while carry_extra > 0 {
-        let value = u16::from(reduced[index]) + (carry_extra & 0xff);
-        reduced[index] = (value & 0xff) as u8;
-        carry_extra = (carry_extra >> 8) + (value >> 8);
-        index += 1;
+        let v = u16::from(reduced[i]) + (carry_extra & 0xff);
+        reduced[i] = (v & 0xff) as u8;
+        carry_extra = (carry_extra >> 8) + (v >> 8);
+        i += 1;
     }
 
-    let mut representative = [0_u8; 32];
-    representative.copy_from_slice(&reduced[..32]);
+    // Extract and fold any overflow above 255 bits.
+    let mut result = [0_u8; 32];
+    result.copy_from_slice(&reduced[..32]);
+    let high = u16::from(result[31] >> 7) + (u16::from(reduced[32]) << 1);
+    result[31] &= 0x7f;
 
-    let high = u16::from(reduced[31] >> 7) + (u16::from(reduced[32]) << 1);
-    representative[31] &= 0x7f;
-
-    let mut carry_high = high * 19;
-    let mut position = 0_usize;
-    while carry_high > 0 {
-        let value = u16::from(representative[position]) + (carry_high & 0xff);
-        representative[position] = (value & 0xff) as u8;
-        carry_high = (carry_high >> 8) + (value >> 8);
-        position += 1;
+    let mut carry_fold = high * 19;
+    let mut pos = 0_usize;
+    while carry_fold > 0 {
+        let v = u16::from(result[pos]) + (carry_fold & 0xff);
+        result[pos] = (v & 0xff) as u8;
+        carry_fold = (carry_fold >> 8) + (v >> 8);
+        pos += 1;
     }
 
-    let high_second_fold = representative[31] >> 7;
-    representative[31] &= 0x7f;
-    if high_second_fold != 0 {
-        let mut carry_second_fold = u16::from(high_second_fold) * 19;
-        let mut position = 0_usize;
-        while carry_second_fold > 0 {
-            let value = u16::from(representative[position]) + (carry_second_fold & 0xff);
-            representative[position] = (value & 0xff) as u8;
-            carry_second_fold = (carry_second_fold >> 8) + (value >> 8);
-            position += 1;
+    // Second fold in case the addition of 19 set bit 255 again.
+    let second_high = result[31] >> 7;
+    result[31] &= 0x7f;
+    if second_high != 0 {
+        let mut c = 19_u16;
+        for byte in result.iter_mut() {
+            c += *byte as u16;
+            *byte = c as u8;
+            c >>= 8;
         }
+        result[31] &= 0x7f;
     }
 
-    const P: [u8; 32] = [
-        0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0x7f,
-    ];
-
-    while representative >= P {
-        let mut borrow = 0_i16;
-        for idx in 0..32 {
-            let value = i16::from(representative[idx]) - i16::from(P[idx]) - borrow;
-            if value < 0 {
-                representative[idx] = (value + 256) as u8;
-                borrow = 1;
-            } else {
-                representative[idx] = value as u8;
-                borrow = 0;
-            }
-        }
-    }
-
-    representative
+    result
 }
 
 fn batchcompat_challenge(
@@ -502,6 +577,32 @@ fn batchcompat_challenge(
     hash.update(announcement_1);
     hash.update(announcement_2);
     hash.update([ZERO]);
+
+    let digest = hash.finalize();
+    digest[..VRF_CHALLENGE_SIZE]
+        .try_into()
+        .expect("challenge hash prefix should match the fixed truncated challenge size")
+}
+
+/// Computes the standard (draft03) VRF challenge.
+///
+/// Mirrors the upstream `vrf03/verify.c` challenge derivation:
+/// `SHA-512(SUITE || TWO || H_string || Gamma || U_string || V_string)` →
+/// first 16 bytes.  Note: unlike batchcompat, the standard challenge uses
+/// `H_string` (the hash-to-curve point) instead of the verification key,
+/// and omits the trailing `ZERO` byte.
+fn standard_challenge(
+    hash_point: &[u8; 32],
+    gamma: &[u8; 32],
+    u_bytes: &[u8; 32],
+    v_bytes: &[u8; 32],
+) -> [u8; VRF_CHALLENGE_SIZE] {
+    let mut hash = Sha512::new();
+    hash.update([SUITE, TWO]);
+    hash.update(hash_point);
+    hash.update(gamma);
+    hash.update(u_bytes);
+    hash.update(v_bytes);
 
     let digest = hash.finalize();
     digest[..VRF_CHALLENGE_SIZE]
@@ -634,129 +735,5 @@ mod tests {
         assert_eq!(decoded.gamma.compress().to_bytes(), vector.proof[..32]);
         assert_eq!(decoded.challenge, vector.proof[32..48]);
         assert_eq!(decoded.response.to_bytes(), vector.proof[48..80]);
-    }
-
-    #[test]
-    fn diagnose_ver13_standard_12_verification_equation() {
-        // vrf_ver13_standard_12 vector from cardano-base
-        let pk_hex = "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025";
-        let msg_hex = "af82";
-        let pi_hex = "926e895d308f5e328e7aa159c06eddbe56d06846abf5d98c2512235eaa57fdce\
-                       a012f35433df219a88ab0f9481f4e0065d00422c3285f3d34a8b0202f20bac60\
-                       fb613986d171b3e98319c7ca4dc44c5dd8314a6e5616c1a4f16ce72bd7a0c25a\
-                       374e7ef73027e14760d42e77341fe05467bb286cc2c9d7fde29120a0b2320d04";
-
-        let pk = hex_to_array::<32>(pk_hex);
-        let msg = hex_to_vec(msg_hex);
-        let proof_bytes = hex_to_array::<128>(pi_hex);
-
-        // Compute the H2C expanded + reduced representative
-        let mut string_to_hash = Vec::with_capacity(pk.len() + msg.len());
-        string_to_hash.extend_from_slice(&pk);
-        string_to_hash.extend_from_slice(&msg);
-        let expanded = cardano_h2c_string_to_hash_sha512(
-            48, RFC9380_EDWARDS25519_ELL2_NU_SUITE, &string_to_hash,
-        );
-        let mut hash_input = [0_u8; 64];
-        for (index, value) in expanded.iter().rev().enumerate() {
-            hash_input[index] = *value;
-        }
-        let representative = reduce_hash_input_to_representative(&hash_input);
-        eprintln!("representative = {:02x?}", representative);
-        eprintln!("repr high bit  = {}", representative[31] >> 7);
-
-        // H from our current implementation (Legacy::from_representative → map_fe_to_edwards)
-        let h_current = encode_batchcompat_hash_point(&pk, &msg).unwrap();
-        eprintln!("H current      = {:02x?}", h_current.compress().to_bytes());
-
-        // H from negating the current
-        let h_neg = -h_current;
-        eprintln!("H negated      = {:02x?}", h_neg.compress().to_bytes());
-
-        // Try verification with current H
-        let decoded = decode_batchcompat_proof(&proof_bytes).unwrap();
-        let public_key = parse_point(&pk).unwrap();
-
-        for (label, h_point) in [("current", h_current), ("negated", h_neg)] {
-            let challenge = batchcompat_challenge(
-                &pk,
-                &h_point.compress().to_bytes(),
-                &proof_bytes[..32].try_into().unwrap(),
-                &proof_bytes[32..64].try_into().unwrap(),
-                &proof_bytes[64..96].try_into().unwrap(),
-            );
-            let c = truncated_challenge_scalar(challenge);
-            let neg_c = -c;
-
-            let expected_u = EdwardsPoint::vartime_double_scalar_mul_basepoint(
-                &neg_c, &public_key, &decoded.response,
-            ).compress().to_bytes();
-            let expected_v = EdwardsPoint::vartime_multiscalar_mul(
-                [&neg_c, &decoded.response],
-                [&decoded.gamma, &h_point],
-            ).compress().to_bytes();
-
-            let ann1: [u8; 32] = proof_bytes[32..64].try_into().unwrap();
-            let ann2: [u8; 32] = proof_bytes[64..96].try_into().unwrap();
-
-            let u_ok = expected_u == ann1;
-            let v_ok = expected_v == ann2;
-            eprintln!("{label}: U={u_ok} V={v_ok}");
-        }
-
-        // Also try using MontgomeryPoint pathway with both signs
-        use curve25519_elligator2::MontgomeryPoint as LegacyMont;
-        let mont = LegacyMont::from_representative::<Legacy>(&representative).unwrap();
-        for sign in [0_u8, 1_u8] {
-            let ed = mont.to_edwards(sign);
-            if let Some(ed_point) = ed {
-                let cofactored = ed_point.mul_by_cofactor();
-                let bytes = cofactored.compress().to_bytes();
-                // Convert to curve25519-dalek EdwardsPoint
-                let h_point = parse_point(&bytes).unwrap();
-                eprintln!("mont sign={sign} H = {:02x?}", bytes);
-
-                let challenge = batchcompat_challenge(
-                    &pk,
-                    &h_point.compress().to_bytes(),
-                    &proof_bytes[..32].try_into().unwrap(),
-                    &proof_bytes[32..64].try_into().unwrap(),
-                    &proof_bytes[64..96].try_into().unwrap(),
-                );
-                let c = truncated_challenge_scalar(challenge);
-                let neg_c = -c;
-
-                let expected_u = EdwardsPoint::vartime_double_scalar_mul_basepoint(
-                    &neg_c, &public_key, &decoded.response,
-                ).compress().to_bytes();
-                let expected_v = EdwardsPoint::vartime_multiscalar_mul(
-                    [&neg_c, &decoded.response],
-                    [&decoded.gamma, &h_point],
-                ).compress().to_bytes();
-
-                let ann1: [u8; 32] = proof_bytes[32..64].try_into().unwrap();
-                let ann2: [u8; 32] = proof_bytes[64..96].try_into().unwrap();
-
-                let u_ok = expected_u == ann1;
-                let v_ok = expected_v == ann2;
-                eprintln!("mont sign={sign}: U={u_ok} V={v_ok}");
-            } else {
-                eprintln!("mont sign={sign}: to_edwards returned None");
-            }
-        }
-
-        // For now, just mark this as diagnostic — will fail
-        panic!("diagnostic test: see stderr output above");
-    }
-
-    fn hex_to_vec(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i+2], 16).unwrap())
-            .collect()
-    }
-
-    fn hex_to_array<const N: usize>(s: &str) -> [u8; N] {
-        let v = hex_to_vec(s);
-        v.try_into().unwrap()
     }
 }

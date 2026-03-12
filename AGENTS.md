@@ -25,6 +25,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `crates/mempool` owns transaction intake and ordering.
 - `crates/network` owns multiplexing, mini-protocols, and peer management.
 - `node` owns orchestration, CLI, and runtime integration.
+- `specs/upstream-test-vectors` officially test-vectors from the `IntersectMBO` repositories.
 
 ## Upstream References
 - `crates/crypto`: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class> and <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
