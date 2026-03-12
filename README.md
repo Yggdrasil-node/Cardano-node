@@ -457,3 +457,4 @@ Siteringer:
 [13] What folder structure do you maintain on Rust projects? - Reddit https://www.reddit.com/r/learnrust/comments/1645w1n/what_folder_structure_do_you_maintain_on_rust/
 [14] GitHub Copilot deep dive: Model selection, prompting ... - YouTube https://www.youtube.com/watch?v=0Oz-WQi51aU
 [15] Prompt engineering for GitHub Copilot Chat https://docs.github.com/en/copilot/concepts/prompting/prompt-engineering
+
