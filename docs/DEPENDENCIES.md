@@ -6,6 +6,7 @@ This file defines how dependencies are introduced into Yggdrasil.
 - `blake2`: pure Rust hashing for Blake2b-based primitives.
 - `curve25519-dalek`: curve operations used in the crypto foundation.
 - `ed25519-dalek`: pure Rust Ed25519 signing and verification built on RustCrypto and dalek primitives.
+- `sha2`: pure Rust SHA-512 required for Praos-compatible VRF proof-to-output hashing; rejected alternatives were hidden FFI wrappers and reimplementing SHA-512 locally, and it introduces no native build requirements.
 - `thiserror`: library error types.
 - `eyre`: binary error reporting.
 - `serde`: structured data interchange where handwritten or generated types require it.

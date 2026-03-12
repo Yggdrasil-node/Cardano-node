@@ -7,6 +7,10 @@ pub enum CryptoError {
     InvalidVerificationKey,
     #[error("ed25519 signature verification failed")]
     SignatureVerificationFailed,
+    #[error("invalid vrf proof")]
+    InvalidVrfProof,
+    #[error("kes period overflow")]
+    KesPeriodOverflow,
     #[error("feature not implemented: {0}")]
     Unimplemented(&'static str),
 }

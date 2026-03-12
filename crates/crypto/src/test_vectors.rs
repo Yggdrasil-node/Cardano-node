@@ -8,6 +8,28 @@ pub struct Ed25519TestVector {
     pub signature: [u8; 64],
 }
 
+/// A Praos VRF compatibility vector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VrfPraosTestVector {
+    pub name: &'static str,
+    pub secret_key: [u8; 64],
+    pub public_key: [u8; 32],
+    pub message: Vec<u8>,
+    pub proof: [u8; 80],
+    pub output: [u8; 64],
+}
+
+/// A batch-compatible Praos VRF compatibility vector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VrfPraosBatchCompatTestVector {
+    pub name: &'static str,
+    pub secret_key: [u8; 64],
+    pub public_key: [u8; 32],
+    pub message: Vec<u8>,
+    pub proof: [u8; 128],
+    pub output: [u8; 64],
+}
+
 /// Returns a small set of published RFC 8032 Ed25519 vectors used as baseline
 /// compatibility fixtures.
 pub fn ed25519_rfc8032_vectors() -> Vec<Ed25519TestVector> {
@@ -67,6 +89,102 @@ pub fn ed25519_rfc8032_vectors() -> Vec<Ed25519TestVector> {
             )),
         },
     ]
+}
+
+/// Returns a small set of published Praos VRF vectors mirrored from the
+/// upstream `cardano-crypto-praos` fixtures.
+pub fn vrf_praos_test_vectors() -> Vec<VrfPraosTestVector> {
+    vec![
+        VrfPraosTestVector {
+            name: "vrf-ver03-standard-10",
+            secret_key: decode_hex_array(concat!(
+                "9d61b19deffd5a60ba844af492ec2cc4",
+                "4449c5697b326919703bac031cae7f60",
+                "d75a980182b10ab7d54bfed3c964073a",
+                "0ee172f3daa62325af021a68f707511a",
+            )),
+            public_key: decode_hex_array(concat!(
+                "d75a980182b10ab7d54bfed3c964073a",
+                "0ee172f3daa62325af021a68f707511a",
+            )),
+            message: Vec::new(),
+            proof: decode_hex_array(concat!(
+                "b6b4699f87d56126c9117a7da55bd008",
+                "5246f4c56dbc95d20172612e9d38e8d7",
+                "ca65e573a126ed88d4e30a46f80a6668",
+                "54d675cf3ba81de0de043c3774f06156",
+                "0f55edc256a787afe701677c0f602900",
+            )),
+            output: decode_hex_array(concat!(
+                "5b49b554d05c0cd5a5325376b3387de5",
+                "9d924fd1e13ded44648ab33c21349a60",
+                "3f25b84ec5ed887995b33da5e3bfcb87",
+                "cd2f64521c4c62cf825cffabbe5d31cc",
+            )),
+        },
+        VrfPraosTestVector {
+            name: "vrf-ver03-standard-11",
+            secret_key: decode_hex_array(concat!(
+                "4ccd089b28ff96da9db6c346ec114e0f",
+                "5b8a319f35aba624da8cf6ed4fb8a6fb",
+                "3d4017c3e843895a92b70aa74d1b7ebc",
+                "9c982ccf2ec4968cc0cd55f12af4660c",
+            )),
+            public_key: decode_hex_array(concat!(
+                "3d4017c3e843895a92b70aa74d1b7ebc",
+                "9c982ccf2ec4968cc0cd55f12af4660c",
+            )),
+            message: decode_hex_vec("72"),
+            proof: decode_hex_array(concat!(
+                "ae5b66bdf04b4c010bfe32b2fc126ead",
+                "2107b697634f6f7337b9bff8785ee111",
+                "200095ece87dde4dbe87343f6df3b107",
+                "d91798c8a7eb1245d3bb9c5aafb09335",
+                "8c13e6ae1111a55717e895fd15f99f07",
+            )),
+            output: decode_hex_array(concat!(
+                "94f4487e1b2fec954309ef1289ecb2e1",
+                "5043a2461ecc7b2ae7d4470607ef82eb",
+                "1cfa97d84991fe4a7bfdfd715606bc27",
+                "e2967a6c557cfb5875879b671740b7d8",
+            )),
+        },
+    ]
+}
+
+/// Returns a small set of batch-compatible Praos VRF vectors mirrored from the
+/// upstream `cardano-crypto-praos` fixtures.
+pub fn vrf_praos_batchcompat_test_vectors() -> Vec<VrfPraosBatchCompatTestVector> {
+    vec![VrfPraosBatchCompatTestVector {
+        name: "vrf-ver13-standard-10",
+        secret_key: decode_hex_array(concat!(
+            "9d61b19deffd5a60ba844af492ec2cc4",
+            "4449c5697b326919703bac031cae7f60",
+            "d75a980182b10ab7d54bfed3c964073a",
+            "0ee172f3daa62325af021a68f707511a",
+        )),
+        public_key: decode_hex_array(concat!(
+            "d75a980182b10ab7d54bfed3c964073a",
+            "0ee172f3daa62325af021a68f707511a",
+        )),
+        message: Vec::new(),
+        proof: decode_hex_array(concat!(
+            "7d9c633ffeee27349264cf5c667579fc",
+            "583b4bda63ab71d001f89c10003ab46f",
+            "762f5c178b68f0cddcc1157918edf45e",
+            "c334ac8e8286601a3256c3bbf858edd9",
+            "4652eba1c4612e6fce762977a59420b4",
+            "51e12964adbe4fbecd58a7aeff5860af",
+            "cafa73589b023d14311c331a9ad15ff2",
+            "fb37831e00f0acaa6d73bc9997b06501",
+        )),
+        output: decode_hex_array(concat!(
+            "9d574bf9b8302ec0fc1e21c3ec536826",
+            "9527b87b462ce36dab2d14ccf80c53cc",
+            "cf6758f058c5b1c856b116388152bbe5",
+            "09ee3b9ecfe63d93c3b4346c1fbc6c54",
+        )),
+    }]
 }
 
 fn decode_hex_array<const N: usize>(hex: &str) -> [u8; N] {
