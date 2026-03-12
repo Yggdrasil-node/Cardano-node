@@ -17,7 +17,7 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Naming MUST mirror the official node and Ouroboros network specs so protocol traces and docs line up cleanly.
 - Wire behavior and protocol sequencing MUST be explained by reference to the official node and upstream Ouroboros network sources.
 
-## Upstream References
+## Upstream References (add or update as needed)
 - Networking repository root: <https://github.com/IntersectMBO/ouroboros-network/>
 - Multiplexer package: <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux/>
 - Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework/>

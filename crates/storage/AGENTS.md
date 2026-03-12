@@ -17,7 +17,7 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Storage naming MUST stay close to official node and Ouroboros consensus terminology such as immutable DB, volatile DB, ChainDB, and snapshots.
 - Storage behavior MUST be explained with reference to the official node and upstream Ouroboros consensus implementation notes.
 
-## Upstream References
+## Upstream References (add or update as needed)
 - Consensus core package, including ChainDB and storage concerns: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
 - Consensus repository docs and reports: <https://github.com/IntersectMBO/ouroboros-consensus/>
 - Node integration reference for operational storage concerns: <https://github.com/IntersectMBO/cardano-node/>

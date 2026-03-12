@@ -16,11 +16,12 @@ Focus on small parser and generator internals that are deterministic, testable, 
 - Public parser and generator internals that define supported syntax boundaries, normalization rules, or output guarantees MUST have Rustdocs.
 - Names MUST remain traceable to upstream schema terminology and official node-adjacent ledger naming wherever practical.
 
-## Upstream References
+## Upstream References (add or update as needed)
 - Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
 - Ledger binary library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
 - Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>
 
 ## Current Phase
-- The supported subset is intentionally small and explicit.
+- Parser AST uses `TypeExpr` enum (Named, Sized, VarArray, Optional) for type expressions, `FieldKey` enum (Label, Index) for map keys, and `ArrayItem` with optional names for array elements.
+- The supported subset is intentionally explicit and fixture-driven.
 - Expand only where pinned fixtures demonstrate a concrete need.

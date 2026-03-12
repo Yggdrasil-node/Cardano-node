@@ -1,12 +1,50 @@
-; Pinned foundation fixture for early code generation integration.
-tx-body = {
-  fee: uint,
-  metadata-hash: bytes,
-}
+; Pinned fixture extracted from IntersectMBO/cardano-ledger shelley.cddl
+; Upstream revision: ed5017c8864ddc99e48483cd2c1278b01a9f24f4
+; Intentionally restricted subset for incremental parser/generator validation.
 
+; --- Size-constrained builtins ---
+block_number = uint .size 8
+slot = uint .size 8
+epoch = uint .size 8
+hash32 = bytes .size 32
+hash28 = bytes .size 28
+vkey = bytes .size 32
+vrf_vkey = bytes .size 32
+kes_vkey = bytes .size 32
+signature = bytes .size 64
+kes_signature = bytes .size 448
+
+; --- Plain aliases ---
+transaction_id = hash32
+coin = uint
+addr_keyhash = hash28
+pool_keyhash = hash28
+script_hash = hash28
+vrf_keyhash = hash32
+auxiliary_data_hash = hash32
+address = bytes
+reward_account = bytes
+
+; --- Flat arrays with named fields ---
+transaction_input = [id: transaction_id, index: uint .size 2]
+transaction_output = [address, amount: coin]
+vkeywitness = [vkey, signature]
+
+; --- Maps with integer keys and optional fields ---
+transaction_body =
+  { 0: [* transaction_input]
+  , 1: [* transaction_output]
+  , 2: coin
+  , 3: slot
+  , ? 4: [* vkeywitness]
+  , ? 7: auxiliary_data_hash
+  }
+
+; --- Simple named-field maps ---
 block-header = {
   slot: uint,
   issuer-vkey: bytes,
 }
 
-tx-seq = [tx-body, block-header]
+; --- Top-level array ---
+tx-seq = [transaction_body, block-header]

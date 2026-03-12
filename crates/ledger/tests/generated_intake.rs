@@ -16,18 +16,18 @@ fn ledger_can_intake_foundation_schema_fixture() {
     let generated = generate_module(&parsed);
 
     assert!(
-        generated.source.contains("pub struct TxBody"),
-        "generated source should expose a TxBody struct\n{}",
+        generated.source.contains("pub struct TransactionBody"),
+        "generated source should expose a TransactionBody struct\n{}",
         generated.source
     );
     assert!(
-        generated.source.contains("pub fee: u64"),
-        "generated source should map uint to u64\n{}",
+        generated.source.contains("pub field_2: Coin"),
+        "generated source should map integer-keyed coin field\n{}",
         generated.source
     );
     assert!(
-        generated.source.contains("pub metadata_hash: Vec<u8>"),
-        "generated source should normalize hyphenated field names\n{}",
+        generated.source.contains("pub field_7: Option<AuxiliaryDataHash>"),
+        "generated source should map optional fields\n{}",
         generated.source
     );
     assert!(

@@ -18,7 +18,7 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Naming MUST stay close to official node and consensus mempool terminology.
 - Transaction flow and admission policy MUST be explained with reference to the official node and upstream mempool-adjacent sources such as Ouroboros consensus and `cardano-submit-api`.
 
-## Upstream References
+## Upstream References (add or update as needed)
 - Consensus core package, including mempool design context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
 - Consensus repository root: <https://github.com/IntersectMBO/ouroboros-consensus/>
 - Transaction submission integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>

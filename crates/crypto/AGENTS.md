@@ -19,7 +19,7 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Parity-sensitive choices MUST be explained by reference to the official `cardano-node` ecosystem and the relevant upstream IntersectMBO crypto packages.
 - Full cryptographic parity, vector coverage, and encoding compatibility are non-negotiable long-term targets.
 
-## Upstream References
+## Upstream References (add or update as needed)
 - Crypto abstractions and shared utilities: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/>
 - Praos-oriented crypto behavior and vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/>
 - Shared Cardano base packages: <https://github.com/IntersectMBO/cardano-base/>

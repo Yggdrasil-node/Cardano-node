@@ -18,7 +18,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Naming and terminology MUST remain close to the official `cardano-node` so operational concepts map cleanly.
 - Integration behavior MUST always be explained by anchoring it in the official node and the relevant upstream IntersectMBO implementation.
 
-## Upstream References
+## Upstream References (add or update as needed)
 - Node integration repository: <https://github.com/IntersectMBO/cardano-node/>
 - Node runtime and packaging reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
 - Default network configuration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
