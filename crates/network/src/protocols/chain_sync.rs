@@ -191,4 +191,101 @@ impl ChainSyncMessage {
             Self::MsgDone => 7,
         }
     }
+
+    /// Encode this message to CBOR bytes.
+    ///
+    /// Wire format (matching upstream `chain-sync.cddl`):
+    /// - `[0]` — MsgRequestNext
+    /// - `[1]` — MsgAwaitReply
+    /// - `[2, header, tip]` — MsgRollForward
+    /// - `[3, point, tip]` — MsgRollBackward
+    /// - `[4, [*point]]` — MsgFindIntersect
+    /// - `[5, point, tip]` — MsgIntersectFound
+    /// - `[6, tip]` — MsgIntersectNotFound
+    /// - `[7]` — MsgDone
+    pub fn to_cbor(&self) -> Vec<u8> {
+        use yggdrasil_ledger::cbor::Encoder;
+
+        let mut enc = Encoder::new();
+        match self {
+            Self::MsgRequestNext => {
+                enc.array(1).unsigned(0);
+            }
+            Self::MsgAwaitReply => {
+                enc.array(1).unsigned(1);
+            }
+            Self::MsgRollForward { header, tip } => {
+                enc.array(3).unsigned(2).bytes(header).bytes(tip);
+            }
+            Self::MsgRollBackward { point, tip } => {
+                enc.array(3).unsigned(3).bytes(point).bytes(tip);
+            }
+            Self::MsgFindIntersect { points } => {
+                enc.array(2).unsigned(4);
+                enc.array(points.len() as u64);
+                for p in points {
+                    enc.bytes(p);
+                }
+            }
+            Self::MsgIntersectFound { point, tip } => {
+                enc.array(3).unsigned(5).bytes(point).bytes(tip);
+            }
+            Self::MsgIntersectNotFound { tip } => {
+                enc.array(2).unsigned(6).bytes(tip);
+            }
+            Self::MsgDone => {
+                enc.array(1).unsigned(7);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes.
+    pub fn from_cbor(data: &[u8]) -> Result<Self, yggdrasil_ledger::LedgerError> {
+        use yggdrasil_ledger::cbor::Decoder;
+
+        let mut dec = Decoder::new(data);
+        let arr_len = dec.array()?;
+        let tag = dec.unsigned()?;
+        let msg = match (tag, arr_len) {
+            (0, 1) => Self::MsgRequestNext,
+            (1, 1) => Self::MsgAwaitReply,
+            (2, 3) => Self::MsgRollForward {
+                header: dec.bytes()?.to_vec(),
+                tip: dec.bytes()?.to_vec(),
+            },
+            (3, 3) => Self::MsgRollBackward {
+                point: dec.bytes()?.to_vec(),
+                tip: dec.bytes()?.to_vec(),
+            },
+            (4, 2) => {
+                let count = dec.array()?;
+                let mut points = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    points.push(dec.bytes()?.to_vec());
+                }
+                Self::MsgFindIntersect { points }
+            }
+            (5, 3) => Self::MsgIntersectFound {
+                point: dec.bytes()?.to_vec(),
+                tip: dec.bytes()?.to_vec(),
+            },
+            (6, 2) => Self::MsgIntersectNotFound {
+                tip: dec.bytes()?.to_vec(),
+            },
+            (7, 1) => Self::MsgDone,
+            _ => {
+                return Err(yggdrasil_ledger::LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: tag as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(yggdrasil_ledger::LedgerError::CborTrailingBytes(
+                dec.remaining(),
+            ));
+        }
+        Ok(msg)
+    }
 }

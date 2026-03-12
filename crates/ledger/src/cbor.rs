@@ -14,10 +14,16 @@ use crate::error::LedgerError;
 
 /// Major type 0: unsigned integer.
 const MAJOR_UNSIGNED: u8 = 0;
+/// Major type 1: negative integer.
+const MAJOR_NEGATIVE: u8 = 1;
 /// Major type 2: byte string.
 const MAJOR_BYTES: u8 = 2;
+/// Major type 3: text string (UTF-8).
+const MAJOR_TEXT: u8 = 3;
 /// Major type 4: array.
 const MAJOR_ARRAY: u8 = 4;
+/// Major type 5: map.
+const MAJOR_MAP: u8 = 5;
 /// Major type 7: simple values and floats.
 const MAJOR_SIMPLE: u8 = 7;
 
@@ -109,6 +115,38 @@ impl Encoder {
     /// Encodes a CBOR boolean.
     pub fn bool(&mut self, value: bool) -> &mut Self {
         self.buf.push((MAJOR_SIMPLE << 5) | if value { 21 } else { 20 });
+        self
+    }
+
+    /// Encodes a negative integer (CBOR major type 1).
+    ///
+    /// The CBOR encoding stores `-(1 + n)`, so `negative(0)` encodes `-1`.
+    pub fn negative(&mut self, n: u64) -> &mut Self {
+        self.write_type_and_arg(MAJOR_NEGATIVE, n);
+        self
+    }
+
+    /// Encodes a UTF-8 text string (CBOR major type 3).
+    pub fn text(&mut self, s: &str) -> &mut Self {
+        self.write_type_and_arg(MAJOR_TEXT, s.len() as u64);
+        self.buf.extend_from_slice(s.as_bytes());
+        self
+    }
+
+    /// Encodes a definite-length map header (CBOR major type 5).
+    ///
+    /// The caller must encode exactly `len` key-value pairs after this.
+    pub fn map(&mut self, len: u64) -> &mut Self {
+        self.write_type_and_arg(MAJOR_MAP, len);
+        self
+    }
+
+    /// Writes raw bytes directly into the encoder buffer.
+    ///
+    /// Use with care — the caller is responsible for ensuring the bytes
+    /// form valid CBOR.
+    pub fn raw(&mut self, data: &[u8]) -> &mut Self {
+        self.buf.extend_from_slice(data);
         self
     }
 }
@@ -251,6 +289,91 @@ impl<'a> Decoder<'a> {
     /// Peeks at the next major type without advancing the position.
     pub fn peek_major(&self) -> Result<u8, LedgerError> {
         Ok(self.peek_byte()? >> 5)
+    }
+
+    /// Decodes a negative integer (CBOR major type 1).
+    ///
+    /// Returns the raw argument `n`; the represented value is `-(1 + n)`.
+    pub fn negative(&mut self) -> Result<u64, LedgerError> {
+        self.expect_major(MAJOR_NEGATIVE)
+    }
+
+    /// Decodes a UTF-8 text string (CBOR major type 3) and returns a
+    /// borrowed `&str`.
+    pub fn text(&mut self) -> Result<&'a str, LedgerError> {
+        let len = self.expect_major(MAJOR_TEXT)?;
+        let raw = self.read_exact(len as usize)?;
+        core::str::from_utf8(raw).map_err(|_| LedgerError::CborTypeMismatch {
+            expected: MAJOR_TEXT,
+            actual: MAJOR_BYTES,
+        })
+    }
+
+    /// Decodes a definite-length map header (CBOR major type 5) and
+    /// returns the number of key-value pairs.
+    pub fn map(&mut self) -> Result<u64, LedgerError> {
+        self.expect_major(MAJOR_MAP)
+    }
+
+    /// Decodes a CBOR boolean (simple value 20 = false, 21 = true).
+    pub fn bool(&mut self) -> Result<bool, LedgerError> {
+        let b = self.read_byte()?;
+        match b {
+            v if v == (MAJOR_SIMPLE << 5) | 20 => Ok(false),
+            v if v == (MAJOR_SIMPLE << 5) | 21 => Ok(true),
+            _ => Err(LedgerError::CborTypeMismatch {
+                expected: MAJOR_SIMPLE,
+                actual: b >> 5,
+            }),
+        }
+    }
+
+    /// Skips one complete CBOR data item (including nested structures).
+    pub fn skip(&mut self) -> Result<(), LedgerError> {
+        let initial = self.read_byte()?;
+        let major = initial >> 5;
+        match major {
+            MAJOR_UNSIGNED | MAJOR_NEGATIVE => {
+                let _ = self.read_argument(initial)?;
+            }
+            MAJOR_BYTES | MAJOR_TEXT => {
+                let len = self.read_argument(initial)?;
+                let _ = self.read_exact(len as usize)?;
+            }
+            MAJOR_ARRAY => {
+                let count = self.read_argument(initial)?;
+                for _ in 0..count {
+                    self.skip()?;
+                }
+            }
+            MAJOR_MAP => {
+                let count = self.read_argument(initial)?;
+                for _ in 0..count {
+                    self.skip()?;
+                    self.skip()?;
+                }
+            }
+            MAJOR_SIMPLE => {
+                // Simple values (false, true, null) have no payload.
+                // Float16/32/64 have fixed-size payloads.
+                let ai = initial & 0x1f;
+                match ai {
+                    0..=23 => {} // simple value, no extra bytes
+                    24 => { let _ = self.read_byte()?; }
+                    25 => { let _ = self.read_exact(2)?; }
+                    26 => { let _ = self.read_exact(4)?; }
+                    27 => { let _ = self.read_exact(8)?; }
+                    _ => return Err(LedgerError::CborInvalidAdditionalInfo(ai)),
+                }
+            }
+            // Major type 6 (tags)
+            6 => {
+                let _ = self.read_argument(initial)?;
+                self.skip()?;
+            }
+            _ => return Err(LedgerError::CborInvalidAdditionalInfo(major)),
+        }
+        Ok(())
     }
 }
 

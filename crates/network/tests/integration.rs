@@ -1,7 +1,8 @@
 use yggdrasil_network::{
     BlockFetchMessage, BlockFetchState, ChainRange, ChainSyncMessage,
     ChainSyncState, HandshakeMessage, HandshakeRequest, HandshakeState,
-    HandshakeVersion, MiniProtocolDir, MiniProtocolNum, MuxChannel,
+    HandshakeVersion, KeepAliveMessage, KeepAliveState,
+    MiniProtocolDir, MiniProtocolNum, MuxChannel,
     NodeToNodeVersionData, RefuseReason, SduDecodeError, SduHeader,
     SDU_HEADER_SIZE,
 };
@@ -381,4 +382,313 @@ fn blockfetch_wire_tags() {
         4
     );
     assert_eq!(BlockFetchMessage::MsgBatchDone.wire_tag(), 5);
+}
+
+// ===========================================================================
+// KeepAlive state machine
+// ===========================================================================
+
+#[test]
+fn keepalive_happy_path_round_trip() {
+    let state = KeepAliveState::StClient;
+    let state = state
+        .transition(&KeepAliveMessage::MsgKeepAlive { cookie: 42 })
+        .expect("MsgKeepAlive from StClient");
+    assert_eq!(state, KeepAliveState::StServer);
+    let state = state
+        .transition(&KeepAliveMessage::MsgKeepAliveResponse { cookie: 42 })
+        .expect("MsgKeepAliveResponse from StServer");
+    assert_eq!(state, KeepAliveState::StClient);
+}
+
+#[test]
+fn keepalive_done_from_client() {
+    let state = KeepAliveState::StClient;
+    let state = state
+        .transition(&KeepAliveMessage::MsgDone)
+        .expect("MsgDone from StClient");
+    assert_eq!(state, KeepAliveState::StDone);
+}
+
+#[test]
+fn keepalive_illegal_transition_rejected() {
+    let err = KeepAliveState::StServer
+        .transition(&KeepAliveMessage::MsgDone)
+        .expect_err("MsgDone should be illegal from StServer");
+    assert_eq!(err.to_string(), "illegal keep-alive transition from StServer via MsgDone");
+
+    let err = KeepAliveState::StDone
+        .transition(&KeepAliveMessage::MsgKeepAlive { cookie: 1 })
+        .expect_err("MsgKeepAlive should be illegal from StDone");
+    assert_eq!(err.to_string(), "illegal keep-alive transition from StDone via MsgKeepAlive");
+}
+
+// ===========================================================================
+// KeepAlive CBOR round-trip
+// ===========================================================================
+
+#[test]
+fn keepalive_cbor_msg_keepalive_round_trip() {
+    let msg = KeepAliveMessage::MsgKeepAlive { cookie: 12345 };
+    let bytes = msg.to_cbor();
+    let decoded = KeepAliveMessage::from_cbor(&bytes).expect("decode MsgKeepAlive");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn keepalive_cbor_msg_done_round_trip() {
+    let msg = KeepAliveMessage::MsgDone;
+    let bytes = msg.to_cbor();
+    let decoded = KeepAliveMessage::from_cbor(&bytes).expect("decode MsgDone");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn keepalive_cbor_msg_response_round_trip() {
+    let msg = KeepAliveMessage::MsgKeepAliveResponse { cookie: 0xFFFF };
+    let bytes = msg.to_cbor();
+    let decoded = KeepAliveMessage::from_cbor(&bytes).expect("decode MsgKeepAliveResponse");
+    assert_eq!(msg, decoded);
+}
+
+// ===========================================================================
+// ChainSync CBOR round-trip
+// ===========================================================================
+
+#[test]
+fn chainsync_cbor_request_next_round_trip() {
+    let msg = ChainSyncMessage::MsgRequestNext;
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn chainsync_cbor_await_reply_round_trip() {
+    let msg = ChainSyncMessage::MsgAwaitReply;
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn chainsync_cbor_roll_forward_round_trip() {
+    let msg = ChainSyncMessage::MsgRollForward {
+        header: vec![1, 2, 3, 4],
+        tip: vec![5, 6, 7],
+    };
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn chainsync_cbor_roll_backward_round_trip() {
+    let msg = ChainSyncMessage::MsgRollBackward {
+        point: vec![10, 20],
+        tip: vec![30, 40, 50],
+    };
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn chainsync_cbor_find_intersect_round_trip() {
+    let msg = ChainSyncMessage::MsgFindIntersect {
+        points: vec![vec![1, 2], vec![3, 4, 5], vec![]],
+    };
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn chainsync_cbor_intersect_found_round_trip() {
+    let msg = ChainSyncMessage::MsgIntersectFound {
+        point: vec![0xAA, 0xBB],
+        tip: vec![0xCC],
+    };
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn chainsync_cbor_intersect_not_found_round_trip() {
+    let msg = ChainSyncMessage::MsgIntersectNotFound {
+        tip: vec![0xDD, 0xEE, 0xFF],
+    };
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn chainsync_cbor_done_round_trip() {
+    let msg = ChainSyncMessage::MsgDone;
+    let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+// ===========================================================================
+// BlockFetch CBOR round-trip
+// ===========================================================================
+
+#[test]
+fn blockfetch_cbor_request_range_round_trip() {
+    let msg = BlockFetchMessage::MsgRequestRange(ChainRange {
+        lower: vec![1, 2, 3],
+        upper: vec![4, 5, 6],
+    });
+    let decoded = BlockFetchMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn blockfetch_cbor_client_done_round_trip() {
+    let msg = BlockFetchMessage::MsgClientDone;
+    let decoded = BlockFetchMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn blockfetch_cbor_start_batch_round_trip() {
+    let msg = BlockFetchMessage::MsgStartBatch;
+    let decoded = BlockFetchMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn blockfetch_cbor_no_blocks_round_trip() {
+    let msg = BlockFetchMessage::MsgNoBlocks;
+    let decoded = BlockFetchMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn blockfetch_cbor_block_round_trip() {
+    let msg = BlockFetchMessage::MsgBlock {
+        block: vec![0xDE, 0xAD, 0xBE, 0xEF],
+    };
+    let decoded = BlockFetchMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn blockfetch_cbor_batch_done_round_trip() {
+    let msg = BlockFetchMessage::MsgBatchDone;
+    let decoded = BlockFetchMessage::from_cbor(&msg.to_cbor()).expect("decode");
+    assert_eq!(msg, decoded);
+}
+
+// ===========================================================================
+// Handshake CBOR round-trip
+// ===========================================================================
+
+fn mainnet_version_data() -> NodeToNodeVersionData {
+    NodeToNodeVersionData {
+        network_magic: 764824073,
+        initiator_only_diffusion_mode: false,
+        peer_sharing: 1,
+        query: false,
+    }
+}
+
+#[test]
+fn handshake_cbor_propose_versions_round_trip() {
+    let msg = HandshakeMessage::ProposeVersions(vec![
+        (HandshakeVersion::V14, mainnet_version_data()),
+        (HandshakeVersion::V15, NodeToNodeVersionData {
+            network_magic: 764824073,
+            initiator_only_diffusion_mode: true,
+            peer_sharing: 0,
+            query: true,
+        }),
+    ]);
+    let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode ProposeVersions");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn handshake_cbor_accept_version_round_trip() {
+    let msg = HandshakeMessage::AcceptVersion(HandshakeVersion::V14, mainnet_version_data());
+    let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode AcceptVersion");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn handshake_cbor_refuse_version_mismatch_round_trip() {
+    let msg = HandshakeMessage::Refuse(RefuseReason::VersionMismatch(vec![
+        HandshakeVersion(10),
+        HandshakeVersion(11),
+    ]));
+    let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode Refuse VersionMismatch");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn handshake_cbor_refuse_decode_error_round_trip() {
+    let msg = HandshakeMessage::Refuse(RefuseReason::HandshakeDecodeError(
+        HandshakeVersion::V14,
+        "bad version data".to_owned(),
+    ));
+    let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode Refuse DecodeError");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn handshake_cbor_refuse_refused_round_trip() {
+    let msg = HandshakeMessage::Refuse(RefuseReason::Refused(
+        HandshakeVersion::V15,
+        "incompatible peer".to_owned(),
+    ));
+    let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode Refuse Refused");
+    assert_eq!(msg, decoded);
+}
+
+#[test]
+fn handshake_cbor_query_reply_round_trip() {
+    let msg = HandshakeMessage::QueryReply(vec![
+        (HandshakeVersion::V14, mainnet_version_data()),
+    ]);
+    let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode QueryReply");
+    assert_eq!(msg, decoded);
+}
+
+// ===========================================================================
+// Handshake state transitions
+// ===========================================================================
+
+#[test]
+fn handshake_transition_propose_to_confirm() {
+    let state = HandshakeState::StPropose;
+    let state = state
+        .transition(&HandshakeMessage::ProposeVersions(vec![
+            (HandshakeVersion::V14, mainnet_version_data()),
+        ]))
+        .expect("ProposeVersions from StPropose");
+    assert_eq!(state, HandshakeState::StConfirm);
+}
+
+#[test]
+fn handshake_transition_confirm_to_done_accept() {
+    let state = HandshakeState::StConfirm;
+    let state = state
+        .transition(&HandshakeMessage::AcceptVersion(
+            HandshakeVersion::V14,
+            mainnet_version_data(),
+        ))
+        .expect("AcceptVersion from StConfirm");
+    assert_eq!(state, HandshakeState::StDone);
+}
+
+#[test]
+fn handshake_transition_confirm_to_done_refuse() {
+    let state = HandshakeState::StConfirm;
+    let state = state
+        .transition(&HandshakeMessage::Refuse(RefuseReason::VersionMismatch(vec![])))
+        .expect("Refuse from StConfirm");
+    assert_eq!(state, HandshakeState::StDone);
+}
+
+#[test]
+fn handshake_transition_illegal_from_done() {
+    let err = HandshakeState::StDone
+        .transition(&HandshakeMessage::ProposeVersions(vec![]))
+        .expect_err("ProposeVersions should be illegal from StDone");
+    assert_eq!(err.to_string(), "illegal handshake transition from StDone via ProposeVersions");
 }

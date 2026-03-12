@@ -1,6 +1,6 @@
 use yggdrasil_ledger::{
-    Block, BlockHeader, BlockNo, CborDecode, CborEncode, Era, HeaderHash, LedgerState, Nonce,
-    Point, SlotNo, TxId,
+    Block, BlockHeader, BlockNo, CborDecode, CborEncode, Decoder, Encoder, Era, HeaderHash,
+    LedgerState, Nonce, Point, SlotNo, TxId,
 };
 
 #[test]
@@ -191,4 +191,128 @@ fn cbor_short_hash_rejected() {
         ),
         "expected CborInvalidLength, got {err:?}"
     );
+}
+
+// ===========================================================================
+// CBOR extensions: text, map, negative, bool decode, skip
+// ===========================================================================
+
+#[test]
+fn cbor_text_round_trip() {
+    let mut enc = Encoder::new();
+    enc.text("hello, cardano!");
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    let s = dec.text().expect("decode text");
+    assert_eq!(s, "hello, cardano!");
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn cbor_text_empty_string() {
+    let mut enc = Encoder::new();
+    enc.text("");
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    let s = dec.text().expect("decode empty text");
+    assert_eq!(s, "");
+}
+
+#[test]
+fn cbor_map_round_trip() {
+    let mut enc = Encoder::new();
+    enc.map(2);
+    enc.unsigned(14).text("version fourteen");
+    enc.unsigned(15).text("version fifteen");
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    let count = dec.map().expect("decode map");
+    assert_eq!(count, 2);
+    assert_eq!(dec.unsigned().expect("key1"), 14);
+    assert_eq!(dec.text().expect("val1"), "version fourteen");
+    assert_eq!(dec.unsigned().expect("key2"), 15);
+    assert_eq!(dec.text().expect("val2"), "version fifteen");
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn cbor_negative_round_trip() {
+    let mut enc = Encoder::new();
+    // Encode -1 (n=0), -100 (n=99), -256 (n=255)
+    enc.negative(0).negative(99).negative(255);
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    assert_eq!(dec.negative().expect("n=0"), 0);  // represents -1
+    assert_eq!(dec.negative().expect("n=99"), 99); // represents -100
+    assert_eq!(dec.negative().expect("n=255"), 255); // represents -256
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn cbor_bool_decode() {
+    let mut enc = Encoder::new();
+    enc.bool(false).bool(true);
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    assert!(!dec.bool().expect("decode false"));
+    assert!(dec.bool().expect("decode true"));
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn cbor_skip_primitives() {
+    let mut enc = Encoder::new();
+    enc.unsigned(42).text("skip me").bytes(&[1, 2, 3]).bool(true);
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    // Skip all four items
+    dec.skip().expect("skip unsigned");
+    dec.skip().expect("skip text");
+    dec.skip().expect("skip bytes");
+    dec.skip().expect("skip bool");
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn cbor_skip_nested_structures() {
+    let mut enc = Encoder::new();
+    // Array [1, [2, 3], "hello"]
+    enc.array(3).unsigned(1);
+    enc.array(2).unsigned(2).unsigned(3);
+    enc.text("hello");
+
+    // Map {0: "a", 1: "b"}
+    enc.map(2);
+    enc.unsigned(0).text("a");
+    enc.unsigned(1).text("b");
+
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    dec.skip().expect("skip nested array");
+    dec.skip().expect("skip nested map");
+    assert!(dec.is_empty());
+}
+
+#[test]
+fn cbor_raw_passthrough() {
+    // Encode a value, then insert it as raw bytes into another encoder
+    let inner = SlotNo(999).to_cbor_bytes();
+
+    let mut enc = Encoder::new();
+    enc.array(2).raw(&inner).unsigned(1);
+    let bytes = enc.into_bytes();
+
+    let mut dec = Decoder::new(&bytes);
+    let len = dec.array().expect("array");
+    assert_eq!(len, 2);
+    let slot = SlotNo::decode_cbor(&mut dec).expect("decode slot");
+    assert_eq!(slot, SlotNo(999));
+    assert_eq!(dec.unsigned().expect("trailing uint"), 1);
 }

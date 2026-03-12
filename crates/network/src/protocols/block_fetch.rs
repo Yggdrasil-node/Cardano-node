@@ -159,4 +159,74 @@ impl BlockFetchMessage {
             Self::MsgBatchDone => 5,
         }
     }
+
+    /// Encode this message to CBOR bytes.
+    ///
+    /// Wire format (matching upstream `block-fetch.cddl`):
+    /// - `[0, point, point]` — MsgRequestRange
+    /// - `[1]` — MsgClientDone
+    /// - `[2]` — MsgStartBatch
+    /// - `[3]` — MsgNoBlocks
+    /// - `[4, block]` — MsgBlock
+    /// - `[5]` — MsgBatchDone
+    pub fn to_cbor(&self) -> Vec<u8> {
+        use yggdrasil_ledger::cbor::Encoder;
+
+        let mut enc = Encoder::new();
+        match self {
+            Self::MsgRequestRange(range) => {
+                enc.array(3).unsigned(0).bytes(&range.lower).bytes(&range.upper);
+            }
+            Self::MsgClientDone => {
+                enc.array(1).unsigned(1);
+            }
+            Self::MsgStartBatch => {
+                enc.array(1).unsigned(2);
+            }
+            Self::MsgNoBlocks => {
+                enc.array(1).unsigned(3);
+            }
+            Self::MsgBlock { block } => {
+                enc.array(2).unsigned(4).bytes(block);
+            }
+            Self::MsgBatchDone => {
+                enc.array(1).unsigned(5);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes.
+    pub fn from_cbor(data: &[u8]) -> Result<Self, yggdrasil_ledger::LedgerError> {
+        use yggdrasil_ledger::cbor::Decoder;
+
+        let mut dec = Decoder::new(data);
+        let arr_len = dec.array()?;
+        let tag = dec.unsigned()?;
+        let msg = match (tag, arr_len) {
+            (0, 3) => Self::MsgRequestRange(ChainRange {
+                lower: dec.bytes()?.to_vec(),
+                upper: dec.bytes()?.to_vec(),
+            }),
+            (1, 1) => Self::MsgClientDone,
+            (2, 1) => Self::MsgStartBatch,
+            (3, 1) => Self::MsgNoBlocks,
+            (4, 2) => Self::MsgBlock {
+                block: dec.bytes()?.to_vec(),
+            },
+            (5, 1) => Self::MsgBatchDone,
+            _ => {
+                return Err(yggdrasil_ledger::LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: tag as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(yggdrasil_ledger::LedgerError::CborTrailingBytes(
+                dec.remaining(),
+            ));
+        }
+        Ok(msg)
+    }
 }

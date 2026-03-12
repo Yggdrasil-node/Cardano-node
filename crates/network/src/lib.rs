@@ -13,8 +13,8 @@ pub mod protocols;
 
 // -- Handshake re-exports -----------------------------------------------------
 pub use handshake::{
-    HandshakeMessage, HandshakeRequest, HandshakeState, HandshakeVersion, NodeToNodeVersionData,
-    RefuseReason,
+    HandshakeMessage, HandshakeRequest, HandshakeState, HandshakeTransitionError,
+    HandshakeVersion, NodeToNodeVersionData, RefuseReason,
 };
 
 // -- Multiplexer re-exports ---------------------------------------------------
@@ -26,4 +26,5 @@ pub use multiplexer::{
 pub use protocols::{
     BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
     ChainSyncMessage, ChainSyncState, ChainSyncTransitionError,
+    KeepAliveMessage, KeepAliveState, KeepAliveTransitionError,
 };

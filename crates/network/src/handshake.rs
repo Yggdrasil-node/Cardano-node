@@ -121,3 +121,232 @@ pub struct HandshakeRequest {
     pub network_magic: u32,
     pub version: HandshakeVersion,
 }
+
+// ---------------------------------------------------------------------------
+// State transitions
+// ---------------------------------------------------------------------------
+
+/// Errors arising from illegal Handshake state transitions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum HandshakeTransitionError {
+    /// A message was received that is not legal in the current state.
+    #[error("illegal handshake transition from {from:?} via {msg_tag}")]
+    IllegalTransition {
+        from: HandshakeState,
+        msg_tag: &'static str,
+    },
+}
+
+impl HandshakeState {
+    /// Computes the next state given an incoming message.
+    pub fn transition(
+        self,
+        msg: &HandshakeMessage,
+    ) -> Result<Self, HandshakeTransitionError> {
+        match (self, msg) {
+            (Self::StPropose, HandshakeMessage::ProposeVersions(_)) => Ok(Self::StConfirm),
+            (Self::StConfirm, HandshakeMessage::AcceptVersion(..)) => Ok(Self::StDone),
+            (Self::StConfirm, HandshakeMessage::Refuse(_)) => Ok(Self::StDone),
+            (Self::StConfirm, HandshakeMessage::QueryReply(_)) => Ok(Self::StDone),
+            (from, msg) => Err(HandshakeTransitionError::IllegalTransition {
+                from,
+                msg_tag: msg.tag_name(),
+            }),
+        }
+    }
+}
+
+impl HandshakeMessage {
+    /// Human-readable tag name used in error messages.
+    pub fn tag_name(&self) -> &'static str {
+        match self {
+            Self::ProposeVersions(_) => "ProposeVersions",
+            Self::AcceptVersion(..) => "AcceptVersion",
+            Self::Refuse(_) => "Refuse",
+            Self::QueryReply(_) => "QueryReply",
+        }
+    }
+
+    /// The CDDL wire tag for this message variant.
+    pub fn wire_tag(&self) -> u8 {
+        match self {
+            Self::ProposeVersions(_) => 0,
+            Self::AcceptVersion(..) => 1,
+            Self::Refuse(_) => 2,
+            Self::QueryReply(_) => 3,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CBOR wire codec
+// ---------------------------------------------------------------------------
+
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::LedgerError;
+
+/// Encode a version data value as a CBOR array:
+/// `[networkMagic, initiatorOnlyDiffusionMode, peerSharing, query]`.
+fn encode_version_data(enc: &mut Encoder, vd: &NodeToNodeVersionData) {
+    enc.array(4)
+        .unsigned(u64::from(vd.network_magic))
+        .bool(vd.initiator_only_diffusion_mode)
+        .unsigned(u64::from(vd.peer_sharing))
+        .bool(vd.query);
+}
+
+/// Decode a version data value from a CBOR array.
+fn decode_version_data(dec: &mut Decoder<'_>) -> Result<NodeToNodeVersionData, LedgerError> {
+    let len = dec.array()?;
+    if len != 4 {
+        return Err(LedgerError::CborInvalidLength {
+            expected: 4,
+            actual: len as usize,
+        });
+    }
+    let network_magic = dec.unsigned()? as u32;
+    let initiator_only_diffusion_mode = dec.bool()?;
+    let peer_sharing = dec.unsigned()? as u8;
+    let query = dec.bool()?;
+    Ok(NodeToNodeVersionData {
+        network_magic,
+        initiator_only_diffusion_mode,
+        peer_sharing,
+        query,
+    })
+}
+
+/// Encode a version table as a CBOR map: `{version: versionData, ...}`.
+fn encode_version_table(
+    enc: &mut Encoder,
+    versions: &[(HandshakeVersion, NodeToNodeVersionData)],
+) {
+    enc.map(versions.len() as u64);
+    for (ver, vd) in versions {
+        enc.unsigned(u64::from(ver.0));
+        encode_version_data(enc, vd);
+    }
+}
+
+/// Decode a version table from a CBOR map.
+fn decode_version_table(
+    dec: &mut Decoder<'_>,
+) -> Result<Vec<(HandshakeVersion, NodeToNodeVersionData)>, LedgerError> {
+    let count = dec.map()?;
+    let mut versions = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let ver_num = dec.unsigned()? as u16;
+        let vd = decode_version_data(dec)?;
+        versions.push((HandshakeVersion(ver_num), vd));
+    }
+    Ok(versions)
+}
+
+impl HandshakeMessage {
+    /// Encode this message to CBOR bytes.
+    ///
+    /// Wire format (matching upstream `handshake-node-to-node-v14.cddl`):
+    /// - `[0, versionTable]` — ProposeVersions
+    /// - `[1, versionNumber, versionData]` — AcceptVersion
+    /// - `[2, refuseReason]` — Refuse
+    /// - `[3, versionTable]` — QueryReply
+    pub fn to_cbor(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        match self {
+            Self::ProposeVersions(versions) => {
+                enc.array(2).unsigned(0);
+                encode_version_table(&mut enc, versions);
+            }
+            Self::AcceptVersion(ver, vd) => {
+                enc.array(3).unsigned(1).unsigned(u64::from(ver.0));
+                encode_version_data(&mut enc, vd);
+            }
+            Self::Refuse(reason) => {
+                enc.array(2).unsigned(2);
+                match reason {
+                    RefuseReason::VersionMismatch(vs) => {
+                        enc.array(2).unsigned(0);
+                        enc.array(vs.len() as u64);
+                        for v in vs {
+                            enc.unsigned(u64::from(v.0));
+                        }
+                    }
+                    RefuseReason::HandshakeDecodeError(ver, msg) => {
+                        enc.array(3).unsigned(1).unsigned(u64::from(ver.0)).text(msg);
+                    }
+                    RefuseReason::Refused(ver, msg) => {
+                        enc.array(3).unsigned(2).unsigned(u64::from(ver.0)).text(msg);
+                    }
+                }
+            }
+            Self::QueryReply(versions) => {
+                enc.array(2).unsigned(3);
+                encode_version_table(&mut enc, versions);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes.
+    pub fn from_cbor(data: &[u8]) -> Result<Self, LedgerError> {
+        let mut dec = Decoder::new(data);
+        let arr_len = dec.array()?;
+        let tag = dec.unsigned()?;
+        let msg = match (tag, arr_len) {
+            (0, 2) => {
+                let versions = decode_version_table(&mut dec)?;
+                Self::ProposeVersions(versions)
+            }
+            (1, 3) => {
+                let ver_num = dec.unsigned()? as u16;
+                let vd = decode_version_data(&mut dec)?;
+                Self::AcceptVersion(HandshakeVersion(ver_num), vd)
+            }
+            (2, 2) => {
+                let reason_len = dec.array()?;
+                let reason_tag = dec.unsigned()?;
+                let reason = match (reason_tag, reason_len) {
+                    (0, 2) => {
+                        let count = dec.array()?;
+                        let mut vs = Vec::with_capacity(count as usize);
+                        for _ in 0..count {
+                            vs.push(HandshakeVersion(dec.unsigned()? as u16));
+                        }
+                        RefuseReason::VersionMismatch(vs)
+                    }
+                    (1, 3) => {
+                        let ver_num = dec.unsigned()? as u16;
+                        let msg = dec.text()?.to_owned();
+                        RefuseReason::HandshakeDecodeError(HandshakeVersion(ver_num), msg)
+                    }
+                    (2, 3) => {
+                        let ver_num = dec.unsigned()? as u16;
+                        let msg = dec.text()?.to_owned();
+                        RefuseReason::Refused(HandshakeVersion(ver_num), msg)
+                    }
+                    _ => {
+                        return Err(LedgerError::CborTypeMismatch {
+                            expected: 0,
+                            actual: reason_tag as u8,
+                        });
+                    }
+                };
+                Self::Refuse(reason)
+            }
+            (3, 2) => {
+                let versions = decode_version_table(&mut dec)?;
+                Self::QueryReply(versions)
+            }
+            _ => {
+                return Err(LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: tag as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(LedgerError::CborTrailingBytes(dec.remaining()));
+        }
+        Ok(msg)
+    }
+}
