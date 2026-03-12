@@ -1,0 +1,12 @@
+; Pinned foundation fixture for early code generation integration.
+tx-body = {
+  fee: uint,
+  metadata-hash: bytes,
+}
+
+block-header = {
+  slot: uint,
+  issuer-vkey: bytes,
+}
+
+tx-seq = [tx-body, block-header]

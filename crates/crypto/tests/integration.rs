@@ -1,4 +1,7 @@
-use yggdrasil_crypto::{Blake2bHash, CryptoError, SigningKey, hash_bytes};
+use yggdrasil_crypto::{
+    Blake2bHash, CryptoError, Signature, SigningKey, VerificationKey,
+    ed25519_rfc8032_vectors, hash_bytes,
+};
 
 #[test]
 fn blake2b_hash_is_deterministic() {
@@ -40,4 +43,32 @@ fn ed25519_rejects_modified_message() {
         .expect_err("signature verification should fail for a modified message");
 
     assert_eq!(error, CryptoError::SignatureVerificationFailed);
+}
+
+#[test]
+fn ed25519_matches_rfc8032_test_vectors() {
+    for vector in ed25519_rfc8032_vectors() {
+        let signing_key = SigningKey::from_bytes(vector.secret_key);
+        let derived_verification_key = signing_key
+            .verification_key()
+            .expect("verification key derivation should succeed for vector seed");
+        let expected_verification_key = VerificationKey::from_bytes(vector.public_key);
+        let expected_signature = Signature::from_bytes(vector.signature);
+
+        assert_eq!(
+            derived_verification_key, expected_verification_key,
+            "public key mismatch for {}",
+            vector.name
+        );
+
+        let signature = signing_key
+            .sign(&vector.message)
+            .expect("signing should succeed for vector seed");
+
+        assert_eq!(signature, expected_signature, "signature mismatch for {}", vector.name);
+
+        derived_verification_key
+            .verify(&vector.message, &expected_signature)
+            .expect("RFC 8032 signature should verify");
+    }
 }

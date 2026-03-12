@@ -10,5 +10,8 @@ serde.workspace = true
 thiserror.workspace = true
 yggdrasil-crypto.workspace = true
 
+[dev-dependencies]
+yggdrasil-cddl-codegen = { path = "../cddl-codegen" }
+
 [lints]
 workspace = true
