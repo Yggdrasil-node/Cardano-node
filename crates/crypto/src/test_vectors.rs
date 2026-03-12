@@ -30,6 +30,19 @@ pub struct VrfPraosBatchCompatTestVector {
     pub output: [u8; 64],
 }
 
+/// A deterministic two-period SimpleKES compatibility vector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SimpleKesTwoPeriodTestVector {
+    pub name: &'static str,
+    pub seeds: [[u8; 32]; 2],
+    pub verification_keys: [[u8; 32]; 2],
+    pub period: u32,
+    pub message: Vec<u8>,
+    pub signature: [u8; 64],
+    pub indexed_signature: [u8; 68],
+    pub compact_indexed_signature: [u8; 100],
+}
+
 /// Returns a small set of published RFC 8032 Ed25519 vectors used as baseline
 /// compatibility fixtures.
 pub fn ed25519_rfc8032_vectors() -> Vec<Ed25519TestVector> {
@@ -183,6 +196,58 @@ pub fn vrf_praos_batchcompat_test_vectors() -> Vec<VrfPraosBatchCompatTestVector
             "9527b87b462ce36dab2d14ccf80c53cc",
             "cf6758f058c5b1c856b116388152bbe5",
             "09ee3b9ecfe63d93c3b4346c1fbc6c54",
+        )),
+    }]
+}
+
+/// Returns deterministic two-period SimpleKES fixtures derived from RFC 8032
+/// Ed25519 vectors.
+pub fn simple_kes_two_period_test_vectors() -> Vec<SimpleKesTwoPeriodTestVector> {
+    vec![SimpleKesTwoPeriodTestVector {
+        name: "simple-kes-2p-rfc8032-period1-msg72",
+        seeds: [
+            decode_hex_array(concat!(
+                "9d61b19deffd5a60ba844af492ec2cc4",
+                "4449c5697b326919703bac031cae7f60",
+            )),
+            decode_hex_array(concat!(
+                "4ccd089b28ff96da9db6c346ec114e0f",
+                "5b8a319f35aba624da8cf6ed4fb8a6fb",
+            )),
+        ],
+        verification_keys: [
+            decode_hex_array(concat!(
+                "d75a980182b10ab7d54bfed3c964073a",
+                "0ee172f3daa62325af021a68f707511a",
+            )),
+            decode_hex_array(concat!(
+                "3d4017c3e843895a92b70aa74d1b7ebc",
+                "9c982ccf2ec4968cc0cd55f12af4660c",
+            )),
+        ],
+        period: 1,
+        message: decode_hex_vec("72"),
+        signature: decode_hex_array(concat!(
+            "92a009a9f0d4cab8720e820b5f642540",
+            "a2b27b5416503f8fb3762223ebdb69da",
+            "085ac1e43e15996e458f3613d0f11d8c",
+            "387b2eaeb4302aeeb00d291612bb0c00",
+        )),
+        indexed_signature: decode_hex_array(concat!(
+            "00000001",
+            "92a009a9f0d4cab8720e820b5f642540",
+            "a2b27b5416503f8fb3762223ebdb69da",
+            "085ac1e43e15996e458f3613d0f11d8c",
+            "387b2eaeb4302aeeb00d291612bb0c00",
+        )),
+        compact_indexed_signature: decode_hex_array(concat!(
+            "00000001",
+            "92a009a9f0d4cab8720e820b5f642540",
+            "a2b27b5416503f8fb3762223ebdb69da",
+            "085ac1e43e15996e458f3613d0f11d8c",
+            "387b2eaeb4302aeeb00d291612bb0c00",
+            "3d4017c3e843895a92b70aa74d1b7ebc",
+            "9c982ccf2ec4968cc0cd55f12af4660c",
         )),
     }]
 }

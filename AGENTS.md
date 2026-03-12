@@ -30,15 +30,15 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `crates/crypto`: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class> and <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
 - `crates/cddl-codegen`: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras> and <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
 - `crates/ledger`: <https://github.com/IntersectMBO/cardano-ledger> and <https://github.com/IntersectMBO/formal-ledger-specifications>
-- `crates/storage`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus>
-- `crates/consensus`: <https://github.com/IntersectMBO/ouroboros-consensus> and <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec>
-- `crates/mempool`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus> and <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api>
-- `crates/network`: <https://github.com/IntersectMBO/ouroboros-network> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
-- `node`: <https://github.com/IntersectMBO/cardano-node> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration>
+- `crates/storage`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
+- `crates/consensus`: <https://github.com/IntersectMBO/ouroboros-consensus/> and <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec>
+- `crates/mempool`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/> and <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
+- `crates/network`: <https://github.com/IntersectMBO/ouroboros-network/> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
+- `node`: <https://github.com/IntersectMBO/cardano-node/> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
 
 ## Non-Negotiable Rules
 - Always write typesafe Rust code.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly.
 - Always research the official relevant upstream IntersectMBO repositories before introducing any local terminology, behavior, or design that is not directly traceable to an upstream source.
 - New dependencies MUST be justified in `docs/DEPENDENCIES.md` before they are treated as accepted.
 - FFI-backed cryptography and hidden native dependencies MUST NOT be introduced.

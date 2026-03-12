@@ -1,10 +1,10 @@
 use yggdrasil_crypto::{
     Blake2bHash, CompactKesSignature, CryptoError, KesPeriod, KesSigningKey,
-    Signature, SigningKey, SimpleKesSignature, SimpleKesSigningKey,
-    SimpleKesVerificationKey, VerificationKey, VrfBatchCompatProof, VrfOutput,
-    VrfProof, VrfSecretKey,
-    ed25519_rfc8032_vectors, hash_bytes, vrf_praos_batchcompat_test_vectors,
-    vrf_praos_test_vectors,
+    Signature, SigningKey, SimpleCompactKesSignature, SimpleKesSignature,
+    SimpleKesSigningKey, SimpleKesVerificationKey, VerificationKey,
+    VrfBatchCompatProof, VrfOutput, VrfProof, VrfSecretKey,
+    ed25519_rfc8032_vectors, hash_bytes, simple_kes_two_period_test_vectors,
+    vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
 };
 
 #[test]
@@ -370,6 +370,88 @@ fn simple_kes_indexed_signature_rejects_tampered_period() {
         .expect_err("SimpleKES indexed verification should reject out-of-range embedded periods");
 
     assert_eq!(error, CryptoError::InvalidKesPeriod(5));
+}
+
+#[test]
+fn simple_kes_compact_indexed_signature_round_trips_and_verifies() {
+    let signing_key = SimpleKesSigningKey::from_seeds(vec![[81_u8; 32], [82_u8; 32]])
+        .expect("SimpleKES should accept non-empty seed sets");
+    let verification_key = signing_key
+        .verification_key()
+        .expect("SimpleKES verification key derivation should succeed");
+    let signature = signing_key
+        .sign_indexed_compact(KesPeriod(1), b"indexed-compact")
+        .expect("SimpleKES should produce compact indexed signatures in-range");
+    let decoded = SimpleCompactKesSignature::from_bytes(signature.to_bytes());
+
+    assert_eq!(decoded, signature);
+    assert_eq!(decoded.period(), KesPeriod(1));
+    verification_key
+        .verify_indexed_compact(b"indexed-compact", &decoded)
+        .expect("SimpleKES compact indexed signatures should verify");
+}
+
+#[test]
+fn simple_kes_compact_indexed_signature_rejects_mismatched_key() {
+    let signing_key = SimpleKesSigningKey::from_seeds(vec![[91_u8; 32], [92_u8; 32]])
+        .expect("SimpleKES should accept non-empty seed sets");
+    let verification_key = signing_key
+        .verification_key()
+        .expect("SimpleKES verification key derivation should succeed");
+    let signature = signing_key
+        .sign_indexed_compact(KesPeriod(1), b"indexed-compact-mismatch")
+        .expect("SimpleKES should produce compact indexed signatures in-range");
+
+    let mut tampered_bytes = signature.to_bytes();
+    tampered_bytes[(4 + 64)..].fill(0);
+    let tampered = SimpleCompactKesSignature::from_bytes(tampered_bytes);
+    let error = verification_key
+        .verify_indexed_compact(b"indexed-compact-mismatch", &tampered)
+        .expect_err("SimpleKES compact indexed verification should reject embedded key mismatch");
+
+    assert_eq!(error, CryptoError::KesVerificationKeyMismatch);
+}
+
+#[test]
+fn simple_kes_fixture_vectors_match_exact_signature_bytes() {
+    for vector in simple_kes_two_period_test_vectors() {
+        let signing_key = SimpleKesSigningKey::from_seeds(vector.seeds.to_vec())
+            .expect("SimpleKES fixture seeds should build a signing key");
+        let verification_key = signing_key
+            .verification_key()
+            .expect("SimpleKES fixture should derive verification keys");
+        let period = KesPeriod(vector.period);
+
+        assert_eq!(verification_key.to_bytes().len(), vector.verification_keys.len() * 32);
+        assert_eq!(&verification_key.to_bytes()[..32], vector.verification_keys[0].as_slice());
+        assert_eq!(&verification_key.to_bytes()[32..64], vector.verification_keys[1].as_slice());
+
+        let signature = signing_key
+            .sign(period, &vector.message)
+            .expect("SimpleKES fixture period should sign");
+        let indexed = signing_key
+            .sign_indexed(period, &vector.message)
+            .expect("SimpleKES fixture period should sign with indexed encoding");
+        let compact_indexed = signing_key
+            .sign_indexed_compact(period, &vector.message)
+            .expect("SimpleKES fixture period should sign with compact indexed encoding");
+
+        assert_eq!(signature.to_bytes(), vector.signature, "signature mismatch for {}", vector.name);
+        assert_eq!(indexed.to_bytes(), vector.indexed_signature, "indexed signature mismatch for {}", vector.name);
+        assert_eq!(
+            compact_indexed.to_bytes(),
+            vector.compact_indexed_signature,
+            "compact indexed signature mismatch for {}",
+            vector.name
+        );
+
+        verification_key
+            .verify_indexed(&vector.message, &indexed)
+            .expect("indexed fixture signature should verify");
+        verification_key
+            .verify_indexed_compact(&vector.message, &compact_indexed)
+            .expect("compact indexed fixture signature should verify");
+    }
 }
 
 #[test]

@@ -21,12 +21,13 @@ pub use error::CryptoError;
 /// Key-evolving signature period, key, and signature wrappers.
 pub use kes::{
 	CompactKesSignature, KesPeriod, KesSignature, KesSigningKey, KesVerificationKey,
-	SimpleKesSignature, SimpleKesSigningKey, SimpleKesVerificationKey,
+	SimpleCompactKesSignature, SimpleKesSignature, SimpleKesSigningKey, SimpleKesVerificationKey,
 };
 /// RFC-backed Ed25519 test vector structures and fixtures.
 pub use test_vectors::{
-	Ed25519TestVector, VrfPraosBatchCompatTestVector, VrfPraosTestVector,
-	ed25519_rfc8032_vectors, vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
+	Ed25519TestVector, SimpleKesTwoPeriodTestVector, VrfPraosBatchCompatTestVector,
+	VrfPraosTestVector, ed25519_rfc8032_vectors, simple_kes_two_period_test_vectors,
+	vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
 };
 /// VRF byte-backed key, proof, and output types.
 pub use vrf::{
