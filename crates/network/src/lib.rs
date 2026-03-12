@@ -1,15 +1,29 @@
-//! Networking-facing types for handshake, multiplexing, and mini-protocol state.
+//! Networking types for Ouroboros handshake, multiplexing, and mini-protocol
+//! state machines.
+//!
+//! This crate models the node-to-node protocol surface defined by the
+//! [Ouroboros network specifications](https://github.com/IntersectMBO/ouroboros-network/).
 
-/// Handshake version and request types.
+/// Handshake negotiation types and state machine.
 pub mod handshake;
-/// Multiplexer channel helpers.
+/// Multiplexer framing, SDU header, and protocol numbering.
 pub mod multiplexer;
-/// Mini-protocol state modules.
+/// Mini-protocol state machine modules.
 pub mod protocols;
 
-/// Handshake request and negotiated version wrappers.
-pub use handshake::{HandshakeRequest, HandshakeVersion};
-/// Multiplexer channel identifier.
-pub use multiplexer::MuxChannel;
-/// Exported ChainSync and BlockFetch protocol states.
-pub use protocols::{BlockFetchState, ChainSyncState};
+// -- Handshake re-exports -----------------------------------------------------
+pub use handshake::{
+    HandshakeMessage, HandshakeRequest, HandshakeState, HandshakeVersion, NodeToNodeVersionData,
+    RefuseReason,
+};
+
+// -- Multiplexer re-exports ---------------------------------------------------
+pub use multiplexer::{
+    MiniProtocolDir, MiniProtocolNum, MuxChannel, SduDecodeError, SduHeader, SDU_HEADER_SIZE,
+};
+
+// -- Protocol re-exports ------------------------------------------------------
+pub use protocols::{
+    BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
+    ChainSyncMessage, ChainSyncState, ChainSyncTransitionError,
+};

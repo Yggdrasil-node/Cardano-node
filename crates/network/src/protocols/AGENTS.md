@@ -22,5 +22,8 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - Shelley networking spec PDF: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
 
 ## Current Phase
-- ChainSync and BlockFetch are the primary targets.
-- Keep other protocol additions behind stable shared protocol patterns.
+- ChainSync has 5 states (StIdle, StCanAwait, StMustReply, StIntersect, StDone) and 8 message variants with validated transitions.
+- BlockFetch has 4 states (StIdle, StBusy, StStreaming, StDone) and 6 message variants with validated transitions.
+- Wire tags and naming match upstream `Ouroboros.Network.Protocol.{ChainSync,BlockFetch}.Type`.
+- Payload types are opaque (`Vec<u8>`); typed point/tip/header/block payloads will come with CBOR codec work.
+- Other protocols (TxSubmission2, KeepAlive, PeerSharing) deferred until shared patterns stabilize.

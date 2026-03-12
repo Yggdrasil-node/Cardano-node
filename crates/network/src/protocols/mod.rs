@@ -1,9 +1,9 @@
-/// BlockFetch protocol state definitions.
+/// BlockFetch protocol state machine and messages.
 mod block_fetch;
-/// ChainSync protocol state definitions.
+/// ChainSync protocol state machine and messages.
 mod chain_sync;
 
-/// Exported BlockFetch protocol states.
-pub use block_fetch::BlockFetchState;
-/// Exported ChainSync protocol states.
-pub use chain_sync::ChainSyncState;
+pub use block_fetch::{
+    BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
+};
+pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
