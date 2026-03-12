@@ -635,4 +635,128 @@ mod tests {
         assert_eq!(decoded.challenge, vector.proof[32..48]);
         assert_eq!(decoded.response.to_bytes(), vector.proof[48..80]);
     }
+
+    #[test]
+    fn diagnose_ver13_standard_12_verification_equation() {
+        // vrf_ver13_standard_12 vector from cardano-base
+        let pk_hex = "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025";
+        let msg_hex = "af82";
+        let pi_hex = "926e895d308f5e328e7aa159c06eddbe56d06846abf5d98c2512235eaa57fdce\
+                       a012f35433df219a88ab0f9481f4e0065d00422c3285f3d34a8b0202f20bac60\
+                       fb613986d171b3e98319c7ca4dc44c5dd8314a6e5616c1a4f16ce72bd7a0c25a\
+                       374e7ef73027e14760d42e77341fe05467bb286cc2c9d7fde29120a0b2320d04";
+
+        let pk = hex_to_array::<32>(pk_hex);
+        let msg = hex_to_vec(msg_hex);
+        let proof_bytes = hex_to_array::<128>(pi_hex);
+
+        // Compute the H2C expanded + reduced representative
+        let mut string_to_hash = Vec::with_capacity(pk.len() + msg.len());
+        string_to_hash.extend_from_slice(&pk);
+        string_to_hash.extend_from_slice(&msg);
+        let expanded = cardano_h2c_string_to_hash_sha512(
+            48, RFC9380_EDWARDS25519_ELL2_NU_SUITE, &string_to_hash,
+        );
+        let mut hash_input = [0_u8; 64];
+        for (index, value) in expanded.iter().rev().enumerate() {
+            hash_input[index] = *value;
+        }
+        let representative = reduce_hash_input_to_representative(&hash_input);
+        eprintln!("representative = {:02x?}", representative);
+        eprintln!("repr high bit  = {}", representative[31] >> 7);
+
+        // H from our current implementation (Legacy::from_representative → map_fe_to_edwards)
+        let h_current = encode_batchcompat_hash_point(&pk, &msg).unwrap();
+        eprintln!("H current      = {:02x?}", h_current.compress().to_bytes());
+
+        // H from negating the current
+        let h_neg = -h_current;
+        eprintln!("H negated      = {:02x?}", h_neg.compress().to_bytes());
+
+        // Try verification with current H
+        let decoded = decode_batchcompat_proof(&proof_bytes).unwrap();
+        let public_key = parse_point(&pk).unwrap();
+
+        for (label, h_point) in [("current", h_current), ("negated", h_neg)] {
+            let challenge = batchcompat_challenge(
+                &pk,
+                &h_point.compress().to_bytes(),
+                &proof_bytes[..32].try_into().unwrap(),
+                &proof_bytes[32..64].try_into().unwrap(),
+                &proof_bytes[64..96].try_into().unwrap(),
+            );
+            let c = truncated_challenge_scalar(challenge);
+            let neg_c = -c;
+
+            let expected_u = EdwardsPoint::vartime_double_scalar_mul_basepoint(
+                &neg_c, &public_key, &decoded.response,
+            ).compress().to_bytes();
+            let expected_v = EdwardsPoint::vartime_multiscalar_mul(
+                [&neg_c, &decoded.response],
+                [&decoded.gamma, &h_point],
+            ).compress().to_bytes();
+
+            let ann1: [u8; 32] = proof_bytes[32..64].try_into().unwrap();
+            let ann2: [u8; 32] = proof_bytes[64..96].try_into().unwrap();
+
+            let u_ok = expected_u == ann1;
+            let v_ok = expected_v == ann2;
+            eprintln!("{label}: U={u_ok} V={v_ok}");
+        }
+
+        // Also try using MontgomeryPoint pathway with both signs
+        use curve25519_elligator2::MontgomeryPoint as LegacyMont;
+        let mont = LegacyMont::from_representative::<Legacy>(&representative).unwrap();
+        for sign in [0_u8, 1_u8] {
+            let ed = mont.to_edwards(sign);
+            if let Some(ed_point) = ed {
+                let cofactored = ed_point.mul_by_cofactor();
+                let bytes = cofactored.compress().to_bytes();
+                // Convert to curve25519-dalek EdwardsPoint
+                let h_point = parse_point(&bytes).unwrap();
+                eprintln!("mont sign={sign} H = {:02x?}", bytes);
+
+                let challenge = batchcompat_challenge(
+                    &pk,
+                    &h_point.compress().to_bytes(),
+                    &proof_bytes[..32].try_into().unwrap(),
+                    &proof_bytes[32..64].try_into().unwrap(),
+                    &proof_bytes[64..96].try_into().unwrap(),
+                );
+                let c = truncated_challenge_scalar(challenge);
+                let neg_c = -c;
+
+                let expected_u = EdwardsPoint::vartime_double_scalar_mul_basepoint(
+                    &neg_c, &public_key, &decoded.response,
+                ).compress().to_bytes();
+                let expected_v = EdwardsPoint::vartime_multiscalar_mul(
+                    [&neg_c, &decoded.response],
+                    [&decoded.gamma, &h_point],
+                ).compress().to_bytes();
+
+                let ann1: [u8; 32] = proof_bytes[32..64].try_into().unwrap();
+                let ann2: [u8; 32] = proof_bytes[64..96].try_into().unwrap();
+
+                let u_ok = expected_u == ann1;
+                let v_ok = expected_v == ann2;
+                eprintln!("mont sign={sign}: U={u_ok} V={v_ok}");
+            } else {
+                eprintln!("mont sign={sign}: to_edwards returned None");
+            }
+        }
+
+        // For now, just mark this as diagnostic — will fail
+        panic!("diagnostic test: see stderr output above");
+    }
+
+    fn hex_to_vec(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i+2], 16).unwrap())
+            .collect()
+    }
+
+    fn hex_to_array<const N: usize>(s: &str) -> [u8; N] {
+        let v = hex_to_vec(s);
+        v.try_into().unwrap()
+    }
 }
