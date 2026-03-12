@@ -1,0 +1,14 @@
+[package]
+name = "yggdrasil-consensus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+yggdrasil-crypto.workspace = true
+yggdrasil-ledger.workspace = true
+
+[lints]
+workspace = true

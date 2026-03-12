@@ -1,0 +1,11 @@
+use thiserror::Error;
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum CryptoError {
+    #[error("invalid ed25519 verification key")]
+    InvalidVerificationKey,
+    #[error("ed25519 signature verification failed")]
+    SignatureVerificationFailed,
+    #[error("feature not implemented: {0}")]
+    Unimplemented(&'static str),
+}

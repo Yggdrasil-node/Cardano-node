@@ -1,0 +1,17 @@
+[package]
+name = "yggdrasil-cddl-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "cddl-codegen"
+path = "src/main.rs"
+
+[dependencies]
+eyre.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
