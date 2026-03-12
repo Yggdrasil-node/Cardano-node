@@ -1,4 +1,5 @@
 use crate::{CryptoError, SigningKey};
+use curve25519_elligator2::{edwards::EdwardsPoint as LegacyEdwardsPoint, elligator2::Legacy};
 use curve25519_dalek::{
     edwards::{CompressedEdwardsY, EdwardsPoint},
     scalar::Scalar,
@@ -198,7 +199,7 @@ impl VrfVerificationKey {
 
         let decoded = decode_batchcompat_proof(&proof.0)?;
         let public_key = parse_point(&self.0).map_err(|_| CryptoError::InvalidVrfVerificationKey)?;
-        let h_point = encode_batchcompat_hash_point(&self.0, message);
+        let h_point = encode_batchcompat_hash_point(&self.0, message)?;
 
         let challenge = batchcompat_challenge(
             &self.0,
@@ -322,17 +323,156 @@ fn proof_to_output<const N: usize>(proof: &[u8; N], batch_compat: bool) -> Resul
 fn encode_batchcompat_hash_point(
     verification_key: &[u8; VRF_VERIFICATION_KEY_SIZE],
     message: &[u8],
-) -> EdwardsPoint {
-    let mut input = Vec::with_capacity(
-        RFC9380_EDWARDS25519_ELL2_NU_SUITE.len() + verification_key.len() + message.len(),
+) -> Result<EdwardsPoint, CryptoError> {
+    let mut string_to_hash = Vec::with_capacity(verification_key.len() + message.len());
+    string_to_hash.extend_from_slice(verification_key);
+    string_to_hash.extend_from_slice(message);
+
+    let expanded = cardano_h2c_string_to_hash_sha512(
+        48,
+        RFC9380_EDWARDS25519_ELL2_NU_SUITE,
+        &string_to_hash,
     );
-    input.extend_from_slice(RFC9380_EDWARDS25519_ELL2_NU_SUITE);
-    input.extend_from_slice(verification_key);
-    input.extend_from_slice(message);
-    #[allow(deprecated)]
-    {
-        EdwardsPoint::nonspec_map_to_curve::<Sha512>(&input)
+
+    let mut hash_input = [0_u8; 64];
+    for (index, value) in expanded.iter().rev().enumerate() {
+        hash_input[index] = *value;
     }
+
+    let representative = reduce_hash_input_to_representative(&hash_input);
+    let mapped = LegacyEdwardsPoint::from_representative::<Legacy>(&representative)
+        .ok_or(CryptoError::InvalidVrfProof)?
+        .mul_by_cofactor()
+        .compress()
+        .to_bytes();
+
+    parse_point(&mapped)
+}
+
+fn cardano_h2c_string_to_hash_sha512(h_len: u8, dst: &[u8], message: &[u8]) -> Vec<u8> {
+    let mut effective_dst = dst.to_vec();
+    if effective_dst.len() > u8::MAX as usize {
+        let mut hash = Sha512::new();
+        hash.update(b"H2C-OVERSIZE-DST-");
+        hash.update(&effective_dst);
+        effective_dst = hash.finalize().to_vec();
+    }
+
+    let dst_len_u8 = u8::try_from(effective_dst.len())
+        .expect("effective DST length should fit in one byte");
+    let mut t = [0_u8, h_len, 0_u8];
+
+    let mut hash = Sha512::new();
+    hash.update([0_u8; 128]);
+    hash.update(message);
+    hash.update(t);
+    hash.update(&effective_dst);
+    hash.update([dst_len_u8]);
+    let u0: [u8; 64] = hash.finalize().into();
+
+    let mut output = vec![0_u8; usize::from(h_len)];
+    let mut ux = [0_u8; 64];
+    let mut offset = 0_usize;
+
+    while offset < output.len() {
+        for (slot, value) in ux.iter_mut().zip(u0.iter()) {
+            *slot ^= *value;
+        }
+
+        t[2] = t[2].wrapping_add(1);
+        let mut chunk_hash = Sha512::new();
+        chunk_hash.update(ux);
+        chunk_hash.update([t[2]]);
+        chunk_hash.update(&effective_dst);
+        chunk_hash.update([dst_len_u8]);
+        ux = chunk_hash.finalize().into();
+
+        let copy_len = core::cmp::min(ux.len(), output.len() - offset);
+        output[offset..offset + copy_len].copy_from_slice(&ux[..copy_len]);
+        offset += copy_len;
+    }
+
+    output
+}
+
+fn reduce_hash_input_to_representative(hash_input: &[u8; 64]) -> [u8; 32] {
+    let mut lower = [0_u8; 32];
+    let mut upper = [0_u8; 32];
+    lower.copy_from_slice(&hash_input[..32]);
+    upper.copy_from_slice(&hash_input[32..]);
+    let lower_high_bit = (lower[31] >> 7) as u16;
+    let upper_high_bit = (upper[31] >> 7) as u16;
+    lower[31] &= 0x7f;
+    upper[31] &= 0x7f;
+
+    let mut reduced = [0_u8; 33];
+    let mut carry: u16 = 0;
+    for index in 0..32 {
+        let value = u16::from(lower[index]) + (u16::from(upper[index]) * 38) + carry;
+        reduced[index] = (value & 0xff) as u8;
+        carry = value >> 8;
+    }
+    reduced[32] = carry as u8;
+
+    let extra = (lower_high_bit * 19) + (upper_high_bit * 722);
+    let mut carry_extra = extra;
+    let mut index = 0_usize;
+    while carry_extra > 0 {
+        let value = u16::from(reduced[index]) + (carry_extra & 0xff);
+        reduced[index] = (value & 0xff) as u8;
+        carry_extra = (carry_extra >> 8) + (value >> 8);
+        index += 1;
+    }
+
+    let mut representative = [0_u8; 32];
+    representative.copy_from_slice(&reduced[..32]);
+
+    let high = u16::from(reduced[31] >> 7) + (u16::from(reduced[32]) << 1);
+    representative[31] &= 0x7f;
+
+    let mut carry_high = high * 19;
+    let mut position = 0_usize;
+    while carry_high > 0 {
+        let value = u16::from(representative[position]) + (carry_high & 0xff);
+        representative[position] = (value & 0xff) as u8;
+        carry_high = (carry_high >> 8) + (value >> 8);
+        position += 1;
+    }
+
+    let high_second_fold = representative[31] >> 7;
+    representative[31] &= 0x7f;
+    if high_second_fold != 0 {
+        let mut carry_second_fold = u16::from(high_second_fold) * 19;
+        let mut position = 0_usize;
+        while carry_second_fold > 0 {
+            let value = u16::from(representative[position]) + (carry_second_fold & 0xff);
+            representative[position] = (value & 0xff) as u8;
+            carry_second_fold = (carry_second_fold >> 8) + (value >> 8);
+            position += 1;
+        }
+    }
+
+    const P: [u8; 32] = [
+        0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0x7f,
+    ];
+
+    if representative >= P {
+        let mut borrow = 0_i16;
+        for idx in 0..32 {
+            let value = i16::from(representative[idx]) - i16::from(P[idx]) - borrow;
+            if value < 0 {
+                representative[idx] = (value + 256) as u8;
+                borrow = 1;
+            } else {
+                representative[idx] = value as u8;
+                borrow = 0;
+            }
+        }
+    }
+
+    representative
 }
 
 fn batchcompat_challenge(

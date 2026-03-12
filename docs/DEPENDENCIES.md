@@ -5,6 +5,7 @@ This file defines how dependencies are introduced into Yggdrasil.
 ## Approved Now
 - `blake2`: pure Rust hashing for Blake2b-based primitives.
 - `curve25519-dalek`: curve operations used in the crypto foundation.
+- `curve25519-elligator2`: pure Rust legacy elligator2 mapping support needed to mirror `cardano-crypto-praos` batch-compatible VRF hash-to-curve behavior; rejected alternatives were FFI bindings to libsodium/cardano C code and ad-hoc local finite-field reimplementations, and this crate introduces no hidden native build requirements.
 - `ed25519-dalek`: pure Rust Ed25519 signing and verification built on RustCrypto and dalek primitives.
 - `sha2`: pure Rust SHA-512 required for Praos-compatible VRF proof-to-output hashing; rejected alternatives were hidden FFI wrappers and reimplementing SHA-512 locally, and it introduces no native build requirements.
 - `thiserror`: library error types.
