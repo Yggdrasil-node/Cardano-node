@@ -1,5 +1,6 @@
 use crate::{CryptoError, Signature, SigningKey, VerificationKey};
 use std::fmt;
+use subtle::ConstantTimeEq;
 
 /// Serialized size of the single-period KES signing key.
 pub const KES_SIGNING_KEY_SIZE: usize = 32;
@@ -24,7 +25,7 @@ pub struct KesPeriod(pub u32);
 ///
 /// This is currently aligned with upstream `SingleKES Ed25519DSIGN` behavior:
 /// the seed serialisation matches Ed25519 and only period `0` is valid.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct KesSigningKey(pub [u8; KES_SIGNING_KEY_SIZE]);
 
 /// A byte-backed single-period KES verification key.
@@ -84,6 +85,14 @@ impl KesPeriod {
             .ok_or(CryptoError::KesPeriodOverflow)
     }
 }
+
+impl PartialEq for KesSigningKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ct_eq(&other.0).into()
+    }
+}
+
+impl Eq for KesSigningKey {}
 
 impl KesSigningKey {
     /// Constructs a KES signing key from its 32-byte seed encoding.

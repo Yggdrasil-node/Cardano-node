@@ -193,6 +193,16 @@ fn single_kes_round_trip_sign_and_verify() {
 }
 
 #[test]
+fn kes_signing_key_equality_is_byte_exact() {
+    let left = KesSigningKey::from_bytes([11_u8; 32]);
+    let same = KesSigningKey::from_bytes([11_u8; 32]);
+    let different = KesSigningKey::from_bytes([12_u8; 32]);
+
+    assert!(left == same);
+    assert!(left != different);
+}
+
+#[test]
 fn single_kes_rejects_invalid_periods() {
     let signing_key = KesSigningKey::from_bytes([13_u8; 32]);
     let verification_key = signing_key
