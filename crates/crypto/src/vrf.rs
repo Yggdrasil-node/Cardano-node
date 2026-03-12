@@ -1,5 +1,5 @@
 use crate::{CryptoError, SigningKey};
-use curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar};
+use curve25519_dalek::{edwards::{CompressedEdwardsY, EdwardsPoint}, scalar::Scalar};
 use curve25519_dalek::traits::IsIdentity;
 use sha2::{Digest, Sha512};
 use std::fmt;
@@ -21,6 +21,7 @@ pub const VRF_BATCHCOMPAT_PROOF_SIZE: usize = 128;
 pub const VRF_OUTPUT_SIZE: usize = 64;
 /// Serialized size of a Praos VRF seed.
 pub const VRF_SEED_SIZE: usize = 32;
+const VRF_CHALLENGE_SIZE: usize = 16;
 
 /// A byte-backed Praos VRF signing key.
 ///
@@ -177,7 +178,10 @@ impl VrfProof {
     /// This checks point and scalar encoding constraints that are required
     /// before proof verification can proceed.
     pub fn validate(&self) -> Result<(), CryptoError> {
-        parse_gamma_bytes(&self.0)?;
+        let decoded = decode_standard_proof(&self.0)?;
+        let _ = decoded.gamma;
+        let _ = decoded.challenge;
+        let _ = decoded.response;
         Ok(())
     }
 
@@ -237,6 +241,29 @@ fn proof_to_output<const N: usize>(proof: &[u8; N], batch_compat: bool) -> Resul
     Ok(VrfOutput(hash.finalize().into()))
 }
 
+fn decode_standard_proof(proof: &[u8; VRF_PROOF_SIZE]) -> Result<DecodedStandardProof, CryptoError> {
+    let gamma = parse_point(
+        &proof[..32]
+            .try_into()
+            .expect("gamma slice should match the fixed point length"),
+    )?;
+    let challenge = proof[32..32 + VRF_CHALLENGE_SIZE]
+        .try_into()
+        .expect("challenge slice should match the fixed challenge length");
+    let response_bytes: [u8; 32] = proof[32 + VRF_CHALLENGE_SIZE..]
+        .try_into()
+        .expect("response slice should match the fixed scalar length");
+    let response = Scalar::from_canonical_bytes(response_bytes)
+        .into_option()
+        .ok_or(CryptoError::InvalidVrfProof)?;
+
+    Ok(DecodedStandardProof {
+        gamma,
+        challenge,
+        response,
+    })
+}
+
 fn parse_gamma_bytes<const N: usize>(proof: &[u8; N]) -> Result<[u8; 32], CryptoError> {
     let scalar_offset = N - 32;
     let scalar_bytes: [u8; 32] = proof[scalar_offset..]
@@ -249,15 +276,43 @@ fn parse_gamma_bytes<const N: usize>(proof: &[u8; N]) -> Result<[u8; 32], Crypto
         return Err(CryptoError::InvalidVrfProof);
     }
 
-    let compressed_gamma = CompressedEdwardsY(
-        proof[..32]
+    let gamma = parse_point(
+        &proof[..32]
             .try_into()
             .expect("gamma slice should match the fixed point length"),
-    );
-    let gamma = compressed_gamma
-        .decompress()
-        .ok_or(CryptoError::InvalidVrfProof)?
-        .mul_by_cofactor();
+    )?
+    .mul_by_cofactor();
 
     Ok(gamma.compress().to_bytes())
+}
+
+fn parse_point(bytes: &[u8; 32]) -> Result<EdwardsPoint, CryptoError> {
+    CompressedEdwardsY(*bytes)
+        .decompress()
+        .ok_or(CryptoError::InvalidVrfProof)
+}
+
+struct DecodedStandardProof {
+    gamma: EdwardsPoint,
+    challenge: [u8; VRF_CHALLENGE_SIZE],
+    response: Scalar,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_vectors::vrf_praos_test_vectors;
+
+    #[test]
+    fn standard_proof_decoding_extracts_challenge_and_response() {
+        let vector = vrf_praos_test_vectors()
+            .into_iter()
+            .nth(1)
+            .expect("the second published standard Praos vector should exist");
+        let decoded = decode_standard_proof(&vector.proof).expect("published proof should decode");
+
+        assert_eq!(decoded.gamma.compress().to_bytes(), vector.proof[..32]);
+        assert_eq!(decoded.challenge, vector.proof[32..48]);
+        assert_eq!(decoded.response.to_bytes(), vector.proof[48..80]);
+    }
 }

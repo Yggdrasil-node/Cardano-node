@@ -48,6 +48,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - Explanations of behavior or naming MUST be cross-checked against the official `cardano-node` and the relevant upstream IntersectMBO repositories.
 - Type and function naming MUST stay as close to upstream terminology as practical so parity work and fixture comparison remain tractable.
 - Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
+- when you dont know how to proceed after reserching the official node and upstream repositories, you can Reserch <https://github.com/pragma-org/amaru/> and <https://github.com/txpipe/dolos/> for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
 
 ## Verification Expectations
 - `cargo check-all`
