@@ -122,6 +122,7 @@ fn vendored_batchcompat_praos_vectors_verify_against_implementation() {
         .collect();
 
     let mut checked = 0_usize;
+    let mut failures: Vec<String> = Vec::new();
     for name in embedded_names {
         let path = dir.join(&name);
         let content = fs::read_to_string(&path).expect("vector file should be readable as UTF-8");
@@ -152,15 +153,81 @@ fn vendored_batchcompat_praos_vectors_verify_against_implementation() {
         let verification_key = VrfVerificationKey::from_bytes(public_key);
         let proof = VrfBatchCompatProof::from_bytes(proof_bytes);
         let expected = VrfOutput::from_bytes(output_bytes);
-        let actual = verification_key
-            .verify_batchcompat(&message, &proof)
-            .unwrap_or_else(|error| panic!("{} should verify: {error:?}", path.display()));
-
-        assert_eq!(actual, expected, "output mismatch for {}", path.display());
+        match verification_key.verify_batchcompat(&message, &proof) {
+            Ok(actual) => {
+                if actual != expected {
+                    failures.push(format!("{} output mismatch", path.display()));
+                }
+            }
+            Err(error) => failures.push(format!("{} verify failed: {error:?}", path.display())),
+        }
         checked += 1;
     }
 
     assert!(checked > 0, "at least one mirrored batch-compatible vector should be verified");
+    assert!(
+        failures.is_empty(),
+        "mirrored batch-compatible vectors should verify cleanly, failures: {}",
+        failures.join("; ")
+    );
+}
+
+#[test]
+#[ignore = "tracks parity against full official batchcompat corpus while implementation is still incremental"]
+fn vendored_batchcompat_full_corpus_probe() {
+    // Current known gap: `vrf_ver13_standard_12` from cardano-base fails with
+    // `InvalidVrfProof` under the pure-Rust verifier and is tracked by this probe.
+    let mut failures: Vec<String> = Vec::new();
+    let mut checked = 0_usize;
+
+    for path in vendored_praos_files() {
+        let content = fs::read_to_string(&path).expect("vector file should be readable as UTF-8");
+        let kv = parse_kv(&content);
+        if kv.get("vrf").map(String::as_str) != Some("PraosBatchCompatVRF") {
+            continue;
+        }
+
+        let public_key = decode_hex_array::<32>(
+            kv.get("pk")
+                .expect("pk key should be present for batch-compatible vectors"),
+        );
+        let proof_bytes = decode_hex_array::<128>(
+            kv.get("pi")
+                .expect("pi key should be present for batch-compatible vectors"),
+        );
+        let output_bytes = decode_hex_array::<64>(
+            kv.get("beta")
+                .expect("beta key should be present for batch-compatible vectors"),
+        );
+        let message = match kv
+            .get("alpha")
+            .expect("alpha key should be present for batch-compatible vectors")
+            .as_str()
+        {
+            "empty" => Vec::new(),
+            hex_value => decode_hex_vec(hex_value),
+        };
+
+        let verification_key = VrfVerificationKey::from_bytes(public_key);
+        let proof = VrfBatchCompatProof::from_bytes(proof_bytes);
+        let expected = VrfOutput::from_bytes(output_bytes);
+        match verification_key.verify_batchcompat(&message, &proof) {
+            Ok(actual) => {
+                if actual != expected {
+                    failures.push(format!("{} output mismatch", path.display()));
+                }
+            }
+            Err(error) => failures.push(format!("{} verify failed: {error:?}", path.display())),
+        }
+        checked += 1;
+    }
+
+    assert!(checked > 0, "full batch-compatible corpus should contain vectors");
+    assert!(
+        failures.is_empty(),
+        "full batch-compatible corpus parity failures: {}",
+        failures.join("; ")
+    );
 }
 
 fn parse_kv(content: &str) -> HashMap<String, String> {
@@ -169,6 +236,16 @@ fn parse_kv(content: &str) -> HashMap<String, String> {
         .filter_map(|line| line.split_once(':'))
         .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
         .collect()
+}
+
+fn vendored_praos_files() -> Vec<PathBuf> {
+    let dir = vendored_root().join("cardano-crypto-praos/test_vectors");
+    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
+        .expect("vendored Praos vector directory should exist")
+        .map(|entry| entry.expect("directory entry should be readable").path())
+        .collect();
+    files.sort();
+    files
 }
 
 fn assert_hex_lines(path: &Path, expected_line_count: usize) {

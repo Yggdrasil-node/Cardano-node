@@ -204,9 +204,15 @@ impl VrfVerificationKey {
         let challenge = batchcompat_challenge(
             &self.0,
             &h_point.compress().to_bytes(),
-            &decoded.gamma.compress().to_bytes(),
-            &decoded.announcement_1.compress().to_bytes(),
-            &decoded.announcement_2.compress().to_bytes(),
+            &proof.0[..32]
+                .try_into()
+                .expect("gamma slice should match the fixed point length"),
+            &proof.0[32..64]
+                .try_into()
+                .expect("announcement_1 slice should match the fixed point length"),
+            &proof.0[64..96]
+                .try_into()
+                .expect("announcement_2 slice should match the fixed point length"),
         );
 
         let challenge_scalar = truncated_challenge_scalar(challenge);
@@ -227,8 +233,14 @@ impl VrfVerificationKey {
         .compress()
         .to_bytes();
 
-        if expected_u != decoded.announcement_1.compress().to_bytes()
-            || expected_v != decoded.announcement_2.compress().to_bytes()
+        let announcement_1_bytes: [u8; 32] = proof.0[32..64]
+            .try_into()
+            .expect("announcement_1 slice should match the fixed point length");
+        let announcement_2_bytes: [u8; 32] = proof.0[64..96]
+            .try_into()
+            .expect("announcement_2 slice should match the fixed point length");
+
+        if expected_u != announcement_1_bytes || expected_v != announcement_2_bytes
         {
             return Err(CryptoError::InvalidVrfProof);
         }
@@ -458,7 +470,7 @@ fn reduce_hash_input_to_representative(hash_input: &[u8; 64]) -> [u8; 32] {
         0xff, 0xff, 0xff, 0x7f,
     ];
 
-    if representative >= P {
+    while representative >= P {
         let mut borrow = 0_i16;
         for idx in 0..32 {
             let value = i16::from(representative[idx]) - i16::from(P[idx]) - borrow;
@@ -515,9 +527,7 @@ fn decode_standard_proof(proof: &[u8; VRF_PROOF_SIZE]) -> Result<DecodedStandard
     let response_bytes: [u8; 32] = proof[32 + VRF_CHALLENGE_SIZE..]
         .try_into()
         .expect("response slice should match the fixed scalar length");
-    let response = Scalar::from_canonical_bytes(response_bytes)
-        .into_option()
-        .ok_or(CryptoError::InvalidVrfProof)?;
+    let response = parse_vrf_response_scalar(response_bytes)?;
 
     Ok(DecodedStandardProof {
         gamma,
@@ -547,9 +557,7 @@ fn decode_batchcompat_proof(
     let response_bytes: [u8; 32] = proof[96..]
         .try_into()
         .expect("response slice should match the fixed scalar length");
-    let response = Scalar::from_canonical_bytes(response_bytes)
-        .into_option()
-        .ok_or(CryptoError::InvalidVrfProof)?;
+    let response = parse_vrf_response_scalar(response_bytes)?;
 
     Ok(DecodedBatchCompatProof {
         gamma,
@@ -557,6 +565,16 @@ fn decode_batchcompat_proof(
         announcement_2,
         response,
     })
+}
+
+fn parse_vrf_response_scalar(response_bytes: [u8; 32]) -> Result<Scalar, CryptoError> {
+    if response_bytes[31] & 0xF0 != 0
+        && !bool::from(Scalar::from_canonical_bytes(response_bytes).is_some())
+    {
+        return Err(CryptoError::InvalidVrfProof);
+    }
+
+    Ok(Scalar::from_bytes_mod_order(response_bytes))
 }
 
 fn parse_gamma_bytes<const N: usize>(proof: &[u8; N]) -> Result<[u8; 32], CryptoError> {
