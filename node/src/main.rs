@@ -5,6 +5,7 @@ use yggdrasil_mempool::Mempool;
 use yggdrasil_network::HandshakeVersion;
 use yggdrasil_storage::ImmutableBlockStore;
 
+/// Boots the current Yggdrasil foundation binary and reports a minimal runtime banner.
 fn main() -> Result<()> {
     let preferred = select_preferred(
         ChainCandidate {
