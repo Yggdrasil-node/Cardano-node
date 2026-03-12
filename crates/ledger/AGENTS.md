@@ -18,10 +18,10 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Ledger behavior MUST be explained by reference to the official node, the ledger repository, and the formal ledger specifications rather than only local interpretation.
 
 ## Upstream References
-- Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger>
-- Era-specific sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>
-- Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications>
-- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
+- Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger/>
+- Era-specific sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+- Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>
+- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site/>
 
 ## Current Phase
 - Keep the full era roadmap visible, but land only narrow reusable slices.

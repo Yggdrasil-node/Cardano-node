@@ -5,7 +5,7 @@ pub mod blake2b;
 /// Ed25519 signing and verification types.
 pub mod ed25519;
 mod error;
-/// Key-evolving signature placeholders and shared types.
+/// Key-evolving signature helpers and shared types.
 pub mod kes;
 /// Published compatibility vectors used by crypto tests.
 pub mod test_vectors;
@@ -18,8 +18,10 @@ pub use blake2b::{Blake2bHash, hash_bytes};
 pub use ed25519::{Signature, SigningKey, VerificationKey};
 /// Errors surfaced by the crypto crate.
 pub use error::CryptoError;
-/// Key-evolving signature period and signature wrappers.
-pub use kes::{KesPeriod, KesSignature};
+/// Key-evolving signature period, key, and signature wrappers.
+pub use kes::{
+	CompactKesSignature, KesPeriod, KesSignature, KesSigningKey, KesVerificationKey,
+};
 /// RFC-backed Ed25519 test vector structures and fixtures.
 pub use test_vectors::{
 	Ed25519TestVector, VrfPraosBatchCompatTestVector, VrfPraosTestVector,

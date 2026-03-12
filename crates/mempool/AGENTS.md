@@ -19,10 +19,10 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Transaction flow and admission policy MUST be explained with reference to the official node and upstream mempool-adjacent sources such as Ouroboros consensus and `cardano-submit-api`.
 
 ## Upstream References
-- Consensus core package, including mempool design context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus>
-- Consensus repository root: <https://github.com/IntersectMBO/ouroboros-consensus>
-- Transaction submission integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api>
-- Node integration reference: <https://github.com/IntersectMBO/cardano-node>
+- Consensus core package, including mempool design context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
+- Consensus repository root: <https://github.com/IntersectMBO/ouroboros-consensus/>
+- Transaction submission integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
+- Node integration reference: <https://github.com/IntersectMBO/cardano-node/>
 
 ## Current Phase
 - Keep the queue deterministic and simple while ledger validation contracts are still evolving.

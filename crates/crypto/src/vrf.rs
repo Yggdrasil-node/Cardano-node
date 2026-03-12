@@ -1,4 +1,4 @@
-use crate::CryptoError;
+use crate::{CryptoError, SigningKey};
 use curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar};
 use sha2::{Digest, Sha512};
 use std::fmt;
@@ -44,6 +44,22 @@ pub struct VrfBatchCompatProof(pub [u8; VRF_BATCHCOMPAT_PROOF_SIZE]);
 pub struct VrfOutput(pub [u8; VRF_OUTPUT_SIZE]);
 
 impl VrfSecretKey {
+    /// Derives a VRF signing key from a 32-byte seed.
+    ///
+    /// Upstream Praos serializes the signing key as `seed || vk`, where `vk`
+    /// is the Ed25519-compatible public key derived from the hashed and clamped
+    /// seed.
+    pub fn from_seed(seed: [u8; VRF_SEED_SIZE]) -> Self {
+        let verification_key = SigningKey::from_bytes(seed)
+            .verification_key()
+            .expect("a 32-byte seed should derive a VRF verification key")
+            .to_bytes();
+        let mut bytes = [0_u8; VRF_SIGNING_KEY_SIZE];
+        bytes[..VRF_SEED_SIZE].copy_from_slice(&seed);
+        bytes[VRF_SEED_SIZE..].copy_from_slice(&verification_key);
+        Self(bytes)
+    }
+
     /// Constructs a VRF signing key from its 64-byte serialized form.
     pub fn from_bytes(bytes: [u8; VRF_SIGNING_KEY_SIZE]) -> Self {
         Self(bytes)
@@ -70,6 +86,11 @@ impl VrfSecretKey {
         )
     }
 
+    /// Re-derives the serialized signing key from its embedded seed prefix.
+    pub fn normalized(&self) -> Self {
+        Self::from_seed(self.seed_bytes())
+    }
+
     /// Produces a VRF proof for a message.
     ///
     /// Full Praos proof generation remains unimplemented until the workspace has
@@ -86,6 +107,11 @@ impl fmt::Debug for VrfSecretKey {
 }
 
 impl VrfVerificationKey {
+    /// Derives a VRF verification key directly from a 32-byte seed.
+    pub fn from_seed(seed: [u8; VRF_SEED_SIZE]) -> Self {
+        VrfSecretKey::from_seed(seed).verification_key()
+    }
+
     /// Constructs a VRF verification key from its 32-byte serialized form.
     pub fn from_bytes(bytes: [u8; VRF_VERIFICATION_KEY_SIZE]) -> Self {
         Self(bytes)

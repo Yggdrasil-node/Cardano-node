@@ -17,9 +17,9 @@ Focus on small parser and generator internals that are deterministic, testable, 
 - Names MUST remain traceable to upstream schema terminology and official node-adjacent ledger naming wherever practical.
 
 ## Upstream References
-- Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>
-- Ledger binary library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
-- Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+- Ledger binary library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
+- Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>
 
 ## Current Phase
 - The supported subset is intentionally small and explicit.

@@ -19,10 +19,10 @@ Focus on deterministic parsing and reproducible generated artifacts.
 - Schema handling and generated output MUST be explained with reference to the official node path through cardano-ledger and related IntersectMBO sources.
 
 ## Upstream References
-- Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>
-- Ledger binary and supporting libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
-- Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs>
-- Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+- Ledger binary and supporting libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
+- Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/>
+- Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>
 
 ## Current Phase
 - Support a narrow tested subset first: aliases, flat maps, arrays, and builtin type mapping.

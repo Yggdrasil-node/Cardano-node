@@ -20,9 +20,9 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Full cryptographic parity, vector coverage, and encoding compatibility are non-negotiable long-term targets.
 
 ## Upstream References
-- Crypto abstractions and shared utilities: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class>
-- Praos-oriented crypto behavior and vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
-- Shared Cardano base packages: <https://github.com/IntersectMBO/cardano-base>
+- Crypto abstractions and shared utilities: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/>
+- Praos-oriented crypto behavior and vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/>
+- Shared Cardano base packages: <https://github.com/IntersectMBO/cardano-base/>
 
 ## Current Phase
 - Blake2b and Ed25519 are the active baseline.

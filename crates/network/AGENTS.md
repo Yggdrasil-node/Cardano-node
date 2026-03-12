@@ -18,11 +18,11 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Wire behavior and protocol sequencing MUST be explained by reference to the official node and upstream Ouroboros network sources.
 
 ## Upstream References
-- Networking repository root: <https://github.com/IntersectMBO/ouroboros-network>
-- Multiplexer package: <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux>
-- Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework>
-- Protocol implementations: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols>
-- Shelley networking spec PDF: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
+- Networking repository root: <https://github.com/IntersectMBO/ouroboros-network/>
+- Multiplexer package: <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux/>
+- Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework/>
+- Protocol implementations: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/>
+- Shelley networking spec PDF: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/>
 
 ## Current Phase
 - Keep the current implementation focused on handshake, mux, ChainSync, and BlockFetch boundaries.

@@ -18,10 +18,10 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Consensus behavior MUST be explained by reference to the official node and upstream Ouroboros consensus sources before any local terminology is introduced.
 
 ## Upstream References
-- Core consensus implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus>
-- Consensus repository documentation: <https://github.com/IntersectMBO/ouroboros-consensus>
-- Formal consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec>
-- Cardano-specific consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano>
+- Core consensus implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
+- Consensus repository documentation: <https://github.com/IntersectMBO/ouroboros-consensus/>
+- Formal consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec/>
+- Cardano-specific consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/>
 
 ## Current Phase
 - Keep interfaces small and deterministic.
