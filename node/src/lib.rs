@@ -6,8 +6,11 @@ pub mod runtime;
 pub mod sync;
 
 pub use runtime::{
-	NodeConfig, PeerSession, TxSubmissionServiceError, TxSubmissionServiceOutcome,
-	bootstrap, run_txsubmission_service, serve_txsubmission_request_from_mempool,
+	MempoolAddTxError, MempoolAddTxResult, NodeConfig, PeerSession,
+	TxSubmissionServiceError, TxSubmissionServiceOutcome, add_tx_to_mempool,
+	add_tx_to_shared_mempool, add_txs_to_mempool, add_txs_to_shared_mempool,
+	bootstrap, run_txsubmission_service,
+	run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
 	serve_txsubmission_request_from_reader,
 };
 pub use sync::{

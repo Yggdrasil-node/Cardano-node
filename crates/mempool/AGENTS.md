@@ -18,6 +18,7 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Naming MUST stay close to official node and consensus mempool terminology.
 - Transaction flow and admission policy MUST be explained with reference to the official node and upstream mempool-adjacent sources such as Ouroboros consensus and `cardano-submit-api`.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
 
 ## Official Upstream References (add or update as needed)
 - Consensus core package, including mempool design context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
@@ -28,11 +29,11 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 ## Current Phase
 - Mempool uses real ledger `TxId` for transaction identification, stores the transaction era plus both body CBOR and full submitted-transaction CBOR, and can convert entries to/from ledger `MultiEraSubmittedTx` for relay-facing integration.
 - Fee-descending ordering is implemented with duplicate detection and capacity enforcement.
-- TxSubmission-facing snapshot support is now exposed via upstream-aligned `TxSubmissionMempoolReader` and `MempoolSnapshot` terminology, with a monotonic `MempoolIdx` cursor kept separate from fee ordering.
+- TxSubmission-facing snapshot support is now exposed via upstream-aligned `TxSubmissionMempoolReader` and `MempoolSnapshot` terminology, with a monotonic `MempoolIdx` cursor kept separate from fee ordering. `SharedMempool` and `SharedTxSubmissionMempoolReader` provide concurrent snapshot access for long-lived TxSubmission services without coupling networking to queue internals.
 - `remove_by_id`, `contains`, `len`, `is_empty`, `size_bytes`, `iter`, and `remove_confirmed` are implemented.
 - Block-application eviction via `remove_confirmed` enables post-sync snipping of confirmed transactions.
 - TTL-aware admission via `insert_checked(entry, current_slot)` rejects transactions whose TTL has expired.
 - Periodic TTL expiry purge via `purge_expired(current_slot)` removes all stale entries.
 - Node-side `evict_confirmed_from_mempool` in `node/src/sync.rs` wires mempool eviction into the sync pipeline.
 - Fee ordering remains a queue policy concern; TxSubmission snapshot traversal uses insertion-order indices so networking does not depend on fee-priority layout.
-- Next: add concurrency support for multi-producer intake, and integrate with ledger validation for full admission checks and network submission sourcing.
+- Next: integrate shared mempool intake with ledger validation for full admission checks and broader network submission sourcing.

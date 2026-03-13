@@ -16,6 +16,7 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - Protocol terminology MUST match the upstream network spec.
 - Public protocol states, message helpers, and transition functions MUST have Rustdocs when the legal flow is not obvious from the type shape.
 - Naming MUST stay aligned with the official node and network spec so the implementation remains easy to compare against upstream traces and docs.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
 
 ## Official Upstream References (add or update as needed)
 - Protocol implementations: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols>

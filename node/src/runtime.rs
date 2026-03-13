@@ -11,11 +11,135 @@ use yggdrasil_network::{
     MiniProtocolNum, NodeToNodeVersionData, PeerConnection, PeerError, TxIdAndSize,
     TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
 };
-use yggdrasil_mempool::{Mempool, MempoolIdx, TxSubmissionMempoolReader};
+use yggdrasil_ledger::{LedgerError, LedgerState, MultiEraSubmittedTx, SlotNo, TxId};
+use yggdrasil_mempool::{
+    Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
+    SharedMempool, MEMPOOL_ZERO_IDX, SharedTxSubmissionMempoolReader,
+    TxSubmissionMempoolReader,
+};
 
 // ---------------------------------------------------------------------------
 // TxSubmission mempool integration
 // ---------------------------------------------------------------------------
+
+/// Result of attempting to add a single transaction to the mempool.
+///
+/// This mirrors the upstream `MempoolAddTxResult` split between accepted and
+/// rejected transactions while keeping queue-level failures separate.
+#[derive(Debug, Eq, PartialEq)]
+pub enum MempoolAddTxResult {
+    /// The transaction was validated and added to the mempool.
+    MempoolTxAdded(TxId),
+    /// The transaction was rejected by ledger validation and not added.
+    MempoolTxRejected(TxId, LedgerError),
+}
+
+/// Queue-level failures encountered while adding a transaction to the mempool.
+#[derive(Debug, thiserror::Error)]
+pub enum MempoolAddTxError {
+    /// Underlying mempool capacity, duplicate, or TTL error.
+    #[error("mempool admission error: {0}")]
+    Mempool(#[from] MempoolError),
+}
+
+fn admitted_entry(tx: MultiEraSubmittedTx) -> MempoolEntry {
+    let fee = tx.fee();
+    let ttl = tx.expires_at().unwrap_or(SlotNo(u64::MAX));
+    MempoolEntry::from_multi_era_submitted_tx(tx, fee, ttl)
+}
+
+fn add_tx_with<F>(
+    ledger: &mut LedgerState,
+    tx: MultiEraSubmittedTx,
+    current_slot: SlotNo,
+    mut insert_entry: F,
+) -> Result<MempoolAddTxResult, MempoolAddTxError>
+where
+    F: FnMut(MempoolEntry) -> Result<(), MempoolError>,
+{
+    let tx_id = tx.tx_id();
+    let mut staged_ledger = ledger.clone();
+    match staged_ledger.apply_submitted_tx(&tx, current_slot) {
+        Ok(()) => {
+            insert_entry(admitted_entry(tx))?;
+            *ledger = staged_ledger;
+            Ok(MempoolAddTxResult::MempoolTxAdded(tx_id))
+        }
+        Err(err) => Ok(MempoolAddTxResult::MempoolTxRejected(tx_id, err)),
+    }
+}
+
+/// Validate and add a single transaction to the mempool.
+///
+/// The transaction is first applied to a staged clone of the caller-provided
+/// ledger state. If ledger validation fails, the ledger and mempool remain
+/// unchanged and the result is `MempoolTxRejected`. If validation succeeds, the
+/// transaction is inserted into the mempool and the staged ledger state is
+/// committed.
+pub fn add_tx_to_mempool(
+    ledger: &mut LedgerState,
+    mempool: &mut Mempool,
+    tx: MultiEraSubmittedTx,
+    current_slot: SlotNo,
+) -> Result<MempoolAddTxResult, MempoolAddTxError> {
+    add_tx_with(ledger, tx, current_slot, |entry| {
+        mempool.insert_checked(entry, current_slot)
+    })
+}
+
+/// Validate and add a single transaction to a shared mempool.
+///
+/// This is the shared-handle variant of [`add_tx_to_mempool`]. Accepted
+/// transactions update the caller's ledger state only after the shared mempool
+/// insert succeeds.
+pub fn add_tx_to_shared_mempool(
+    ledger: &mut LedgerState,
+    mempool: &SharedMempool,
+    tx: MultiEraSubmittedTx,
+    current_slot: SlotNo,
+) -> Result<MempoolAddTxResult, MempoolAddTxError> {
+    add_tx_with(ledger, tx, current_slot, |entry| {
+        mempool.insert_checked(entry, current_slot)
+    })
+}
+
+/// Validate and add a sequence of transactions to the mempool in order.
+///
+/// This mirrors the upstream `addTxs` semantics: each transaction is checked
+/// against the ledger state produced by all previously accepted transactions in
+/// the same batch. Rejected transactions do not advance the staged ledger
+/// state. Queue-level failures stop the batch and return an error.
+pub fn add_txs_to_mempool<I>(
+    ledger: &mut LedgerState,
+    mempool: &mut Mempool,
+    txs: I,
+    current_slot: SlotNo,
+) -> Result<Vec<MempoolAddTxResult>, MempoolAddTxError>
+where
+    I: IntoIterator<Item = MultiEraSubmittedTx>,
+{
+    txs.into_iter()
+        .map(|tx| add_tx_to_mempool(ledger, mempool, tx, current_slot))
+        .collect()
+}
+
+/// Validate and add a sequence of transactions to a shared mempool in order.
+///
+/// Accepted transactions update the caller's ledger state one by one so later
+/// transactions in the batch can depend on earlier accepted outputs.
+pub fn add_txs_to_shared_mempool<I>(
+    ledger: &mut LedgerState,
+    mempool: &SharedMempool,
+    txs: I,
+    current_slot: SlotNo,
+) -> Result<Vec<MempoolAddTxResult>, MempoolAddTxError>
+where
+    I: IntoIterator<Item = MultiEraSubmittedTx>,
+{
+    txs.into_iter()
+        .map(|tx| add_tx_to_shared_mempool(ledger, mempool, tx, current_slot))
+        .collect()
+}
 
 /// Errors from serving TxSubmission requests out of a mempool snapshot.
 #[derive(Debug, thiserror::Error)]
@@ -35,17 +159,36 @@ pub struct TxSubmissionServiceOutcome {
     pub terminated_by_protocol: bool,
 }
 
+trait TxSubmissionSnapshotReader {
+    fn mempool_get_snapshot(&self) -> MempoolSnapshot;
+}
+
+impl TxSubmissionSnapshotReader for TxSubmissionMempoolReader<'_> {
+    fn mempool_get_snapshot(&self) -> MempoolSnapshot {
+        self.mempool_get_snapshot()
+    }
+}
+
+impl TxSubmissionSnapshotReader for SharedTxSubmissionMempoolReader {
+    fn mempool_get_snapshot(&self) -> MempoolSnapshot {
+        self.mempool_get_snapshot()
+    }
+}
+
 /// Serve a single TxSubmission request using the current mempool contents.
 ///
 /// Tx ids are advertised from a TxSubmission mempool snapshot using the
 /// monotonic `last_idx` cursor expected by the outbound side. For blocking
 /// requests with no available transactions after `last_idx`, the helper
 /// terminates the mini-protocol with `MsgDone` and returns `Ok(false)`.
-pub async fn serve_txsubmission_request_from_reader(
+async fn serve_txsubmission_request_from_snapshot_reader<R>(
     client: &mut TxSubmissionClient,
-    reader: &TxSubmissionMempoolReader<'_>,
+    reader: &R,
     last_idx: &mut MempoolIdx,
-) -> Result<bool, TxSubmissionServiceError> {
+) -> Result<bool, TxSubmissionServiceError>
+where
+    R: TxSubmissionSnapshotReader,
+{
     match client.recv_request().await? {
         TxServerRequest::RequestTxIds { blocking, req, .. } => {
             let snapshot = reader.mempool_get_snapshot();
@@ -79,6 +222,63 @@ pub async fn serve_txsubmission_request_from_reader(
                 .collect::<Vec<_>>();
             client.reply_txs(txs).await?;
             Ok(true)
+        }
+    }
+}
+
+pub async fn serve_txsubmission_request_from_reader(
+    client: &mut TxSubmissionClient,
+    reader: &TxSubmissionMempoolReader<'_>,
+    last_idx: &mut MempoolIdx,
+) -> Result<bool, TxSubmissionServiceError> {
+    serve_txsubmission_request_from_snapshot_reader(client, reader, last_idx).await
+}
+
+/// Run a managed TxSubmission loop backed by a shared mempool snapshot source
+/// until shutdown or protocol termination.
+///
+/// This variant allows concurrent mempool updates while the service is
+/// running. Each request takes a fresh snapshot from the shared handle and
+/// continues advertising from the previously served `last_idx` position.
+pub async fn run_txsubmission_service_shared<F>(
+    client: &mut TxSubmissionClient,
+    mempool: &SharedMempool,
+    shutdown: F,
+) -> Result<TxSubmissionServiceOutcome, TxSubmissionServiceError>
+where
+    F: Future<Output = ()>,
+{
+    client.init().await?;
+    tokio::pin!(shutdown);
+
+    let mut handled_requests = 0usize;
+    let reader = mempool.txsubmission_mempool_reader();
+    let mut last_idx = MEMPOOL_ZERO_IDX;
+
+    loop {
+        let serve_fut =
+            serve_txsubmission_request_from_snapshot_reader(client, &reader, &mut last_idx);
+
+        tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                return Ok(TxSubmissionServiceOutcome {
+                    handled_requests,
+                    terminated_by_protocol: false,
+                });
+            }
+
+            result = serve_fut => {
+                handled_requests += 1;
+                let should_continue = result?;
+                if !should_continue {
+                    return Ok(TxSubmissionServiceOutcome {
+                        handled_requests,
+                        terminated_by_protocol: true,
+                    });
+                }
+            }
         }
     }
 }
@@ -143,10 +343,11 @@ where
 
     let mut handled_requests = 0usize;
     let reader = mempool.txsubmission_mempool_reader();
-    let mut last_idx = reader.mempool_zero_idx();
+    let mut last_idx = MEMPOOL_ZERO_IDX;
 
     loop {
-        let serve_fut = serve_txsubmission_request_from_reader(client, &reader, &mut last_idx);
+        let serve_fut =
+            serve_txsubmission_request_from_snapshot_reader(client, &reader, &mut last_idx);
 
         tokio::select! {
             biased;

@@ -271,6 +271,30 @@ impl MultiEraSubmittedTx {
         }
     }
 
+    /// Return the transaction fee declared by the submitted transaction body.
+    pub fn fee(&self) -> u64 {
+        match self {
+            Self::Shelley(tx) => tx.body.fee,
+            Self::Allegra(tx) => tx.body.fee,
+            Self::Mary(tx) => tx.body.fee,
+            Self::Alonzo(tx) => tx.body.fee,
+            Self::Babbage(tx) => tx.body.fee,
+            Self::Conway(tx) => tx.body.fee,
+        }
+    }
+
+    /// Return the upper validity bound, if the era carries one.
+    pub fn expires_at(&self) -> Option<SlotNo> {
+        match self {
+            Self::Shelley(tx) => Some(SlotNo(tx.body.ttl)),
+            Self::Allegra(tx) => tx.body.ttl.map(SlotNo),
+            Self::Mary(tx) => tx.body.ttl.map(SlotNo),
+            Self::Alonzo(tx) => tx.body.ttl.map(SlotNo),
+            Self::Babbage(tx) => tx.body.ttl.map(SlotNo),
+            Self::Conway(tx) => tx.body.ttl.map(SlotNo),
+        }
+    }
+
     /// Return the canonical CBOR bytes of the transaction body.
     pub fn body_cbor(&self) -> Vec<u8> {
         match self {

@@ -17,6 +17,7 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Storage naming MUST stay close to official node and Ouroboros consensus terminology such as immutable DB, volatile DB, ChainDB, and snapshots.
 - Storage behavior MUST be explained with reference to the official node and upstream Ouroboros consensus implementation notes.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
 
 ## Official Upstream References (add or update as needed)
 - Consensus core package, including ChainDB and storage concerns: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>

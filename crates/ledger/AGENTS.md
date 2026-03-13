@@ -17,6 +17,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Era, transaction, and rule naming MUST stay close to official ledger and `cardano-node` terminology.
 - Ledger behavior MUST be explained by reference to the official node, the ledger repository, and the formal ledger specifications rather than only local interpretation.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
 
 ## Official Upstream References (add or update as needed)
 - Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger/>
@@ -30,7 +31,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - `Block` and `BlockHeader` use typed identifiers; `LedgerState` tracks tip via `Point` and owns dual UTxO sets: `ShelleyUtxo` (legacy) and `MultiEraUtxo` (generalized) with atomic per-block application across all eras.
 - Shared submitted-transaction abstractions now live in `tx.rs`: `compute_tx_id`, `ShelleyCompatibleSubmittedTx<TBody>` for Shelley/Allegra/Mary 3-element transaction shapes, `AlonzoCompatibleSubmittedTx<TBody>` for Alonzo/Babbage/Conway 4-element transaction shapes, and `MultiEraSubmittedTx::from_cbor_bytes_for_era()` for era-directed decode at the ledger boundary.
 - Multi-era UTxO landed: `MultiEraTxOut` enum (Shelley/Mary/Alonzo/Babbage variants), `MultiEraUtxo` with era-specific apply methods (`apply_shelley_tx/.../apply_conway_tx`). Validates non-empty inputs/outputs, TTL, validity interval start, coin preservation, and multi-asset preservation (including mint/burn). New error variants: `TxNotYetValid`, `MultiAssetNotPreserved`.
-- `LedgerState.apply_block()` dispatches per era: Shelley uses legacy `ShelleyUtxo`, Allegra through Conway use `MultiEraUtxo`. Byron returns `UnsupportedEra`.
+- `LedgerState.apply_block()` dispatches per era: Shelley uses legacy `ShelleyUtxo`, Allegra through Conway use `MultiEraUtxo`. Byron returns `UnsupportedEra`. `LedgerState.apply_submitted_tx()` now exposes the same era-specific UTxO checks for single submitted-transaction admission while preserving atomicity on rejection.
 - CBOR codec (`cbor.rs`) supports all 8 major types plus signed integer helpers (`Encoder::integer`, `Decoder::integer`). Includes `skip()` for recursive item skipping and `CborEncode`/`CborDecode` traits.
 - Allegra era types landed: `AllegraTxBody` (optional TTL + validity interval start), `NativeScript` (6-variant timelock/multi-sig enum with recursive CBOR codec).
 - Mary era types landed: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (key 9 mint) with CBOR codecs; `pub(crate)` helpers shared cross-era.

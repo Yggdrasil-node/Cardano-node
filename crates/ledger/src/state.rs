@@ -5,7 +5,7 @@ use crate::eras::conway::ConwayTxBody;
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
 use crate::types::Point;
 use crate::utxo::MultiEraUtxo;
-use crate::{CborDecode, Era, LedgerError};
+use crate::{CborDecode, CborEncode, Era, LedgerError};
 
 /// Ledger state tracking the current era, chain tip, and UTxO set.
 ///
@@ -86,6 +86,52 @@ impl LedgerState {
         }
 
         self.tip = Point::BlockPoint(block.header.slot_no, block.header.hash);
+        Ok(())
+    }
+
+    /// Applies a single submitted transaction to the current ledger state.
+    ///
+    /// This uses the same era-specific UTxO transition rules as block
+    /// application while preserving atomicity: on validation failure, the
+    /// ledger state is unchanged.
+    pub fn apply_submitted_tx(
+        &mut self,
+        tx: &crate::tx::MultiEraSubmittedTx,
+        current_slot: crate::types::SlotNo,
+    ) -> Result<(), LedgerError> {
+        match tx {
+            crate::tx::MultiEraSubmittedTx::Shelley(tx) => {
+                let mut staged = self.shelley_utxo.clone();
+                staged.apply_tx(crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0, &tx.body, current_slot.0)?;
+                self.shelley_utxo = staged;
+            }
+            crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
+                let mut staged = self.multi_era_utxo.clone();
+                staged.apply_allegra_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                self.multi_era_utxo = staged;
+            }
+            crate::tx::MultiEraSubmittedTx::Mary(tx) => {
+                let mut staged = self.multi_era_utxo.clone();
+                staged.apply_mary_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                self.multi_era_utxo = staged;
+            }
+            crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
+                let mut staged = self.multi_era_utxo.clone();
+                staged.apply_alonzo_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                self.multi_era_utxo = staged;
+            }
+            crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
+                let mut staged = self.multi_era_utxo.clone();
+                staged.apply_babbage_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                self.multi_era_utxo = staged;
+            }
+            crate::tx::MultiEraSubmittedTx::Conway(tx) => {
+                let mut staged = self.multi_era_utxo.clone();
+                staged.apply_conway_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                self.multi_era_utxo = staged;
+            }
+        }
+
         Ok(())
     }
 

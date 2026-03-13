@@ -16,6 +16,7 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Public era-specific types or helpers MUST have Rustdocs when the era difference is not obvious from naming alone.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Official era names, rule labels, and transition terminology from upstream ledger and node sources MUST be preferred.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
 
 ## Official Upstream References (add or update as needed)
 - Era sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>

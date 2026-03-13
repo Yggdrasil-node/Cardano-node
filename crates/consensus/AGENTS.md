@@ -17,6 +17,7 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Names MUST track official consensus and `cardano-node` terminology so traces, fixtures, and parity checks remain comparable.
 - Consensus behavior MUST be explained by reference to the official node and upstream Ouroboros consensus sources before any local terminology is introduced.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
 
 ## Official Upstream References (add or update as needed)
 - Core consensus implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>

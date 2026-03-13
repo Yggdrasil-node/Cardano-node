@@ -18,6 +18,7 @@ Focus on deterministic parsing and reproducible generated artifacts.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Generated type and field naming MUST remain traceable to upstream ledger schemas and official node terminology.
 - Schema handling and generated output MUST be explained with reference to the official node path through cardano-ledger and related IntersectMBO sources.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
 
 ## Official Upstream References (add or update as needed)
 - Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
