@@ -69,11 +69,11 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Intersection + batch: `typed_find_intersect`, `sync_batch_apply`.
   - KeepAlive: `keepalive_heartbeat`.
   - Managed service: `run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`.
-  - Consensus bridge: `shelley_opcert_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`.
+  - Consensus bridge: `shelley_opcert_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`, `praos_header_to_consensus`, `verify_praos_header`.
   - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks` (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway — all seven era tags).
-  - Header hash: `ShelleyHeader::header_hash` (Blake2b-256), `compute_tx_id`.
-  - Verified pipeline: `multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`.
-  - Block body hash verification: `verify_block_body_hash` (Blake2b-256 of body elements vs header-declared hash), wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`. `compute_block_body_hash` in ledger crate.
+  - Header hash: `ShelleyHeader::header_hash`, `PraosHeader::header_hash` (Blake2b-256), `compute_tx_id`.
+  - Verified pipeline: `multi_era_block_to_block`, `verify_multi_era_block` (dispatches Shelley verifier for pre-Babbage, Praos verifier for Babbage/Conway), `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`.
+  - Block body hash verification: `verify_block_body_hash` (Blake2b-256 of body elements vs header-declared hash), `extract_header_block_body_hash` (handles both 14-element Praos and 15-element Shelley header bodies), wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`. `compute_block_body_hash` in ledger crate.
   - Mempool eviction: `extract_tx_ids`, `evict_confirmed_from_mempool`.
 - `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, TTL-aware admission (`insert_checked`, `purge_expired`), and iterator support.
 - `crates/ledger`:
@@ -84,8 +84,8 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Mary era types (`Value`, `MultiAsset`, `MaryTxBody`).
   - Alonzo era types (`ExUnits`, `Redeemer`, `AlonzoTxOut`, `AlonzoTxBody`).
   - Byron envelope (`ByronBlock`).
-  - Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`, `BabbageBlock`).
-  - Conway era types (`Vote`, `Voter`, `GovActionId`, `Constitution`, `GovAction` (7-variant typed enum: ParameterChange/HardForkInitiation/TreasuryWithdrawals/NoConfidence/UpdateCommittee/NewConstitution/InfoAction), `VotingProcedure`, `ProposalProcedure` (typed `GovAction`), `VotingProcedures`, `ConwayTxBody`, `ConwayBlock`).
+  - Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`, `BabbageBlock` with `PraosHeader`).
+  - Conway era types (`Vote`, `Voter`, `GovActionId`, `Constitution`, `GovAction` (7-variant typed enum: ParameterChange/HardForkInitiation/TreasuryWithdrawals/NoConfidence/UpdateCommittee/NewConstitution/InfoAction), `VotingProcedure`, `ProposalProcedure` (typed `GovAction`), `VotingProcedures`, `ConwayTxBody`, `ConwayBlock` with `PraosHeader`).
   - Credential and address types (`StakeCredential`, `RewardAccount`, `Address` with Base/Enterprise/Pointer/Reward/Byron variants, `AddrKeyHash`, `ScriptHash`, `PoolKeyHash` type aliases).
   - Certificate hierarchy (`Anchor`, `UnitInterval`, `Relay`, `PoolMetadata`, `PoolParams`, `DRep`, `DCert` with 19 CDDL-aligned variants covering Shelley tags 0–5 and Conway tags 7–18).
   - Signed integer CBOR helpers.
@@ -96,7 +96,8 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `crates/storage` now includes file-backed implementations (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) with JSON-based on-disk persistence, directory scanning on open, rollback-aware file deletion, and re-open persistence. 19 integration tests cover all trait methods.
 - `crates/consensus` now includes `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain tracker with roll-forward/roll-backward, max rollback depth enforcement, stability window detection (`stable_count`, `drain_stable`), and non-contiguous block rejection. `HeaderBody` and `OpCert` field names aligned with CDDL (`block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `block_body_size`, `block_body_hash`, `operational_cert`, `hot_vkey`, `sequence_number`). 57 consensus tests.
 - Upstream naming alignment is complete across ledger and consensus crates:
-  - Ledger ShelleyHeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `nonce_vrf`, `leader_vrf`, `block_body_size`, `block_body_hash`, `operational_cert` (with `hot_vkey`, `sequence_number`, `kes_period`, `sigma`).
+  - Ledger ShelleyHeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `nonce_vrf`, `leader_vrf`, `block_body_size`, `block_body_hash`, `operational_cert` (with `hot_vkey`, `sequence_number`, `kes_period`, `sigma`). 15-element CBOR array (Shelley through Alonzo).
+  - Ledger PraosHeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `vrf_result`, `block_body_size`, `block_body_hash`, `operational_cert`. 14-element CBOR array with single VRF result (Babbage/Conway).
   - Ledger block fields: `transaction_witness_sets` (all eras), `transaction_metadata_set` (Shelley), `auxiliary_data_set` (Babbage/Conway).
   - Consensus HeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `block_body_size`, `block_body_hash`, `operational_cert`.
   - Consensus OpCert: `hot_vkey`, `sequence_number`.

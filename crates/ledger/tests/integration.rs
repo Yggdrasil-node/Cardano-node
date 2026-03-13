@@ -4,12 +4,12 @@ use yggdrasil_ledger::{
     CborDecode, CborEncode, Constitution, ConwayBlock, ConwayTxBody, DCert, DRep, DatumOption,
     Decoder, Encoder, EnterpriseAddress, Era, EpochNo, ExUnits, GovAction, GovActionId, HeaderHash,
     LedgerError, LedgerState, MaryTxBody, MaryTxOut, MultiEraTxOut, MultiEraUtxo, NativeScript,
-    Nonce, PlutusData, Point, PointerAddress, PoolMetadata, PoolParams, ProposalProcedure,
-    Redeemer, Relay, RewardAccount, Script, ScriptRef, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo,
-    StakeCredential, TxId, UnitInterval, Value, Vote, Voter, VotingProcedure, VotingProcedures,
-    BYRON_SLOTS_PER_EPOCH,
+    Nonce, PlutusData, Point, PointerAddress, PoolMetadata, PoolParams, PraosHeader,
+    PraosHeaderBody, ProposalProcedure, Redeemer, Relay, RewardAccount, Script, ScriptRef,
+    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody,
+    ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert,
+    ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value, Vote, Voter,
+    VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
 };
 
 #[test]
@@ -3221,21 +3221,17 @@ fn voter_ordering_deterministic() {
 // Phase 47: BabbageBlock / ConwayBlock round-trip tests
 // ---------------------------------------------------------------------------
 
-fn sample_shelley_header() -> ShelleyHeader {
-    ShelleyHeader {
-        body: ShelleyHeaderBody {
+fn sample_praos_header() -> PraosHeader {
+    PraosHeader {
+        body: PraosHeaderBody {
             block_number: 42,
             slot: 1000,
             prev_hash: Some([0xAA; 32]),
             issuer_vkey: [0x11; 32],
             vrf_vkey: [0x22; 32],
-            nonce_vrf: ShelleyVrfCert {
+            vrf_result: ShelleyVrfCert {
                 output: vec![0x30; 32],
                 proof: [0x31; 80],
-            },
-            leader_vrf: ShelleyVrfCert {
-                output: vec![0x40; 32],
-                proof: [0x41; 80],
             },
             block_body_size: 512,
             block_body_hash: [0x55; 32],
@@ -3254,7 +3250,7 @@ fn sample_shelley_header() -> ShelleyHeader {
 #[test]
 fn babbage_block_cbor_round_trip_empty() {
     let block = BabbageBlock {
-        header: sample_shelley_header(),
+        header: sample_praos_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),
@@ -3294,7 +3290,7 @@ fn babbage_block_cbor_round_trip_with_tx() {
         reference_inputs: None,
     };
     let block = BabbageBlock {
-        header: sample_shelley_header(),
+        header: sample_praos_header(),
         transaction_bodies: vec![tx_body],
         transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
@@ -3319,7 +3315,7 @@ fn babbage_block_cbor_round_trip_with_tx() {
 #[test]
 fn babbage_block_header_hash() {
     let block = BabbageBlock {
-        header: sample_shelley_header(),
+        header: sample_praos_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),
@@ -3333,7 +3329,7 @@ fn babbage_block_header_hash() {
 #[test]
 fn conway_block_cbor_round_trip_empty() {
     let block = ConwayBlock {
-        header: sample_shelley_header(),
+        header: sample_praos_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),
@@ -3376,7 +3372,7 @@ fn conway_block_cbor_round_trip_with_tx() {
         treasury_donation: None,
     };
     let block = ConwayBlock {
-        header: sample_shelley_header(),
+        header: sample_praos_header(),
         transaction_bodies: vec![tx_body],
         transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
@@ -3400,7 +3396,7 @@ fn conway_block_cbor_round_trip_with_tx() {
 #[test]
 fn conway_block_header_hash() {
     let block = ConwayBlock {
-        header: sample_shelley_header(),
+        header: sample_praos_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),

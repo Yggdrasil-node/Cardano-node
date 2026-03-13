@@ -18,8 +18,8 @@ use yggdrasil_network::{
 };
 use yggdrasil_ledger::{
     BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock, Decoder, Era,
-    HeaderHash, LedgerError, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
-    SlotNo, Tx, TxId,
+    HeaderHash, LedgerError, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
     compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
@@ -713,6 +713,57 @@ pub fn verify_shelley_header(
     Ok(())
 }
 
+/// Convert a ledger `PraosHeaderBody` into a consensus `HeaderBody` for
+/// verification.
+pub fn praos_header_body_to_consensus(body: &PraosHeaderBody) -> ConsensusHeaderBody {
+    ConsensusHeaderBody {
+        block_number: BlockNo(body.block_number),
+        slot: SlotNo(body.slot),
+        prev_hash: body.prev_hash.map(HeaderHash),
+        issuer_vkey: VerificationKey::from_bytes(body.issuer_vkey),
+        vrf_vkey: VrfVerificationKey::from_bytes(body.vrf_vkey),
+        block_body_size: body.block_body_size,
+        block_body_hash: body.block_body_hash,
+        operational_cert: shelley_opcert_to_consensus(&body.operational_cert),
+        protocol_version: body.protocol_version,
+    }
+}
+
+/// Convert a ledger `PraosHeader` into a consensus `Header` for
+/// cryptographic verification.
+///
+/// # Errors
+///
+/// Returns `SyncError::LedgerDecode` if the KES signature bytes cannot be
+/// parsed at `SHELLEY_KES_DEPTH`.
+pub fn praos_header_to_consensus(header: &PraosHeader) -> Result<ConsensusHeader, SyncError> {
+    let kes_sig = SumKesSignature::from_bytes(SHELLEY_KES_DEPTH, &header.signature)
+        .map_err(|_| SyncError::LedgerDecode(LedgerError::CborInvalidLength {
+            expected: SumKesSignature::expected_size(SHELLEY_KES_DEPTH),
+            actual: header.signature.len(),
+        }))?;
+
+    Ok(ConsensusHeader {
+        body: praos_header_body_to_consensus(&header.body),
+        kes_signature: kes_sig,
+    })
+}
+
+/// Verify a Praos-era block header (Babbage/Conway) using the consensus
+/// verification pipeline.
+///
+/// Identical verification logic to `verify_shelley_header` but operates on
+/// the Praos header format (14-element body with single `vrf_result`).
+pub fn verify_praos_header(
+    header: &PraosHeader,
+    slots_per_kes_period: u64,
+    max_kes_evolutions: u64,
+) -> Result<(), SyncError> {
+    let consensus_hdr = praos_header_to_consensus(header)?;
+    verify_header(&consensus_hdr, slots_per_kes_period, max_kes_evolutions)?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Phase 35: Multi-era block decode
 // ---------------------------------------------------------------------------
@@ -938,22 +989,23 @@ pub struct VerificationConfig {
 /// block body content.
 ///
 /// `raw_envelope` is the raw CBOR `[era_tag, inner_block]` envelope as
-/// received on the wire.  Byron blocks (era tag 0) are skipped because they
-/// use a different header format.
+/// received on the wire.  Byron blocks (era tags 0–1) are skipped because
+/// they use a different header format.
 ///
 /// Steps:
 /// 1. Peel the 2-element envelope to extract the inner block bytes.
 /// 2. Compute the Blake2b-256 hash of the body elements (via
 ///    `compute_block_body_hash`).
 /// 3. Parse the header-body to extract the declared `block_body_hash`
-///    (field 8 of the 15-element `ShelleyHeaderBody` array).
+///    (field 8 for 15-element Shelley headers, field 7 for 14-element
+///    Praos headers).
 /// 4. Compare — mismatch yields `SyncError::BlockBodyHashMismatch`.
 pub fn verify_block_body_hash(raw_envelope: &[u8]) -> Result<(), SyncError> {
     let mut dec = Decoder::new(raw_envelope);
     let _arr_len = dec.array()?;
     let era_tag = dec.unsigned()?;
     // Byron blocks use a different header layout — skip them.
-    if era_tag == 0 {
+    if era_tag <= 1 {
         return Ok(());
     }
     let inner_start = dec.position();
@@ -973,23 +1025,26 @@ pub fn verify_block_body_hash(raw_envelope: &[u8]) -> Result<(), SyncError> {
 /// Extract the `block_body_hash` field from the header of a raw inner block.
 ///
 /// The inner block is a CBOR array whose first element is the header,
-/// which is itself `[header_body, kes_signature]`.  `header_body` is a
-/// 15-element array; field index 8 contains the 32-byte body hash.
+/// which is itself `[header_body, kes_signature]`.  `header_body` has:
+/// - 15 elements for Shelley through Alonzo (`block_body_hash` at index 8)
+/// - 14 elements for Babbage/Conway (`block_body_hash` at index 7)
 fn extract_header_block_body_hash(inner_block: &[u8]) -> Result<[u8; 32], LedgerError> {
     let mut dec = Decoder::new(inner_block);
     let _block_len = dec.array()?;
     // Element 0: header = [header_body, kes_sig]
     let _hdr_len = dec.array()?;
-    // header_body: 15-element array
     let hb_len = dec.array()?;
-    if hb_len != 15 {
-        return Err(LedgerError::CborInvalidLength {
-            expected: 15,
-            actual: hb_len as usize,
-        });
-    }
-    // Skip fields 0–7 to reach field 8 (block_body_hash).
-    for _ in 0..8 {
+    let skip_count = match hb_len {
+        15 => 8, // Shelley: block_body_hash at index 8
+        14 => 7, // Praos (Babbage/Conway): block_body_hash at index 7
+        _ => {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 15,
+                actual: hb_len as usize,
+            });
+        }
+    };
+    for _ in 0..skip_count {
         dec.skip()?;
     }
     let hash_bytes = dec.bytes()?;
@@ -1006,9 +1061,10 @@ fn extract_header_block_body_hash(inner_block: &[u8]) -> Result<[u8; 32], Ledger
 
 /// Verify the header of a multi-era block.
 ///
-/// All Shelley-family blocks (Shelley, Babbage, Conway) are verified
-/// using `verify_shelley_header` since they share the KES-signed header
-/// format. Byron blocks pass through without verification.
+/// Shelley-family blocks (Shelley through Alonzo) use `verify_shelley_header`
+/// (15-element header body with two VRF certs).  Babbage and Conway use
+/// `verify_praos_header` (14-element header body with single `vrf_result`).
+/// Byron blocks pass through without verification.
 pub fn verify_multi_era_block(
     block: &MultiEraBlock,
     config: &VerificationConfig,
@@ -1022,14 +1078,14 @@ pub fn verify_multi_era_block(
             )
         }
         MultiEraBlock::Babbage(babbage) => {
-            verify_shelley_header(
+            verify_praos_header(
                 &babbage.header,
                 config.slots_per_kes_period,
                 config.max_kes_evolutions,
             )
         }
         MultiEraBlock::Conway(conway) => {
-            verify_shelley_header(
+            verify_praos_header(
                 &conway.header,
                 config.slots_per_kes_period,
                 config.max_kes_evolutions,

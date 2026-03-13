@@ -26,7 +26,7 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`).
 - Full sync orchestration stack: `sync_step`, typed decode bridges, bounded loops, intersection finding, batch apply, managed sync service with `tokio::select!` shutdown + `ctrl_c` signal handling.
 - Multi-era block decode for all 7 era tags (Byron through Conway).
-- Consensus header verification bridge and verified multi-era sync pipeline.
-- Block body hash verification: `verify_block_body_hash` computes Blake2b-256 of body elements and compares against the hash declared in the header. Wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`.
+- Consensus header verification bridge for both Shelley-era (`shelley_header_to_consensus`, `verify_shelley_header`) and Praos-era (`praos_header_to_consensus`, `verify_praos_header`) headers. `verify_multi_era_block` dispatches to the correct verifier per era (Shelley through Alonzo → Shelley, Babbage/Conway → Praos).
+- Block body hash verification: `verify_block_body_hash` computes Blake2b-256 of body elements and compares against the hash declared in the header. `extract_header_block_body_hash` handles both 14-element (Praos) and 15-element (Shelley) header bodies. Wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`.
 - Block header hash computation uses real Blake2b-256.
 - Mempool sync eviction: `extract_tx_ids` + `evict_confirmed_from_mempool`.

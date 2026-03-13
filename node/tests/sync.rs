@@ -6,8 +6,9 @@ use yggdrasil_network::{
 };
 use yggdrasil_ledger::{
     BabbageBlock, BabbageTxBody, BabbageTxOut, CborEncode, ConwayBlock, ConwayTxBody,
-    Encoder, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
+    Encoder, HeaderHash, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
+    ShelleyWitnessSet, SlotNo, TxId,
     compute_block_body_hash,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry};
@@ -377,6 +378,29 @@ fn sample_block_bytes() -> Vec<u8> {
 fn sample_header_hash() -> HeaderHash {
     let header = ShelleyHeader {
         body: sample_header_body(),
+        signature: vec![0xDD; 448],
+    };
+    header.header_hash()
+}
+
+fn sample_praos_header_body() -> PraosHeaderBody {
+    PraosHeaderBody {
+        block_number: 1,
+        slot: 500,
+        prev_hash: Some([0xAA; 32]),
+        issuer_vkey: [0x11; 32],
+        vrf_vkey: [0x22; 32],
+        vrf_result: sample_vrf_cert(0x30),
+        block_body_size: 1024,
+        block_body_hash: [0x55; 32],
+        operational_cert: sample_opcert(0x60),
+        protocol_version: (2, 0),
+    }
+}
+
+fn sample_praos_header_hash() -> HeaderHash {
+    let header = PraosHeader {
+        body: sample_praos_header_body(),
         signature: vec![0xDD; 448],
     };
     header.header_hash()
@@ -1790,8 +1814,8 @@ fn evict_confirmed_rollback_does_nothing() {
 /// Build a sample Babbage block (no transactions) and return its CBOR bytes.
 fn sample_babbage_block_bytes() -> Vec<u8> {
     let block = BabbageBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
@@ -1805,8 +1829,8 @@ fn sample_babbage_block_bytes() -> Vec<u8> {
 /// Build a sample Conway block (no transactions) and return its CBOR bytes.
 fn sample_conway_block_bytes() -> Vec<u8> {
     let block = ConwayBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
@@ -1863,8 +1887,8 @@ fn decode_multi_era_blocks_all_eras() {
 #[test]
 fn multi_era_block_to_block_babbage() {
     let block = BabbageBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
@@ -1877,14 +1901,14 @@ fn multi_era_block_to_block_babbage() {
     assert_eq!(generic.era, yggdrasil_ledger::Era::Babbage);
     assert_eq!(generic.header.slot_no, SlotNo(500));
     assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
-    assert_eq!(generic.header.hash, sample_header_hash());
+    assert_eq!(generic.header.hash, sample_praos_header_hash());
 }
 
 #[test]
 fn multi_era_block_to_block_conway() {
     let block = ConwayBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
@@ -1897,7 +1921,7 @@ fn multi_era_block_to_block_conway() {
     assert_eq!(generic.era, yggdrasil_ledger::Era::Conway);
     assert_eq!(generic.header.slot_no, SlotNo(500));
     assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
-    assert_eq!(generic.header.hash, sample_header_hash());
+    assert_eq!(generic.header.hash, sample_praos_header_hash());
 }
 
 fn make_babbage_tx_body(fee: u64) -> BabbageTxBody {
@@ -1969,8 +1993,8 @@ fn extract_tx_ids_babbage() {
     let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
 
     let block = BabbageBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
@@ -1999,8 +2023,8 @@ fn extract_tx_ids_conway() {
     let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
 
     let block = ConwayBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
@@ -2027,8 +2051,8 @@ fn extract_tx_ids_conway() {
 fn babbage_block_round_trip_decode() {
     let body = make_babbage_tx_body(500);
     let block = BabbageBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
@@ -2061,8 +2085,8 @@ fn babbage_block_round_trip_decode() {
 fn conway_block_round_trip_decode() {
     let body = make_conway_tx_body(700);
     let block = ConwayBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
@@ -2096,8 +2120,8 @@ fn multi_era_block_to_block_babbage_with_txs() {
     let body = make_babbage_tx_body(250);
     let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
     let block = BabbageBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
@@ -2125,8 +2149,8 @@ fn multi_era_block_to_block_conway_with_txs() {
     let body = make_conway_tx_body(350);
     let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
     let block = ConwayBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
@@ -2152,8 +2176,8 @@ fn multi_era_block_to_block_conway_with_txs() {
 #[test]
 fn verify_multi_era_block_babbage_passes() {
     let block = BabbageBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
@@ -2177,8 +2201,8 @@ fn verify_multi_era_block_babbage_passes() {
 #[test]
 fn verify_multi_era_block_conway_passes() {
     let block = ConwayBlock {
-        header: ShelleyHeader {
-            body: sample_header_body(),
+        header: PraosHeader {
+            body: sample_praos_header_body(),
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
@@ -2266,10 +2290,10 @@ fn make_babbage_block_with_correct_body_hash() -> BabbageBlock {
     }];
 
     let dummy_block = BabbageBlock {
-        header: ShelleyHeader {
-            body: ShelleyHeaderBody {
+        header: PraosHeader {
+            body: PraosHeaderBody {
                 block_body_hash: [0x00; 32],
-                ..sample_header_body()
+                ..sample_praos_header_body()
             },
             signature: vec![0xDD; 448],
         },
@@ -2282,10 +2306,10 @@ fn make_babbage_block_with_correct_body_hash() -> BabbageBlock {
     let real_body_hash = compute_block_body_hash(&dummy_bytes).expect("compute hash");
 
     BabbageBlock {
-        header: ShelleyHeader {
-            body: ShelleyHeaderBody {
+        header: PraosHeader {
+            body: PraosHeaderBody {
                 block_body_hash: real_body_hash,
-                ..sample_header_body()
+                ..sample_praos_header_body()
             },
             signature: vec![0xDD; 448],
         },
@@ -2351,10 +2375,10 @@ fn verify_block_body_hash_mismatch_rejected() {
 #[test]
 fn verify_block_body_hash_babbage_mismatch_rejected() {
     let block = BabbageBlock {
-        header: ShelleyHeader {
-            body: ShelleyHeaderBody {
+        header: PraosHeader {
+            body: PraosHeaderBody {
                 block_body_hash: [0xFF; 32], // deliberately wrong
-                ..sample_header_body()
+                ..sample_praos_header_body()
             },
             signature: vec![0xDD; 448],
         },
