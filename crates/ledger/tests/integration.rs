@@ -1,12 +1,13 @@
 use yggdrasil_ledger::{
     Address, AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, BabbageBlock, BabbageTxBody,
     BabbageTxOut, BaseAddress, Block, BlockHeader, BlockNo, ByronBlock, CborDecode, CborEncode,
-    ConwayBlock, ConwayTxBody, DatumOption, Decoder, Encoder, EnterpriseAddress, Era, ExUnits,
-    GovActionId, HeaderHash, LedgerError, LedgerState, MaryTxBody, MaryTxOut, NativeScript, Nonce,
-    Point, PointerAddress, ProposalProcedure, Redeemer, RewardAccount, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential,
-    TxId, Value, Vote, Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
+    ConwayBlock, ConwayTxBody, DCert, DRep, DatumOption, Decoder, Encoder, EnterpriseAddress, Era,
+    EpochNo, ExUnits, GovActionId, HeaderHash, LedgerError, LedgerState, MaryTxBody, MaryTxOut,
+    NativeScript, Nonce, Point, PointerAddress, PoolMetadata, PoolParams, ProposalProcedure,
+    Redeemer, Relay, RewardAccount, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
+    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness,
+    ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value, Vote,
+    Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
 };
 
 #[test]
@@ -2850,6 +2851,14 @@ fn sample_hash28_alt() -> [u8; 28] {
     h
 }
 
+fn sample_hash32() -> [u8; 32] {
+    let mut h = [0u8; 32];
+    for (i, b) in h.iter_mut().enumerate() {
+        *b = (i as u8) + 0x10;
+    }
+    h
+}
+
 // -- StakeCredential tests --
 
 #[test]
@@ -3200,4 +3209,487 @@ fn pointer_address_zero_values() {
     assert_eq!(bytes.len(), 32);
     let decoded = Address::from_bytes(&bytes).expect("decode");
     assert_eq!(addr, decoded);
+}
+
+// =========================================================================
+// Phase 49 — Certificate Hierarchy Tests
+// =========================================================================
+
+// -- UnitInterval ----------------------------------------------------------
+
+#[test]
+fn unit_interval_cbor_round_trip() {
+    let ui = UnitInterval {
+        numerator: 1,
+        denominator: 3,
+    };
+    let bytes = ui.to_cbor_bytes();
+    let decoded = UnitInterval::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ui, decoded);
+}
+
+#[test]
+fn unit_interval_cbor_tag_30() {
+    let ui = UnitInterval {
+        numerator: 0,
+        denominator: 1,
+    };
+    let bytes = ui.to_cbor_bytes();
+    // Should start with tag 30 (0xd8 0x1e)
+    assert_eq!(bytes[0], 0xd8);
+    assert_eq!(bytes[1], 0x1e);
+}
+
+#[test]
+fn unit_interval_large_values() {
+    let ui = UnitInterval {
+        numerator: 999_999,
+        denominator: 1_000_000,
+    };
+    let bytes = ui.to_cbor_bytes();
+    let decoded = UnitInterval::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ui, decoded);
+}
+
+// -- Relay -----------------------------------------------------------------
+
+#[test]
+fn relay_single_host_addr_full_round_trip() {
+    let relay = Relay::SingleHostAddr(
+        Some(3001),
+        Some([127, 0, 0, 1]),
+        Some([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+    );
+    let bytes = relay.to_cbor_bytes();
+    let decoded = Relay::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(relay, decoded);
+}
+
+#[test]
+fn relay_single_host_addr_all_null_round_trip() {
+    let relay = Relay::SingleHostAddr(None, None, None);
+    let bytes = relay.to_cbor_bytes();
+    let decoded = Relay::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(relay, decoded);
+}
+
+#[test]
+fn relay_single_host_name_round_trip() {
+    let relay = Relay::SingleHostName(Some(6000), "relay1.example.com".to_string());
+    let bytes = relay.to_cbor_bytes();
+    let decoded = Relay::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(relay, decoded);
+}
+
+#[test]
+fn relay_single_host_name_no_port_round_trip() {
+    let relay = Relay::SingleHostName(None, "relay.example.com".to_string());
+    let bytes = relay.to_cbor_bytes();
+    let decoded = Relay::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(relay, decoded);
+}
+
+#[test]
+fn relay_multi_host_name_round_trip() {
+    let relay = Relay::MultiHostName("pool.example.com".to_string());
+    let bytes = relay.to_cbor_bytes();
+    let decoded = Relay::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(relay, decoded);
+}
+
+// -- PoolMetadata ----------------------------------------------------------
+
+#[test]
+fn pool_metadata_cbor_round_trip() {
+    let pm = PoolMetadata {
+        url: "https://example.com/pool.json".to_string(),
+        metadata_hash: sample_hash32(),
+    };
+    let bytes = pm.to_cbor_bytes();
+    let decoded = PoolMetadata::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pm, decoded);
+}
+
+// -- DRep ------------------------------------------------------------------
+
+#[test]
+fn drep_key_hash_round_trip() {
+    let drep = DRep::KeyHash(sample_hash28());
+    let bytes = drep.to_cbor_bytes();
+    let decoded = DRep::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(drep, decoded);
+}
+
+#[test]
+fn drep_script_hash_round_trip() {
+    let drep = DRep::ScriptHash(sample_hash28());
+    let bytes = drep.to_cbor_bytes();
+    let decoded = DRep::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(drep, decoded);
+}
+
+#[test]
+fn drep_always_abstain_round_trip() {
+    let drep = DRep::AlwaysAbstain;
+    let bytes = drep.to_cbor_bytes();
+    let decoded = DRep::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(drep, decoded);
+}
+
+#[test]
+fn drep_always_no_confidence_round_trip() {
+    let drep = DRep::AlwaysNoConfidence;
+    let bytes = drep.to_cbor_bytes();
+    let decoded = DRep::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(drep, decoded);
+}
+
+#[test]
+fn drep_abstain_array_length_1() {
+    let drep = DRep::AlwaysAbstain;
+    let bytes = drep.to_cbor_bytes();
+    // Should be [1-element array, uint(2)] = 0x81 0x02
+    assert_eq!(bytes[0], 0x81);
+    assert_eq!(bytes[1], 0x02);
+}
+
+#[test]
+fn drep_key_hash_array_length_2() {
+    let drep = DRep::KeyHash(sample_hash28());
+    let bytes = drep.to_cbor_bytes();
+    // Should be [2-element array, uint(0), bytes(28)] = 0x82 0x00 ...
+    assert_eq!(bytes[0], 0x82);
+    assert_eq!(bytes[1], 0x00);
+}
+
+// -- DCert (Shelley tags 0–5) ----------------------------------------------
+
+fn sample_pool_params() -> PoolParams {
+    PoolParams {
+        operator: sample_hash28(),
+        vrf_keyhash: sample_hash32(),
+        pledge: 500_000_000,
+        cost: 340_000_000,
+        margin: UnitInterval {
+            numerator: 1,
+            denominator: 100,
+        },
+        reward_account: RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash(sample_hash28()),
+        },
+        pool_owners: vec![sample_hash28()],
+        relays: vec![Relay::SingleHostName(
+            Some(3001),
+            "relay1.example.com".to_string(),
+        )],
+        pool_metadata: Some(PoolMetadata {
+            url: "https://example.com/pool.json".to_string(),
+            metadata_hash: sample_hash32(),
+        }),
+    }
+}
+
+#[test]
+fn dcert_stake_registration_round_trip() {
+    let cert = DCert::StakeRegistration(StakeCredential::AddrKeyHash(sample_hash28()));
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_stake_deregistration_round_trip() {
+    let cert = DCert::StakeDeregistration(StakeCredential::ScriptHash(sample_hash28()));
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_stake_delegation_round_trip() {
+    let cert =
+        DCert::StakeDelegation(StakeCredential::AddrKeyHash(sample_hash28()), sample_hash28());
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_pool_registration_round_trip() {
+    let cert = DCert::PoolRegistration(sample_pool_params());
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_pool_registration_no_metadata_round_trip() {
+    let mut params = sample_pool_params();
+    params.pool_metadata = None;
+    params.relays = vec![];
+    let cert = DCert::PoolRegistration(params);
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_pool_retirement_round_trip() {
+    let cert = DCert::PoolRetirement(sample_hash28(), EpochNo(300));
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_genesis_key_delegation_round_trip() {
+    let cert = DCert::GenesisKeyDelegation(sample_hash28(), sample_hash28(), sample_hash32());
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+// -- DCert (Conway tags 7–18) ---------------------------------------------
+
+#[test]
+fn dcert_reg_cert_round_trip() {
+    let cert = DCert::RegCert(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_unreg_cert_round_trip() {
+    let cert = DCert::UnregCert(StakeCredential::ScriptHash(sample_hash28()), 2_000_000);
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_vote_deleg_cert_round_trip() {
+    let cert = DCert::VoteDelegCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        DRep::KeyHash(sample_hash28()),
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_stake_vote_deleg_cert_round_trip() {
+    let cert = DCert::StakeVoteDelegCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        sample_hash28(),
+        DRep::AlwaysAbstain,
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_stake_reg_deleg_cert_round_trip() {
+    let cert = DCert::StakeRegDelegCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        sample_hash28(),
+        2_000_000,
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_vote_reg_deleg_cert_round_trip() {
+    let cert = DCert::VoteRegDelegCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        DRep::ScriptHash(sample_hash28()),
+        2_000_000,
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_stake_vote_reg_deleg_cert_round_trip() {
+    let cert = DCert::StakeVoteRegDelegCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        sample_hash28(),
+        DRep::AlwaysNoConfidence,
+        2_000_000,
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_auth_committee_hot_round_trip() {
+    let cert = DCert::AuthCommitteeHotCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        StakeCredential::ScriptHash(sample_hash28()),
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_resign_committee_cold_with_anchor_round_trip() {
+    let cert = DCert::ResignCommitteeColdCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        Some(Anchor {
+            url: "https://example.com/resign.json".to_string(),
+            data_hash: sample_hash32(),
+        }),
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_resign_committee_cold_no_anchor_round_trip() {
+    let cert = DCert::ResignCommitteeColdCert(
+        StakeCredential::ScriptHash(sample_hash28()),
+        None,
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_reg_drep_with_anchor_round_trip() {
+    let cert = DCert::RegDRepCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        500_000_000,
+        Some(Anchor {
+            url: "https://example.com/drep.json".to_string(),
+            data_hash: sample_hash32(),
+        }),
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_reg_drep_no_anchor_round_trip() {
+    let cert = DCert::RegDRepCert(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        500_000_000,
+        None,
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_unreg_drep_round_trip() {
+    let cert = DCert::UnregDRepCert(StakeCredential::AddrKeyHash(sample_hash28()), 500_000_000);
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_update_drep_with_anchor_round_trip() {
+    let cert = DCert::UpdateDRepCert(
+        StakeCredential::ScriptHash(sample_hash28()),
+        Some(Anchor {
+            url: "https://example.com/drep-update.json".to_string(),
+            data_hash: sample_hash32(),
+        }),
+    );
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+#[test]
+fn dcert_update_drep_no_anchor_round_trip() {
+    let cert = DCert::UpdateDRepCert(StakeCredential::AddrKeyHash(sample_hash28()), None);
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+// -- DCert structural checks -----------------------------------------------
+
+#[test]
+fn dcert_stake_registration_starts_with_tag_0() {
+    let cert = DCert::StakeRegistration(StakeCredential::AddrKeyHash(sample_hash28()));
+    let bytes = cert.to_cbor_bytes();
+    // array(2) = 0x82, uint(0) = 0x00
+    assert_eq!(bytes[0], 0x82);
+    assert_eq!(bytes[1], 0x00);
+}
+
+#[test]
+fn dcert_pool_registration_starts_with_tag_3() {
+    let cert = DCert::PoolRegistration(sample_pool_params());
+    let bytes = cert.to_cbor_bytes();
+    // array(10) = 0x8a, uint(3) = 0x03
+    assert_eq!(bytes[0], 0x8a);
+    assert_eq!(bytes[1], 0x03);
+}
+
+#[test]
+fn dcert_reg_cert_conway_starts_with_tag_7() {
+    let cert = DCert::RegCert(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
+    let bytes = cert.to_cbor_bytes();
+    // array(3) = 0x83, uint(7) = 0x07
+    assert_eq!(bytes[0], 0x83);
+    assert_eq!(bytes[1], 0x07);
+}
+
+// -- PoolParams with multiple relays and owners ----------------------------
+
+#[test]
+fn pool_params_multiple_relays_and_owners_round_trip() {
+    let params = PoolParams {
+        operator: sample_hash28(),
+        vrf_keyhash: sample_hash32(),
+        pledge: 1_000_000_000,
+        cost: 340_000_000,
+        margin: UnitInterval {
+            numerator: 3,
+            denominator: 100,
+        },
+        reward_account: RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash(sample_hash28()),
+        },
+        pool_owners: vec![sample_hash28(), [0xbb; 28]],
+        relays: vec![
+            Relay::SingleHostAddr(Some(3001), Some([1, 2, 3, 4]), None),
+            Relay::SingleHostName(None, "relay2.example.com".to_string()),
+            Relay::MultiHostName("pool.example.com".to_string()),
+        ],
+        pool_metadata: None,
+    };
+    let cert = DCert::PoolRegistration(params);
+    let bytes = cert.to_cbor_bytes();
+    let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cert, decoded);
+}
+
+// -- Moved Anchor: verify existing anchor tests still work -----------------
+
+#[test]
+fn anchor_cbor_round_trip_types_module() {
+    let anchor = Anchor {
+        url: "https://example.com/metadata.json".to_string(),
+        data_hash: sample_hash32(),
+    };
+    let bytes = anchor.to_cbor_bytes();
+    let decoded = Anchor::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(anchor, decoded);
 }

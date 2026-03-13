@@ -520,6 +520,239 @@ impl Address {
 }
 
 // ---------------------------------------------------------------------------
+// UnitInterval (rational number)
+// ---------------------------------------------------------------------------
+
+/// A rational number in [0, 1] encoded as tag 30 wrapping a 2-element array.
+///
+/// CDDL: `unit_interval = #6.30([1, 2])`
+///        `nonnegative_interval = #6.30([uint, positive_int])`
+///
+/// Upstream stores numerator/denominator as a tagged rational.
+///
+/// Reference: `Cardano.Ledger.BaseTypes` — `UnitInterval`, `BoundedRational`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct UnitInterval {
+    /// Numerator of the rational.
+    pub numerator: u64,
+    /// Denominator of the rational (must be > 0).
+    pub denominator: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Relay
+// ---------------------------------------------------------------------------
+
+/// A relay entry for a stake pool registration certificate.
+///
+/// CDDL:
+/// ```text
+/// relay =
+///   [  0, port / null, ipv4 / null, ipv6 / null  ]
+/// / [  1, port / null, dns_name  ]
+/// / [  2, dns_name  ]
+/// ```
+///
+/// Reference: `Cardano.Ledger.Shelley.TxBody` — `StakePoolRelay`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Relay {
+    /// Tag 0: optional port + optional IPv4 + optional IPv6.
+    SingleHostAddr(Option<u16>, Option<[u8; 4]>, Option<[u8; 16]>),
+    /// Tag 1: optional port + DNS name.
+    SingleHostName(Option<u16>, String),
+    /// Tag 2: multi-host DNS name.
+    MultiHostName(String),
+}
+
+// ---------------------------------------------------------------------------
+// PoolMetadata
+// ---------------------------------------------------------------------------
+
+/// Off-chain pool metadata: URL + hash of the content at that URL.
+///
+/// CDDL: `pool_metadata = [url, pool_metadata_hash]`
+///
+/// Reference: `Cardano.Ledger.Shelley.TxBody` — `PoolMetadata`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolMetadata {
+    /// URL pointing to pool metadata JSON (max 64 bytes).
+    pub url: String,
+    /// Blake2b-256 hash of the metadata content.
+    pub metadata_hash: [u8; 32],
+}
+
+// ---------------------------------------------------------------------------
+// PoolParams
+// ---------------------------------------------------------------------------
+
+/// Parameters for a stake pool registration certificate.
+///
+/// CDDL:
+/// ```text
+/// pool_params = ( operator:       pool_keyhash
+///               , vrf_keyhash:    vrf_keyhash
+///               , pledge:         coin
+///               , cost:           coin
+///               , margin:         unit_interval
+///               , reward_account: reward_account
+///               , pool_owners:    set<addr_keyhash>
+///               , relays:         [* relay]
+///               , pool_metadata:  pool_metadata / null
+///               )
+/// ```
+///
+/// Reference: `Cardano.Ledger.Shelley.TxBody` — `PoolParams`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolParams {
+    /// Pool operator key hash.
+    pub operator: PoolKeyHash,
+    /// VRF verification key hash.
+    pub vrf_keyhash: VrfKeyHash,
+    /// Pledge (in lovelace).
+    pub pledge: u64,
+    /// Fixed cost per epoch (in lovelace).
+    pub cost: u64,
+    /// Pool margin (rational in [0, 1]).
+    pub margin: UnitInterval,
+    /// Reward account for pool rewards.
+    pub reward_account: RewardAccount,
+    /// Set of pool-owner key hashes.
+    pub pool_owners: Vec<AddrKeyHash>,
+    /// Relay entries for the pool.
+    pub relays: Vec<Relay>,
+    /// Optional off-chain metadata.
+    pub pool_metadata: Option<PoolMetadata>,
+}
+
+// ---------------------------------------------------------------------------
+// Anchor
+// ---------------------------------------------------------------------------
+
+/// Off-chain metadata anchor: a URL plus a hash of the data at that URL.
+///
+/// CDDL: `anchor = [anchor_url : url, anchor_data_hash : $hash32]`
+///
+/// Reference: `Cardano.Ledger.BaseTypes.Anchor`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Anchor {
+    /// URL pointing to off-chain metadata (UTF-8 text).
+    pub url: String,
+    /// Blake2b-256 hash of the data at the URL.
+    pub data_hash: [u8; 32],
+}
+
+// ---------------------------------------------------------------------------
+// DRep (Conway)
+// ---------------------------------------------------------------------------
+
+/// A delegated representative for governance voting (CIP-1694).
+///
+/// CDDL:
+/// ```text
+/// drep =
+///   [0, addr_keyhash]
+/// / [1, scripthash]
+/// / [2]  ; always_abstain
+/// / [3]  ; always_no_confidence
+/// ```
+///
+/// Reference: `Cardano.Ledger.Conway.Governance.Procedures` — `DRep`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DRep {
+    /// DRep identified by key hash (tag 0).
+    KeyHash(AddrKeyHash),
+    /// DRep identified by script hash (tag 1).
+    ScriptHash(ScriptHash),
+    /// Always abstain sentinel (tag 2).
+    AlwaysAbstain,
+    /// Always no-confidence sentinel (tag 3).
+    AlwaysNoConfidence,
+}
+
+// ---------------------------------------------------------------------------
+// DCert (all eras)
+// ---------------------------------------------------------------------------
+
+/// Delegation and pool certificate covering Shelley through Conway eras.
+///
+/// Shelley certificates use tags 0–5; Conway adds tags 7–18 with
+/// extended delegation and governance certificate variants.
+///
+/// CDDL (Shelley):
+/// ```text
+/// certificate =
+///   [0, stake_credential]                          ; stake_registration
+/// / [1, stake_credential]                          ; stake_deregistration
+/// / [2, stake_credential, pool_keyhash]            ; stake_delegation
+/// / [3, pool_params]                               ; pool_registration
+/// / [4, pool_keyhash, epoch]                       ; pool_retirement
+/// / [5, genesishash, genesis_delegate_hash, vrf_keyhash]  ; genesis_key_delegation
+/// ```
+///
+/// CDDL (Conway extensions):
+/// ```text
+/// / [7, stake_credential, coin]                    ; reg_cert
+/// / [8, stake_credential, coin]                    ; unreg_cert
+/// / [9, stake_credential, drep]                    ; vote_deleg_cert
+/// / [10, stake_credential, pool_keyhash]           ; stake_vote_deleg_cert
+/// / [11, stake_credential, pool_keyhash, drep]     ; stake_reg_deleg_cert (combined)
+/// / [12, stake_credential, drep, coin]             ; vote_reg_deleg_cert
+/// / [13, stake_credential, pool_keyhash, drep, coin] ; stake_vote_reg_deleg_cert
+/// / [14, committee_cold_credential, committee_hot_credential] ; auth_committee_hot_cert
+/// / [15, committee_cold_credential, anchor / null] ; resign_committee_cold_cert
+/// / [16, drep_credential, coin, anchor / null]     ; reg_drep_cert
+/// / [17, drep_credential]                          ; unreg_drep_cert
+/// / [18, drep_credential, anchor / null]           ; update_drep_cert
+/// ```
+///
+/// Reference: `Cardano.Ledger.Shelley.TxBody` and
+/// `Cardano.Ledger.Conway.TxCert`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DCert {
+    // -- Shelley (tags 0–5) --------------------------------------------------
+
+    /// Tag 0: Stake key registration.
+    StakeRegistration(StakeCredential),
+    /// Tag 1: Stake key deregistration.
+    StakeDeregistration(StakeCredential),
+    /// Tag 2: Delegate stake to a pool.
+    StakeDelegation(StakeCredential, PoolKeyHash),
+    /// Tag 3: Register a stake pool.
+    PoolRegistration(PoolParams),
+    /// Tag 4: Retire a stake pool at the given epoch.
+    PoolRetirement(PoolKeyHash, EpochNo),
+    /// Tag 5: Genesis key delegation.
+    GenesisKeyDelegation(GenesisHash, GenesisDelegateHash, VrfKeyHash),
+
+    // -- Conway (tags 7–18) --------------------------------------------------
+
+    /// Tag 7: Registration certificate with deposit.
+    RegCert(StakeCredential, u64),
+    /// Tag 8: Unregistration certificate with deposit refund.
+    UnregCert(StakeCredential, u64),
+    /// Tag 9: Vote delegation certificate.
+    VoteDelegCert(StakeCredential, DRep),
+    /// Tag 10: Stake-and-vote delegation certificate.
+    StakeVoteDelegCert(StakeCredential, PoolKeyHash, DRep),
+    /// Tag 11: Stake registration + delegation combined.
+    StakeRegDelegCert(StakeCredential, PoolKeyHash, u64),
+    /// Tag 12: Vote registration + delegation combined.
+    VoteRegDelegCert(StakeCredential, DRep, u64),
+    /// Tag 13: Stake + vote registration + delegation combined.
+    StakeVoteRegDelegCert(StakeCredential, PoolKeyHash, DRep, u64),
+    /// Tag 14: Authorize committee hot credential.
+    AuthCommitteeHotCert(StakeCredential, StakeCredential),
+    /// Tag 15: Resign committee cold credential.
+    ResignCommitteeColdCert(StakeCredential, Option<Anchor>),
+    /// Tag 16: Register DRep with deposit and optional anchor.
+    RegDRepCert(StakeCredential, u64, Option<Anchor>),
+    /// Tag 17: Unregister DRep with deposit refund.
+    UnregDRepCert(StakeCredential, u64),
+    /// Tag 18: Update DRep certificate with optional anchor.
+    UpdateDRepCert(StakeCredential, Option<Anchor>),
+}
+
+// ---------------------------------------------------------------------------
 // Variable-length natural number encoding (Shelley address pointer)
 // ---------------------------------------------------------------------------
 

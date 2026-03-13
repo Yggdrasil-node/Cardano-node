@@ -16,8 +16,8 @@ pub use byron::BYRON_NAME;
 pub use byron::{ByronBlock, BYRON_SLOTS_PER_EPOCH};
 pub use conway::CONWAY_NAME;
 pub use conway::{
-    Anchor, ConwayBlock, ConwayTxBody, GovActionId, ProposalProcedure, Vote, Voter,
-    VotingProcedure, VotingProcedures,
+    ConwayBlock, ConwayTxBody, GovActionId, ProposalProcedure, Vote, Voter, VotingProcedure,
+    VotingProcedures,
 };
 pub use mary::MARY_NAME;
 pub use mary::{

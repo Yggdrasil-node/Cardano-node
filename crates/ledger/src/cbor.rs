@@ -491,7 +491,8 @@ pub trait CborDecode: Sized {
 // ───────────────────────────────────────────────────────────────────────────
 
 use crate::types::{
-    BlockNo, EpochNo, HeaderHash, Nonce, Point, RewardAccount, SlotNo, StakeCredential, TxId,
+    Anchor, BlockNo, DCert, DRep, EpochNo, HeaderHash, Nonce, Point, PoolMetadata, PoolParams,
+    Relay, RewardAccount, SlotNo, StakeCredential, TxId, UnitInterval,
 };
 
 // -- SlotNo ----------------------------------------------------------------
@@ -716,5 +717,658 @@ impl CborDecode for RewardAccount {
             expected: 29,
             actual: raw.len(),
         })
+    }
+}
+
+// -- Anchor ----------------------------------------------------------------
+//
+// CDDL: anchor = [anchor_url : url, anchor_data_hash : $hash32]
+
+impl CborEncode for Anchor {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2).text(&self.url).bytes(&self.data_hash);
+    }
+}
+
+impl CborDecode for Anchor {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let url = dec.text()?.to_owned();
+        let raw = dec.bytes()?;
+        let data_hash: [u8; 32] =
+            raw.try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: raw.len(),
+                })?;
+        Ok(Self { url, data_hash })
+    }
+}
+
+// -- UnitInterval ----------------------------------------------------------
+//
+// CDDL: unit_interval = #6.30([uint, positive_int])
+
+impl CborEncode for UnitInterval {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.tag(30).array(2);
+        enc.unsigned(self.numerator).unsigned(self.denominator);
+    }
+}
+
+impl CborDecode for UnitInterval {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let t = dec.tag()?;
+        if t != 30 {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: 30,
+                actual: t as u8,
+            });
+        }
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let numerator = dec.unsigned()?;
+        let denominator = dec.unsigned()?;
+        Ok(Self {
+            numerator,
+            denominator,
+        })
+    }
+}
+
+// -- Relay -----------------------------------------------------------------
+//
+// CDDL:
+//   relay =
+//     [ 0, port / null, ipv4 / null, ipv6 / null ]
+//   / [ 1, port / null, dns_name ]
+//   / [ 2, dns_name ]
+
+impl CborEncode for Relay {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self {
+            Self::SingleHostAddr(port, ipv4, ipv6) => {
+                enc.array(4).unsigned(0);
+                match port {
+                    Some(p) => { enc.unsigned(u64::from(*p)); }
+                    None => { enc.null(); }
+                }
+                match ipv4 {
+                    Some(ip) => { enc.bytes(ip); }
+                    None => { enc.null(); }
+                }
+                match ipv6 {
+                    Some(ip) => { enc.bytes(ip); }
+                    None => { enc.null(); }
+                }
+            }
+            Self::SingleHostName(port, name) => {
+                enc.array(3).unsigned(1);
+                match port {
+                    Some(p) => { enc.unsigned(u64::from(*p)); }
+                    None => { enc.null(); }
+                }
+                enc.text(name);
+            }
+            Self::MultiHostName(name) => {
+                enc.array(2).unsigned(2).text(name);
+            }
+        }
+    }
+}
+
+/// Decode an optional port: uint or null.
+fn decode_optional_port(dec: &mut Decoder<'_>) -> Result<Option<u16>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        Ok(Some(dec.unsigned()? as u16))
+    }
+}
+
+/// Decode an optional IPv4 address: bstr .size 4 or null.
+fn decode_optional_ipv4(dec: &mut Decoder<'_>) -> Result<Option<[u8; 4]>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        let raw = dec.bytes()?;
+        let ip: [u8; 4] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+            expected: 4,
+            actual: raw.len(),
+        })?;
+        Ok(Some(ip))
+    }
+}
+
+/// Decode an optional IPv6 address: bstr .size 16 or null.
+fn decode_optional_ipv6(dec: &mut Decoder<'_>) -> Result<Option<[u8; 16]>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        let raw = dec.bytes()?;
+        let ip: [u8; 16] =
+            raw.try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 16,
+                    actual: raw.len(),
+                })?;
+        Ok(Some(ip))
+    }
+}
+
+impl CborDecode for Relay {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let tag = dec.unsigned()?;
+        match tag {
+            0 => {
+                if len != 4 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 4,
+                        actual: len as usize,
+                    });
+                }
+                let port = decode_optional_port(dec)?;
+                let ipv4 = decode_optional_ipv4(dec)?;
+                let ipv6 = decode_optional_ipv6(dec)?;
+                Ok(Self::SingleHostAddr(port, ipv4, ipv6))
+            }
+            1 => {
+                if len != 3 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 3,
+                        actual: len as usize,
+                    });
+                }
+                let port = decode_optional_port(dec)?;
+                let name = dec.text()?.to_owned();
+                Ok(Self::SingleHostName(port, name))
+            }
+            2 => {
+                if len != 2 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 2,
+                        actual: len as usize,
+                    });
+                }
+                let name = dec.text()?.to_owned();
+                Ok(Self::MultiHostName(name))
+            }
+            _ => Err(LedgerError::CborTypeMismatch {
+                expected: 2,
+                actual: tag as u8,
+            }),
+        }
+    }
+}
+
+// -- PoolMetadata ----------------------------------------------------------
+//
+// CDDL: pool_metadata = [url, pool_metadata_hash]
+
+impl CborEncode for PoolMetadata {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2).text(&self.url).bytes(&self.metadata_hash);
+    }
+}
+
+impl CborDecode for PoolMetadata {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let url = dec.text()?.to_owned();
+        let raw = dec.bytes()?;
+        let metadata_hash: [u8; 32] =
+            raw.try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: raw.len(),
+                })?;
+        Ok(Self { url, metadata_hash })
+    }
+}
+
+// -- PoolParams ------------------------------------------------------------
+//
+// CDDL: pool_params = ( operator, vrf_keyhash, pledge, cost, margin,
+//                        reward_account, pool_owners, relays, pool_metadata )
+//
+// Encoded as a 9-element inline group (not a top-level array; the
+// containing certificate array provides the context).
+
+impl PoolParams {
+    /// Encode pool params fields inline (no wrapping array).
+    pub(crate) fn encode_inline(&self, enc: &mut Encoder) {
+        enc.bytes(&self.operator);
+        enc.bytes(&self.vrf_keyhash);
+        enc.unsigned(self.pledge);
+        enc.unsigned(self.cost);
+        self.margin.encode_cbor(enc);
+        self.reward_account.encode_cbor(enc);
+        // pool_owners as a CBOR array of key hashes
+        enc.array(self.pool_owners.len() as u64);
+        for owner in &self.pool_owners {
+            enc.bytes(owner);
+        }
+        // relays as a CBOR array
+        enc.array(self.relays.len() as u64);
+        for relay in &self.relays {
+            relay.encode_cbor(enc);
+        }
+        // pool_metadata: value or null
+        match &self.pool_metadata {
+            Some(pm) => pm.encode_cbor(enc),
+            None => { enc.null(); }
+        }
+    }
+
+    /// Decode pool params fields inline (no wrapping array expected).
+    pub(crate) fn decode_inline(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let raw_op = dec.bytes()?;
+        let operator: [u8; 28] =
+            raw_op
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 28,
+                    actual: raw_op.len(),
+                })?;
+        let raw_vrf = dec.bytes()?;
+        let vrf_keyhash: [u8; 32] =
+            raw_vrf
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: raw_vrf.len(),
+                })?;
+        let pledge = dec.unsigned()?;
+        let cost = dec.unsigned()?;
+        let margin = UnitInterval::decode_cbor(dec)?;
+        let reward_account = RewardAccount::decode_cbor(dec)?;
+        // pool_owners
+        let n_owners = dec.array()?;
+        let mut pool_owners = Vec::with_capacity(n_owners as usize);
+        for _ in 0..n_owners {
+            let raw = dec.bytes()?;
+            let h: [u8; 28] =
+                raw.try_into()
+                    .map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 28,
+                        actual: raw.len(),
+                    })?;
+            pool_owners.push(h);
+        }
+        // relays
+        let n_relays = dec.array()?;
+        let mut relays = Vec::with_capacity(n_relays as usize);
+        for _ in 0..n_relays {
+            relays.push(Relay::decode_cbor(dec)?);
+        }
+        // pool_metadata
+        let pool_metadata = if dec.peek_major()? == 7 {
+            dec.null()?;
+            None
+        } else {
+            Some(PoolMetadata::decode_cbor(dec)?)
+        };
+        Ok(Self {
+            operator,
+            vrf_keyhash,
+            pledge,
+            cost,
+            margin,
+            reward_account,
+            pool_owners,
+            relays,
+            pool_metadata,
+        })
+    }
+}
+
+// -- DRep ------------------------------------------------------------------
+//
+// CDDL:
+//   drep =
+//     [0, addr_keyhash]
+//   / [1, scripthash]
+//   / [2]                ; always_abstain
+//   / [3]                ; always_no_confidence
+
+impl CborEncode for DRep {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self {
+            Self::KeyHash(h) => {
+                enc.array(2).unsigned(0).bytes(h);
+            }
+            Self::ScriptHash(h) => {
+                enc.array(2).unsigned(1).bytes(h);
+            }
+            Self::AlwaysAbstain => {
+                enc.array(1).unsigned(2);
+            }
+            Self::AlwaysNoConfidence => {
+                enc.array(1).unsigned(3);
+            }
+        }
+    }
+}
+
+impl CborDecode for DRep {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let tag = dec.unsigned()?;
+        match tag {
+            0 | 1 => {
+                if len != 2 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 2,
+                        actual: len as usize,
+                    });
+                }
+                let raw = dec.bytes()?;
+                let hash: [u8; 28] =
+                    raw.try_into()
+                        .map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 28,
+                            actual: raw.len(),
+                        })?;
+                if tag == 0 {
+                    Ok(Self::KeyHash(hash))
+                } else {
+                    Ok(Self::ScriptHash(hash))
+                }
+            }
+            2 => {
+                if len != 1 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 1,
+                        actual: len as usize,
+                    });
+                }
+                Ok(Self::AlwaysAbstain)
+            }
+            3 => {
+                if len != 1 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 1,
+                        actual: len as usize,
+                    });
+                }
+                Ok(Self::AlwaysNoConfidence)
+            }
+            _ => Err(LedgerError::CborTypeMismatch {
+                expected: 3,
+                actual: tag as u8,
+            }),
+        }
+    }
+}
+
+// -- DCert -----------------------------------------------------------------
+//
+// CDDL: certificate = [tag, ...fields]
+// Tags 0–5 (Shelley), 7–18 (Conway).
+
+/// Decode an optional anchor: anchor / null.
+fn decode_optional_anchor(dec: &mut Decoder<'_>) -> Result<Option<Anchor>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        Ok(Some(Anchor::decode_cbor(dec)?))
+    }
+}
+
+/// Encode an optional anchor: anchor / null.
+fn encode_optional_anchor(anchor: &Option<Anchor>, enc: &mut Encoder) {
+    match anchor {
+        Some(a) => a.encode_cbor(enc),
+        None => { enc.null(); }
+    }
+}
+
+/// Decode a 28-byte hash from the decoder.
+fn decode_hash28(dec: &mut Decoder<'_>) -> Result<[u8; 28], LedgerError> {
+    let raw = dec.bytes()?;
+    raw.try_into()
+        .map_err(|_| LedgerError::CborInvalidLength {
+            expected: 28,
+            actual: raw.len(),
+        })
+}
+
+/// Decode a 32-byte hash from the decoder.
+fn decode_hash32(dec: &mut Decoder<'_>) -> Result<[u8; 32], LedgerError> {
+    let raw = dec.bytes()?;
+    raw.try_into()
+        .map_err(|_| LedgerError::CborInvalidLength {
+            expected: 32,
+            actual: raw.len(),
+        })
+}
+
+impl CborEncode for DCert {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self {
+            Self::StakeRegistration(cred) => {
+                enc.array(2).unsigned(0);
+                cred.encode_cbor(enc);
+            }
+            Self::StakeDeregistration(cred) => {
+                enc.array(2).unsigned(1);
+                cred.encode_cbor(enc);
+            }
+            Self::StakeDelegation(cred, pool) => {
+                enc.array(3).unsigned(2);
+                cred.encode_cbor(enc);
+                enc.bytes(pool);
+            }
+            Self::PoolRegistration(params) => {
+                enc.array(10).unsigned(3);
+                params.encode_inline(enc);
+            }
+            Self::PoolRetirement(pool, epoch) => {
+                enc.array(3).unsigned(4);
+                enc.bytes(pool);
+                epoch.encode_cbor(enc);
+            }
+            Self::GenesisKeyDelegation(genesis, deleg, vrf) => {
+                enc.array(4).unsigned(5);
+                enc.bytes(genesis).bytes(deleg).bytes(vrf);
+            }
+            Self::RegCert(cred, coin) => {
+                enc.array(3).unsigned(7);
+                cred.encode_cbor(enc);
+                enc.unsigned(*coin);
+            }
+            Self::UnregCert(cred, coin) => {
+                enc.array(3).unsigned(8);
+                cred.encode_cbor(enc);
+                enc.unsigned(*coin);
+            }
+            Self::VoteDelegCert(cred, drep) => {
+                enc.array(3).unsigned(9);
+                cred.encode_cbor(enc);
+                drep.encode_cbor(enc);
+            }
+            Self::StakeVoteDelegCert(cred, pool, drep) => {
+                enc.array(4).unsigned(10);
+                cred.encode_cbor(enc);
+                enc.bytes(pool);
+                drep.encode_cbor(enc);
+            }
+            Self::StakeRegDelegCert(cred, pool, coin) => {
+                enc.array(4).unsigned(11);
+                cred.encode_cbor(enc);
+                enc.bytes(pool);
+                enc.unsigned(*coin);
+            }
+            Self::VoteRegDelegCert(cred, drep, coin) => {
+                enc.array(4).unsigned(12);
+                cred.encode_cbor(enc);
+                drep.encode_cbor(enc);
+                enc.unsigned(*coin);
+            }
+            Self::StakeVoteRegDelegCert(cred, pool, drep, coin) => {
+                enc.array(5).unsigned(13);
+                cred.encode_cbor(enc);
+                enc.bytes(pool);
+                drep.encode_cbor(enc);
+                enc.unsigned(*coin);
+            }
+            Self::AuthCommitteeHotCert(cold, hot) => {
+                enc.array(3).unsigned(14);
+                cold.encode_cbor(enc);
+                hot.encode_cbor(enc);
+            }
+            Self::ResignCommitteeColdCert(cold, anchor) => {
+                enc.array(3).unsigned(15);
+                cold.encode_cbor(enc);
+                encode_optional_anchor(anchor, enc);
+            }
+            Self::RegDRepCert(cred, coin, anchor) => {
+                enc.array(4).unsigned(16);
+                cred.encode_cbor(enc);
+                enc.unsigned(*coin);
+                encode_optional_anchor(anchor, enc);
+            }
+            Self::UnregDRepCert(cred, coin) => {
+                enc.array(3).unsigned(17);
+                cred.encode_cbor(enc);
+                enc.unsigned(*coin);
+            }
+            Self::UpdateDRepCert(cred, anchor) => {
+                enc.array(3).unsigned(18);
+                cred.encode_cbor(enc);
+                encode_optional_anchor(anchor, enc);
+            }
+        }
+    }
+}
+
+impl CborDecode for DCert {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let _len = dec.array()?;
+        let tag = dec.unsigned()?;
+        match tag {
+            // Shelley tags 0–5
+            0 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                Ok(Self::StakeRegistration(cred))
+            }
+            1 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                Ok(Self::StakeDeregistration(cred))
+            }
+            2 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let pool = decode_hash28(dec)?;
+                Ok(Self::StakeDelegation(cred, pool))
+            }
+            3 => {
+                let params = PoolParams::decode_inline(dec)?;
+                Ok(Self::PoolRegistration(params))
+            }
+            4 => {
+                let pool = decode_hash28(dec)?;
+                let epoch = EpochNo::decode_cbor(dec)?;
+                Ok(Self::PoolRetirement(pool, epoch))
+            }
+            5 => {
+                let genesis = decode_hash28(dec)?;
+                let deleg = decode_hash28(dec)?;
+                let vrf = decode_hash32(dec)?;
+                Ok(Self::GenesisKeyDelegation(genesis, deleg, vrf))
+            }
+            // Conway tags 7–18
+            7 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let coin = dec.unsigned()?;
+                Ok(Self::RegCert(cred, coin))
+            }
+            8 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let coin = dec.unsigned()?;
+                Ok(Self::UnregCert(cred, coin))
+            }
+            9 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let drep = DRep::decode_cbor(dec)?;
+                Ok(Self::VoteDelegCert(cred, drep))
+            }
+            10 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let pool = decode_hash28(dec)?;
+                let drep = DRep::decode_cbor(dec)?;
+                Ok(Self::StakeVoteDelegCert(cred, pool, drep))
+            }
+            11 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let pool = decode_hash28(dec)?;
+                let coin = dec.unsigned()?;
+                Ok(Self::StakeRegDelegCert(cred, pool, coin))
+            }
+            12 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let drep = DRep::decode_cbor(dec)?;
+                let coin = dec.unsigned()?;
+                Ok(Self::VoteRegDelegCert(cred, drep, coin))
+            }
+            13 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let pool = decode_hash28(dec)?;
+                let drep = DRep::decode_cbor(dec)?;
+                let coin = dec.unsigned()?;
+                Ok(Self::StakeVoteRegDelegCert(cred, pool, drep, coin))
+            }
+            14 => {
+                let cold = StakeCredential::decode_cbor(dec)?;
+                let hot = StakeCredential::decode_cbor(dec)?;
+                Ok(Self::AuthCommitteeHotCert(cold, hot))
+            }
+            15 => {
+                let cold = StakeCredential::decode_cbor(dec)?;
+                let anchor = decode_optional_anchor(dec)?;
+                Ok(Self::ResignCommitteeColdCert(cold, anchor))
+            }
+            16 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let coin = dec.unsigned()?;
+                let anchor = decode_optional_anchor(dec)?;
+                Ok(Self::RegDRepCert(cred, coin, anchor))
+            }
+            17 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let coin = dec.unsigned()?;
+                Ok(Self::UnregDRepCert(cred, coin))
+            }
+            18 => {
+                let cred = StakeCredential::decode_cbor(dec)?;
+                let anchor = decode_optional_anchor(dec)?;
+                Ok(Self::UpdateDRepCert(cred, anchor))
+            }
+            _ => Err(LedgerError::CborTypeMismatch {
+                expected: 18,
+                actual: tag as u8,
+            }),
+        }
     }
 }

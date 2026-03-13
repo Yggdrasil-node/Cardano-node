@@ -25,7 +25,7 @@ use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
-use crate::types::HeaderHash;
+use crate::types::{Anchor, HeaderHash};
 
 pub const CONWAY_NAME: &str = "Conway";
 
@@ -203,48 +203,10 @@ impl CborDecode for GovActionId {
 }
 
 // ---------------------------------------------------------------------------
-// Anchor
+// Anchor — CBOR encoding is in `crate::cbor`.
 // ---------------------------------------------------------------------------
 
-/// Off-chain metadata anchor: a URL plus a hash of the data at that URL.
-///
-/// CDDL: `anchor = [anchor_url : url, anchor_data_hash : $hash32]`
-///
-/// Reference: `Cardano.Ledger.BaseTypes.Anchor`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Anchor {
-    /// URL pointing to off-chain metadata (UTF-8 text).
-    pub url: String,
-    /// Blake2b-256 hash of the data at the URL.
-    pub data_hash: [u8; 32],
-}
-
-impl CborEncode for Anchor {
-    fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(2).text(&self.url).bytes(&self.data_hash);
-    }
-}
-
-impl CborDecode for Anchor {
-    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
-        let len = dec.array()?;
-        if len != 2 {
-            return Err(LedgerError::CborInvalidLength {
-                expected: 2,
-                actual: len as usize,
-            });
-        }
-        let url = dec.text()?.to_owned();
-        let raw = dec.bytes()?;
-        let data_hash: [u8; 32] =
-            raw.try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 32,
-                    actual: raw.len(),
-                })?;
-        Ok(Self { url, data_hash })
-    }
-}
+// The `Anchor` struct is defined in `crate::types`; CBOR impls are in `crate::cbor`.
 
 // ---------------------------------------------------------------------------
 // VotingProcedure

@@ -24,13 +24,12 @@ pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 /// Supported Cardano eras represented in the workspace.
 pub use eras::Era;
 pub use eras::{
-    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, AssetName, BabbageBlock, BabbageTxBody,
-    BabbageTxOut, ByronBlock, ConwayBlock, ConwayTxBody, DatumOption, ExUnits, GovActionId,
-    MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId, ProposalProcedure,
-    Redeemer, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
-    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert,
-    ShelleyWitnessSet, Value, Vote, Voter, VotingProcedure, VotingProcedures,
-    BYRON_SLOTS_PER_EPOCH,
+    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, AssetName, BabbageBlock, BabbageTxBody, BabbageTxOut,
+    ByronBlock, ConwayBlock, ConwayTxBody, DatumOption, ExUnits, GovActionId, MaryTxBody,
+    MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId, ProposalProcedure, Redeemer,
+    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody,
+    ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet,
+    Value, Vote, Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
 };
 
 // -- Error re-exports ---------------------------------------------------------
@@ -47,7 +46,8 @@ pub use tx::{Block, BlockHeader, Tx};
 
 // -- Type re-exports ----------------------------------------------------------
 pub use types::{
-    AddrKeyHash, Address, BaseAddress, BlockNo, EnterpriseAddress, EpochNo, GenesisDelegateHash,
-    GenesisHash, HeaderHash, Nonce, Point, PointerAddress, PoolKeyHash, RewardAccount, ScriptHash,
-    SlotNo, StakeCredential, TxId, VrfKeyHash,
+    AddrKeyHash, Address, Anchor, BaseAddress, BlockNo, DCert, DRep, EnterpriseAddress, EpochNo,
+    GenesisDelegateHash, GenesisHash, HeaderHash, Nonce, Point, PointerAddress, PoolKeyHash,
+    PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash, SlotNo, StakeCredential, TxId,
+    UnitInterval, VrfKeyHash,
 };
