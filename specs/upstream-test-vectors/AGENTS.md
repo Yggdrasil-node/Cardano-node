@@ -16,7 +16,7 @@ This directory vendors official upstream vector and golden artifacts used for pa
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research and add or update links as needed*
+## Official Upstream References *Always research referances and add or update links as needed*
 - Upstream `cardano-base` repository: <https://github.com/IntersectMBO/cardano-base/>
 - Praos vector path: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test_vectors/>
 - BLS12-381 vector path: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>

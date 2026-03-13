@@ -17,7 +17,7 @@ Keep these documents synchronized with the implemented workspace, not with specu
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research and add or update links as needed*
+## Official Upstream References *Always research referances and add or update links as needed*
 - Node integration and operational behavior: <https://github.com/IntersectMBO/cardano-node/>
 - Ledger implementation and schemas: <https://github.com/IntersectMBO/cardano-ledger/>
 - Formal ledger specifications: <https://github.com/IntersectMBO/formal-ledger-specifications>

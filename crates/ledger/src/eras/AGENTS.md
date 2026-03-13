@@ -18,7 +18,7 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Official era names, rule labels, and transition terminology from upstream ledger and node sources MUST be preferred.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research and add or update links as needed*
+## Official Upstream References *Always research referances and add or update links as needed*
 - Era sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
 - Formal ledger specification site: <https://intersectmbo.github.io/formal-ledger-specifications/site/>
 - Formal ledger specification repository: <https://github.com/IntersectMBO/formal-ledger-specifications/>

@@ -18,7 +18,7 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research and add or update links as needed*
+## Official Upstream References *Always research referances and add or update links as needed*
 - `cardano-node` runtime: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
 - `ouroboros-consensus` integration behavior: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
 

@@ -21,7 +21,7 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Full cryptographic parity, vector coverage, and encoding compatibility are non-negotiable long-term targets.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research and add or update links as needed*
+## Official Upstream References *Always research referances and add or update links as needed*
 - Crypto abstractions and shared utilities: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/>
 - Praos-oriented crypto behavior and vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/>
 - Shared Cardano base packages: <https://github.com/IntersectMBO/cardano-base/>

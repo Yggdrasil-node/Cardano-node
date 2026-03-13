@@ -20,7 +20,7 @@ Focus on deterministic parsing and reproducible generated artifacts.
 - Schema handling and generated output MUST be explained with reference to the official node path through cardano-ledger and related IntersectMBO sources.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research and add or update links as needed*
+## Official Upstream References *Always research referances and add or update links as needed*
 - Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
 - Ledger binary and supporting libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
 - Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/>
