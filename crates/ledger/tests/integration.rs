@@ -1,10 +1,10 @@
 use yggdrasil_ledger::{
-    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo, ByronBlock, CborDecode,
-    CborEncode, Decoder, Encoder, Era, ExUnits, HeaderHash, LedgerError, LedgerState, MaryTxBody,
-    MaryTxOut, NativeScript, Nonce, Point, Redeemer, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId, Value,
-    BYRON_SLOTS_PER_EPOCH,
+    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, BabbageTxBody, BabbageTxOut, Block, BlockHeader,
+    BlockNo, ByronBlock, CborDecode, CborEncode, DatumOption, Decoder, Encoder, Era, ExUnits,
+    HeaderHash, LedgerError, LedgerState, MaryTxBody, MaryTxOut, NativeScript, Nonce, Point,
+    Redeemer, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
+    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert,
+    ShelleyWitnessSet, SlotNo, TxId, Value, BYRON_SLOTS_PER_EPOCH,
 };
 
 #[test]
@@ -2141,4 +2141,235 @@ fn byron_block_variant_accessors() {
     };
     assert_eq!(main.epoch(), 3);
     assert_eq!(*main.prev_hash(), [0x66; 32]);
+}
+
+// -----------------------------------------------------------------------
+// Phase 45 – Babbage era types
+// -----------------------------------------------------------------------
+
+#[test]
+fn datum_option_hash_cbor_round_trip() {
+    let datum = DatumOption::Hash([0xAA; 32]);
+    let mut enc = Encoder::new();
+    datum.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = DatumOption::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(datum, decoded);
+}
+
+#[test]
+fn datum_option_inline_cbor_round_trip() {
+    // Inline datum: opaque CBOR bytes (e.g. an integer 42 = 0x18 0x2a).
+    let inline_data = vec![0x18, 0x2A];
+    let datum = DatumOption::Inline(inline_data.clone());
+    let mut enc = Encoder::new();
+    datum.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = DatumOption::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(datum, decoded);
+    if let DatumOption::Inline(data) = decoded {
+        assert_eq!(data, inline_data);
+    } else {
+        panic!("expected Inline variant");
+    }
+}
+
+#[test]
+fn babbage_txout_map_format_cbor_round_trip() {
+    let txout = BabbageTxOut {
+        address: vec![0x01; 28],
+        amount: Value::Coin(5_000_000),
+        datum_option: None,
+        script_ref: None,
+    };
+    let mut enc = Encoder::new();
+    txout.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxOut::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(txout, decoded);
+}
+
+#[test]
+fn babbage_txout_with_datum_hash_cbor_round_trip() {
+    let txout = BabbageTxOut {
+        address: vec![0x02; 28],
+        amount: Value::Coin(3_000_000),
+        datum_option: Some(DatumOption::Hash([0xBB; 32])),
+        script_ref: None,
+    };
+    let mut enc = Encoder::new();
+    txout.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxOut::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(txout, decoded);
+}
+
+#[test]
+fn babbage_txout_with_inline_datum_and_script_ref() {
+    let txout = BabbageTxOut {
+        address: vec![0x03; 28],
+        amount: Value::Coin(10_000_000),
+        datum_option: Some(DatumOption::Inline(vec![0x05])),
+        script_ref: Some(vec![0x83, 0x00, 0x81, 0x00]), // opaque script bytes
+    };
+    let mut enc = Encoder::new();
+    txout.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxOut::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(txout, decoded);
+}
+
+#[test]
+fn babbage_txout_pre_babbage_array_decode() {
+    // Build a pre-Babbage (Alonzo-style) array-format output: [address, coin].
+    let mut enc = Encoder::new();
+    enc.array(2).bytes(&[0x04; 28]).unsigned(2_000_000);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxOut::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(decoded.address, vec![0x04; 28]);
+    assert_eq!(decoded.amount, Value::Coin(2_000_000));
+    assert!(decoded.datum_option.is_none());
+    assert!(decoded.script_ref.is_none());
+}
+
+#[test]
+fn babbage_txout_pre_babbage_array_with_datum_hash() {
+    // Pre-Babbage array with datum hash: [address, coin, datum_hash].
+    let mut enc = Encoder::new();
+    enc.array(3).bytes(&[0x05; 28]).unsigned(1_000_000).bytes(&[0xCC; 32]);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxOut::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(decoded.amount, Value::Coin(1_000_000));
+    assert_eq!(decoded.datum_option, Some(DatumOption::Hash([0xCC; 32])));
+}
+
+#[test]
+fn babbage_tx_body_required_fields_only() {
+    let body = BabbageTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: [0x11; 32], index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x01; 28],
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    };
+    let mut enc = Encoder::new();
+    body.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxBody::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn babbage_tx_body_with_new_fields() {
+    let body = BabbageTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: [0x22; 32], index: 1 }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x02; 28],
+            amount: Value::Coin(5_000_000),
+            datum_option: Some(DatumOption::Inline(vec![0x42])),
+            script_ref: None,
+        }],
+        fee: 300_000,
+        ttl: Some(1_000_000),
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: Some([0xDD; 32]),
+        collateral: Some(vec![ShelleyTxIn { transaction_id: [0x33; 32], index: 0 }]),
+        required_signers: Some(vec![[0x44; 28]]),
+        network_id: Some(1),
+        collateral_return: Some(BabbageTxOut {
+            address: vec![0x05; 28],
+            amount: Value::Coin(4_700_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+        total_collateral: Some(300_000),
+        reference_inputs: Some(vec![ShelleyTxIn { transaction_id: [0x55; 32], index: 2 }]),
+    };
+    let mut enc = Encoder::new();
+    body.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxBody::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn babbage_tx_body_unknown_keys_skipped() {
+    // Build a minimal body with an extra unknown key 99.
+    let mut enc = Encoder::new();
+    enc.map(4); // 3 required + 1 unknown
+    // Key 0: inputs (1 input).
+    enc.unsigned(0).array(1);
+    ShelleyTxIn { transaction_id: [0x11; 32], index: 0 }.encode_cbor(&mut enc);
+    // Key 1: outputs (1 output in map format).
+    enc.unsigned(1).array(1);
+    enc.map(2).unsigned(0).bytes(&[0x01; 28]).unsigned(1).unsigned(500_000);
+    // Key 2: fee.
+    enc.unsigned(2).unsigned(100_000);
+    // Key 99: unknown — should be skipped.
+    enc.unsigned(99).unsigned(42);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxBody::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(decoded.fee, 100_000);
+    assert_eq!(decoded.inputs.len(), 1);
+}
+
+#[test]
+fn babbage_tx_body_reference_inputs_only() {
+    let body = BabbageTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: [0x11; 32], index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x01; 28],
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: Some(vec![
+            ShelleyTxIn { transaction_id: [0x66; 32], index: 0 },
+            ShelleyTxIn { transaction_id: [0x77; 32], index: 3 },
+        ]),
+    };
+    let mut enc = Encoder::new();
+    body.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = BabbageTxBody::decode_cbor(&mut dec).expect("decode");
+    assert_eq!(decoded.reference_inputs.as_ref().map(Vec::len), Some(2));
+    assert_eq!(body, decoded);
 }

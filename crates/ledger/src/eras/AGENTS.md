@@ -27,5 +27,6 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Mary: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (key 9 mint) with CBOR codecs.
 - Alonzo: `ExUnits`, `Redeemer` (opaque PlutusData), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 11/13/14/15) with CBOR codecs.
 - Byron: `ByronBlock` enum (EBB/MainBlock) with lightweight envelope decoding for slot tracking.
-- Babbage, Conway: naming scaffolds only.
+- Babbage: `DatumOption` (hash/inline), `BabbageTxOut` (dual-format array+map with script_ref), `BabbageTxBody` (keys 16/17/18) with CBOR codecs.
+- Conway: naming scaffold only.
 - Keep additions lightweight until generated types and real transition logic land.
