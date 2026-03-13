@@ -17,9 +17,9 @@ use yggdrasil_network::{
     ChainSyncClientError, IntersectResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
 };
 use yggdrasil_ledger::{
-    BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock, Decoder, Era,
-    HeaderHash, LedgerError, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
+    AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock,
+    Decoder, Era, HeaderHash, LedgerError, Point, PraosHeader, PraosHeaderBody, ShelleyBlock,
+    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
     compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
@@ -782,8 +782,13 @@ pub enum MultiEraBlock {
         raw: Vec<u8>,
     },
     /// A fully decoded Shelley-era block (also covers Allegra/Mary
-    /// which share the Shelley block envelope and tx body format).
+    /// which share the Shelley 4-element block envelope and tx body format).
     Shelley(Box<ShelleyBlock>),
+    /// A fully decoded Alonzo-era block with `AlonzoTxBody` entries.
+    /// Alonzo introduced the 5-element block format (adding
+    /// `invalid_transactions`) while keeping the Shelley 15-element
+    /// header body (TPraos, two VRF certs).
+    Alonzo(Box<AlonzoBlock>),
     /// A fully decoded Babbage-era block with `BabbageTxBody` entries.
     Babbage(Box<BabbageBlock>),
     /// A fully decoded Conway-era block with `ConwayTxBody` entries.
@@ -812,9 +817,10 @@ mod era_tag {
 ///
 /// The block is expected to be CBOR-encoded in the Cardano multi-era
 /// envelope format: `[era_tag, block_body]`. Byron blocks (tags 0–1) are
-/// kept as opaque bytes. Shelley-family blocks (tags 2–5) are decoded
-/// using the Shelley block codec. Babbage (tag 6) and Conway (tag 7) use
-/// their own block codecs with era-appropriate transaction body types.
+/// kept as opaque bytes. Shelley/Allegra/Mary (tags 2–4) use the 4-element
+/// Shelley block codec. Alonzo (tag 5) uses the 5-element Alonzo block
+/// codec. Babbage (tag 6) and Conway (tag 7) use their own 5-element
+/// block codecs with era-appropriate transaction body types.
 pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
     // Peek at the structure: expect a 2-element array [tag, body].
     use yggdrasil_ledger::cbor::Decoder;
@@ -833,14 +839,23 @@ pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
         era_tag::BYRON_EBB | era_tag::BYRON_MAIN => {
             Ok(MultiEraBlock::Byron { raw: raw.to_vec() })
         }
-        era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY | era_tag::ALONZO => {
-            // The body is the next CBOR item; capture its raw bytes.
+        era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => {
+            // Shelley/Allegra/Mary blocks are 4-element CBOR arrays.
             let body_start = dec.position();
             dec.skip().map_err(SyncError::LedgerDecode)?;
             let body_bytes = &raw[body_start..dec.position()];
             let block = ShelleyBlock::from_cbor_bytes(body_bytes)
                 .map_err(SyncError::LedgerDecode)?;
             Ok(MultiEraBlock::Shelley(Box::new(block)))
+        }
+        era_tag::ALONZO => {
+            // Alonzo blocks are 5-element CBOR arrays (added invalid_transactions).
+            let body_start = dec.position();
+            dec.skip().map_err(SyncError::LedgerDecode)?;
+            let body_bytes = &raw[body_start..dec.position()];
+            let block = AlonzoBlock::from_cbor_bytes(body_bytes)
+                .map_err(SyncError::LedgerDecode)?;
+            Ok(MultiEraBlock::Alonzo(Box::new(block)))
         }
         era_tag::BABBAGE => {
             let body_start = dec.position();
@@ -891,6 +906,7 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
     match block {
         MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley),
+        MultiEraBlock::Alonzo(alonzo) => alonzo_block_to_block(alonzo),
         MultiEraBlock::Babbage(babbage) => babbage_block_to_block(babbage),
         MultiEraBlock::Conway(conway) => conway_block_to_block(conway),
         MultiEraBlock::Byron { raw } => Block {
@@ -904,6 +920,37 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
             },
             transactions: vec![],
         },
+    }
+}
+
+/// Convert a typed Alonzo block into the generic ledger `Block` wrapper.
+fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
+    let body = &block.header.body;
+    let hash = block.header_hash();
+    let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+
+    let transactions: Vec<Tx> = block
+        .transaction_bodies
+        .iter()
+        .map(|tx_body| {
+            let raw = tx_body.to_cbor_bytes();
+            Tx {
+                id: compute_tx_id(&raw),
+                body: raw,
+            }
+        })
+        .collect();
+
+    Block {
+        era: Era::Alonzo,
+        header: BlockHeader {
+            hash,
+            prev_hash,
+            slot_no: SlotNo(body.slot),
+            block_no: BlockNo(body.block_number),
+            issuer_vkey: body.issuer_vkey,
+        },
+        transactions,
     }
 }
 
@@ -1061,10 +1108,11 @@ fn extract_header_block_body_hash(inner_block: &[u8]) -> Result<[u8; 32], Ledger
 
 /// Verify the header of a multi-era block.
 ///
-/// Shelley-family blocks (Shelley through Alonzo) use `verify_shelley_header`
-/// (15-element header body with two VRF certs).  Babbage and Conway use
-/// `verify_praos_header` (14-element header body with single `vrf_result`).
-/// Byron blocks pass through without verification.
+/// Shelley-family blocks (Shelley through Alonzo, including the separate
+/// Alonzo variant) use `verify_shelley_header` (15-element header body
+/// with two VRF certs).  Babbage and Conway use `verify_praos_header`
+/// (14-element header body with single `vrf_result`).  Byron blocks pass
+/// through without verification.
 pub fn verify_multi_era_block(
     block: &MultiEraBlock,
     config: &VerificationConfig,
@@ -1073,6 +1121,13 @@ pub fn verify_multi_era_block(
         MultiEraBlock::Shelley(shelley) => {
             verify_shelley_header(
                 &shelley.header,
+                config.slots_per_kes_period,
+                config.max_kes_evolutions,
+            )
+        }
+        MultiEraBlock::Alonzo(alonzo) => {
+            verify_shelley_header(
+                &alonzo.header,
                 config.slots_per_kes_period,
                 config.max_kes_evolutions,
             )

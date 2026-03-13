@@ -28,7 +28,7 @@ pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 /// Supported Cardano eras represented in the workspace.
 pub use eras::Era;
 pub use eras::{
-    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, AssetName, BabbageBlock, BabbageTxBody, BabbageTxOut,
+    AllegraTxBody, AlonzoBlock, AlonzoTxBody, AlonzoTxOut, AssetName, BabbageBlock, BabbageTxBody, BabbageTxOut,
     BootstrapWitness, ByronBlock, Constitution, ConwayBlock, ConwayTxBody, DatumOption, ExUnits,
     GovAction, GovActionId, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId,
     PraosHeader, PraosHeaderBody, ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader,

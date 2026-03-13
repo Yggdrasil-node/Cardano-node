@@ -9,7 +9,7 @@ pub mod shelley;
 pub use allegra::ALLEGRA_NAME;
 pub use allegra::{AllegraTxBody, NativeScript};
 pub use alonzo::ALONZO_NAME;
-pub use alonzo::{AlonzoTxBody, AlonzoTxOut, ExUnits, Redeemer};
+pub use alonzo::{AlonzoBlock, AlonzoTxBody, AlonzoTxOut, ExUnits, Redeemer};
 pub use babbage::BABBAGE_NAME;
 pub use babbage::{BabbageBlock, BabbageTxBody, BabbageTxOut, DatumOption};
 pub use byron::BYRON_NAME;

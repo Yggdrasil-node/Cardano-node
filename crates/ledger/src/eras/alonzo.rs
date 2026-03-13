@@ -16,14 +16,15 @@
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl>
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
-use crate::eras::shelley::ShelleyTxIn;
+use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::eras::shelley::ShelleyUpdate;
 use crate::error::LedgerError;
 use crate::plutus::PlutusData;
-use crate::types::{DCert, RewardAccount};
+use crate::types::{DCert, HeaderHash, RewardAccount};
 
 pub const ALONZO_NAME: &str = "Alonzo";
 
@@ -519,6 +520,131 @@ impl CborDecode for AlonzoTxBody {
             collateral,
             required_signers,
             network_id,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Alonzo block
+// ---------------------------------------------------------------------------
+
+/// An Alonzo-era full block.
+///
+/// Alonzo changed the block envelope from 4 elements (Shelley/Allegra/Mary)
+/// to 5 elements, adding `invalid_transactions` — a list of transaction
+/// indices whose Phase-2 Plutus scripts failed validation.  The block still
+/// uses the Shelley-era 15-element `ShelleyHeader` (with `nonce_vrf` and
+/// `leader_vrf`), since the TPraos protocol was active until the Babbage
+/// hard fork.
+///
+/// CDDL:
+/// ```text
+/// block = [
+///   header,
+///   transaction_bodies       : [* transaction_body],
+///   transaction_witness_sets : [* transaction_witness_set],
+///   auxiliary_data_set       : {* transaction_index => auxiliary_data},
+///   invalid_transactions     : [* transaction_index],
+/// ]
+/// ```
+///
+/// Reference: `Ouroboros.Consensus.Shelley.Ledger.Block`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlonzoBlock {
+    /// The signed block header (Shelley/TPraos format, 15-element body).
+    pub header: ShelleyHeader,
+    /// Transaction bodies decoded with Alonzo-era key-map CBOR.
+    pub transaction_bodies: Vec<AlonzoTxBody>,
+    /// Witness sets (parallel to transaction_bodies).
+    pub transaction_witness_sets: Vec<ShelleyWitnessSet>,
+    /// Auxiliary data map: transaction index → raw CBOR auxiliary data bytes.
+    pub auxiliary_data_set: HashMap<u64, Vec<u8>>,
+    /// Indices of transactions whose Phase-2 scripts failed validation.
+    pub invalid_transactions: Vec<u64>,
+}
+
+impl AlonzoBlock {
+    /// Compute the Blake2b-256 header hash for this block.
+    pub fn header_hash(&self) -> HeaderHash {
+        self.header.header_hash()
+    }
+}
+
+impl CborEncode for AlonzoBlock {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(5);
+        self.header.encode_cbor(enc);
+
+        enc.array(self.transaction_bodies.len() as u64);
+        for body in &self.transaction_bodies {
+            body.encode_cbor(enc);
+        }
+
+        enc.array(self.transaction_witness_sets.len() as u64);
+        for ws in &self.transaction_witness_sets {
+            ws.encode_cbor(enc);
+        }
+
+        enc.map(self.auxiliary_data_set.len() as u64);
+        for (&idx, aux) in &self.auxiliary_data_set {
+            enc.unsigned(idx);
+            enc.raw(aux);
+        }
+
+        enc.array(self.invalid_transactions.len() as u64);
+        for &idx in &self.invalid_transactions {
+            enc.unsigned(idx);
+        }
+    }
+}
+
+impl CborDecode for AlonzoBlock {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 5 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 5,
+                actual: len as usize,
+            });
+        }
+
+        let header = ShelleyHeader::decode_cbor(dec)?;
+
+        let tb_count = dec.array()?;
+        let mut transaction_bodies = Vec::with_capacity(tb_count as usize);
+        for _ in 0..tb_count {
+            transaction_bodies.push(AlonzoTxBody::decode_cbor(dec)?);
+        }
+
+        let ws_count = dec.array()?;
+        let mut witness_sets = Vec::with_capacity(ws_count as usize);
+        for _ in 0..ws_count {
+            witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
+        }
+
+        let meta_count = dec.map()?;
+        let mut auxiliary_data_set = HashMap::with_capacity(meta_count as usize);
+        for _ in 0..meta_count {
+            let idx = dec.unsigned()?;
+            let start = dec.position();
+            dec.skip()?;
+            let end = dec.position();
+            let raw = dec.slice(start, end)?.to_vec();
+            auxiliary_data_set.insert(idx, raw);
+        }
+
+        let inv_count = dec.array()?;
+        let mut invalid_transactions = Vec::with_capacity(inv_count as usize);
+        for _ in 0..inv_count {
+            invalid_transactions.push(dec.unsigned()?);
+        }
+
+        Ok(Self {
+            header,
+            transaction_bodies,
+            transaction_witness_sets: witness_sets,
+            auxiliary_data_set,
+            invalid_transactions,
         })
     }
 }

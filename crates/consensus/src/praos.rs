@@ -114,6 +114,10 @@ fn nat_fraction(bytes: &[u8]) -> f64 {
 /// Returns `Ok(Some((output, proof_bytes)))` if the key is elected leader,
 /// `Ok(None)` otherwise.
 ///
+/// The proof is generated using the standard (draft-03) VRF algorithm,
+/// producing an 80-byte proof that matches the on-chain `vrf_cert` wire
+/// format (`bytes .size 80`).
+///
 /// Reference: `checkIsLeader` in
 /// `Ouroboros.Consensus.Protocol.Praos`.
 pub fn check_is_leader(
@@ -125,7 +129,7 @@ pub fn check_is_leader(
 ) -> Result<Option<(VrfOutput, Vec<u8>)>, ConsensusError> {
     let input = vrf_input(slot, epoch_nonce);
     let (output, proof) = sk
-        .prove_batchcompat(&input)
+        .prove(&input)
         .map_err(|_| ConsensusError::InvalidVrfProof)?;
     let is_leader = check_leader_value(&output, sigma, active_slot_coeff)?;
     if is_leader {
@@ -143,6 +147,10 @@ pub fn check_is_leader(
 /// output does not meet the threshold, and `Err` on VRF verification
 /// failure.
 ///
+/// Expects a standard (draft-03) VRF proof of 80 bytes, matching the
+/// on-chain `vrf_cert = [bytes, bytes .size 80]` wire format used across
+/// all eras (Shelley through Conway).
+///
 /// Reference: `validateVRFSignature` in
 /// `Ouroboros.Consensus.Protocol.Praos`.
 pub fn verify_leader_proof(
@@ -153,16 +161,16 @@ pub fn verify_leader_proof(
     sigma: f64,
     active_slot_coeff: ActiveSlotCoeff,
 ) -> Result<bool, ConsensusError> {
-    use yggdrasil_crypto::vrf::{VrfBatchCompatProof, VRF_BATCHCOMPAT_PROOF_SIZE};
+    use yggdrasil_crypto::vrf::{VrfProof, VRF_PROOF_SIZE};
 
-    let proof_arr: [u8; VRF_BATCHCOMPAT_PROOF_SIZE] = proof_bytes
+    let proof_arr: [u8; VRF_PROOF_SIZE] = proof_bytes
         .try_into()
         .map_err(|_| ConsensusError::InvalidVrfProof)?;
-    let proof = VrfBatchCompatProof::from_bytes(proof_arr);
+    let proof = VrfProof::from_bytes(proof_arr);
 
     let input = vrf_input(slot, epoch_nonce);
     let output = vk
-        .verify_batchcompat(&input, &proof)
+        .verify(&input, &proof)
         .map_err(|_| ConsensusError::InvalidVrfProof)?;
 
     check_leader_value(&output, sigma, active_slot_coeff)
