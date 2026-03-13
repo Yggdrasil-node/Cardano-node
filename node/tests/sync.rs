@@ -5,8 +5,8 @@ use yggdrasil_network::{
     peer_accept,
 };
 use yggdrasil_ledger::{
-    BabbageBlock, BabbageTxBody, BabbageTxOut, CborEncode, ConwayBlock, ConwayTxBody,
-    Encoder, HeaderHash, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
+    BabbageBlock, BabbageTxBody, BabbageTxOut, BlockNo, CborEncode, ConwayBlock, ConwayTxBody,
+    Encoder, HeaderHash, Nonce, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
     ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
     ShelleyWitnessSet, SlotNo, TxId,
     compute_block_body_hash,
@@ -15,15 +15,18 @@ use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_node::{
     DecodedSyncStep, MultiEraBlock, MultiEraSyncStep, NodeConfig, SyncServiceConfig, SyncStep,
     TypedIntersectResult, TypedSyncStep, VerificationConfig, apply_multi_era_step_to_volatile,
+    apply_nonce_evolution,
     apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
     evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
+    multi_era_block_to_chain_entry, promote_stable_blocks, track_chain_state,
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
     shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
     sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed,
     typed_find_intersect, verify_block_body_hash, verify_multi_era_block, verify_shelley_header,
     SHELLEY_KES_DEPTH,
 };
-use yggdrasil_storage::{InMemoryVolatile, VolatileStore};
+use yggdrasil_consensus::{ChainState, SecurityParam};
+use yggdrasil_storage::{InMemoryImmutable, InMemoryVolatile, ImmutableStore, VolatileStore};
 
 async fn spawn_rollforward_responder(magic: u32) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -2551,4 +2554,339 @@ fn cross_subsystem_rollback_flow() {
         HeaderHash(h)
     };
     assert!(volatile.get_block(&removed_hash).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Nonce evolution integration with MultiEraBlock
+// ---------------------------------------------------------------------------
+
+use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, vrf_output_to_nonce};
+
+fn nonce_test_config() -> NonceEvolutionConfig {
+    NonceEvolutionConfig {
+        epoch_size: EpochSize(100),
+        stability_window: 30,
+        extra_entropy: Nonce::Neutral,
+    }
+}
+
+fn make_shelley_block(slot: u64, nonce_vrf_seed: u8, prev_hash: Option<[u8; 32]>) -> ShelleyBlock {
+    let mut nonce_out = vec![0u8; 64];
+    nonce_out[0] = nonce_vrf_seed;
+
+    ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_number: 1,
+                slot,
+                prev_hash,
+                issuer_vkey: [0u8; 32],
+                vrf_vkey: [0u8; 32],
+                nonce_vrf: ShelleyVrfCert {
+                    output: nonce_out,
+                    proof: [0u8; 80],
+                },
+                leader_vrf: ShelleyVrfCert {
+                    output: vec![0u8; 64],
+                    proof: [0u8; 80],
+                },
+                block_body_size: 0,
+                block_body_hash: [0u8; 32],
+                operational_cert: ShelleyOpCert {
+                    hot_vkey: [0u8; 32],
+                    sequence_number: 0,
+                    kes_period: 0,
+                    sigma: [0u8; 64],
+                },
+                protocol_version: (2, 0),
+            },
+            signature: vec![0u8; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }
+}
+
+fn make_babbage_block(slot: u64, vrf_seed: u8, prev_hash: Option<[u8; 32]>) -> BabbageBlock {
+    let mut vrf_out = vec![0u8; 64];
+    vrf_out[0] = vrf_seed;
+
+    BabbageBlock {
+        header: PraosHeader {
+            body: PraosHeaderBody {
+                block_number: 1,
+                slot,
+                prev_hash,
+                issuer_vkey: [0u8; 32],
+                vrf_vkey: [0u8; 32],
+                vrf_result: ShelleyVrfCert {
+                    output: vrf_out,
+                    proof: [0u8; 80],
+                },
+                block_body_size: 0,
+                block_body_hash: [0u8; 32],
+                operational_cert: ShelleyOpCert {
+                    hot_vkey: [0u8; 32],
+                    sequence_number: 0,
+                    kes_period: 0,
+                    sigma: [0u8; 64],
+                },
+                protocol_version: (7, 0),
+            },
+            signature: vec![0u8; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }
+}
+
+#[test]
+fn apply_nonce_evolution_shelley_block() {
+    let config = nonce_test_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    let prev = [0xAA; 32];
+    let block = make_shelley_block(5, 42, Some(prev));
+    let me_block = MultiEraBlock::Shelley(Box::new(block.clone()));
+
+    apply_nonce_evolution(&mut state, &me_block, &config);
+
+    let eta = vrf_output_to_nonce(&block.header.body.nonce_vrf.output);
+    assert_eq!(state.evolving_nonce, init.combine(eta));
+    assert_eq!(state.lab_nonce, Nonce::from_header_hash(HeaderHash(prev)));
+}
+
+#[test]
+fn apply_nonce_evolution_babbage_block() {
+    let config = nonce_test_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    let prev = [0xBB; 32];
+    let block = make_babbage_block(10, 99, Some(prev));
+    let me_block = MultiEraBlock::Babbage(Box::new(block.clone()));
+
+    apply_nonce_evolution(&mut state, &me_block, &config);
+
+    let eta = vrf_output_to_nonce(&block.header.body.vrf_result.output);
+    assert_eq!(state.evolving_nonce, init.combine(eta));
+    assert_eq!(state.lab_nonce, Nonce::from_header_hash(HeaderHash(prev)));
+}
+
+#[test]
+fn apply_nonce_evolution_byron_is_no_op() {
+    let config = nonce_test_config();
+    let init = Nonce::Hash([0x11; 32]);
+    let mut state = NonceEvolutionState::new(init);
+    let before = state.clone();
+
+    let byron = MultiEraBlock::Byron { raw: vec![0u8; 100] };
+    apply_nonce_evolution(&mut state, &byron, &config);
+
+    assert_eq!(state, before);
+}
+
+#[test]
+fn apply_nonce_evolution_epoch_transition_via_shelley_blocks() {
+    // epoch_size=100, stability_window=30.
+    let config = nonce_test_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Feed blocks in epoch 0 (slots 0..99).
+    for i in 0u8..10 {
+        let block = make_shelley_block(i as u64 * 5, i + 1, Some([i; 32]));
+        apply_nonce_evolution(&mut state, &MultiEraBlock::Shelley(Box::new(block)), &config);
+    }
+    assert_eq!(state.current_epoch, yggdrasil_ledger::EpochNo(0));
+
+    let epoch_nonce_before = state.epoch_nonce;
+
+    // Feed a block in epoch 1 (slot 100) to trigger TICKN.
+    let block = make_shelley_block(100, 200, Some([0xFF; 32]));
+    apply_nonce_evolution(&mut state, &MultiEraBlock::Shelley(Box::new(block)), &config);
+
+    assert_eq!(state.current_epoch, yggdrasil_ledger::EpochNo(1));
+    // Epoch nonce should have changed.
+    assert_ne!(state.epoch_nonce, epoch_nonce_before);
+}
+
+#[test]
+fn apply_nonce_evolution_mixed_eras() {
+    // Transition from Shelley to Babbage blocks — nonce evolution should
+    // be continuous.
+    let config = nonce_test_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Shelley block at slot 0.
+    let s_block = make_shelley_block(0, 1, Some([0xAA; 32]));
+    apply_nonce_evolution(&mut state, &MultiEraBlock::Shelley(Box::new(s_block)), &config);
+    let nonce_after_shelley = state.evolving_nonce;
+
+    // Babbage block at slot 1.
+    let b_block = make_babbage_block(1, 2, Some([0xBB; 32]));
+    apply_nonce_evolution(&mut state, &MultiEraBlock::Babbage(Box::new(b_block.clone())), &config);
+
+    // Evolving nonce should accumulate over both blocks.
+    let eta_b = vrf_output_to_nonce(&b_block.header.body.vrf_result.output);
+    assert_eq!(state.evolving_nonce, nonce_after_shelley.combine(eta_b));
+}
+
+// ---------------------------------------------------------------------------
+// ChainState integration with sync pipeline
+// ---------------------------------------------------------------------------
+
+/// Build a Shelley block with a specified block number and slot.
+fn make_shelley_block_with_number(block_no: u64, slot: u64) -> ShelleyBlock {
+    ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_number: block_no,
+                slot,
+                prev_hash: Some([block_no as u8; 32]),
+                issuer_vkey: [0u8; 32],
+                vrf_vkey: [0u8; 32],
+                nonce_vrf: ShelleyVrfCert {
+                    output: vec![0u8; 64],
+                    proof: [0u8; 80],
+                },
+                leader_vrf: ShelleyVrfCert {
+                    output: vec![0u8; 64],
+                    proof: [0u8; 80],
+                },
+                block_body_size: 0,
+                block_body_hash: [0u8; 32],
+                operational_cert: ShelleyOpCert {
+                    hot_vkey: [0u8; 32],
+                    sequence_number: 0,
+                    kes_period: 0,
+                    sigma: [0u8; 64],
+                },
+                protocol_version: (2, 0),
+            },
+            signature: vec![0u8; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }
+}
+
+#[test]
+fn chain_entry_from_shelley_block() {
+    let block = make_shelley_block_with_number(42, 100);
+    let me = MultiEraBlock::Shelley(Box::new(block.clone()));
+    let entry = multi_era_block_to_chain_entry(&me).expect("shelley should produce entry");
+    assert_eq!(entry.block_no, BlockNo(42));
+    assert_eq!(entry.slot, SlotNo(100));
+    assert_eq!(entry.hash, block.header_hash());
+}
+
+#[test]
+fn chain_entry_from_byron_is_none() {
+    let me = MultiEraBlock::Byron { raw: vec![0u8; 16] };
+    assert!(multi_era_block_to_chain_entry(&me).is_none());
+}
+
+#[test]
+fn track_chain_state_roll_forward() {
+    let mut cs = ChainState::new(SecurityParam(3));
+    let blocks: Vec<MultiEraBlock> = (1..=5)
+        .map(|i| MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(i, i * 10))))
+        .collect();
+
+    let step = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::Origin,
+        blocks,
+    };
+    let stable = track_chain_state(&mut cs, &step).expect("roll forward");
+    // 5 blocks, k=3 → 2 stable
+    assert_eq!(stable, 2);
+    assert_eq!(cs.volatile_len(), 3);
+}
+
+#[test]
+fn track_chain_state_roll_backward() {
+    let mut cs = ChainState::new(SecurityParam(10));
+    // Insert blocks 1..=4
+    let blocks: Vec<MultiEraBlock> = (1..=4)
+        .map(|i| MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(i, i * 10))))
+        .collect();
+    let fwd = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::Origin,
+        blocks,
+    };
+    track_chain_state(&mut cs, &fwd).expect("roll forward");
+    assert_eq!(cs.volatile_len(), 4);
+
+    // Remember block 2's hash for rollback target.
+    let block2 = make_shelley_block_with_number(2, 20);
+    let hash2 = block2.header_hash();
+
+    let back = MultiEraSyncStep::RollBackward {
+        point: Point::BlockPoint(SlotNo(20), hash2),
+        tip: Point::Origin,
+    };
+    let stable = track_chain_state(&mut cs, &back).expect("roll backward");
+    assert_eq!(stable, 0);
+    assert_eq!(cs.volatile_len(), 2);
+}
+
+#[test]
+fn promote_stable_blocks_moves_to_immutable() {
+    // Build 5 blocks and add to volatile store.
+    let blocks: Vec<_> = (1..=5)
+        .map(|i| {
+            let sb = make_shelley_block_with_number(i, i * 10);
+            multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(sb)))
+        })
+        .collect();
+
+    let mut volatile = InMemoryVolatile::default();
+    for b in &blocks {
+        volatile.add_block(b.clone()).expect("add block");
+    }
+
+    // Build stable entries for the first 2 blocks.
+    let stable_entries: Vec<_> = blocks[..2]
+        .iter()
+        .map(|b| yggdrasil_consensus::ChainEntry {
+            hash: b.header.hash,
+            slot: b.header.slot_no,
+            block_no: b.header.block_no,
+        })
+        .collect();
+
+    let mut immutable = InMemoryImmutable::default();
+    let promoted = promote_stable_blocks(&stable_entries, &volatile, &mut immutable).expect("promote");
+    assert_eq!(promoted, 2);
+    assert_eq!(immutable.len(), 2);
+    // The promoted blocks are accessible in the immutable store.
+    assert!(immutable.get_block(&blocks[0].header.hash).is_some());
+    assert!(immutable.get_block(&blocks[1].header.hash).is_some());
+}
+
+#[test]
+fn track_chain_state_skips_byron_blocks() {
+    let mut cs = ChainState::new(SecurityParam(10));
+    let blocks = vec![
+        MultiEraBlock::Byron { raw: vec![0u8; 16] },
+        MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(1, 10))),
+    ];
+    let step = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::Origin,
+        blocks,
+    };
+    let stable = track_chain_state(&mut cs, &step).expect("roll forward with byron");
+    assert_eq!(stable, 0);
+    // Only the Shelley block was tracked; Byron was skipped.
+    assert_eq!(cs.volatile_len(), 1);
 }

@@ -23,11 +23,13 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Node runtime and packaging reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
 - Default network configuration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
 - Submit API and auxiliary integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
+- Enviorment configuration references "preview, Preprod, mainnet: <https://book.world.dev.cardano.org/env-preview.html>, <https://book.world.dev.cardano.org/env-preprod.html>, <https://book.world.dev.cardano.org/env-mainnet.html>
 
 ## Current Phase
 - Keep the node crate thin and integration-focused.
-- **CLI**: `clap`-based binary with `run` (connect + sync) and `default-config` (emit JSON) subcommands. CLI flags (`--peer`, `--network-magic`, `--no-verify`, `--batch-size`) override config-file values.
-- **Configuration**: `NodeConfigFile` (JSON, serde) with peer address, network magic, protocol versions, KES parameters, and keepalive interval. `default_config()` returns mainnet defaults.
+- **Configuration**: `NodeConfigFile` (JSON, serde) with peer address, network magic, protocol versions, KES parameters, and keepalive interval. `default_config()` returns mainnet defaults. `NetworkPreset` enum (`Mainnet | Preprod | Preview`) with `FromStr`/`Display` and per-network constructors (`mainnet_config()`, `preprod_config()`, `preview_config()`).
+- **CLI**: `clap`-based binary with `run` (connect + sync) and `default-config` (emit JSON) subcommands. CLI flags (`--peer`, `--network-magic`, `--no-verify`, `--batch-size`, `--network`) override config-file values. `--network` accepts `mainnet`, `preprod`, or `preview` as a preset.
+- **Network config files**: `node/configuration/{mainnet,preprod,preview}/` each contain byron-genesis.json, shelley-genesis.json, alonzo-genesis.json, conway-genesis.json, config.json, topology.json sourced from the Cardano Operations Book.
 - Runtime bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`) with smoke coverage.
 - Full sync orchestration stack is implemented: `sync_step`, `sync_steps`, typed decode bridges, bounded loops, intersection finding, batch apply, managed sync service with graceful shutdown via `tokio::signal::ctrl_c`.
 - Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque, Shelley/Allegra/Mary/Alonzo decoded as `ShelleyBlock`, Babbage decoded as `BabbageBlock`, and Conway decoded as `ConwayBlock` is implemented. All seven era tags (0–7) are handled.
@@ -35,4 +37,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Block body hash verification (`verify_block_body_hash`, `VerificationConfig.verify_body_hash`) computes Blake2b-256 of block body elements and compares against the header-declared hash. Wired into `sync_batch_apply_verified`.
 - Block header hash computation uses real Blake2b-256.
 - Mempool sync eviction (`extract_tx_ids`, `evict_confirmed_from_mempool`) is implemented.
+- Verified sync service (`run_verified_sync_service`, `VerifiedSyncServiceConfig`, `VerifiedSyncServiceOutcome`) uses the multi-era verified pipeline with per-block nonce evolution tracking and optional ChainState tracking. Returns final `NonceEvolutionState` and `ChainState` on shutdown. CLI `run` command now uses this pipeline by default.
+- ChainState integration: `multi_era_block_to_chain_entry`, `track_chain_state`, `promote_stable_blocks` wire consensus `ChainState` into the sync flow. `VerifiedSyncServiceConfig.security_param` enables chain tracking with stability window enforcement.
+- Genesis parameters in `NodeConfigFile`: `epoch_length` (432000), `security_param_k` (2160), `active_slot_coeff` (0.05). Stability window computed as `3k/f`.
 - Prefer smokeable runtime wiring over feature-rich operational behavior at this stage.

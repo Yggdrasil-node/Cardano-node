@@ -978,3 +978,308 @@ fn mainnet_max_kes_evolutions() {
     let current_period = kes_period_of_slot(500_000, slots_per_kes).expect("valid");
     assert_eq!(current_period, 3); // 500000 / 129600 = 3
 }
+
+// ---------------------------------------------------------------------------
+// Nonce evolution
+// ---------------------------------------------------------------------------
+
+use yggdrasil_consensus::{NonceEvolutionConfig, NonceEvolutionState, vrf_output_to_nonce};
+
+/// Helper: make a deterministic VRF-like output (64 bytes) from a seed byte.
+fn make_vrf_output(seed: u8) -> Vec<u8> {
+    let mut out = vec![0u8; 64];
+    out[0] = seed;
+    out
+}
+
+/// Helper: make a deterministic header hash from a seed byte.
+fn make_header_hash(seed: u8) -> HeaderHash {
+    let mut h = [0u8; 32];
+    h[0] = seed;
+    HeaderHash(h)
+}
+
+/// Helper: standard test config — 10-slot epochs, stability window of 3 slots.
+fn test_nonce_config() -> NonceEvolutionConfig {
+    NonceEvolutionConfig {
+        epoch_size: EpochSize(10),
+        stability_window: 3,
+        extra_entropy: Nonce::Neutral,
+    }
+}
+
+#[test]
+fn vrf_output_to_nonce_hashes_bytes() {
+    let output = make_vrf_output(42);
+    let nonce = vrf_output_to_nonce(&output);
+    // Must produce a Hash variant (not Neutral).
+    assert!(matches!(nonce, Nonce::Hash(_)));
+    // Two different VRF outputs must yield different nonces.
+    let nonce2 = vrf_output_to_nonce(&make_vrf_output(99));
+    assert_ne!(nonce, nonce2);
+}
+
+#[test]
+fn vrf_output_to_nonce_is_deterministic() {
+    let output = make_vrf_output(7);
+    let n1 = vrf_output_to_nonce(&output);
+    let n2 = vrf_output_to_nonce(&output);
+    assert_eq!(n1, n2);
+}
+
+#[test]
+fn initial_state_has_expected_fields() {
+    let init = Nonce::Hash([1u8; 32]);
+    let state = NonceEvolutionState::new(init);
+    assert_eq!(state.evolving_nonce, init);
+    assert_eq!(state.candidate_nonce, init);
+    assert_eq!(state.epoch_nonce, init);
+    assert_eq!(state.prev_hash_nonce, Nonce::Neutral);
+    assert_eq!(state.lab_nonce, Nonce::Neutral);
+    assert_eq!(state.current_epoch, EpochNo(0));
+}
+
+#[test]
+fn from_epoch_sets_epoch_and_nonce() {
+    let n = Nonce::Hash([0xAB; 32]);
+    let state = NonceEvolutionState::from_epoch(EpochNo(5), n);
+    assert_eq!(state.current_epoch, EpochNo(5));
+    assert_eq!(state.epoch_nonce, n);
+    assert_eq!(state.evolving_nonce, n);
+    assert_eq!(state.candidate_nonce, n);
+}
+
+#[test]
+fn single_block_updates_evolving_nonce() {
+    let config = test_nonce_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    let vrf_out = make_vrf_output(1);
+    let eta = vrf_output_to_nonce(&vrf_out);
+
+    // Slot 0 is in epoch 0, NOT in stability window (0 + 3 < 10).
+    state.apply_block(SlotNo(0), &vrf_out, Some(make_header_hash(0xAA)), &config);
+
+    // evolving_nonce = init ⭒ eta
+    assert_eq!(state.evolving_nonce, init.combine(eta));
+    // Not in stability window → candidate = evolving.
+    assert_eq!(state.candidate_nonce, state.evolving_nonce);
+    // lab_nonce = from_header_hash(prev_hash)
+    assert_eq!(state.lab_nonce, Nonce::from_header_hash(make_header_hash(0xAA)));
+}
+
+#[test]
+fn multiple_blocks_accumulate_evolving_nonce() {
+    let config = test_nonce_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    let vrf1 = make_vrf_output(1);
+    let vrf2 = make_vrf_output(2);
+    let eta1 = vrf_output_to_nonce(&vrf1);
+    let eta2 = vrf_output_to_nonce(&vrf2);
+
+    state.apply_block(SlotNo(0), &vrf1, Some(make_header_hash(10)), &config);
+    state.apply_block(SlotNo(1), &vrf2, Some(make_header_hash(11)), &config);
+
+    // evolving = init ⭒ eta1 ⭒ eta2
+    assert_eq!(state.evolving_nonce, init.combine(eta1).combine(eta2));
+}
+
+#[test]
+fn candidate_freezes_in_stability_window() {
+    // epoch_size=10, stability_window=3.
+    // Stability window starts when slot + 3 >= 10, i.e. slot >= 7.
+    let config = test_nonce_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Apply blocks at slots 0..=6 (NOT in stability window).
+    for i in 0u8..=6u8 {
+        state.apply_block(SlotNo(i as u64), &make_vrf_output(i + 1), Some(make_header_hash(i)), &config);
+    }
+    let candidate_before_freeze = state.candidate_nonce;
+    let evolving_before_freeze = state.evolving_nonce;
+    assert_eq!(candidate_before_freeze, evolving_before_freeze);
+
+    // Slot 7: in stability window (7 + 3 >= 10). Candidate should freeze.
+    state.apply_block(SlotNo(7), &make_vrf_output(100), Some(make_header_hash(7)), &config);
+    assert_ne!(state.evolving_nonce, evolving_before_freeze); // evolving still moves
+    assert_eq!(state.candidate_nonce, candidate_before_freeze); // candidate frozen
+
+    // Slot 8: still frozen.
+    state.apply_block(SlotNo(8), &make_vrf_output(101), Some(make_header_hash(8)), &config);
+    assert_eq!(state.candidate_nonce, candidate_before_freeze);
+
+    // Slot 9: still in stability window (9 + 3 >= 10). Still frozen.
+    state.apply_block(SlotNo(9), &make_vrf_output(102), Some(make_header_hash(9)), &config);
+    assert_eq!(state.candidate_nonce, candidate_before_freeze);
+}
+
+#[test]
+fn epoch_transition_computes_new_epoch_nonce() {
+    // epoch_size=10, stability_window=3.
+    let config = test_nonce_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Fill epoch 0 with blocks at slots 0..=9.
+    for i in 0u8..=9u8 {
+        state.apply_block(SlotNo(i as u64), &make_vrf_output(i + 1), Some(make_header_hash(i)), &config);
+    }
+
+    // Record state at end of epoch 0.
+    let candidate_at_epoch_end = state.candidate_nonce;
+    let prev_hash_at_epoch_end = state.prev_hash_nonce;
+    let lab_at_epoch_end = state.lab_nonce;
+    assert_eq!(state.current_epoch, EpochNo(0));
+
+    // First block of epoch 1 at slot 10 — triggers TICKN.
+    state.apply_block(SlotNo(10), &make_vrf_output(200), Some(make_header_hash(10)), &config);
+    assert_eq!(state.current_epoch, EpochNo(1));
+
+    // epoch_nonce' = candidate ⭒ prev_hash_nonce ⭒ extra_entropy (Neutral)
+    let expected_epoch_nonce = candidate_at_epoch_end.combine(prev_hash_at_epoch_end);
+    assert_eq!(state.epoch_nonce, expected_epoch_nonce);
+
+    // prev_hash_nonce' = lab_nonce (from end of epoch 0)
+    assert_eq!(state.prev_hash_nonce, lab_at_epoch_end);
+}
+
+#[test]
+fn epoch_transition_with_extra_entropy() {
+    let extra = Nonce::Hash([0xFF; 32]);
+    let config = NonceEvolutionConfig {
+        epoch_size: EpochSize(10),
+        stability_window: 3,
+        extra_entropy: extra,
+    };
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Fill epoch 0.
+    for i in 0u8..=9u8 {
+        state.apply_block(SlotNo(i as u64), &make_vrf_output(i + 1), Some(make_header_hash(i)), &config);
+    }
+    let candidate = state.candidate_nonce;
+    let prev_hash = state.prev_hash_nonce;
+
+    // Trigger epoch 1.
+    state.apply_block(SlotNo(10), &make_vrf_output(200), Some(make_header_hash(10)), &config);
+
+    // epoch_nonce' = candidate ⭒ prev_hash ⭒ extra_entropy
+    let expected = candidate.combine(prev_hash).combine(extra);
+    assert_eq!(state.epoch_nonce, expected);
+}
+
+#[test]
+fn candidate_unfreezes_in_new_epoch() {
+    let config = test_nonce_config();
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Fill epoch 0 with blocks in stability window to freeze candidate.
+    for i in 0u8..=9u8 {
+        state.apply_block(SlotNo(i as u64), &make_vrf_output(i + 1), Some(make_header_hash(i)), &config);
+    }
+
+    // Epoch 1, slot 10: triggers transition. Slot 10 + 3 < 20 → NOT in
+    // stability window → candidate should track evolving again.
+    state.apply_block(SlotNo(10), &make_vrf_output(200), Some(make_header_hash(10)), &config);
+    assert_eq!(state.candidate_nonce, state.evolving_nonce);
+}
+
+#[test]
+fn genesis_prev_hash_sets_lab_nonce_neutral() {
+    let config = test_nonce_config();
+    let mut state = NonceEvolutionState::new(Nonce::Neutral);
+
+    // None prev_hash → lab_nonce should be Neutral.
+    state.apply_block(SlotNo(0), &make_vrf_output(1), None, &config);
+    assert_eq!(state.lab_nonce, Nonce::Neutral);
+}
+
+#[test]
+fn multi_epoch_nonce_chain() {
+    // Verify nonce evolution across 3 epochs.
+    let config = test_nonce_config();
+    let init = Nonce::Hash([0x42; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    for epoch in 0u64..3 {
+        let base_slot = epoch * 10;
+        for offset in 0u64..10 {
+            let slot = base_slot + offset;
+            state.apply_block(
+                SlotNo(slot),
+                &make_vrf_output((slot & 0xFF) as u8),
+                Some(make_header_hash((slot & 0xFF) as u8)),
+                &config,
+            );
+        }
+    }
+
+    assert_eq!(state.current_epoch, EpochNo(2));
+    // Each epoch transition should have updated epoch_nonce.
+    // Just verify it's not the initial nonce (it evolved).
+    assert_ne!(state.epoch_nonce, init);
+}
+
+#[test]
+fn epoch_nonce_differs_between_epochs() {
+    let config = test_nonce_config();
+    let init = Nonce::Hash([0u8; 32]);
+
+    // Run two independent states with different block contents to
+    // produce different epoch nonces.
+    let mut state_a = NonceEvolutionState::new(init);
+    let mut state_b = NonceEvolutionState::new(init);
+
+    for i in 0u8..=10u8 {
+        state_a.apply_block(SlotNo(i as u64), &make_vrf_output(i), Some(make_header_hash(i)), &config);
+        state_b.apply_block(SlotNo(i as u64), &make_vrf_output(i + 50), Some(make_header_hash(i)), &config);
+    }
+
+    // Different VRF outputs → different epoch nonces.
+    assert_ne!(state_a.epoch_nonce, state_b.epoch_nonce);
+}
+
+#[test]
+fn stability_window_boundary_slot() {
+    // Exact boundary: slot + stability_window == first_slot_next_epoch.
+    // In the upstream check: `slot + sw < first_slot_next` → at equality
+    // the condition is false → we ARE in stability window → candidate frozen.
+    let config = test_nonce_config(); // epoch=10, sw=3
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Slot 6: 6 + 3 = 9 < 10 → NOT in stability window.
+    state.apply_block(SlotNo(6), &make_vrf_output(1), Some(make_header_hash(1)), &config);
+    assert_eq!(state.candidate_nonce, state.evolving_nonce);
+
+    let candidate_at_6 = state.candidate_nonce;
+
+    // Slot 7: 7 + 3 = 10 >= 10 → IN stability window → candidate frozen.
+    state.apply_block(SlotNo(7), &make_vrf_output(2), Some(make_header_hash(2)), &config);
+    assert_ne!(state.evolving_nonce, candidate_at_6); // evolving changed
+    assert_eq!(state.candidate_nonce, candidate_at_6); // candidate unchanged
+}
+
+#[test]
+fn skip_epoch_detects_transition() {
+    // If blocks jump from epoch 0 to epoch 2 (skipping epoch 1),
+    // a single transition should fire.
+    let config = test_nonce_config(); // epoch=10
+    let init = Nonce::Hash([0u8; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    state.apply_block(SlotNo(0), &make_vrf_output(1), Some(make_header_hash(1)), &config);
+    assert_eq!(state.current_epoch, EpochNo(0));
+
+    // Jump to slot 20 (epoch 2).
+    state.apply_block(SlotNo(20), &make_vrf_output(2), Some(make_header_hash(2)), &config);
+    assert_eq!(state.current_epoch, EpochNo(2));
+    // epoch_nonce should have been updated by the transition.
+    assert_ne!(state.epoch_nonce, init);
+}

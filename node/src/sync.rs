@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use yggdrasil_consensus::{ActiveSlotCoeff, ConsensusError, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, OpCert as ConsensusOpCert, verify_header, verify_leader_proof};
+use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ConsensusError, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceEvolutionConfig, NonceEvolutionState, OpCert as ConsensusOpCert, SecurityParam, verify_header, verify_leader_proof};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
@@ -24,7 +24,7 @@ use yggdrasil_ledger::{
     compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
-use yggdrasil_storage::{StorageError, VolatileStore};
+use yggdrasil_storage::{ImmutableStore, StorageError, VolatileStore};
 
 /// Error type for sync orchestration operations.
 #[derive(Debug, thiserror::Error)]
@@ -635,6 +635,153 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Phase 37: Verified sync service with nonce evolution tracking
+// ---------------------------------------------------------------------------
+
+/// Configuration for the verified managed sync service.
+///
+/// Extends the basic `SyncServiceConfig` with header/body verification and
+/// optional epoch nonce tracking.
+#[derive(Clone, Debug)]
+pub struct VerifiedSyncServiceConfig {
+    /// Number of multi-era sync steps per batch iteration.
+    pub batch_size: usize,
+    /// Header and body hash verification parameters.
+    pub verification: VerificationConfig,
+    /// Nonce evolution parameters.  When set, the service tracks the epoch
+    /// nonce across all processed blocks.  `None` disables nonce tracking.
+    pub nonce_config: Option<NonceEvolutionConfig>,
+    /// Ouroboros security parameter `k`.  When set, the service maintains
+    /// a [`ChainState`] that tracks chain topology and enforces rollback
+    /// depth limits.  `None` disables chain state tracking.
+    pub security_param: Option<SecurityParam>,
+}
+
+/// Outcome returned when the verified sync service finishes.
+///
+/// Includes the final `NonceEvolutionState` so the caller can persist or
+/// inspect the current epoch nonce, and the `ChainState` for rollback
+/// tracking context.
+#[derive(Clone, Debug)]
+pub struct VerifiedSyncServiceOutcome {
+    /// Final chain point when the service stopped.
+    pub final_point: Point,
+    /// Total blocks fetched across all batches.
+    pub total_blocks: usize,
+    /// Total rollback events across all batches.
+    pub total_rollbacks: usize,
+    /// Number of batch iterations completed.
+    pub batches_completed: usize,
+    /// Final nonce evolution state (present when `nonce_config` was set).
+    pub nonce_state: Option<NonceEvolutionState>,
+    /// Final chain state (present when `security_param` was set).
+    pub chain_state: Option<ChainState>,
+    /// Total number of blocks that crossed the stability window during
+    /// the service run (eligible for immutable promotion).
+    pub stable_block_count: usize,
+}
+
+/// Run a continuous verified sync loop with multi-era block decoding,
+/// header/body verification, and optional epoch nonce tracking.
+///
+/// The service:
+/// 1. Calls [`sync_batch_apply_verified`] per iteration with full
+///    header + body-hash verification.
+/// 2. After each batch, applies [`apply_nonce_evolution`] to every
+///    roll-forward block (when nonce tracking is enabled).
+/// 3. Loops until `shutdown` resolves or a protocol error occurs.
+/// 4. Returns [`VerifiedSyncServiceOutcome`] including the final nonce
+///    state.
+///
+/// ## Nonce evolution and rollbacks
+///
+/// During initial chain sync, rollbacks are rare and typically shallow.
+/// Nonce evolution is forward-only — a rollback does **not** revert the
+/// nonce state.  This is safe for initial sync but will need epoch-boundary
+/// checkpointing when handling live chain forks.
+///
+/// # Errors
+///
+/// Returns `SyncError` on protocol, decode, verification, or storage
+/// errors.  Shutdown-triggered termination returns `Ok`.
+pub async fn run_verified_sync_service<S, F>(
+    chain_sync: &mut ChainSyncClient,
+    block_fetch: &mut BlockFetchClient,
+    store: &mut S,
+    mut from_point: Point,
+    config: &VerifiedSyncServiceConfig,
+    mut nonce_state: Option<NonceEvolutionState>,
+    shutdown: F,
+) -> Result<VerifiedSyncServiceOutcome, SyncError>
+where
+    S: VolatileStore,
+    F: std::future::Future<Output = ()>,
+{
+    tokio::pin!(shutdown);
+
+    let mut total_blocks = 0usize;
+    let mut total_rollbacks = 0usize;
+    let mut batches_completed = 0usize;
+    let mut total_stable = 0usize;
+    let mut chain_state = config.security_param.map(ChainState::new);
+
+    loop {
+        let batch_fut = sync_batch_apply_verified(
+            chain_sync,
+            block_fetch,
+            store,
+            from_point,
+            config.batch_size,
+            Some(&config.verification),
+        );
+
+        tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                return Ok(VerifiedSyncServiceOutcome {
+                    final_point: from_point,
+                    total_blocks,
+                    total_rollbacks,
+                    batches_completed,
+                    nonce_state,
+                    chain_state,
+                    stable_block_count: total_stable,
+                });
+            }
+
+            result = batch_fut => {
+                let progress = result?;
+                from_point = progress.current_point;
+                total_blocks += progress.fetched_blocks;
+                total_rollbacks += progress.rollback_count;
+                batches_completed += 1;
+
+                // Track chain topology in ChainState.
+                if let Some(ref mut cs) = chain_state {
+                    for step in &progress.steps {
+                        total_stable += track_chain_state(cs, step)?;
+                    }
+                }
+
+                // Apply nonce evolution to all roll-forward blocks.
+                if let Some((ref mut state, nonce_cfg)) =
+                    nonce_state.as_mut().zip(config.nonce_config.as_ref())
+                {
+                    for step in &progress.steps {
+                        if let MultiEraSyncStep::RollForward { blocks, .. } = step {
+                            for block in blocks {
+                                apply_nonce_evolution(state, block, nonce_cfg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Phase 34: Consensus header verification bridge
 // ---------------------------------------------------------------------------
 
@@ -1116,6 +1263,49 @@ pub fn verify_block_vrf(
     .map_err(SyncError::Consensus)
 }
 
+/// Applies a multi-era block to the nonce evolution state machine.
+///
+/// Extracts the VRF nonce contribution and `prev_hash` from the block header
+/// and feeds them to [`NonceEvolutionState::apply_block`].
+///
+/// - TPraos (Shelley–Alonzo): uses the dedicated `nonce_vrf` output.
+/// - Praos (Babbage/Conway): uses the single `vrf_result` output.
+/// - Byron blocks are skipped (no VRF).
+///
+/// After this call, the state's `epoch_nonce` reflects any epoch transition
+/// that may have occurred at the block's slot.
+pub fn apply_nonce_evolution(
+    state: &mut NonceEvolutionState,
+    block: &MultiEraBlock,
+    config: &NonceEvolutionConfig,
+) {
+    match block {
+        MultiEraBlock::Shelley(s) => {
+            let slot = SlotNo(s.header.body.slot);
+            let prev_hash = s.header.body.prev_hash.map(HeaderHash);
+            state.apply_block(slot, &s.header.body.nonce_vrf.output, prev_hash, config);
+        }
+        MultiEraBlock::Alonzo(a) => {
+            let slot = SlotNo(a.header.body.slot);
+            let prev_hash = a.header.body.prev_hash.map(HeaderHash);
+            state.apply_block(slot, &a.header.body.nonce_vrf.output, prev_hash, config);
+        }
+        MultiEraBlock::Babbage(b) => {
+            let slot = SlotNo(b.header.body.slot);
+            let prev_hash = b.header.body.prev_hash.map(HeaderHash);
+            state.apply_block(slot, &b.header.body.vrf_result.output, prev_hash, config);
+        }
+        MultiEraBlock::Conway(c) => {
+            let slot = SlotNo(c.header.body.slot);
+            let prev_hash = c.header.body.prev_hash.map(HeaderHash);
+            state.apply_block(slot, &c.header.body.vrf_result.output, prev_hash, config);
+        }
+        MultiEraBlock::Byron { .. } => {
+            // Byron blocks have no VRF; skip nonce evolution.
+        }
+    }
+}
+
 /// Verify that the block body hash declared in the header matches the actual
 /// block body content.
 ///
@@ -1283,6 +1473,100 @@ pub async fn sync_step_multi_era(
             tip: decode_point(&tip)?,
         }),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 42: ChainState integration helpers
+// ---------------------------------------------------------------------------
+
+/// Extract a [`ChainEntry`] from a [`MultiEraBlock`] for chain state tracking.
+///
+/// Byron blocks return `None` because the opaque envelope does not expose
+/// a decoded block number.  Chain state tracking begins at the
+/// Shelley/Allegra boundary, consistent with nonce evolution.
+pub fn multi_era_block_to_chain_entry(block: &MultiEraBlock) -> Option<ChainEntry> {
+    match block {
+        MultiEraBlock::Byron { .. } => None,
+        MultiEraBlock::Shelley(b) => Some(ChainEntry {
+            hash: b.header_hash(),
+            slot: SlotNo(b.header.body.slot),
+            block_no: BlockNo(b.header.body.block_number),
+        }),
+        MultiEraBlock::Alonzo(b) => Some(ChainEntry {
+            hash: b.header_hash(),
+            slot: SlotNo(b.header.body.slot),
+            block_no: BlockNo(b.header.body.block_number),
+        }),
+        MultiEraBlock::Babbage(b) => Some(ChainEntry {
+            hash: b.header_hash(),
+            slot: SlotNo(b.header.body.slot),
+            block_no: BlockNo(b.header.body.block_number),
+        }),
+        MultiEraBlock::Conway(b) => Some(ChainEntry {
+            hash: b.header_hash(),
+            slot: SlotNo(b.header.body.slot),
+            block_no: BlockNo(b.header.body.block_number),
+        }),
+    }
+}
+
+/// Apply one multi-era sync step to a [`ChainState`].
+///
+/// Roll-forward blocks are converted to [`ChainEntry`] values and
+/// `roll_forward`-ed.  Byron blocks are skipped (see
+/// [`multi_era_block_to_chain_entry`]).  Roll-backward steps trigger
+/// `roll_backward` on the chain state.
+///
+/// After roll-forward processing, stable entries are drained so the
+/// volatile window stays bounded to the security parameter `k`.
+///
+/// # Returns
+///
+/// The number of newly stable entries drained from the chain state.
+pub fn track_chain_state(
+    chain_state: &mut ChainState,
+    step: &MultiEraSyncStep,
+) -> Result<usize, SyncError> {
+    match step {
+        MultiEraSyncStep::RollForward { blocks, .. } => {
+            for block in blocks {
+                if let Some(entry) = multi_era_block_to_chain_entry(block) {
+                    chain_state.roll_forward(entry)?;
+                }
+            }
+        }
+        MultiEraSyncStep::RollBackward { point, .. } => {
+            chain_state.roll_backward(point)?;
+        }
+    }
+    let stable = chain_state.drain_stable();
+    Ok(stable.len())
+}
+
+/// Promote blocks that have crossed the stability window from volatile
+/// storage into immutable storage.
+///
+/// For each stable [`ChainEntry`], the corresponding block is looked up
+/// in the volatile store and appended to the immutable store.  Only
+/// entries whose block is still present in volatile are promoted —
+/// missing entries are silently skipped.
+///
+/// # Returns
+///
+/// The number of blocks successfully promoted.
+pub fn promote_stable_blocks<V: VolatileStore, I: ImmutableStore>(
+    stable_entries: &[ChainEntry],
+    volatile: &V,
+    immutable: &mut I,
+) -> Result<usize, SyncError> {
+    let mut promoted = 0;
+    for entry in stable_entries {
+        if let Some(block) = volatile.get_block(&entry.hash) {
+            immutable.append_block(block.clone())?;
+            promoted += 1;
+        }
+    }
+    Ok(promoted)
 }
 
 /// Apply one multi-era sync step into a volatile store.

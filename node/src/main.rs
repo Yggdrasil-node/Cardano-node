@@ -1,16 +1,16 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
 
-use yggdrasil_node::config::{NodeConfigFile, default_config};
+use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, default_config};
 use yggdrasil_node::{
-    NodeConfig, SyncServiceConfig, SyncServiceOutcome, VerificationConfig, bootstrap,
-    run_sync_service,
+    NodeConfig, VerificationConfig, VerifiedSyncServiceConfig, VerifiedSyncServiceOutcome,
+    bootstrap, run_verified_sync_service,
 };
-use yggdrasil_ledger::Point;
+use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
+use yggdrasil_ledger::{Nonce, Point};
 use yggdrasil_network::HandshakeVersion;
 use yggdrasil_storage::InMemoryVolatile;
 
@@ -29,6 +29,9 @@ enum Command {
         /// Path to a JSON configuration file.
         #[arg(long, short)]
         config: Option<PathBuf>,
+        /// Network preset (mainnet, preprod, preview). Overridden by --config.
+        #[arg(long, value_parser = clap::value_parser!(NetworkPreset))]
+        network: Option<NetworkPreset>,
         /// Peer address (host:port). Overrides config file.
         #[arg(long)]
         peer: Option<SocketAddr>,
@@ -57,6 +60,7 @@ fn main() -> Result<()> {
         }
         Command::Run {
             config,
+            network,
             peer,
             network_magic,
             no_verify,
@@ -68,7 +72,10 @@ fn main() -> Result<()> {
                     let parsed: NodeConfigFile = serde_json::from_str(&contents)?;
                     parsed
                 }
-                None => default_config(),
+                None => match network {
+                    Some(preset) => preset.to_config(),
+                    None => default_config(),
+                },
             };
 
             let peer_addr = peer.unwrap_or(file_cfg.peer_addr);
@@ -95,23 +102,45 @@ fn main() -> Result<()> {
                 })
             };
 
-            let sync_config = SyncServiceConfig {
-                batch_size,
-                keepalive_interval: file_cfg
-                    .keepalive_interval_secs
-                    .map(Duration::from_secs),
+            let nonce_config = NonceEvolutionConfig {
+                epoch_size: EpochSize(file_cfg.epoch_length),
+                // stability_window = 3k/f
+                stability_window: (3.0 * file_cfg.security_param_k as f64
+                    / file_cfg.active_slot_coeff) as u64,
+                extra_entropy: Nonce::Neutral,
+            };
+
+            let security_param = SecurityParam(file_cfg.security_param_k);
+
+            let sync_config = if let Some(verification) = verification {
+                VerifiedSyncServiceConfig {
+                    batch_size,
+                    verification,
+                    nonce_config: Some(nonce_config),
+                    security_param: Some(security_param),
+                }
+            } else {
+                VerifiedSyncServiceConfig {
+                    batch_size,
+                    verification: VerificationConfig {
+                        slots_per_kes_period: file_cfg.slots_per_kes_period,
+                        max_kes_evolutions: file_cfg.max_kes_evolutions,
+                        verify_body_hash: false,
+                    },
+                    nonce_config: Some(nonce_config),
+                    security_param: Some(security_param),
+                }
             };
 
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(run_node(node_config, sync_config, verification))
+            rt.block_on(run_node(node_config, sync_config))
         }
     }
 }
 
 async fn run_node(
     node_config: NodeConfig,
-    sync_config: SyncServiceConfig,
-    verification: Option<VerificationConfig>,
+    sync_config: VerifiedSyncServiceConfig,
 ) -> Result<()> {
     eprintln!(
         "Yggdrasil connecting to {} (magic {})",
@@ -127,6 +156,11 @@ async fn run_node(
     let mut store = InMemoryVolatile::default();
     let from_point = Point::Origin;
 
+    let nonce_state = sync_config
+        .nonce_config
+        .as_ref()
+        .map(|_| NonceEvolutionState::new(Nonce::Neutral));
+
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     // Spawn signal handler for graceful shutdown.
@@ -136,24 +170,41 @@ async fn run_node(
         let _ = shutdown_tx.send(());
     });
 
-    let _verification = verification;
-    let outcome: SyncServiceOutcome = run_sync_service(
+    let outcome: VerifiedSyncServiceOutcome = run_verified_sync_service(
         &mut session.chain_sync,
         &mut session.block_fetch,
         &mut store,
         from_point,
         &sync_config,
+        nonce_state,
         async { let _ = shutdown_rx.await; },
     )
     .await?;
 
     eprintln!(
-        "Sync complete: {} blocks, {} rollbacks, {} batches, tip {:?}",
+        "Sync complete: {} blocks, {} rollbacks, {} batches, {} stable, tip {:?}",
         outcome.total_blocks,
         outcome.total_rollbacks,
         outcome.batches_completed,
+        outcome.stable_block_count,
         outcome.final_point,
     );
+
+    if let Some(ref nonce) = outcome.nonce_state {
+        eprintln!(
+            "Epoch nonce: {:?} (epoch {})",
+            nonce.epoch_nonce,
+            nonce.current_epoch.0,
+        );
+    }
+
+    if let Some(ref cs) = outcome.chain_state {
+        eprintln!(
+            "Chain state: {} volatile entries, tip {:?}",
+            cs.volatile_len(),
+            cs.tip(),
+        );
+    }
 
     session.mux.abort();
     Ok(())

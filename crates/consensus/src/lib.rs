@@ -9,6 +9,8 @@ pub mod epoch;
 mod error;
 /// Block header types and KES-based header signature verification.
 pub mod header;
+/// Epoch nonce evolution state machine (UPDN + TICKN rules).
+pub mod nonce;
 /// Operational certificate (OpCert) types and verification.
 pub mod opcert;
 /// Praos-specific threshold and leader-election helpers.
@@ -24,6 +26,8 @@ pub use epoch::{EpochSize, epoch_first_slot, is_new_epoch, slot_to_epoch};
 pub use error::ConsensusError;
 /// Block header types and verification entry point.
 pub use header::{Header, HeaderBody, verify_header, verify_opcert_only};
+/// Epoch nonce evolution state machine and helpers.
+pub use nonce::{NonceEvolutionConfig, NonceEvolutionState, vrf_output_to_nonce};
 /// Operational certificate type and helpers.
 pub use opcert::{OpCert, check_kes_period, kes_period_of_slot};
 /// Active slot coefficient wrapper, threshold, and leader check helpers.
