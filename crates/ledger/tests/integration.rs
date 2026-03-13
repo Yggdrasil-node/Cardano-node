@@ -6259,6 +6259,271 @@ fn ledger_state_snapshot_exposes_pool_and_reward_state() {
 }
 
 #[test]
+fn ledger_state_registers_stake_credential_via_certificate() {
+    let mut state = LedgerState::new(Era::Shelley);
+    let credential = StakeCredential::AddrKeyHash(sample_hash28());
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x98; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x99,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x98; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::AccountRegistration(credential)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("registration block");
+    assert!(state.stake_credentials().is_registered(&credential));
+    assert_eq!(
+        state
+            .stake_credential_state(&credential)
+            .expect("registered credential")
+            .delegated_pool(),
+        None
+    );
+}
+
+#[test]
+fn ledger_state_delegates_registered_stake_credential_to_pool() {
+    let mut state = LedgerState::new(Era::Shelley);
+    let credential = StakeCredential::AddrKeyHash([0x21; 28]);
+    let reward_account = RewardAccount {
+        network: 1,
+        credential,
+    };
+    let params = sample_pool_params();
+    let operator = params.operator;
+
+    state.pool_state_mut().register(params);
+    state.stake_credentials_mut().register(credential);
+    state
+        .reward_accounts_mut()
+        .insert(reward_account, RewardAccountState::new(0, None));
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x9A; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x9B,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x9A; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::DelegationToStakePool(credential, operator)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("delegation block");
+    assert_eq!(
+        state
+            .stake_credential_state(&credential)
+            .expect("delegated credential")
+            .delegated_pool(),
+        Some(operator)
+    );
+    assert_eq!(
+        state
+            .reward_account_state(&reward_account)
+            .expect("reward account synced")
+            .delegated_pool(),
+        Some(operator)
+    );
+}
+
+#[test]
+fn ledger_state_rejects_delegation_for_unregistered_stake_credential() {
+    let mut state = LedgerState::new(Era::Shelley);
+    let credential = StakeCredential::AddrKeyHash([0x31; 28]);
+    let params = sample_pool_params();
+    let operator = params.operator;
+
+    state.pool_state_mut().register(params);
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x9C; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x9D,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x9C; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::DelegationToStakePool(credential, operator)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    let err = state.apply_block(&block).expect_err("unregistered delegation should fail");
+    assert_eq!(err, LedgerError::StakeCredentialNotRegistered(credential));
+}
+
+#[test]
+fn ledger_state_unregisters_stake_credential_with_zero_rewards() {
+    let mut state = LedgerState::new(Era::Shelley);
+    let credential = StakeCredential::AddrKeyHash([0x41; 28]);
+    let reward_account = RewardAccount {
+        network: 1,
+        credential,
+    };
+    state.stake_credentials_mut().register(credential);
+    state
+        .reward_accounts_mut()
+        .insert(reward_account, RewardAccountState::new(0, None));
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x9E; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x9F,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x9E; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::AccountUnregistration(credential)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("unregistration block");
+    assert!(!state.stake_credentials().is_registered(&credential));
+    assert!(state.reward_account_state(&reward_account).is_none());
+}
+
+#[test]
+fn ledger_state_rejects_unregistration_with_nonzero_rewards() {
+    let mut state = LedgerState::new(Era::Shelley);
+    let credential = StakeCredential::AddrKeyHash([0x51; 28]);
+    let reward_account = RewardAccount {
+        network: 1,
+        credential,
+    };
+    state.stake_credentials_mut().register(credential);
+    state
+        .reward_accounts_mut()
+        .insert(reward_account, RewardAccountState::new(123_456, None));
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xA0; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0xA1,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xA0; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::AccountUnregistration(credential)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    let err = state.apply_block(&block).expect_err("nonzero rewards should fail");
+    assert_eq!(
+        err,
+        LedgerError::StakeCredentialHasRewards {
+            credential,
+            balance: 123_456,
+        }
+    );
+    assert!(state.stake_credentials().is_registered(&credential));
+}
+
+#[test]
 fn ledger_state_pool_state_tracks_registration_and_retirement() {
     let mut state = LedgerState::new(Era::Shelley);
     let params = sample_pool_params();

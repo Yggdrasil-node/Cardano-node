@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::types::{PoolKeyHash, RewardAccount};
+use crate::types::{PoolKeyHash, RewardAccount, StakeCredential};
 
 /// Errors returned by ledger-facing helpers.
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -53,6 +53,20 @@ pub enum LedgerError {
 
     #[error("stake pool not registered: {0:02x?}")]
     PoolNotRegistered(PoolKeyHash),
+
+    #[error("stake credential already registered: {0:?}")]
+    StakeCredentialAlreadyRegistered(StakeCredential),
+
+    #[error("stake credential not registered: {0:?}")]
+    StakeCredentialNotRegistered(StakeCredential),
+
+    #[error(
+        "stake credential has non-zero reward balance: {credential:?} has {balance} lovelace"
+    )]
+    StakeCredentialHasRewards {
+        credential: StakeCredential,
+        balance: u64,
+    },
 
     #[error("reward account not registered: {0:?}")]
     RewardAccountNotRegistered(RewardAccount),

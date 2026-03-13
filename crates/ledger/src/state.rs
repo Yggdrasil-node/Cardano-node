@@ -4,7 +4,9 @@ use crate::eras::babbage::BabbageTxBody;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
-use crate::types::{Address, DCert, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount};
+use crate::types::{
+    Address, DCert, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount, StakeCredential,
+};
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Era, LedgerError};
 use std::collections::BTreeMap;
@@ -173,6 +175,74 @@ impl RewardAccounts {
     }
 }
 
+/// Registered stake-credential state visible from the ledger.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakeCredentialState {
+    delegated_pool: Option<PoolKeyHash>,
+}
+
+impl StakeCredentialState {
+    /// Creates stake-credential state with the given delegation target.
+    pub fn new(delegated_pool: Option<PoolKeyHash>) -> Self {
+        Self { delegated_pool }
+    }
+
+    /// Returns the delegated pool, if any.
+    pub fn delegated_pool(&self) -> Option<PoolKeyHash> {
+        self.delegated_pool
+    }
+
+    /// Replaces the delegated pool reference.
+    pub fn set_delegated_pool(&mut self, delegated_pool: Option<PoolKeyHash>) {
+        self.delegated_pool = delegated_pool;
+    }
+}
+
+/// Stake-credential map visible from the ledger.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct StakeCredentials {
+    entries: BTreeMap<StakeCredential, StakeCredentialState>,
+}
+
+impl StakeCredentials {
+    /// Creates an empty stake-credential container.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the state for `credential`, if present.
+    pub fn get(&self, credential: &StakeCredential) -> Option<&StakeCredentialState> {
+        self.entries.get(credential)
+    }
+
+    /// Returns mutable state for `credential`, if present.
+    pub fn get_mut(&mut self, credential: &StakeCredential) -> Option<&mut StakeCredentialState> {
+        self.entries.get_mut(credential)
+    }
+
+    /// Iterates over registered stake credentials in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&StakeCredential, &StakeCredentialState)> {
+        self.entries.iter()
+    }
+
+    /// Returns true when `credential` is registered.
+    pub fn is_registered(&self, credential: &StakeCredential) -> bool {
+        self.entries.contains_key(credential)
+    }
+
+    /// Registers a stake credential with no delegation target.
+    pub fn register(&mut self, credential: StakeCredential) -> bool {
+        self.entries
+            .insert(credential, StakeCredentialState::new(None))
+            .is_none()
+    }
+
+    /// Removes a registered stake credential.
+    pub fn unregister(&mut self, credential: &StakeCredential) -> Option<StakeCredentialState> {
+        self.entries.remove(credential)
+    }
+}
+
 /// Read-only snapshot of ledger-visible state.
 ///
 /// This snapshot preserves the current era, tip, stake-pool state,
@@ -185,6 +255,7 @@ pub struct LedgerStateSnapshot {
     current_era: Era,
     tip: Point,
     pool_state: PoolState,
+    stake_credentials: StakeCredentials,
     reward_accounts: RewardAccounts,
     multi_era_utxo: MultiEraUtxo,
     shelley_utxo: ShelleyUtxo,
@@ -206,6 +277,11 @@ impl LedgerStateSnapshot {
         &self.pool_state
     }
 
+    /// Returns the registered stake-credential state captured in this snapshot.
+    pub fn stake_credentials(&self) -> &StakeCredentials {
+        &self.stake_credentials
+    }
+
     /// Returns the reward-account state captured in this snapshot.
     pub fn reward_accounts(&self) -> &RewardAccounts {
         &self.reward_accounts
@@ -214,6 +290,14 @@ impl LedgerStateSnapshot {
     /// Returns the registered state for `operator`, if present.
     pub fn registered_pool(&self, operator: &PoolKeyHash) -> Option<&RegisteredPool> {
         self.pool_state.get(operator)
+    }
+
+    /// Returns the stake-credential state for `credential`, if present.
+    pub fn stake_credential_state(
+        &self,
+        credential: &StakeCredential,
+    ) -> Option<&StakeCredentialState> {
+        self.stake_credentials.get(credential)
     }
 
     /// Returns the reward-account state for `account`, if present.
@@ -298,6 +382,8 @@ pub struct LedgerState {
     pub tip: Point,
     /// Registered stake-pool state.
     pool_state: PoolState,
+    /// Registered stake-credential state.
+    stake_credentials: StakeCredentials,
     /// Reward-account balances and delegation pointers.
     reward_accounts: RewardAccounts,
     /// Multi-era UTxO set.
@@ -314,6 +400,7 @@ impl LedgerState {
             current_era,
             tip: Point::Origin,
             pool_state: PoolState::new(),
+            stake_credentials: StakeCredentials::new(),
             reward_accounts: RewardAccounts::new(),
             multi_era_utxo: MultiEraUtxo::new(),
             shelley_utxo: ShelleyUtxo::new(),
@@ -330,6 +417,16 @@ impl LedgerState {
         &mut self.pool_state
     }
 
+    /// Returns a reference to registered stake-credential state.
+    pub fn stake_credentials(&self) -> &StakeCredentials {
+        &self.stake_credentials
+    }
+
+    /// Returns a mutable reference to registered stake-credential state.
+    pub fn stake_credentials_mut(&mut self) -> &mut StakeCredentials {
+        &mut self.stake_credentials
+    }
+
     /// Returns a reference to reward-account state.
     pub fn reward_accounts(&self) -> &RewardAccounts {
         &self.reward_accounts
@@ -343,6 +440,14 @@ impl LedgerState {
     /// Returns the registered state for `operator`, if present.
     pub fn registered_pool(&self, operator: &PoolKeyHash) -> Option<&RegisteredPool> {
         self.pool_state.get(operator)
+    }
+
+    /// Returns the stake-credential state for `credential`, if present.
+    pub fn stake_credential_state(
+        &self,
+        credential: &StakeCredential,
+    ) -> Option<&StakeCredentialState> {
+        self.stake_credentials.get(credential)
     }
 
     /// Returns the reward-account state for `account`, if present.
@@ -387,6 +492,7 @@ impl LedgerState {
             current_era: self.current_era,
             tip: self.tip.clone(),
             pool_state: self.pool_state.clone(),
+            stake_credentials: self.stake_credentials.clone(),
             reward_accounts: self.reward_accounts.clone(),
             multi_era_utxo: self.multi_era_utxo.clone(),
             shelley_utxo: self.shelley_utxo.clone(),
@@ -441,9 +547,11 @@ impl LedgerState {
             crate::tx::MultiEraSubmittedTx::Shelley(tx) => {
                 let mut staged = self.shelley_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
+                    &mut staged_stake_credentials,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -456,14 +564,17 @@ impl LedgerState {
                 )?;
                 self.shelley_utxo = staged;
                 self.pool_state = staged_pool_state;
+                self.stake_credentials = staged_stake_credentials;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
+                    &mut staged_stake_credentials,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -471,14 +582,17 @@ impl LedgerState {
                 staged.apply_allegra_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
+                self.stake_credentials = staged_stake_credentials;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Mary(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
+                    &mut staged_stake_credentials,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -486,14 +600,17 @@ impl LedgerState {
                 staged.apply_mary_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
+                self.stake_credentials = staged_stake_credentials;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
+                    &mut staged_stake_credentials,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -501,14 +618,17 @@ impl LedgerState {
                 staged.apply_alonzo_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
+                self.stake_credentials = staged_stake_credentials;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
+                    &mut staged_stake_credentials,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -516,14 +636,17 @@ impl LedgerState {
                 staged.apply_babbage_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
+                self.stake_credentials = staged_stake_credentials;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Conway(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
+                    &mut staged_stake_credentials,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -531,6 +654,7 @@ impl LedgerState {
                 staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
+                self.stake_credentials = staged_stake_credentials;
                 self.reward_accounts = staged_reward_accounts;
             }
         }
@@ -564,10 +688,12 @@ impl LedgerState {
         // via utxo_mut()).
         let mut staged = self.shelley_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_stake_credentials = self.stake_credentials.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
+            &mut staged_stake_credentials,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -576,6 +702,7 @@ impl LedgerState {
         }
         self.shelley_utxo = staged;
         self.pool_state = staged_pool_state;
+        self.stake_credentials = staged_stake_credentials;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -600,10 +727,12 @@ impl LedgerState {
 
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_stake_credentials = self.stake_credentials.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
+            &mut staged_stake_credentials,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -612,6 +741,7 @@ impl LedgerState {
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
+        self.stake_credentials = staged_stake_credentials;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -636,10 +766,12 @@ impl LedgerState {
 
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_stake_credentials = self.stake_credentials.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
+            &mut staged_stake_credentials,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -648,6 +780,7 @@ impl LedgerState {
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
+        self.stake_credentials = staged_stake_credentials;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -672,10 +805,12 @@ impl LedgerState {
 
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_stake_credentials = self.stake_credentials.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
+            &mut staged_stake_credentials,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -684,6 +819,7 @@ impl LedgerState {
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
+        self.stake_credentials = staged_stake_credentials;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -708,10 +844,12 @@ impl LedgerState {
 
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_stake_credentials = self.stake_credentials.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
+            &mut staged_stake_credentials,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -720,6 +858,7 @@ impl LedgerState {
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
+        self.stake_credentials = staged_stake_credentials;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -744,10 +883,12 @@ impl LedgerState {
 
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_stake_credentials = self.stake_credentials.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
+            &mut staged_stake_credentials,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -756,6 +897,7 @@ impl LedgerState {
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
+        self.stake_credentials = staged_stake_credentials;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -763,6 +905,7 @@ impl LedgerState {
 
 fn apply_certificates_and_withdrawals(
     pool_state: &mut PoolState,
+    stake_credentials: &mut StakeCredentials,
     reward_accounts: &mut RewardAccounts,
     certificates: Option<&[DCert]>,
     withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
@@ -770,6 +913,33 @@ fn apply_certificates_and_withdrawals(
     if let Some(certs) = certificates {
         for cert in certs {
             match cert {
+                DCert::AccountRegistration(credential)
+                | DCert::AccountRegistrationDeposit(credential, _) => {
+                    register_stake_credential(stake_credentials, *credential)?;
+                }
+                DCert::AccountUnregistration(credential)
+                | DCert::AccountUnregistrationDeposit(credential, _) => {
+                    unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
+                }
+                DCert::DelegationToStakePool(credential, pool) => {
+                    delegate_stake_credential(
+                        pool_state,
+                        stake_credentials,
+                        reward_accounts,
+                        *credential,
+                        *pool,
+                    )?;
+                }
+                DCert::AccountRegistrationDelegationToStakePool(credential, pool, _) => {
+                    register_stake_credential(stake_credentials, *credential)?;
+                    delegate_stake_credential(
+                        pool_state,
+                        stake_credentials,
+                        reward_accounts,
+                        *credential,
+                        *pool,
+                    )?;
+                }
                 DCert::PoolRegistration(params) => pool_state.register(params.clone()),
                 DCert::PoolRetirement(pool, epoch) => {
                     if !pool_state.retire(*pool, *epoch) {
@@ -803,6 +973,71 @@ fn apply_certificates_and_withdrawals(
     }
 
     Ok(withdrawal_total)
+}
+
+fn register_stake_credential(
+    stake_credentials: &mut StakeCredentials,
+    credential: StakeCredential,
+) -> Result<(), LedgerError> {
+    if !stake_credentials.register(credential) {
+        return Err(LedgerError::StakeCredentialAlreadyRegistered(credential));
+    }
+
+    Ok(())
+}
+
+fn unregister_stake_credential(
+    stake_credentials: &mut StakeCredentials,
+    reward_accounts: &mut RewardAccounts,
+    credential: StakeCredential,
+) -> Result<(), LedgerError> {
+    if !stake_credentials.is_registered(&credential) {
+        return Err(LedgerError::StakeCredentialNotRegistered(credential));
+    }
+
+    let reward_balance: u64 = reward_accounts
+        .entries
+        .iter()
+        .filter(|(account, _)| account.credential == credential)
+        .map(|(_, state)| state.balance())
+        .sum();
+    if reward_balance != 0 {
+        return Err(LedgerError::StakeCredentialHasRewards {
+            credential,
+            balance: reward_balance,
+        });
+    }
+
+    stake_credentials.unregister(&credential);
+    reward_accounts
+        .entries
+        .retain(|account, _| account.credential != credential);
+    Ok(())
+}
+
+fn delegate_stake_credential(
+    pool_state: &PoolState,
+    stake_credentials: &mut StakeCredentials,
+    reward_accounts: &mut RewardAccounts,
+    credential: StakeCredential,
+    pool: PoolKeyHash,
+) -> Result<(), LedgerError> {
+    if !pool_state.is_registered(&pool) {
+        return Err(LedgerError::PoolNotRegistered(pool));
+    }
+
+    let Some(state) = stake_credentials.get_mut(&credential) else {
+        return Err(LedgerError::StakeCredentialNotRegistered(credential));
+    };
+    state.set_delegated_pool(Some(pool));
+
+    for (account, account_state) in &mut reward_accounts.entries {
+        if account.credential == credential {
+            account_state.set_delegated_pool(Some(pool));
+        }
+    }
+
+    Ok(())
 }
 
 fn certificate_kind(cert: &DCert) -> &'static str {
