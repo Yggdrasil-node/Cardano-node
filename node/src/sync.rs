@@ -1108,7 +1108,7 @@ pub fn verify_block_vrf(
     verify_leader_proof(
         &vk,
         slot,
-        params.epoch_nonce.clone(),
+        params.epoch_nonce,
         leader_proof,
         params.sigma,
         params.active_slot_coeff,
