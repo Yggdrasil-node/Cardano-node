@@ -56,6 +56,7 @@ pub use protocols::{
 // -- ChainSync client re-exports ----------------------------------------------
 pub use chainsync_client::{
     ChainSyncClient, ChainSyncClientError, IntersectResponse, NextResponse,
+    TypedIntersectResponse, TypedNextResponse,
 };
 
 // -- BlockFetch client re-exports ---------------------------------------------

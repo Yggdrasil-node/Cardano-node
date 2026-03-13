@@ -9,6 +9,7 @@
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
+use yggdrasil_ledger::{CborEncode, Point};
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -127,6 +128,20 @@ impl BlockFetchClient {
                 other.tag_name().to_string(),
             )),
         }
+    }
+
+    /// Send `MsgRequestRange` using typed ledger points for the lower and
+    /// upper bounds.
+    pub async fn request_range_points(
+        &mut self,
+        lower: Point,
+        upper: Point,
+    ) -> Result<BatchResponse, BlockFetchClientError> {
+        self.request_range(ChainRange {
+            lower: lower.to_cbor_bytes(),
+            upper: upper.to_cbor_bytes(),
+        })
+        .await
     }
 
     /// Receive the next block in the current batch.

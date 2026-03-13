@@ -5,9 +5,9 @@ use yggdrasil_network::{
     peer_accept,
 };
 use yggdrasil_ledger::{
-    BabbageBlock, BabbageTxBody, BabbageTxOut, BlockNo, CborEncode, ConwayBlock, ConwayTxBody,
-    Encoder, HeaderHash, Nonce, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
+    BabbageBlock, BabbageTxBody, BabbageTxOut, BlockNo, ByronBlock, CborEncode, ConwayBlock,
+    ConwayTxBody, Encoder, HeaderHash, Nonce, Point, PraosHeader, PraosHeaderBody, ShelleyBlock,
+    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
     ShelleyWitnessSet, SlotNo, TxId,
     compute_block_body_hash,
 };
@@ -750,7 +750,7 @@ async fn sync_step_typed_rollforward_decodes_header_tip_and_blocks() {
     let step = sync_step_typed(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        Point::Origin.to_cbor_bytes(),
+        Point::Origin,
     )
     .await
     .expect("typed sync step");
@@ -792,7 +792,7 @@ async fn sync_step_typed_rollback_decodes_points() {
     let step = sync_step_typed(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        Point::Origin.to_cbor_bytes(),
+        Point::Origin,
     )
     .await
     .expect("typed rollback step");
@@ -1443,22 +1443,80 @@ fn build_multi_era_envelope(tag: u64, block_body: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Build a minimal valid Byron EBB body CBOR:
+/// `[header, body, extra]` where header is
+/// `[protocol_magic, prev_hash, body_proof, [epoch, [difficulty]], extra_data]`.
+fn build_byron_ebb_body(epoch: u64, difficulty: u64, prev_hash: &[u8; 32]) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(3); // outer: [header, body, extra]
+    enc.array(5); // header
+    enc.unsigned(764824073); // protocol_magic (mainnet)
+    enc.bytes(prev_hash);
+    enc.bytes(&[0u8; 32]); // body_proof (dummy)
+    enc.array(2).unsigned(epoch); // consensus_data: [epoch, [difficulty]]
+    enc.array(1).unsigned(difficulty);
+    enc.unsigned(0); // extra_data (dummy)
+    enc.bytes(&[]); // body (dummy)
+    enc.bytes(&[]); // extra (dummy)
+    enc.into_bytes()
+}
+
+/// Build a minimal valid Byron main block body CBOR:
+/// `[header, body, extra]` where header is
+/// `[protocol_magic, prev_hash, body_proof, [slot_id, pubkey, [difficulty], sig], extra_data]`.
+fn build_byron_main_body(
+    epoch: u64,
+    slot_in_epoch: u64,
+    difficulty: u64,
+    prev_hash: &[u8; 32],
+) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(3); // outer: [header, body, extra]
+    enc.array(5); // header
+    enc.unsigned(764824073); // protocol_magic
+    enc.bytes(prev_hash);
+    enc.bytes(&[0u8; 32]); // body_proof (dummy)
+    enc.array(4); // consensus_data: [slot_id, pubkey, [difficulty], sig]
+    enc.array(2).unsigned(epoch).unsigned(slot_in_epoch); // slot_id
+    enc.bytes(&[0u8; 64]); // pubkey (dummy)
+    enc.array(1).unsigned(difficulty); // [difficulty]
+    enc.bytes(&[0u8; 64]); // signature (dummy)
+    enc.unsigned(0); // extra_data (dummy)
+    enc.bytes(&[]); // body (dummy)
+    enc.bytes(&[]); // extra (dummy)
+    enc.into_bytes()
+}
+
 #[test]
 fn decode_multi_era_block_byron_ebb() {
-    let envelope = build_multi_era_envelope(0, &[0x80]); // tag 0 = Byron EBB
+    let body = build_byron_ebb_body(3, 100, &[0xAA; 32]);
+    let envelope = build_multi_era_envelope(0, &body);
     let result = decode_multi_era_block(&envelope).expect("decode");
     match result {
-        MultiEraBlock::Byron { raw } => assert_eq!(raw, envelope),
+        MultiEraBlock::Byron { block, era_tag } => {
+            assert_eq!(era_tag, 0);
+            assert!(block.is_ebb());
+            assert_eq!(block.epoch(), 3);
+            assert_eq!(block.chain_difficulty(), 100);
+            assert_eq!(*block.prev_hash(), [0xAA; 32]);
+        }
         other => panic!("expected Byron, got {other:?}"),
     }
 }
 
 #[test]
 fn decode_multi_era_block_byron_main() {
-    let envelope = build_multi_era_envelope(1, &[0x80]); // tag 1 = Byron Main
+    let body = build_byron_main_body(5, 42, 200, &[0xBB; 32]);
+    let envelope = build_multi_era_envelope(1, &body);
     let result = decode_multi_era_block(&envelope).expect("decode");
     match result {
-        MultiEraBlock::Byron { raw } => assert_eq!(raw, envelope),
+        MultiEraBlock::Byron { block, era_tag } => {
+            assert_eq!(era_tag, 1);
+            assert!(!block.is_ebb());
+            assert_eq!(block.epoch(), 5);
+            assert_eq!(block.chain_difficulty(), 200);
+            assert_eq!(*block.prev_hash(), [0xBB; 32]);
+        }
         other => panic!("expected Byron, got {other:?}"),
     }
 }
@@ -1493,7 +1551,7 @@ fn decode_multi_era_block_empty_input() {
 #[test]
 fn decode_multi_era_blocks_batch() {
     let shelley_envelope = build_multi_era_envelope(2, &sample_block_bytes());
-    let byron_envelope = build_multi_era_envelope(0, &[0x80]);
+    let byron_envelope = build_multi_era_envelope(0, &build_byron_ebb_body(0, 0, &[0; 32]));
     let blocks =
         decode_multi_era_blocks(&[shelley_envelope, byron_envelope]).expect("decode batch");
     assert_eq!(blocks.len(), 2);
@@ -1526,21 +1584,33 @@ fn multi_era_block_to_block_shelley() {
 
 #[test]
 fn multi_era_block_to_block_byron() {
+    let byron = ByronBlock::EpochBoundary {
+        epoch: 2,
+        chain_difficulty: 10,
+        prev_hash: [0x33; 32],
+        raw_header: vec![0xAA, 0xBB],
+    };
+    let expected_hash = byron.header_hash();
     let me = MultiEraBlock::Byron {
-        raw: vec![0x82, 0x00, 0x80],
+        block: byron,
+        era_tag: 0,
     };
     let generic = multi_era_block_to_block(&me);
     assert_eq!(generic.era, yggdrasil_ledger::Era::Byron);
-    // Header hash should be Blake2b-256 of the raw CBOR.
-    let expected_hash = yggdrasil_crypto::hash_bytes_256(&[0x82, 0x00, 0x80]);
-    assert_eq!(generic.header.hash, HeaderHash(expected_hash.0));
+    assert_eq!(generic.header.hash, expected_hash);
     assert!(generic.transactions.is_empty());
 }
 
 #[test]
 fn verify_multi_era_block_byron_is_noop() {
     let me = MultiEraBlock::Byron {
-        raw: vec![0x82, 0x00, 0x80],
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
     };
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
@@ -1698,7 +1768,15 @@ fn extract_tx_ids_from_shelley_block() {
 
 #[test]
 fn extract_tx_ids_from_byron_block_is_empty() {
-    let block = MultiEraBlock::Byron { raw: vec![0x80] };
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
+    };
     assert!(extract_tx_ids(&block).is_empty());
 }
 
@@ -1875,7 +1953,7 @@ fn decode_multi_era_block_conway() {
 #[test]
 fn decode_multi_era_blocks_all_eras() {
     let shelley = build_multi_era_envelope(2, &sample_block_bytes());
-    let byron = build_multi_era_envelope(0, &[0x80]);
+    let byron = build_multi_era_envelope(0, &build_byron_ebb_body(0, 0, &[0; 32]));
     let babbage = build_multi_era_envelope(6, &sample_babbage_block_bytes());
     let conway = build_multi_era_envelope(7, &sample_conway_block_bytes());
     let blocks = decode_multi_era_blocks(&[shelley, byron, babbage, conway])
@@ -2684,7 +2762,16 @@ fn apply_nonce_evolution_byron_is_no_op() {
     let mut state = NonceEvolutionState::new(init);
     let before = state.clone();
 
-    let byron = MultiEraBlock::Byron { raw: vec![0u8; 100] };
+    let byron = MultiEraBlock::Byron {
+        block: ByronBlock::MainBlock {
+            epoch: 0,
+            slot_in_epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 1,
+    };
     apply_nonce_evolution(&mut state, &byron, &config);
 
     assert_eq!(state, before);
@@ -2788,9 +2875,21 @@ fn chain_entry_from_shelley_block() {
 }
 
 #[test]
-fn chain_entry_from_byron_is_none() {
-    let me = MultiEraBlock::Byron { raw: vec![0u8; 16] };
-    assert!(multi_era_block_to_chain_entry(&me).is_none());
+fn chain_entry_from_byron_returns_some() {
+    let me = MultiEraBlock::Byron {
+        block: ByronBlock::MainBlock {
+            epoch: 1,
+            slot_in_epoch: 5,
+            chain_difficulty: 42,
+            prev_hash: [0x11; 32],
+            raw_header: vec![0xCC],
+        },
+        era_tag: 1,
+    };
+    let entry = multi_era_block_to_chain_entry(&me).expect("Byron should return Some");
+    assert_eq!(entry.block_no, BlockNo(42));
+    // epoch=1, slot_in_epoch=5, slots_per_epoch=21600 → slot = 21605
+    assert_eq!(entry.slot, SlotNo(21605));
 }
 
 #[test]
@@ -2874,11 +2973,20 @@ fn promote_stable_blocks_moves_to_immutable() {
 }
 
 #[test]
-fn track_chain_state_skips_byron_blocks() {
+fn track_chain_state_includes_byron_blocks() {
     let mut cs = ChainState::new(SecurityParam(10));
     let blocks = vec![
-        MultiEraBlock::Byron { raw: vec![0u8; 16] },
-        MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(1, 10))),
+        MultiEraBlock::Byron {
+            block: ByronBlock::MainBlock {
+                epoch: 0,
+                slot_in_epoch: 1,
+                chain_difficulty: 1,
+                prev_hash: [0; 32],
+                raw_header: vec![0xDD],
+            },
+            era_tag: 1,
+        },
+        MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(2, 10))),
     ];
     let step = MultiEraSyncStep::RollForward {
         raw_header: vec![],
@@ -2887,6 +2995,6 @@ fn track_chain_state_skips_byron_blocks() {
     };
     let stable = track_chain_state(&mut cs, &step).expect("roll forward with byron");
     assert_eq!(stable, 0);
-    // Only the Shelley block was tracked; Byron was skipped.
-    assert_eq!(cs.volatile_len(), 1);
+    // Both the Byron and the Shelley block were tracked.
+    assert_eq!(cs.volatile_len(), 2);
 }

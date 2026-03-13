@@ -66,18 +66,18 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Raw sync: `sync_step`, `sync_steps`, `sync_step_decoded`, `decode_shelley_blocks`.
   - Typed sync: `sync_step_typed`, `decode_shelley_header`, `decode_point`, `sync_steps_typed`, `sync_until_typed`.
   - Storage handoff: `apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`.
-  - Intersection + batch: `typed_find_intersect`, `sync_batch_apply`.
+  - Intersection + batch: `typed_find_intersect`, `sync_batch_apply`. Typed ChainSync intersection and point/tip decode now happen in `yggdrasil-network`; `node/` keeps header and block decode.
   - KeepAlive: `keepalive_heartbeat`.
   - Managed service: `run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`.
   - Consensus bridge: `shelley_opcert_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`, `praos_header_to_consensus`, `verify_praos_header`.
-  - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks` (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway — all seven era tags). Alonzo (tag 5) uses dedicated `AlonzoBlock` (5-element format with `invalid_transactions` and TPraos header), distinct from the 4-element `ShelleyBlock` used for Shelley/Allegra/Mary (tags 2–4).
-  - Header hash: `ShelleyHeader::header_hash`, `PraosHeader::header_hash` (Blake2b-256), `compute_tx_id`.
+  - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks` (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway — all seven era tags). Byron blocks are structurally decoded via `ByronBlock::decode_ebb()`/`decode_main()`, carrying epoch, slot, chain_difficulty, prev_hash, and raw header bytes for correct header hash computation. Alonzo (tag 5) uses dedicated `AlonzoBlock` (5-element format with `invalid_transactions` and TPraos header), distinct from the 4-element `ShelleyBlock` used for Shelley/Allegra/Mary (tags 2–4).
+  - Header hash: `ShelleyHeader::header_hash`, `PraosHeader::header_hash` (Blake2b-256), `ByronBlock::header_hash` (Blake2b-256 of prefix + raw header), `compute_tx_id`.
   - Verified pipeline: `multi_era_block_to_block`, `verify_multi_era_block` (dispatches Shelley verifier for pre-Babbage, Praos verifier for Babbage/Conway), `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`.
   - Block body hash verification: `verify_block_body_hash` (Blake2b-256 of body elements vs header-declared hash), `extract_header_block_body_hash` (handles both 14-element Praos and 15-element Shelley header bodies), wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`. `compute_block_body_hash` in ledger crate.
   - VRF data flow: bridge functions carry leader VRF proof/output (and nonce VRF for TPraos) through to consensus `HeaderBody`. `verify_block_vrf` + `VrfVerificationParams` enable per-block leader-proof verification when epoch nonce and stake data are available.
   - Nonce evolution wiring: `apply_nonce_evolution` extracts per-era VRF nonce contribution and prev_hash from `MultiEraBlock` and feeds `NonceEvolutionState::apply_block`. Byron blocks skipped.
   - Verified sync service: `run_verified_sync_service`, `VerifiedSyncServiceConfig`, `VerifiedSyncServiceOutcome` — async managed service using `sync_batch_apply_verified` with multi-era header/body verification, per-block nonce evolution tracking, and optional ChainState tracking. Reports final `NonceEvolutionState`, `ChainState`, and `stable_block_count` on shutdown.
-  - ChainState integration: `multi_era_block_to_chain_entry`, `track_chain_state`, `promote_stable_blocks`. Wires consensus `ChainState` into the sync pipeline with stability window enforcement and stable-block promotion from volatile to immutable storage.
+  - ChainState integration: `multi_era_block_to_chain_entry`, `track_chain_state`, `promote_stable_blocks`. Wires consensus `ChainState` into the sync pipeline with stability window enforcement and stable-block promotion from volatile to immutable storage. All eras including Byron are tracked.
   - Genesis parameters: `NodeConfigFile` includes `epoch_length` (432000), `security_param_k` (2160), `active_slot_coeff` (0.05). CLI `run` command computes `stability_window = 3k/f` and builds `NonceEvolutionConfig` from config.
   - Network presets: `NetworkPreset` enum (`Mainnet | Preprod | Preview`) with `FromStr`/`Display` and per-network constructors. CLI `--network` flag selects preset. Configuration files for all three networks stored in `node/configuration/`.
   - Mempool eviction: `extract_tx_ids`, `evict_confirmed_from_mempool`.
@@ -89,7 +89,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Allegra era types (`AllegraTxBody`, `NativeScript`).
   - Mary era types (`Value`, `MultiAsset`, `MaryTxBody`).
   - Alonzo era types (`ExUnits`, `Redeemer`, `AlonzoTxOut`, `AlonzoTxBody`, `AlonzoBlock`).
-  - Byron envelope (`ByronBlock`).
+  - Byron envelope (`ByronBlock`) with structural header decode — epoch, slot-in-epoch, `chain_difficulty` (block number), prev_hash, raw header bytes. `header_hash()` computes `Blake2b-256(prefix ++ raw_header_cbor)` with variant-specific prefix (`0x82 0x00` for EBB, `0x82 0x01` for Main).
   - Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`, `BabbageBlock` with `PraosHeader`).
   - Conway era types (`Vote`, `Voter`, `GovActionId`, `Constitution`, `GovAction` (7-variant typed enum: ParameterChange/HardForkInitiation/TreasuryWithdrawals/NoConfidence/UpdateCommittee/NewConstitution/InfoAction), `VotingProcedure`, `ProposalProcedure` (typed `GovAction`), `VotingProcedures`, `ConwayTxBody`, `ConwayBlock` with `PraosHeader`).
   - Credential and address types (`StakeCredential`, `RewardAccount`, `Address` with Base/Enterprise/Pointer/Reward/Byron variants, `AddrKeyHash`, `ScriptHash`, `PoolKeyHash` type aliases).

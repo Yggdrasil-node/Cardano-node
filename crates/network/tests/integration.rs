@@ -2,6 +2,7 @@ use yggdrasil_network::{
     BatchResponse, Bearer, BearerError, BlockFetchClient, BlockFetchMessage, BlockFetchState,
     ChainRange, ChainSyncMessage,
     ChainSyncState, ChainSyncClient, IntersectResponse, NextResponse,
+    TypedIntersectResponse, TypedNextResponse,
     HandshakeMessage, HandshakeRequest, HandshakeState,
     HandshakeVersion, KeepAliveClient, KeepAliveMessage, KeepAliveState,
     MessageChannel, MiniProtocolDir, MiniProtocolNum, MuxChannel,
@@ -10,6 +11,7 @@ use yggdrasil_network::{
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
+use yggdrasil_ledger::{CborEncode, HeaderHash, Point, SlotNo};
 
 // ===========================================================================
 // Legacy scaffold test (preserved)
@@ -1858,6 +1860,35 @@ async fn chainsync_client_request_next_await_reply() {
 }
 
 #[tokio::test]
+async fn chainsync_client_request_next_typed_decodes_points() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+    let point = Point::BlockPoint(SlotNo(12), HeaderHash([0x12; 32]));
+    let tip = Point::BlockPoint(SlotNo(15), HeaderHash([0x15; 32]));
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv request");
+        let reply = ChainSyncMessage::MsgRollBackward {
+            point: point.to_cbor_bytes(),
+            tip: tip.to_cbor_bytes(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client.request_next_typed().await.expect("request_next_typed");
+    assert_eq!(
+        resp,
+        TypedNextResponse::RollBackward { point, tip }
+    );
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
 async fn chainsync_client_find_intersect_found() {
     let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
     let mut client = ChainSyncClient::new(c_handle);
@@ -1923,6 +1954,43 @@ async fn chainsync_client_find_intersect_not_found() {
             tip: b"not-found-tip".to_vec(),
         }
     );
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_find_intersect_points_decodes_points() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+    let wanted = Point::BlockPoint(SlotNo(99), HeaderHash([0x99; 32]));
+    let tip = Point::BlockPoint(SlotNo(120), HeaderHash([0xAB; 32]));
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv find_intersect");
+        let msg = ChainSyncMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            ChainSyncMessage::MsgFindIntersect { points } => {
+                assert_eq!(points, vec![wanted.to_cbor_bytes(), Point::Origin.to_cbor_bytes()]);
+            }
+            _ => panic!("expected MsgFindIntersect"),
+        }
+
+        let reply = ChainSyncMessage::MsgIntersectFound {
+            point: wanted.to_cbor_bytes(),
+            tip: tip.to_cbor_bytes(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client
+        .find_intersect_points(vec![wanted, Point::Origin])
+        .await
+        .expect("find_intersect_points");
+    assert_eq!(resp, TypedIntersectResponse::Found { point: wanted, tip });
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -2131,6 +2199,42 @@ async fn blockfetch_client_request_range_single_block() {
     let done = client.recv_block().await.expect("recv_block batch_done");
     assert_eq!(done, None);
     assert_eq!(client.state(), BlockFetchState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_request_range_points_encodes_points() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+    let lower = Point::Origin;
+    let upper = Point::BlockPoint(SlotNo(50), HeaderHash([0x50; 32]));
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let raw = sh.recv().await.expect("recv request_range");
+        let msg = BlockFetchMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            BlockFetchMessage::MsgRequestRange(range) => {
+                assert_eq!(range.lower, lower.to_cbor_bytes());
+                assert_eq!(range.upper, upper.to_cbor_bytes());
+            }
+            other => panic!("unexpected request: {other:?}"),
+        }
+
+        sh.send(BlockFetchMessage::MsgNoBlocks.to_cbor())
+            .await
+            .expect("send no_blocks");
+    });
+
+    let resp = client
+        .request_range_points(lower, upper)
+        .await
+        .expect("request_range_points");
+    assert_eq!(resp, BatchResponse::NoBlocks);
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;

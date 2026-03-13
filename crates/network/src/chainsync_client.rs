@@ -9,6 +9,7 @@
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
+use yggdrasil_ledger::{CborDecode, CborEncode, Point};
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -60,6 +61,58 @@ pub enum IntersectResponse {
     },
 }
 
+/// The server's response to a `MsgRequestNext`, with point and tip payloads
+/// decoded into ledger `Point` values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TypedNextResponse {
+    /// A new header was rolled forward.
+    RollForward {
+        /// Serialised block header.
+        header: Vec<u8>,
+        /// Decoded current tip.
+        tip: Point,
+    },
+    /// The chain rolled backward to a prior point.
+    RollBackward {
+        /// Decoded rollback target point.
+        point: Point,
+        /// Decoded current tip.
+        tip: Point,
+    },
+    /// The server asked us to wait and then later delivered a roll-forward.
+    AwaitRollForward {
+        /// Serialised block header.
+        header: Vec<u8>,
+        /// Decoded current tip.
+        tip: Point,
+    },
+    /// The server asked us to wait and then later delivered a roll-backward.
+    AwaitRollBackward {
+        /// Decoded rollback target point.
+        point: Point,
+        /// Decoded current tip.
+        tip: Point,
+    },
+}
+
+/// The server's response to a `MsgFindIntersect`, with point and tip payloads
+/// decoded into ledger `Point` values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TypedIntersectResponse {
+    /// An intersection was found.
+    Found {
+        /// The decoded intersection point.
+        point: Point,
+        /// Decoded current tip.
+        tip: Point,
+    },
+    /// No intersection was found.
+    NotFound {
+        /// Decoded current tip.
+        tip: Point,
+    },
+}
+
 // ---------------------------------------------------------------------------
 // Client error
 // ---------------------------------------------------------------------------
@@ -86,6 +139,10 @@ pub enum ChainSyncClientError {
     /// Unexpected message from the server.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+
+    /// Point payload decode failure.
+    #[error("point decode error: {0}")]
+    PointDecode(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +197,11 @@ impl ChainSyncClient {
         Ok(msg)
     }
 
+    fn decode_point(raw: &[u8]) -> Result<Point, ChainSyncClientError> {
+        Point::from_cbor_bytes(raw)
+            .map_err(|e| ChainSyncClientError::PointDecode(e.to_string()))
+    }
+
     // -- public API -------------------------------------------------------
 
     /// Send `MsgFindIntersect` with the given candidate points and wait
@@ -163,6 +225,24 @@ impl ChainSyncClient {
             other => Err(ChainSyncClientError::UnexpectedMessage(
                 other.tag_name().to_string(),
             )),
+        }
+    }
+
+    /// Send `MsgFindIntersect` with typed candidate points and decode the
+    /// server response into typed ledger `Point` values.
+    pub async fn find_intersect_points(
+        &mut self,
+        points: Vec<Point>,
+    ) -> Result<TypedIntersectResponse, ChainSyncClientError> {
+        let encoded = points.into_iter().map(|p| p.to_cbor_bytes()).collect();
+        match self.find_intersect(encoded).await? {
+            IntersectResponse::Found { point, tip } => Ok(TypedIntersectResponse::Found {
+                point: Self::decode_point(&point)?,
+                tip: Self::decode_point(&tip)?,
+            }),
+            IntersectResponse::NotFound { tip } => Ok(TypedIntersectResponse::NotFound {
+                tip: Self::decode_point(&tip)?,
+            }),
         }
     }
 
@@ -198,6 +278,33 @@ impl ChainSyncClient {
             other => Err(ChainSyncClientError::UnexpectedMessage(
                 other.tag_name().to_string(),
             )),
+        }
+    }
+
+    /// Send `MsgRequestNext` and decode any point or tip payloads in the
+    /// server response into typed ledger `Point` values.
+    pub async fn request_next_typed(&mut self) -> Result<TypedNextResponse, ChainSyncClientError> {
+        match self.request_next().await? {
+            NextResponse::RollForward { header, tip } => Ok(TypedNextResponse::RollForward {
+                header,
+                tip: Self::decode_point(&tip)?,
+            }),
+            NextResponse::RollBackward { point, tip } => Ok(TypedNextResponse::RollBackward {
+                point: Self::decode_point(&point)?,
+                tip: Self::decode_point(&tip)?,
+            }),
+            NextResponse::AwaitRollForward { header, tip } => {
+                Ok(TypedNextResponse::AwaitRollForward {
+                    header,
+                    tip: Self::decode_point(&tip)?,
+                })
+            }
+            NextResponse::AwaitRollBackward { point, tip } => {
+                Ok(TypedNextResponse::AwaitRollBackward {
+                    point: Self::decode_point(&point)?,
+                    tip: Self::decode_point(&tip)?,
+                })
+            }
         }
     }
 

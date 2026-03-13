@@ -14,7 +14,8 @@ use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
 use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_network::{
     BatchResponse, BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient,
-    ChainSyncClientError, IntersectResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
+    ChainSyncClientError, KeepAliveClient, KeepAliveClientError, NextResponse,
+    TypedIntersectResponse, TypedNextResponse,
 };
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
@@ -230,6 +231,24 @@ async fn fetch_range_blocks(
     }
 }
 
+async fn fetch_range_blocks_typed(
+    block_fetch: &mut BlockFetchClient,
+    lower: Point,
+    upper: Point,
+) -> Result<Vec<Vec<u8>>, SyncError> {
+    let mut blocks = Vec::new();
+
+    match block_fetch.request_range_points(lower, upper).await? {
+        BatchResponse::NoBlocks => Ok(blocks),
+        BatchResponse::StartedBatch => {
+            while let Some(block) = block_fetch.recv_block().await? {
+                blocks.push(block);
+            }
+            Ok(blocks)
+        }
+    }
+}
+
 /// Execute one sync step:
 /// 1. Request the next ChainSync update.
 /// 2. If roll-forward, request matching blocks via BlockFetch.
@@ -286,23 +305,24 @@ pub async fn sync_step_decoded(
 pub async fn sync_step_typed(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
-    from_point: Vec<u8>,
+    from_point: Point,
 ) -> Result<TypedSyncStep, SyncError> {
-    let step = sync_step(chain_sync, block_fetch, from_point).await?;
-    match step {
-        SyncStep::RollForward {
-            header,
-            tip,
-            blocks,
-        } => Ok(TypedSyncStep::RollForward {
-            header: Box::new(decode_shelley_header(&header)?),
-            tip: decode_point(&tip)?,
-            blocks: decode_shelley_blocks(&blocks)?,
-        }),
-        SyncStep::RollBackward { point, tip } => Ok(TypedSyncStep::RollBackward {
-            point: decode_point(&point)?,
-            tip: decode_point(&tip)?,
-        }),
+    let next = chain_sync.request_next_typed().await?;
+
+    match next {
+        TypedNextResponse::RollForward { header, tip }
+        | TypedNextResponse::AwaitRollForward { header, tip } => {
+            let blocks = fetch_range_blocks_typed(block_fetch, from_point, tip).await?;
+            Ok(TypedSyncStep::RollForward {
+                header: Box::new(decode_shelley_header(&header)?),
+                tip,
+                blocks: decode_shelley_blocks(&blocks)?,
+            })
+        }
+        TypedNextResponse::RollBackward { point, tip }
+        | TypedNextResponse::AwaitRollBackward { point, tip } => {
+            Ok(TypedSyncStep::RollBackward { point, tip })
+        }
     }
 }
 
@@ -358,7 +378,7 @@ pub async fn sync_steps_typed(
         let step = sync_step_typed(
             chain_sync,
             block_fetch,
-            from_point.to_cbor_bytes(),
+            from_point,
         )
         .await?;
 
@@ -405,7 +425,7 @@ pub async fn sync_until_typed(
         let step = sync_step_typed(
             chain_sync,
             block_fetch,
-            from_point.to_cbor_bytes(),
+            from_point,
         )
         .await?;
 
@@ -493,16 +513,12 @@ pub async fn typed_find_intersect(
     chain_sync: &mut ChainSyncClient,
     points: &[Point],
 ) -> Result<TypedIntersectResult, SyncError> {
-    let encoded: Vec<Vec<u8>> = points.iter().map(|p| p.to_cbor_bytes()).collect();
-
-    match chain_sync.find_intersect(encoded).await? {
-        IntersectResponse::Found { point, tip } => Ok(TypedIntersectResult::Found {
-            point: decode_point(&point)?,
-            tip: decode_point(&tip)?,
+    match chain_sync.find_intersect_points(points.to_vec()).await? {
+        TypedIntersectResponse::Found { point, tip } => Ok(TypedIntersectResult::Found {
+            point,
+            tip,
         }),
-        IntersectResponse::NotFound { tip } => Ok(TypedIntersectResult::NotFound {
-            tip: decode_point(&tip)?,
-        }),
+        TypedIntersectResponse::NotFound { tip } => Ok(TypedIntersectResult::NotFound { tip }),
     }
 }
 
@@ -1535,9 +1551,8 @@ pub fn multi_era_block_to_chain_entry(block: &MultiEraBlock) -> Option<ChainEntr
 /// Apply one multi-era sync step to a [`ChainState`].
 ///
 /// Roll-forward blocks are converted to [`ChainEntry`] values and
-/// `roll_forward`-ed.  Byron blocks are skipped (see
-/// [`multi_era_block_to_chain_entry`]).  Roll-backward steps trigger
-/// `roll_backward` on the chain state.
+/// `roll_forward`-ed.  All eras including Byron are tracked.
+/// Roll-backward steps trigger `roll_backward` on the chain state.
 ///
 /// After roll-forward processing, stable entries are drained so the
 /// volatile window stays bounded to the security parameter `k`.
