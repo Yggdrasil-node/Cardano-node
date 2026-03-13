@@ -7,8 +7,11 @@
 
 use std::net::{SocketAddr, ToSocketAddrs};
 
+use serde::{Deserialize, Serialize};
+
 /// A hostname or IP address plus port for an outbound peer candidate.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PeerAccessPoint {
     /// DNS name or IP address.
     pub address: String,
@@ -16,17 +19,62 @@ pub struct PeerAccessPoint {
     pub port: u16,
 }
 
-/// A topology group of access points sharing trust and advertisement flags.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct PeerRootGroup {
+/// Diffusion mode for a locally configured root peer group.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum PeerDiffusionMode {
+    /// Dial peers in the group and accept inbound connections from them.
+    #[default]
+    InitiatorAndResponderDiffusionMode,
+    /// Dial peers in the group but do not expect inbound diffusion from them.
+    InitiatorOnlyDiffusionMode,
+}
+
+/// A locally configured root peer group.
+///
+/// This mirrors the official `TopologyP2P` split more closely than a flat
+/// valency-only group: local roots carry trustability and diffusion-mode
+/// semantics in addition to their access points.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalRootConfig {
     /// Ordered access points within the group.
+    #[serde(default)]
     pub access_points: Vec<PeerAccessPoint>,
     /// Whether peers in this group should be advertised to others.
+    #[serde(default)]
     pub advertise: bool,
     /// Whether peers in this group are trusted bootstrap candidates.
+    #[serde(default)]
     pub trustable: bool,
-    /// Requested outbound valency for the group.
-    pub valency: Option<u16>,
+    /// Desired number of hot peers for the group.
+    #[serde(default, rename = "hotValency", alias = "valency")]
+    pub hot_valency: u16,
+    /// Desired number of warm peers for the group.
+    #[serde(default, rename = "warmValency", skip_serializing_if = "Option::is_none")]
+    pub warm_valency: Option<u16>,
+    /// Diffusion mode for the group.
+    #[serde(default, rename = "diffusionMode")]
+    pub diffusion_mode: PeerDiffusionMode,
+}
+
+impl LocalRootConfig {
+    /// Effective warm valency, defaulting to the hot valency when the topology
+    /// omits the explicit warm target.
+    pub fn effective_warm_valency(&self) -> u16 {
+        self.warm_valency.unwrap_or(self.hot_valency)
+    }
+}
+
+/// A public root peer group.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicRootConfig {
+    /// Ordered access points within the group.
+    #[serde(default)]
+    pub access_points: Vec<PeerAccessPoint>,
+    /// Whether peers in this group should be advertised to others.
+    #[serde(default)]
+    pub advertise: bool,
 }
 
 /// Ordered bootstrap targets consisting of a primary peer and optional
@@ -142,8 +190,8 @@ pub fn resolve_peer_access_point(access_point: &PeerAccessPoint) -> Option<Socke
 /// roots, and finally public roots.
 pub fn ordered_peer_candidates(
     bootstrap_peers: &[PeerAccessPoint],
-    local_roots: &[PeerRootGroup],
-    public_roots: &[PeerRootGroup],
+    local_roots: &[LocalRootConfig],
+    public_roots: &[PublicRootConfig],
 ) -> Vec<SocketAddr> {
     let mut ordered = Vec::new();
 
@@ -154,15 +202,15 @@ pub fn ordered_peer_candidates(
     }
 
     for group in local_roots.iter().filter(|group| group.trustable) {
-        extend_group(&mut ordered, group);
+        extend_access_points(&mut ordered, &group.access_points);
     }
 
     for group in local_roots.iter().filter(|group| !group.trustable) {
-        extend_group(&mut ordered, group);
+        extend_access_points(&mut ordered, &group.access_points);
     }
 
     for group in public_roots {
-        extend_group(&mut ordered, group);
+        extend_access_points(&mut ordered, &group.access_points);
     }
 
     ordered
@@ -172,21 +220,21 @@ pub fn ordered_peer_candidates(
 pub fn ordered_fallback_peers(
     primary_peer: SocketAddr,
     bootstrap_peers: &[SocketAddr],
-    local_roots: &[PeerRootGroup],
-    public_roots: &[PeerRootGroup],
+    local_roots: &[LocalRootConfig],
+    public_roots: &[PublicRootConfig],
 ) -> Vec<SocketAddr> {
     let mut ordered = bootstrap_peers.to_vec();
 
     for group in local_roots.iter().filter(|group| group.trustable) {
-        extend_group(&mut ordered, group);
+        extend_access_points(&mut ordered, &group.access_points);
     }
 
     for group in local_roots.iter().filter(|group| !group.trustable) {
-        extend_group(&mut ordered, group);
+        extend_access_points(&mut ordered, &group.access_points);
     }
 
     for group in public_roots {
-        extend_group(&mut ordered, group);
+        extend_access_points(&mut ordered, &group.access_points);
     }
 
     ordered.retain(|addr| *addr != primary_peer);
@@ -210,8 +258,8 @@ pub fn peer_attempt_state(
     PeerAttemptState::new(bootstrap_targets(primary_peer, fallback_peers))
 }
 
-fn extend_group(addrs: &mut Vec<SocketAddr>, group: &PeerRootGroup) {
-    for access_point in &group.access_points {
+fn extend_access_points(addrs: &mut Vec<SocketAddr>, access_points: &[PeerAccessPoint]) {
+    for access_point in access_points {
         if let Some(addr) = resolve_peer_access_point(access_point) {
             push_unique_addr(addrs, addr);
         }
@@ -241,33 +289,35 @@ mod tests {
             },
         ];
         let local = vec![
-            PeerRootGroup {
+            LocalRootConfig {
                 access_points: vec![PeerAccessPoint {
                     address: "127.0.0.12".to_owned(),
                     port: 3001,
                 }],
                 advertise: false,
                 trustable: false,
-                valency: Some(1),
+                hot_valency: 1,
+                warm_valency: None,
+                diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
             },
-            PeerRootGroup {
+            LocalRootConfig {
                 access_points: vec![PeerAccessPoint {
                     address: "127.0.0.13".to_owned(),
                     port: 3001,
                 }],
                 advertise: false,
                 trustable: true,
-                valency: Some(1),
+                hot_valency: 1,
+                warm_valency: None,
+                diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
             },
         ];
-        let public = vec![PeerRootGroup {
+        let public = vec![PublicRootConfig {
             access_points: vec![PeerAccessPoint {
                 address: "127.0.0.14".to_owned(),
                 port: 3001,
             }],
             advertise: false,
-            trustable: false,
-            valency: None,
         }];
 
         assert_eq!(
@@ -286,7 +336,7 @@ mod tests {
     fn ordered_fallbacks_drop_primary_and_duplicates() {
         let primary: SocketAddr = "127.0.0.10:3001".parse().expect("addr");
         let bootstrap = vec![primary, "127.0.0.11:3001".parse().expect("addr")];
-        let local = vec![PeerRootGroup {
+        let local = vec![LocalRootConfig {
             access_points: vec![
                 PeerAccessPoint {
                     address: "127.0.0.11".to_owned(),
@@ -299,7 +349,9 @@ mod tests {
             ],
             advertise: false,
             trustable: true,
-            valency: Some(1),
+            hot_valency: 1,
+            warm_valency: None,
+            diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
         }];
 
         assert_eq!(
@@ -397,5 +449,44 @@ mod tests {
                 "127.0.0.11:3001".parse().expect("addr"),
             ]
         );
+    }
+
+    #[test]
+    fn local_root_config_parses_legacy_valency_as_hot_valency() {
+        let group: LocalRootConfig = serde_json::from_str(
+            r#"{
+                "accessPoints": [{ "address": "127.0.0.1", "port": 3001 }],
+                "advertise": false,
+                "trustable": true,
+                "valency": 2
+            }"#,
+        )
+        .expect("parse local root");
+
+        assert_eq!(group.hot_valency, 2);
+        assert_eq!(group.effective_warm_valency(), 2);
+        assert_eq!(
+            group.diffusion_mode,
+            PeerDiffusionMode::InitiatorAndResponderDiffusionMode
+        );
+    }
+
+    #[test]
+    fn local_root_config_parses_explicit_upstream_fields() {
+        let group: LocalRootConfig = serde_json::from_str(
+            r#"{
+                "accessPoints": [{ "address": "127.0.0.1", "port": 3001 }],
+                "advertise": true,
+                "trustable": true,
+                "hotValency": 2,
+                "warmValency": 4,
+                "diffusionMode": "InitiatorOnlyDiffusionMode"
+            }"#,
+        )
+        .expect("parse local root");
+
+        assert_eq!(group.hot_valency, 2);
+        assert_eq!(group.effective_warm_valency(), 4);
+        assert_eq!(group.diffusion_mode, PeerDiffusionMode::InitiatorOnlyDiffusionMode);
     }
 }

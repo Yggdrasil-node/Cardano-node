@@ -6,14 +6,13 @@ description: Guidance for concrete network transport, mux, and client-driver imp
 Focus on implementation details for bearer I/O, mux/demux behavior, protocol driver ergonomics, and wire-level safety properties.
 
 ## Scope
-- `bearer.rs`, `multiplexer.rs`, `mux.rs`, `peer.rs`, and typed client drivers.
 - `bearer.rs`, `multiplexer.rs`, `mux.rs`, `peer.rs`, `peer_selection.rs`, and typed client drivers.
 - CBOR message boundary handling, segmentation/reassembly, and protocol-handle composition.
 
 ##  Rules *Non-Negotiable*
 - Keep wire framing deterministic and byte-accurate.
 - Do not leak protocol business logic from `protocols/` state machines into transport primitives.
-- Keep reusable peer candidate resolution, bootstrap-target sequencing, and reconnect attempt ordering here rather than in `node`, while avoiding full peer-governor state in low-level transport helpers.
+- Keep reusable peer candidate resolution, bootstrap-target sequencing, reconnect attempt ordering, and preferred-peer retry state here rather than in `node`, while avoiding full peer-governor state in low-level transport helpers.
 - Preserve strict separation between raw transport (`ProtocolHandle`) and higher-level message orchestration (`MessageChannel`, client drivers).
 - Any receive-path buffering or boundary detection changes MUST ship with regression tests for partial/incremental payload delivery.
 - Public transport and driver APIs MUST include Rustdocs when behavior is non-obvious.

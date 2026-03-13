@@ -45,3 +45,16 @@ Upstream parity testing is complete with CBOR golden round-trip tests and cross-
 The next architecture milestones are end-to-end multi-peer management, dedicated tracer transport/metrics export, and mainnet sync endurance testing.
 
 Topology parsing and preset-specific config resolution currently stay in `node` because they are operational concerns tied to the node binary's config format. Once peer selection grows into ledger peers, peer sharing, or long-lived governor policy, that logic should move behind a network-crate boundary rather than continuing to grow in `node`.
+
+## Upstream-Aligned Networking Plan
+- Phase 1: topology-model parity in `crates/network`. Follow `cardano-node` `TopologyP2P` and `ouroboros-network` `Diffusion.Topology` naming more closely by adding `hotValency`, `warmValency`, `diffusionMode`, trustability flags, and explicit `useBootstrapPeers` / `useLedgerPeers` semantics instead of stopping at a flat fallback list.
+- Phase 2: root-set providers in `crates/network`. Mirror the upstream split between local roots, public roots, bootstrap peers, and dynamic public-root or DNS providers. Preserve the upstream invariant that local roots and public roots are disjoint, and that bootstrap peers have stronger precedence than ordinary public roots.
+- Phase 3: peer registry state in `crates/network`. Introduce an explicit registry for peer source and status aligned with upstream `PeerSource` and `PeerStatus` concepts: local root, public root, ledger, bootstrap, and peer-share origins; cold, warm, and hot connection states. This is the point where `node` must stop carrying any reconnect or peer-preference state beyond reporting.
+- Phase 4: consensus-network bridge for ledger peers. Follow `ouroboros-consensus` and `cardano-node` by sourcing ledger peers from the immutable ledger state, gating them with latest-slot and ledger-state judgement signals, and honoring peer snapshot freshness relative to `useLedgerAfterSlot`.
+- Phase 5: governor-style policy. Only after the previous phases exist should Yggdrasil add promotion, demotion, peer sharing, public-root refresh backoff, churn, or Genesis-specific security behavior. The implementation should keep policy separate from mechanism, as in upstream `PeerSelectionActions`, `PeerSelectionPolicy`, and governor state modules.
+
+## Planning Constraints
+- Prefer the official type split over local simplifications. Upstream distinguishes local root groups from public roots, public roots from bootstrap peers, and ledger peers from all configured root sets.
+- Keep the dynamic parts asynchronous. Upstream treats local roots, public roots, ledger peers, and snapshot data as time-varying sources observed by the networking layer rather than one-shot startup inputs.
+- Preserve root-set invariants. Official peer-selection state enforces that local roots and public roots do not overlap and that root counts respect peer-selection targets.
+- Keep `node` focused on orchestration. It should provide config loading, CLI overrides, and consensus-facing signals, but the network crate should own peer sources, peer state, retry policy, and future governor behavior.

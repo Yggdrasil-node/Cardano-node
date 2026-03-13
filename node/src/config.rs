@@ -12,55 +12,32 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
-use yggdrasil_network::{PeerAccessPoint, PeerRootGroup, ordered_peer_candidates, ordered_peer_fallbacks};
+use yggdrasil_network::{
+    LocalRootConfig, PeerAccessPoint, PublicRootConfig, ordered_peer_candidates,
+    ordered_peer_fallbacks,
+};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct TopologyConfigFile {
     #[serde(default)]
-    bootstrap_peers: Vec<TopologyAccessPoint>,
+    bootstrap_peers: Vec<PeerAccessPoint>,
     #[serde(default)]
-    local_roots: Vec<TopologyRootGroup>,
+    local_roots: Vec<LocalRootConfig>,
     #[serde(default)]
-    public_roots: Vec<TopologyRootGroup>,
+    public_roots: Vec<PublicRootConfig>,
     #[serde(default)]
     use_ledger_after_slot: Option<u64>,
     #[serde(default)]
     peer_snapshot_file: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TopologyRootGroup {
-    /// Ordered access points within a local-root or public-root group.
-    #[serde(default)]
-    pub access_points: Vec<TopologyAccessPoint>,
-    /// Whether addresses in this group should be advertised to peers.
-    #[serde(default)]
-    pub advertise: bool,
-    /// Whether the group is trusted for bootstrap and Genesis-style sync.
-    #[serde(default)]
-    pub trustable: bool,
-    /// Requested connection valency for the group, when specified.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valency: Option<u16>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TopologyAccessPoint {
-    /// DNS name or IP address for a topology access point.
-    pub address: String,
-    /// TCP port for a topology access point.
-    pub port: u16,
-}
-
 #[derive(Debug)]
 struct ResolvedTopologyPeers {
     primary_peer: SocketAddr,
     fallback_peers: Vec<SocketAddr>,
-    local_roots: Vec<TopologyRootGroup>,
-    public_roots: Vec<TopologyRootGroup>,
+    local_roots: Vec<LocalRootConfig>,
+    public_roots: Vec<PublicRootConfig>,
     use_ledger_after_slot: Option<u64>,
     peer_snapshot_file: Option<String>,
 }
@@ -108,10 +85,10 @@ pub struct NodeConfigFile {
     pub bootstrap_peers: Vec<SocketAddr>,
     /// Ordered local root groups parsed from the topology file.
     #[serde(default)]
-    pub local_roots: Vec<TopologyRootGroup>,
+    pub local_roots: Vec<LocalRootConfig>,
     /// Ordered public root groups parsed from the topology file.
     #[serde(default)]
-    pub public_roots: Vec<TopologyRootGroup>,
+    pub public_roots: Vec<PublicRootConfig>,
     /// Slot after which ledger peers should be preferred when available.
     #[serde(default)]
     pub use_ledger_after_slot: Option<u64>,
@@ -184,8 +161,8 @@ impl NodeConfigFile {
         ordered_peer_fallbacks(
             self.peer_addr,
             &self.bootstrap_peers,
-            &to_network_root_groups(&self.local_roots),
-            &to_network_root_groups(&self.public_roots),
+            &self.local_roots,
+            &self.public_roots,
         )
     }
 }
@@ -296,39 +273,15 @@ fn default_trace_options() -> BTreeMap<String, TraceNamespaceConfig> {
     ])
 }
 
-fn to_network_access_point(access_point: &TopologyAccessPoint) -> PeerAccessPoint {
-    PeerAccessPoint {
-        address: access_point.address.clone(),
-        port: access_point.port,
-    }
-}
-
-fn to_network_root_group(group: &TopologyRootGroup) -> PeerRootGroup {
-    PeerRootGroup {
-        access_points: group.access_points.iter().map(to_network_access_point).collect(),
-        advertise: group.advertise,
-        trustable: group.trustable,
-        valency: group.valency,
-    }
-}
-
-fn to_network_root_groups(groups: &[TopologyRootGroup]) -> Vec<PeerRootGroup> {
-    groups.iter().map(to_network_root_group).collect()
-}
-
 fn parse_topology_config(topology_json: &str) -> TopologyConfigFile {
     serde_json::from_str::<TopologyConfigFile>(topology_json).unwrap_or_default()
 }
 
 fn ordered_topology_peer_candidates(topology: &TopologyConfigFile) -> Vec<SocketAddr> {
     ordered_peer_candidates(
-        &topology
-            .bootstrap_peers
-            .iter()
-            .map(to_network_access_point)
-            .collect::<Vec<_>>(),
-        &to_network_root_groups(&topology.local_roots),
-        &to_network_root_groups(&topology.public_roots),
+        &topology.bootstrap_peers,
+        &topology.local_roots,
+        &topology.public_roots,
     )
 }
 

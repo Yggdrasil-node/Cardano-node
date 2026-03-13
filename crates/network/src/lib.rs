@@ -47,7 +47,8 @@ pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as star
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
 pub use peer_selection::{
-    PeerAccessPoint, PeerAttemptState, PeerBootstrapTargets, PeerRootGroup,
+    LocalRootConfig, PeerAccessPoint, PeerAttemptState, PeerBootstrapTargets,
+    PeerDiffusionMode, PublicRootConfig,
     bootstrap_targets, ordered_fallback_peers as ordered_peer_fallbacks,
     ordered_peer_candidates, peer_attempt_state, resolve_peer_access_point,
 };
