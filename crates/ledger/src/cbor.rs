@@ -1168,15 +1168,15 @@ fn decode_hash32(dec: &mut Decoder<'_>) -> Result<[u8; 32], LedgerError> {
 impl CborEncode for DCert {
     fn encode_cbor(&self, enc: &mut Encoder) {
         match self {
-            Self::StakeRegistration(cred) => {
+            Self::AccountRegistration(cred) => {
                 enc.array(2).unsigned(0);
                 cred.encode_cbor(enc);
             }
-            Self::StakeDeregistration(cred) => {
+            Self::AccountUnregistration(cred) => {
                 enc.array(2).unsigned(1);
                 cred.encode_cbor(enc);
             }
-            Self::StakeDelegation(cred, pool) => {
+            Self::DelegationToStakePool(cred, pool) => {
                 enc.array(3).unsigned(2);
                 cred.encode_cbor(enc);
                 enc.bytes(pool);
@@ -1190,72 +1190,72 @@ impl CborEncode for DCert {
                 enc.bytes(pool);
                 epoch.encode_cbor(enc);
             }
-            Self::GenesisKeyDelegation(genesis, deleg, vrf) => {
+            Self::GenesisDelegation(genesis, deleg, vrf) => {
                 enc.array(4).unsigned(5);
                 enc.bytes(genesis).bytes(deleg).bytes(vrf);
             }
-            Self::RegCert(cred, coin) => {
+            Self::AccountRegistrationDeposit(cred, coin) => {
                 enc.array(3).unsigned(7);
                 cred.encode_cbor(enc);
                 enc.unsigned(*coin);
             }
-            Self::UnregCert(cred, coin) => {
+            Self::AccountUnregistrationDeposit(cred, coin) => {
                 enc.array(3).unsigned(8);
                 cred.encode_cbor(enc);
                 enc.unsigned(*coin);
             }
-            Self::VoteDelegCert(cred, drep) => {
+            Self::DelegationToDrep(cred, drep) => {
                 enc.array(3).unsigned(9);
                 cred.encode_cbor(enc);
                 drep.encode_cbor(enc);
             }
-            Self::StakeVoteDelegCert(cred, pool, drep) => {
+            Self::DelegationToStakePoolAndDrep(cred, pool, drep) => {
                 enc.array(4).unsigned(10);
                 cred.encode_cbor(enc);
                 enc.bytes(pool);
                 drep.encode_cbor(enc);
             }
-            Self::StakeRegDelegCert(cred, pool, coin) => {
+            Self::AccountRegistrationDelegationToStakePool(cred, pool, coin) => {
                 enc.array(4).unsigned(11);
                 cred.encode_cbor(enc);
                 enc.bytes(pool);
                 enc.unsigned(*coin);
             }
-            Self::VoteRegDelegCert(cred, drep, coin) => {
+            Self::AccountRegistrationDelegationToDrep(cred, drep, coin) => {
                 enc.array(4).unsigned(12);
                 cred.encode_cbor(enc);
                 drep.encode_cbor(enc);
                 enc.unsigned(*coin);
             }
-            Self::StakeVoteRegDelegCert(cred, pool, drep, coin) => {
+            Self::AccountRegistrationDelegationToStakePoolAndDrep(cred, pool, drep, coin) => {
                 enc.array(5).unsigned(13);
                 cred.encode_cbor(enc);
                 enc.bytes(pool);
                 drep.encode_cbor(enc);
                 enc.unsigned(*coin);
             }
-            Self::AuthCommitteeHotCert(cold, hot) => {
+            Self::CommitteeAuthorization(cold, hot) => {
                 enc.array(3).unsigned(14);
                 cold.encode_cbor(enc);
                 hot.encode_cbor(enc);
             }
-            Self::ResignCommitteeColdCert(cold, anchor) => {
+            Self::CommitteeResignation(cold, anchor) => {
                 enc.array(3).unsigned(15);
                 cold.encode_cbor(enc);
                 encode_optional_anchor(anchor, enc);
             }
-            Self::RegDRepCert(cred, coin, anchor) => {
+            Self::DrepRegistration(cred, coin, anchor) => {
                 enc.array(4).unsigned(16);
                 cred.encode_cbor(enc);
                 enc.unsigned(*coin);
                 encode_optional_anchor(anchor, enc);
             }
-            Self::UnregDRepCert(cred, coin) => {
+            Self::DrepUnregistration(cred, coin) => {
                 enc.array(3).unsigned(17);
                 cred.encode_cbor(enc);
                 enc.unsigned(*coin);
             }
-            Self::UpdateDRepCert(cred, anchor) => {
+            Self::DrepUpdate(cred, anchor) => {
                 enc.array(3).unsigned(18);
                 cred.encode_cbor(enc);
                 encode_optional_anchor(anchor, enc);
@@ -1272,16 +1272,16 @@ impl CborDecode for DCert {
             // Shelley tags 0–5
             0 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
-                Ok(Self::StakeRegistration(cred))
+                Ok(Self::AccountRegistration(cred))
             }
             1 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
-                Ok(Self::StakeDeregistration(cred))
+                Ok(Self::AccountUnregistration(cred))
             }
             2 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let pool = decode_hash28(dec)?;
-                Ok(Self::StakeDelegation(cred, pool))
+                Ok(Self::DelegationToStakePool(cred, pool))
             }
             3 => {
                 let params = PoolParams::decode_inline(dec)?;
@@ -1296,74 +1296,74 @@ impl CborDecode for DCert {
                 let genesis = decode_hash28(dec)?;
                 let deleg = decode_hash28(dec)?;
                 let vrf = decode_hash32(dec)?;
-                Ok(Self::GenesisKeyDelegation(genesis, deleg, vrf))
+                Ok(Self::GenesisDelegation(genesis, deleg, vrf))
             }
             // Conway tags 7–18
             7 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let coin = dec.unsigned()?;
-                Ok(Self::RegCert(cred, coin))
+                Ok(Self::AccountRegistrationDeposit(cred, coin))
             }
             8 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let coin = dec.unsigned()?;
-                Ok(Self::UnregCert(cred, coin))
+                Ok(Self::AccountUnregistrationDeposit(cred, coin))
             }
             9 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let drep = DRep::decode_cbor(dec)?;
-                Ok(Self::VoteDelegCert(cred, drep))
+                Ok(Self::DelegationToDrep(cred, drep))
             }
             10 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let pool = decode_hash28(dec)?;
                 let drep = DRep::decode_cbor(dec)?;
-                Ok(Self::StakeVoteDelegCert(cred, pool, drep))
+                Ok(Self::DelegationToStakePoolAndDrep(cred, pool, drep))
             }
             11 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let pool = decode_hash28(dec)?;
                 let coin = dec.unsigned()?;
-                Ok(Self::StakeRegDelegCert(cred, pool, coin))
+                Ok(Self::AccountRegistrationDelegationToStakePool(cred, pool, coin))
             }
             12 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let drep = DRep::decode_cbor(dec)?;
                 let coin = dec.unsigned()?;
-                Ok(Self::VoteRegDelegCert(cred, drep, coin))
+                Ok(Self::AccountRegistrationDelegationToDrep(cred, drep, coin))
             }
             13 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let pool = decode_hash28(dec)?;
                 let drep = DRep::decode_cbor(dec)?;
                 let coin = dec.unsigned()?;
-                Ok(Self::StakeVoteRegDelegCert(cred, pool, drep, coin))
+                Ok(Self::AccountRegistrationDelegationToStakePoolAndDrep(cred, pool, drep, coin))
             }
             14 => {
                 let cold = StakeCredential::decode_cbor(dec)?;
                 let hot = StakeCredential::decode_cbor(dec)?;
-                Ok(Self::AuthCommitteeHotCert(cold, hot))
+                Ok(Self::CommitteeAuthorization(cold, hot))
             }
             15 => {
                 let cold = StakeCredential::decode_cbor(dec)?;
                 let anchor = decode_optional_anchor(dec)?;
-                Ok(Self::ResignCommitteeColdCert(cold, anchor))
+                Ok(Self::CommitteeResignation(cold, anchor))
             }
             16 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let coin = dec.unsigned()?;
                 let anchor = decode_optional_anchor(dec)?;
-                Ok(Self::RegDRepCert(cred, coin, anchor))
+                Ok(Self::DrepRegistration(cred, coin, anchor))
             }
             17 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let coin = dec.unsigned()?;
-                Ok(Self::UnregDRepCert(cred, coin))
+                Ok(Self::DrepUnregistration(cred, coin))
             }
             18 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
                 let anchor = decode_optional_anchor(dec)?;
-                Ok(Self::UpdateDRepCert(cred, anchor))
+                Ok(Self::DrepUpdate(cred, anchor))
             }
             _ => Err(LedgerError::CborTypeMismatch {
                 expected: 18,

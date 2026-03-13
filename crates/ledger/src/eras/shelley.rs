@@ -1313,7 +1313,7 @@ pub struct ShelleyBlock {
     /// Witness sets (parallel to transaction_bodies).
     pub transaction_witness_sets: Vec<ShelleyWitnessSet>,
     /// Metadata map: transaction index → raw CBOR metadata bytes.
-    pub transaction_metadata: HashMap<u64, Vec<u8>>,
+    pub transaction_metadata_set: HashMap<u64, Vec<u8>>,
 }
 
 impl CborEncode for ShelleyBlock {
@@ -1334,8 +1334,8 @@ impl CborEncode for ShelleyBlock {
         }
 
         // transaction_metadata_set
-        enc.map(self.transaction_metadata.len() as u64);
-        for (&idx, meta) in &self.transaction_metadata {
+        enc.map(self.transaction_metadata_set.len() as u64);
+        for (&idx, meta) in &self.transaction_metadata_set {
             enc.unsigned(idx);
             enc.raw(meta);
         }
@@ -1384,7 +1384,7 @@ impl CborDecode for ShelleyBlock {
             header,
             transaction_bodies,
             transaction_witness_sets: witness_sets,
-            transaction_metadata,
+            transaction_metadata_set: transaction_metadata,
         })
     }
 }

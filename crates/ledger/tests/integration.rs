@@ -1316,7 +1316,7 @@ fn shelley_block_cbor_round_trip_no_txs() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
     let decoded = ShelleyBlock::from_cbor_bytes(&bytes).expect("Block no-txs round-trip");
@@ -1355,7 +1355,7 @@ fn shelley_block_cbor_round_trip_with_txs() {
         },
         transaction_bodies: vec![body],
         transaction_witness_sets: vec![ws],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
     let decoded = ShelleyBlock::from_cbor_bytes(&bytes).expect("Block with-txs round-trip");
@@ -1371,7 +1371,7 @@ fn shelley_block_is_four_element_array() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
     let mut dec = Decoder::new(&bytes);
@@ -3257,7 +3257,7 @@ fn babbage_block_cbor_round_trip_empty() {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
     let decoded = BabbageBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3305,7 +3305,7 @@ fn babbage_block_cbor_round_trip_with_tx() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
     let decoded = BabbageBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3320,7 +3320,7 @@ fn babbage_block_header_hash() {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let h1 = block.header_hash();
     let h2 = block.header.header_hash();
@@ -3333,7 +3333,7 @@ fn conway_block_cbor_round_trip_empty() {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
     let decoded = ConwayBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3384,7 +3384,7 @@ fn conway_block_cbor_round_trip_with_tx() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
     let decoded = ConwayBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3398,7 +3398,7 @@ fn conway_block_header_hash() {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let h1 = block.header_hash();
     let h2 = block.header.header_hash();
@@ -3966,7 +3966,7 @@ fn sample_pool_params() -> PoolParams {
 
 #[test]
 fn dcert_stake_registration_round_trip() {
-    let cert = DCert::StakeRegistration(StakeCredential::AddrKeyHash(sample_hash28()));
+    let cert = DCert::AccountRegistration(StakeCredential::AddrKeyHash(sample_hash28()));
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -3974,7 +3974,7 @@ fn dcert_stake_registration_round_trip() {
 
 #[test]
 fn dcert_stake_deregistration_round_trip() {
-    let cert = DCert::StakeDeregistration(StakeCredential::ScriptHash(sample_hash28()));
+    let cert = DCert::AccountUnregistration(StakeCredential::ScriptHash(sample_hash28()));
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -3983,7 +3983,7 @@ fn dcert_stake_deregistration_round_trip() {
 #[test]
 fn dcert_stake_delegation_round_trip() {
     let cert =
-        DCert::StakeDelegation(StakeCredential::AddrKeyHash(sample_hash28()), sample_hash28());
+        DCert::DelegationToStakePool(StakeCredential::AddrKeyHash(sample_hash28()), sample_hash28());
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -4018,7 +4018,7 @@ fn dcert_pool_retirement_round_trip() {
 
 #[test]
 fn dcert_genesis_key_delegation_round_trip() {
-    let cert = DCert::GenesisKeyDelegation(sample_hash28(), sample_hash28(), sample_hash32());
+    let cert = DCert::GenesisDelegation(sample_hash28(), sample_hash28(), sample_hash32());
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -4028,7 +4028,7 @@ fn dcert_genesis_key_delegation_round_trip() {
 
 #[test]
 fn dcert_reg_cert_round_trip() {
-    let cert = DCert::RegCert(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
+    let cert = DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -4036,7 +4036,7 @@ fn dcert_reg_cert_round_trip() {
 
 #[test]
 fn dcert_unreg_cert_round_trip() {
-    let cert = DCert::UnregCert(StakeCredential::ScriptHash(sample_hash28()), 2_000_000);
+    let cert = DCert::AccountUnregistrationDeposit(StakeCredential::ScriptHash(sample_hash28()), 2_000_000);
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -4044,7 +4044,7 @@ fn dcert_unreg_cert_round_trip() {
 
 #[test]
 fn dcert_vote_deleg_cert_round_trip() {
-    let cert = DCert::VoteDelegCert(
+    let cert = DCert::DelegationToDrep(
         StakeCredential::AddrKeyHash(sample_hash28()),
         DRep::KeyHash(sample_hash28()),
     );
@@ -4055,7 +4055,7 @@ fn dcert_vote_deleg_cert_round_trip() {
 
 #[test]
 fn dcert_stake_vote_deleg_cert_round_trip() {
-    let cert = DCert::StakeVoteDelegCert(
+    let cert = DCert::DelegationToStakePoolAndDrep(
         StakeCredential::AddrKeyHash(sample_hash28()),
         sample_hash28(),
         DRep::AlwaysAbstain,
@@ -4067,7 +4067,7 @@ fn dcert_stake_vote_deleg_cert_round_trip() {
 
 #[test]
 fn dcert_stake_reg_deleg_cert_round_trip() {
-    let cert = DCert::StakeRegDelegCert(
+    let cert = DCert::AccountRegistrationDelegationToStakePool(
         StakeCredential::AddrKeyHash(sample_hash28()),
         sample_hash28(),
         2_000_000,
@@ -4079,7 +4079,7 @@ fn dcert_stake_reg_deleg_cert_round_trip() {
 
 #[test]
 fn dcert_vote_reg_deleg_cert_round_trip() {
-    let cert = DCert::VoteRegDelegCert(
+    let cert = DCert::AccountRegistrationDelegationToDrep(
         StakeCredential::AddrKeyHash(sample_hash28()),
         DRep::ScriptHash(sample_hash28()),
         2_000_000,
@@ -4091,7 +4091,7 @@ fn dcert_vote_reg_deleg_cert_round_trip() {
 
 #[test]
 fn dcert_stake_vote_reg_deleg_cert_round_trip() {
-    let cert = DCert::StakeVoteRegDelegCert(
+    let cert = DCert::AccountRegistrationDelegationToStakePoolAndDrep(
         StakeCredential::AddrKeyHash(sample_hash28()),
         sample_hash28(),
         DRep::AlwaysNoConfidence,
@@ -4104,7 +4104,7 @@ fn dcert_stake_vote_reg_deleg_cert_round_trip() {
 
 #[test]
 fn dcert_auth_committee_hot_round_trip() {
-    let cert = DCert::AuthCommitteeHotCert(
+    let cert = DCert::CommitteeAuthorization(
         StakeCredential::AddrKeyHash(sample_hash28()),
         StakeCredential::ScriptHash(sample_hash28()),
     );
@@ -4115,7 +4115,7 @@ fn dcert_auth_committee_hot_round_trip() {
 
 #[test]
 fn dcert_resign_committee_cold_with_anchor_round_trip() {
-    let cert = DCert::ResignCommitteeColdCert(
+    let cert = DCert::CommitteeResignation(
         StakeCredential::AddrKeyHash(sample_hash28()),
         Some(Anchor {
             url: "https://example.com/resign.json".to_string(),
@@ -4129,7 +4129,7 @@ fn dcert_resign_committee_cold_with_anchor_round_trip() {
 
 #[test]
 fn dcert_resign_committee_cold_no_anchor_round_trip() {
-    let cert = DCert::ResignCommitteeColdCert(
+    let cert = DCert::CommitteeResignation(
         StakeCredential::ScriptHash(sample_hash28()),
         None,
     );
@@ -4140,7 +4140,7 @@ fn dcert_resign_committee_cold_no_anchor_round_trip() {
 
 #[test]
 fn dcert_reg_drep_with_anchor_round_trip() {
-    let cert = DCert::RegDRepCert(
+    let cert = DCert::DrepRegistration(
         StakeCredential::AddrKeyHash(sample_hash28()),
         500_000_000,
         Some(Anchor {
@@ -4155,7 +4155,7 @@ fn dcert_reg_drep_with_anchor_round_trip() {
 
 #[test]
 fn dcert_reg_drep_no_anchor_round_trip() {
-    let cert = DCert::RegDRepCert(
+    let cert = DCert::DrepRegistration(
         StakeCredential::AddrKeyHash(sample_hash28()),
         500_000_000,
         None,
@@ -4167,7 +4167,7 @@ fn dcert_reg_drep_no_anchor_round_trip() {
 
 #[test]
 fn dcert_unreg_drep_round_trip() {
-    let cert = DCert::UnregDRepCert(StakeCredential::AddrKeyHash(sample_hash28()), 500_000_000);
+    let cert = DCert::DrepUnregistration(StakeCredential::AddrKeyHash(sample_hash28()), 500_000_000);
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -4175,7 +4175,7 @@ fn dcert_unreg_drep_round_trip() {
 
 #[test]
 fn dcert_update_drep_with_anchor_round_trip() {
-    let cert = DCert::UpdateDRepCert(
+    let cert = DCert::DrepUpdate(
         StakeCredential::ScriptHash(sample_hash28()),
         Some(Anchor {
             url: "https://example.com/drep-update.json".to_string(),
@@ -4189,7 +4189,7 @@ fn dcert_update_drep_with_anchor_round_trip() {
 
 #[test]
 fn dcert_update_drep_no_anchor_round_trip() {
-    let cert = DCert::UpdateDRepCert(StakeCredential::AddrKeyHash(sample_hash28()), None);
+    let cert = DCert::DrepUpdate(StakeCredential::AddrKeyHash(sample_hash28()), None);
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -4199,7 +4199,7 @@ fn dcert_update_drep_no_anchor_round_trip() {
 
 #[test]
 fn dcert_stake_registration_starts_with_tag_0() {
-    let cert = DCert::StakeRegistration(StakeCredential::AddrKeyHash(sample_hash28()));
+    let cert = DCert::AccountRegistration(StakeCredential::AddrKeyHash(sample_hash28()));
     let bytes = cert.to_cbor_bytes();
     // array(2) = 0x82, uint(0) = 0x00
     assert_eq!(bytes[0], 0x82);
@@ -4217,7 +4217,7 @@ fn dcert_pool_registration_starts_with_tag_3() {
 
 #[test]
 fn dcert_reg_cert_conway_starts_with_tag_7() {
-    let cert = DCert::RegCert(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
+    let cert = DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
     let bytes = cert.to_cbor_bytes();
     // array(3) = 0x83, uint(7) = 0x07
     assert_eq!(bytes[0], 0x83);
@@ -4284,8 +4284,8 @@ fn shelley_tx_body_with_certificates_round_trip() {
         fee: 200_000,
         ttl: 500_000,
         certificates: Some(vec![
-            DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28])),
-            DCert::StakeDeregistration(StakeCredential::ScriptHash([0x02; 28])),
+            DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x01; 28])),
+            DCert::AccountUnregistration(StakeCredential::ScriptHash([0x02; 28])),
         ]),
         withdrawals: None,
         update: None,
@@ -4389,7 +4389,7 @@ fn shelley_tx_body_with_all_keys_4_6_round_trip() {
         }],
         fee: 200_000,
         ttl: 500_000,
-        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
         withdrawals: Some(wdrl),
         update: Some(update),
         auxiliary_data_hash: Some([0xFF; 32]),
@@ -4416,7 +4416,7 @@ fn allegra_tx_body_with_certs_and_withdrawals_round_trip() {
         }],
         fee: 180_000,
         ttl: Some(600_000),
-        certificates: Some(vec![DCert::StakeDelegation(
+        certificates: Some(vec![DCert::DelegationToStakePool(
             StakeCredential::AddrKeyHash([0x01; 28]),
             [0x02; 28],
         )]),
@@ -4447,7 +4447,7 @@ fn mary_tx_body_with_certs_and_withdrawals_round_trip() {
         }],
         fee: 190_000,
         ttl: Some(700_000),
-        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::ScriptHash([0x03; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::ScriptHash([0x03; 28]))]),
         withdrawals: Some(wdrl),
         update: None,
         auxiliary_data_hash: None,
@@ -4489,7 +4489,7 @@ fn alonzo_tx_body_with_certs_and_withdrawals_round_trip() {
         }],
         fee: 250_000,
         ttl: Some(800_000),
-        certificates: Some(vec![DCert::StakeDeregistration(StakeCredential::AddrKeyHash([0x04; 28]))]),
+        certificates: Some(vec![DCert::AccountUnregistration(StakeCredential::AddrKeyHash([0x04; 28]))]),
         withdrawals: Some(wdrl),
         update: Some(update),
         auxiliary_data_hash: None,
@@ -4524,7 +4524,7 @@ fn babbage_tx_body_with_certs_and_withdrawals_round_trip() {
         }],
         fee: 300_000,
         ttl: None,
-        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x05; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x05; 28]))]),
         withdrawals: Some(wdrl),
         update: None,
         auxiliary_data_hash: None,
@@ -4563,8 +4563,8 @@ fn conway_tx_body_with_certs_and_withdrawals_round_trip() {
         fee: 350_000,
         ttl: None,
         certificates: Some(vec![
-            DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x06; 28])),
-            DCert::RegCert(StakeCredential::AddrKeyHash([0x07; 28]), 2_000_000),
+            DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x06; 28])),
+            DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash([0x07; 28]), 2_000_000),
         ]),
         withdrawals: Some(wdrl),
         auxiliary_data_hash: None,
@@ -4616,7 +4616,7 @@ fn shelley_tx_body_map_count_includes_keys_4_5_6() {
         }],
         fee: 200_000,
         ttl: 500_000,
-        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
         withdrawals: Some(wdrl),
         update: Some(update),
         auxiliary_data_hash: None,
@@ -4649,7 +4649,7 @@ fn conway_tx_body_no_update_key_round_trip() {
         }],
         fee: 200_000,
         ttl: None,
-        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
         withdrawals: Some(wdrl),
         auxiliary_data_hash: None,
         validity_interval_start: None,
@@ -6130,7 +6130,7 @@ fn cbor_golden_shelley_block_round_trip() {
         header: header.clone(),
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
 
     let encoded = block.to_cbor_bytes();

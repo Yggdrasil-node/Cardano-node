@@ -86,15 +86,20 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`, `BabbageBlock`).
   - Conway era types (`Vote`, `Voter`, `GovActionId`, `Constitution`, `GovAction` (7-variant typed enum: ParameterChange/HardForkInitiation/TreasuryWithdrawals/NoConfidence/UpdateCommittee/NewConstitution/InfoAction), `VotingProcedure`, `ProposalProcedure` (typed `GovAction`), `VotingProcedures`, `ConwayTxBody`, `ConwayBlock`).
   - Credential and address types (`StakeCredential`, `RewardAccount`, `Address` with Base/Enterprise/Pointer/Reward/Byron variants, `AddrKeyHash`, `ScriptHash`, `PoolKeyHash` type aliases).
-  - Certificate hierarchy (`Anchor`, `UnitInterval`, `Relay`, `PoolMetadata`, `PoolParams`, `DRep`, `DCert` with 19 variants covering Shelley tags 0–5 and Conway tags 7–18).
+  - Certificate hierarchy (`Anchor`, `UnitInterval`, `Relay`, `PoolMetadata`, `PoolParams`, `DRep`, `DCert` with 19 CDDL-aligned variants covering Shelley tags 0–5 and Conway tags 7–18).
   - Signed integer CBOR helpers.
   - TxBody keys 4–6 (`certificates`, `withdrawals`, `update` as typed `ShelleyUpdate` with opaque param values for Shelley–Babbage; Conway omits key 6).
   - WitnessSet keys 0–7 (`vkey_witnesses`, `native_scripts`, `bootstrap_witnesses`, `plutus_v1_scripts`, `plutus_data` (typed `Vec<PlutusData>`), `redeemers` (typed `PlutusData` payload), `plutus_v2_scripts`, `plutus_v3_scripts`). Typed `BootstrapWitness`. Conway map-format redeemers supported.
   - PlutusData AST (`Constr`/`Map`/`List`/`Integer`/`Bytes`) with full recursive CBOR codec including compact constructor tags 121–127, general form tag 102, and bignum encoding. `Script` enum (Native/PlutusV1/V2/V3), `ScriptRef` with tag-24 double encoding. `BabbageTxOut.script_ref` is now typed `Option<ScriptRef>`. `DatumOption::Inline` is now typed `PlutusData` (tag-24 double encoding). `Redeemer.data` is now typed `PlutusData`.
   - Full era type and block coverage from Byron through Conway is complete.
 - `crates/storage` now includes file-backed implementations (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) with JSON-based on-disk persistence, directory scanning on open, rollback-aware file deletion, and re-open persistence. 19 integration tests cover all trait methods.
-- `crates/consensus` now includes `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain tracker with roll-forward/roll-backward, max rollback depth enforcement, stability window detection (`stable_count`, `drain_stable`), and non-contiguous block rejection. 57 consensus tests.
-- Upstream naming alignment is complete: ledger wire-format field names (`block_body_size`, `block_body_hash`, `operational_cert`, `transaction_witness_sets`) match the official Cardano CDDL schemas verbatim.
+- `crates/consensus` now includes `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain tracker with roll-forward/roll-backward, max rollback depth enforcement, stability window detection (`stable_count`, `drain_stable`), and non-contiguous block rejection. `HeaderBody` and `OpCert` field names aligned with CDDL (`block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `block_body_size`, `block_body_hash`, `operational_cert`, `hot_vkey`, `sequence_number`). 57 consensus tests.
+- Upstream naming alignment is complete across ledger and consensus crates:
+  - Ledger ShelleyHeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `nonce_vrf`, `leader_vrf`, `block_body_size`, `block_body_hash`, `operational_cert` (with `hot_vkey`, `sequence_number`, `kes_period`, `sigma`).
+  - Ledger block fields: `transaction_witness_sets` (all eras), `transaction_metadata_set` (Shelley), `auxiliary_data_set` (Babbage/Conway).
+  - Consensus HeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `block_body_size`, `block_body_hash`, `operational_cert`.
+  - Consensus OpCert: `hot_vkey`, `sequence_number`.
+  - DCert variants aligned with CDDL certificate names: `AccountRegistration`, `AccountUnregistration`, `DelegationToStakePool`, `PoolRegistration`, `PoolRetirement`, `GenesisDelegation`, plus Conway-era `AccountRegistrationDeposit` through `DrepUpdate`.
 - CBOR golden round-trip parity tests cover `ShelleyTxBody`, `ShelleyBlock`, `PlutusData`, `StakeCredential`, and `MultiEraTxOut`. Cross-subsystem integration tests verify block→ChainState→storage and rollback flows.
 - 640 workspace tests pass across all crates, 0 clippy warnings.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.

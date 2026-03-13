@@ -642,8 +642,8 @@ pub const SHELLEY_KES_DEPTH: u32 = 6;
 /// verification.
 pub fn shelley_opcert_to_consensus(opcert: &ShelleyOpCert) -> ConsensusOpCert {
     ConsensusOpCert {
-        hot_vk: SumKesVerificationKey::from_bytes(opcert.hot_vkey),
-        cert_counter: opcert.sequence_number,
+        hot_vkey: SumKesVerificationKey::from_bytes(opcert.hot_vkey),
+        sequence_number: opcert.sequence_number,
         kes_period: opcert.kes_period,
         sigma: Ed25519Signature::from_bytes(opcert.sigma),
     }
@@ -653,14 +653,14 @@ pub fn shelley_opcert_to_consensus(opcert: &ShelleyOpCert) -> ConsensusOpCert {
 /// verification.
 pub fn shelley_header_body_to_consensus(body: &ShelleyHeaderBody) -> ConsensusHeaderBody {
     ConsensusHeaderBody {
-        block_no: BlockNo(body.block_number),
-        slot_no: SlotNo(body.slot),
+        block_number: BlockNo(body.block_number),
+        slot: SlotNo(body.slot),
         prev_hash: body.prev_hash.map(HeaderHash),
-        issuer_vk: VerificationKey::from_bytes(body.issuer_vkey),
-        vrf_vk: VrfVerificationKey::from_bytes(body.vrf_vkey),
-        body_size: body.block_body_size,
-        body_hash: body.block_body_hash,
-        opcert: shelley_opcert_to_consensus(&body.operational_cert),
+        issuer_vkey: VerificationKey::from_bytes(body.issuer_vkey),
+        vrf_vkey: VrfVerificationKey::from_bytes(body.vrf_vkey),
+        block_body_size: body.block_body_size,
+        block_body_hash: body.block_body_hash,
+        operational_cert: shelley_opcert_to_consensus(&body.operational_cert),
         protocol_version: body.protocol_version,
     }
 }

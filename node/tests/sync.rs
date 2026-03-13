@@ -366,7 +366,7 @@ fn sample_block_bytes() -> Vec<u8> {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
     block.to_cbor_bytes()
 }
@@ -1347,7 +1347,7 @@ fn shelley_opcert_to_consensus_preserves_fields() {
     };
 
     let consensus = shelley_opcert_to_consensus(&opcert);
-    assert_eq!(consensus.cert_counter, 99);
+    assert_eq!(consensus.sequence_number, 99);
     assert_eq!(consensus.kes_period, 200);
 }
 
@@ -1355,12 +1355,12 @@ fn shelley_opcert_to_consensus_preserves_fields() {
 fn shelley_header_body_to_consensus_preserves_fields() {
     let body = sample_header_body();
     let consensus = shelley_header_body_to_consensus(&body);
-    assert_eq!(consensus.block_no.0, 1);
-    assert_eq!(consensus.slot_no.0, 500);
-    assert_eq!(consensus.body_size, 1024);
-    assert_eq!(consensus.body_hash, [0x55; 32]);
+    assert_eq!(consensus.block_number.0, 1);
+    assert_eq!(consensus.slot.0, 500);
+    assert_eq!(consensus.block_body_size, 1024);
+    assert_eq!(consensus.block_body_hash, [0x55; 32]);
     assert_eq!(consensus.protocol_version, (2, 0));
-    assert_eq!(consensus.opcert.cert_counter, 42);
+    assert_eq!(consensus.operational_cert.sequence_number, 42);
 }
 
 #[test]
@@ -1372,7 +1372,7 @@ fn shelley_header_to_consensus_builds_header() {
     let result = shelley_header_to_consensus(&header);
     assert!(result.is_ok(), "expected Ok, got {result:?}");
     let consensus_hdr = result.expect("conversion should succeed");
-    assert_eq!(consensus_hdr.body.slot_no.0, 500);
+    assert_eq!(consensus_hdr.body.slot.0, 500);
 }
 
 #[test]
@@ -1485,7 +1485,7 @@ fn multi_era_block_to_block_shelley() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Shelley(Box::new(block));
     let generic = multi_era_block_to_block(&me);
@@ -1529,7 +1529,7 @@ fn apply_multi_era_step_rollforward_adds_block() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
     let step = MultiEraSyncStep::RollForward {
         raw_header: vec![],
@@ -1553,7 +1553,7 @@ fn apply_multi_era_step_rollbackward_resets_tip() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     };
     let fwd_step = MultiEraSyncStep::RollForward {
         raw_header: vec![],
@@ -1659,7 +1659,7 @@ fn extract_tx_ids_from_shelley_block() {
             ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
             ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
         ],
-        transaction_metadata: std::collections::HashMap::new(),
+        transaction_metadata_set: std::collections::HashMap::new(),
     }));
 
     let ids = extract_tx_ids(&block);
@@ -1700,7 +1700,7 @@ fn evict_confirmed_removes_matching_mempool_entries() {
             transaction_witness_sets: vec![
                 ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
             ],
-            transaction_metadata: std::collections::HashMap::new(),
+            transaction_metadata_set: std::collections::HashMap::new(),
         }))],
     };
 
@@ -1745,7 +1745,7 @@ fn evict_confirmed_also_purges_expired() {
             },
             transaction_bodies: vec![],
             transaction_witness_sets: vec![],
-            transaction_metadata: std::collections::HashMap::new(),
+            transaction_metadata_set: std::collections::HashMap::new(),
         }))],
     };
 
@@ -1793,7 +1793,7 @@ fn sample_babbage_block_bytes() -> Vec<u8> {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     block.to_cbor_bytes()
 }
@@ -1807,7 +1807,7 @@ fn sample_conway_block_bytes() -> Vec<u8> {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     block.to_cbor_bytes()
 }
@@ -1864,7 +1864,7 @@ fn multi_era_block_to_block_babbage() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
     let generic = multi_era_block_to_block(&me);
@@ -1883,7 +1883,7 @@ fn multi_era_block_to_block_conway() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Conway(Box::new(block));
     let generic = multi_era_block_to_block(&me);
@@ -1977,7 +1977,7 @@ fn extract_tx_ids_babbage() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
     let ids = extract_tx_ids(&me);
@@ -2006,7 +2006,7 @@ fn extract_tx_ids_conway() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Conway(Box::new(block));
     let ids = extract_tx_ids(&me);
@@ -2033,7 +2033,7 @@ fn babbage_block_round_trip_decode() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let block_bytes = block.to_cbor_bytes();
     let envelope = build_multi_era_envelope(6, &block_bytes);
@@ -2066,7 +2066,7 @@ fn conway_block_round_trip_decode() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let block_bytes = block.to_cbor_bytes();
     let envelope = build_multi_era_envelope(7, &block_bytes);
@@ -2100,7 +2100,7 @@ fn multi_era_block_to_block_babbage_with_txs() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
     let generic = multi_era_block_to_block(&me);
@@ -2128,7 +2128,7 @@ fn multi_era_block_to_block_conway_with_txs() {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         }],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Conway(Box::new(block));
     let generic = multi_era_block_to_block(&me);
@@ -2145,7 +2145,7 @@ fn verify_multi_era_block_babbage_passes() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
     // Verification will fail on signature, but the match arm itself is exercised.
@@ -2168,7 +2168,7 @@ fn verify_multi_era_block_conway_passes() {
         },
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
-        transaction_metadata: std::collections::HashMap::new(),
+        auxiliary_data_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Conway(Box::new(block));
     let config = VerificationConfig {

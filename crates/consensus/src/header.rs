@@ -22,21 +22,21 @@ use crate::opcert::{OpCert, check_kes_period, kes_period_of_slot};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeaderBody {
     /// Block height.
-    pub block_no: BlockNo,
+    pub block_number: BlockNo,
     /// Slot in which this block was issued.
-    pub slot_no: SlotNo,
+    pub slot: SlotNo,
     /// Hash of the previous block header (`None` for genesis successor).
     pub prev_hash: Option<HeaderHash>,
     /// Cold-key (block issuer) verification key.
-    pub issuer_vk: VerificationKey,
+    pub issuer_vkey: VerificationKey,
     /// VRF verification key for the block issuer.
-    pub vrf_vk: VrfVerificationKey,
+    pub vrf_vkey: VrfVerificationKey,
     /// Size of the block body in bytes.
-    pub body_size: u32,
+    pub block_body_size: u32,
     /// Hash of the block body (Blake2b-256).
-    pub body_hash: [u8; 32],
+    pub block_body_hash: [u8; 32],
     /// Operational certificate binding cold key to hot KES key.
-    pub opcert: OpCert,
+    pub operational_cert: OpCert,
     /// Protocol version (major, minor).
     pub protocol_version: (u64, u64),
 }
@@ -51,9 +51,9 @@ impl HeaderBody {
         let mut buf = Vec::with_capacity(256);
 
         // block_no (u64 BE)
-        buf.extend_from_slice(&self.block_no.0.to_be_bytes());
+        buf.extend_from_slice(&self.block_number.0.to_be_bytes());
         // slot_no (u64 BE)
-        buf.extend_from_slice(&self.slot_no.0.to_be_bytes());
+        buf.extend_from_slice(&self.slot.0.to_be_bytes());
         // prev_hash: 0x00 for genesis, 0x01 || hash for a block
         match &self.prev_hash {
             None => buf.push(0x00),
@@ -63,17 +63,17 @@ impl HeaderBody {
             }
         }
         // issuer_vk (32 bytes)
-        buf.extend_from_slice(&self.issuer_vk.to_bytes());
+        buf.extend_from_slice(&self.issuer_vkey.to_bytes());
         // vrf_vk (32 bytes)
-        buf.extend_from_slice(&self.vrf_vk.to_bytes());
+        buf.extend_from_slice(&self.vrf_vkey.to_bytes());
         // body_size (u32 BE)
-        buf.extend_from_slice(&self.body_size.to_be_bytes());
+        buf.extend_from_slice(&self.block_body_size.to_be_bytes());
         // body_hash (32 bytes)
-        buf.extend_from_slice(&self.body_hash);
+        buf.extend_from_slice(&self.block_body_hash);
         // opcert signable (48 bytes: hot_vk 32 + counter 8 + kes_period 8)
-        buf.extend_from_slice(&self.opcert.signable_bytes());
+        buf.extend_from_slice(&self.operational_cert.signable_bytes());
         // opcert sigma (64 bytes)
-        buf.extend_from_slice(&self.opcert.sigma.to_bytes());
+        buf.extend_from_slice(&self.operational_cert.sigma.to_bytes());
         // protocol_version (major u64 BE + minor u64 BE)
         buf.extend_from_slice(&self.protocol_version.0.to_be_bytes());
         buf.extend_from_slice(&self.protocol_version.1.to_be_bytes());
@@ -112,25 +112,25 @@ pub fn verify_header(
     max_kes_evolutions: u64,
 ) -> Result<(), ConsensusError> {
     // 1. Verify the OpCert cold-key signature.
-    header.body.opcert.verify(&header.body.issuer_vk)?;
+    header.body.operational_cert.verify(&header.body.issuer_vkey)?;
 
     // 2. Check the KES period window.
-    let current_kes_period = kes_period_of_slot(header.body.slot_no.0, slots_per_kes_period)?;
-    check_kes_period(&header.body.opcert, current_kes_period, max_kes_evolutions)?;
+    let current_kes_period = kes_period_of_slot(header.body.slot.0, slots_per_kes_period)?;
+    check_kes_period(&header.body.operational_cert, current_kes_period, max_kes_evolutions)?;
 
     // 3. Verify the KES signature over the header body.
     let signable = header.body.to_signable_bytes();
     let kes_offset = current_kes_period
-        .checked_sub(header.body.opcert.kes_period)
+        .checked_sub(header.body.operational_cert.kes_period)
         .ok_or(ConsensusError::KesPeriodTooEarly {
             current: current_kes_period,
-            cert_start: header.body.opcert.kes_period,
+            cert_start: header.body.operational_cert.kes_period,
         })?;
     let kes_period_u32 =
         u32::try_from(kes_offset).map_err(|_| ConsensusError::KesPeriodOverflow)?;
 
     verify_sum_kes(
-        &header.body.opcert.hot_vk,
+        &header.body.operational_cert.hot_vkey,
         kes_period_u32,
         &signable,
         &header.kes_signature,

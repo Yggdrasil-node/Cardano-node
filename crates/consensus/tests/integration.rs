@@ -310,8 +310,8 @@ fn make_opcert(
     let sigma = cold_sk.sign(&signable).expect("signing should succeed");
 
     OpCert {
-        hot_vk: *hot_vk,
-        cert_counter: counter,
+        hot_vkey: *hot_vk,
+        sequence_number: counter,
         kes_period,
         sigma,
     }
@@ -362,7 +362,7 @@ fn opcert_verify_tampered_counter_fails() {
 
     let mut opcert = make_opcert(&cold_sk, &kes_vk, 5, 0);
     // Tamper with the counter after signing.
-    opcert.cert_counter = 6;
+    opcert.sequence_number = 6;
     assert_eq!(
         opcert.verify(&cold_vk),
         Err(ConsensusError::InvalidOpCertSignature),
@@ -460,14 +460,14 @@ fn make_signed_header(
     let opcert = make_opcert(cold_sk, &kes_vk, 0, cert_kes_period);
 
     let body = HeaderBody {
-        block_no: BlockNo(1),
-        slot_no: SlotNo(slot),
+        block_number: BlockNo(1),
+        slot: SlotNo(slot),
         prev_hash: Some(HeaderHash([0xAB; 32])),
-        issuer_vk: cold_vk,
-        vrf_vk: vrf_sk.verification_key(),
-        body_size: 1024,
-        body_hash: [0xCD; 32],
-        opcert,
+        issuer_vkey: cold_vk,
+        vrf_vkey: vrf_sk.verification_key(),
+        block_body_size: 1024,
+        block_body_hash: [0xCD; 32],
+        operational_cert: opcert,
         protocol_version: (10, 0),
     };
 
@@ -529,7 +529,7 @@ fn verify_header_rejects_wrong_cold_key() {
     let wrong_vk = SigningKey::from_bytes([0x71; 32])
         .verification_key()
         .expect("valid");
-    header.body.issuer_vk = wrong_vk;
+    header.body.issuer_vkey = wrong_vk;
 
     assert_eq!(
         verify_header(&header, 100, 1),
@@ -553,14 +553,14 @@ fn verify_header_rejects_expired_kes() {
     let opcert = make_opcert(&cold_sk, &kes_vk, 0, 0);
 
     let body = HeaderBody {
-        block_no: BlockNo(1),
-        slot_no: SlotNo(150), // KES period 1 with slots_per_kes = 100
+        block_number: BlockNo(1),
+        slot: SlotNo(150), // KES period 1 with slots_per_kes = 100
         prev_hash: None,
-        issuer_vk: cold_vk,
-        vrf_vk: vrf_sk.verification_key(),
-        body_size: 0,
-        body_hash: [0; 32],
-        opcert,
+        issuer_vkey: cold_vk,
+        vrf_vkey: vrf_sk.verification_key(),
+        block_body_size: 0,
+        block_body_hash: [0; 32],
+        operational_cert: opcert,
         protocol_version: (10, 0),
     };
 
@@ -588,7 +588,7 @@ fn verify_header_rejects_tampered_body() {
     let mut header = make_signed_header(&cold_sk, &[0xD0; 32], 1, 50, 100, 0);
 
     // Tamper with the body after signing.
-    header.body.body_size = 9999;
+    header.body.block_body_size = 9999;
 
     assert_eq!(
         verify_header(&header, 100, 2),
@@ -623,14 +623,14 @@ fn header_body_signable_bytes_deterministic() {
     let opcert = make_opcert(&cold_sk, &kes_vk, 42, 7);
 
     let body = HeaderBody {
-        block_no: BlockNo(100),
-        slot_no: SlotNo(5000),
+        block_number: BlockNo(100),
+        slot: SlotNo(5000),
         prev_hash: Some(HeaderHash([0xEE; 32])),
-        issuer_vk: cold_vk,
-        vrf_vk: vrf_sk.verification_key(),
-        body_size: 2048,
-        body_hash: [0xDD; 32],
-        opcert,
+        issuer_vkey: cold_vk,
+        vrf_vkey: vrf_sk.verification_key(),
+        block_body_size: 2048,
+        block_body_hash: [0xDD; 32],
+        operational_cert: opcert,
         protocol_version: (10, 1),
     };
 
@@ -656,14 +656,14 @@ fn header_body_signable_bytes_genesis_prev() {
     let opcert = make_opcert(&cold_sk, &kes_vk, 0, 0);
 
     let body = HeaderBody {
-        block_no: BlockNo(0),
-        slot_no: SlotNo(0),
+        block_number: BlockNo(0),
+        slot: SlotNo(0),
         prev_hash: None, // genesis
-        issuer_vk: cold_vk,
-        vrf_vk: vrf_sk.verification_key(),
-        body_size: 0,
-        body_hash: [0; 32],
-        opcert,
+        issuer_vkey: cold_vk,
+        vrf_vkey: vrf_sk.verification_key(),
+        block_body_size: 0,
+        block_body_hash: [0; 32],
+        operational_cert: opcert,
         protocol_version: (1, 0),
     };
 

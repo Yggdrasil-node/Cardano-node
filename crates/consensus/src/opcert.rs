@@ -2,7 +2,7 @@
 //!
 //! An operational certificate binds a cold (offline) Ed25519 key to a hot
 //! KES verification key for a window of KES periods.  The cold key signs
-//! `hot_vk || cert_counter || kes_period` to produce the certificate
+//! `hot_vkey || sequence_number || kes_period` to produce the certificate
 //! signature.
 //!
 //! Reference: `Cardano.Protocol.TPraos.OCert` in `cardano-ledger`.
@@ -16,14 +16,14 @@ use crate::error::ConsensusError;
 /// key for block signing starting at a given KES period.
 ///
 /// The certificate is verified by checking the cold-key signature over the
-/// canonical signable representation (hot VK ‖ counter ‖ KES period).
+/// canonical signable representation (hot_vkey ‖ sequence_number ‖ kes_period).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpCert {
     /// The hot KES verification key certified by this certificate.
-    pub hot_vk: SumKesVerificationKey,
-    /// Monotonic certificate counter — must be ≥ the previous certificate
-    /// counter for the same pool.
-    pub cert_counter: u64,
+    pub hot_vkey: SumKesVerificationKey,
+    /// Monotonic sequence number — must be ≥ the previous certificate's
+    /// sequence number for the same pool.
+    pub sequence_number: u64,
     /// The KES period at which this certificate becomes valid.
     pub kes_period: u64,
     /// Ed25519 signature by the cold key over the signable representation.
@@ -31,16 +31,16 @@ pub struct OpCert {
 }
 
 impl OpCert {
-    /// Compute the serialized signable bytes: `hot_vk || counter_BE || kes_period_BE`.
+    /// Compute the serialized signable bytes: `hot_vkey || sequence_number_BE || kes_period_BE`.
     ///
     /// This matches the upstream `OCertSignable` representation:
     /// ```text
-    /// rawSerialiseVerKeyKES vk <> word64BE counter <> word64BE (fromIntegral kesPeriod)
+    /// rawSerialiseVerKeyKES vk <> word64BE sequence_number <> word64BE (fromIntegral kesPeriod)
     /// ```
     pub fn signable_bytes(&self) -> [u8; 48] {
         let mut buf = [0u8; 48];
-        buf[..32].copy_from_slice(&self.hot_vk.to_bytes());
-        buf[32..40].copy_from_slice(&self.cert_counter.to_be_bytes());
+        buf[..32].copy_from_slice(&self.hot_vkey.to_bytes());
+        buf[32..40].copy_from_slice(&self.sequence_number.to_be_bytes());
         buf[40..48].copy_from_slice(&self.kes_period.to_be_bytes());
         buf
     }

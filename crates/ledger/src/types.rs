@@ -682,28 +682,28 @@ pub enum DRep {
 /// CDDL (Shelley):
 /// ```text
 /// certificate =
-///   [0, stake_credential]                          ; stake_registration
-/// / [1, stake_credential]                          ; stake_deregistration
-/// / [2, stake_credential, pool_keyhash]            ; stake_delegation
-/// / [3, pool_params]                               ; pool_registration
-/// / [4, pool_keyhash, epoch]                       ; pool_retirement
-/// / [5, genesishash, genesis_delegate_hash, vrf_keyhash]  ; genesis_key_delegation
+///   [0, stake_credential]                          ; account_registration_cert
+/// / [1, stake_credential]                          ; account_unregistration_cert
+/// / [2, stake_credential, pool_keyhash]            ; delegation_to_stake_pool_cert
+/// / [3, pool_params]                               ; pool_registration_cert
+/// / [4, pool_keyhash, epoch]                       ; pool_retirement_cert
+/// / [5, genesishash, genesis_delegate_hash, vrf_keyhash]  ; genesis_delegation_cert
 /// ```
 ///
 /// CDDL (Conway extensions):
 /// ```text
-/// / [7, stake_credential, coin]                    ; reg_cert
-/// / [8, stake_credential, coin]                    ; unreg_cert
-/// / [9, stake_credential, drep]                    ; vote_deleg_cert
-/// / [10, stake_credential, pool_keyhash]           ; stake_vote_deleg_cert
-/// / [11, stake_credential, pool_keyhash, drep]     ; stake_reg_deleg_cert (combined)
-/// / [12, stake_credential, drep, coin]             ; vote_reg_deleg_cert
-/// / [13, stake_credential, pool_keyhash, drep, coin] ; stake_vote_reg_deleg_cert
-/// / [14, committee_cold_credential, committee_hot_credential] ; auth_committee_hot_cert
-/// / [15, committee_cold_credential, anchor / null] ; resign_committee_cold_cert
-/// / [16, drep_credential, coin, anchor / null]     ; reg_drep_cert
-/// / [17, drep_credential]                          ; unreg_drep_cert
-/// / [18, drep_credential, anchor / null]           ; update_drep_cert
+/// / [7, stake_credential, coin]                    ; account_registration_deposit_cert
+/// / [8, stake_credential, coin]                    ; account_unregistration_deposit_cert
+/// / [9, stake_credential, drep]                    ; delegation_to_drep_cert
+/// / [10, stake_credential, pool_keyhash, drep]     ; delegation_to_stake_pool_and_drep_cert
+/// / [11, stake_credential, pool_keyhash, coin]     ; account_registration_delegation_to_stake_pool_cert
+/// / [12, stake_credential, drep, coin]             ; account_registration_delegation_to_drep_cert
+/// / [13, stake_credential, pool_keyhash, drep, coin] ; account_registration_delegation_to_stake_pool_and_drep_cert
+/// / [14, committee_cold_credential, committee_hot_credential] ; committee_authorization_cert
+/// / [15, committee_cold_credential, anchor / null] ; committee_resignation_cert
+/// / [16, drep_credential, coin, anchor / null]     ; drep_registration_cert
+/// / [17, drep_credential, coin]                    ; drep_unregistration_cert
+/// / [18, drep_credential, anchor / null]           ; drep_update_cert
 /// ```
 ///
 /// Reference: `Cardano.Ledger.Shelley.TxBody` and
@@ -712,45 +712,45 @@ pub enum DRep {
 pub enum DCert {
     // -- Shelley (tags 0–5) --------------------------------------------------
 
-    /// Tag 0: Stake key registration.
-    StakeRegistration(StakeCredential),
-    /// Tag 1: Stake key deregistration.
-    StakeDeregistration(StakeCredential),
-    /// Tag 2: Delegate stake to a pool.
-    StakeDelegation(StakeCredential, PoolKeyHash),
-    /// Tag 3: Register a stake pool.
+    /// Tag 0: Account registration (`account_registration_cert`).
+    AccountRegistration(StakeCredential),
+    /// Tag 1: Account unregistration (`account_unregistration_cert`).
+    AccountUnregistration(StakeCredential),
+    /// Tag 2: Delegation to stake pool (`delegation_to_stake_pool_cert`).
+    DelegationToStakePool(StakeCredential, PoolKeyHash),
+    /// Tag 3: Pool registration (`pool_registration_cert`).
     PoolRegistration(PoolParams),
-    /// Tag 4: Retire a stake pool at the given epoch.
+    /// Tag 4: Pool retirement (`pool_retirement_cert`).
     PoolRetirement(PoolKeyHash, EpochNo),
-    /// Tag 5: Genesis key delegation.
-    GenesisKeyDelegation(GenesisHash, GenesisDelegateHash, VrfKeyHash),
+    /// Tag 5: Genesis delegation (`genesis_delegation_cert`).
+    GenesisDelegation(GenesisHash, GenesisDelegateHash, VrfKeyHash),
 
     // -- Conway (tags 7–18) --------------------------------------------------
 
-    /// Tag 7: Registration certificate with deposit.
-    RegCert(StakeCredential, u64),
-    /// Tag 8: Unregistration certificate with deposit refund.
-    UnregCert(StakeCredential, u64),
-    /// Tag 9: Vote delegation certificate.
-    VoteDelegCert(StakeCredential, DRep),
-    /// Tag 10: Stake-and-vote delegation certificate.
-    StakeVoteDelegCert(StakeCredential, PoolKeyHash, DRep),
-    /// Tag 11: Stake registration + delegation combined.
-    StakeRegDelegCert(StakeCredential, PoolKeyHash, u64),
-    /// Tag 12: Vote registration + delegation combined.
-    VoteRegDelegCert(StakeCredential, DRep, u64),
-    /// Tag 13: Stake + vote registration + delegation combined.
-    StakeVoteRegDelegCert(StakeCredential, PoolKeyHash, DRep, u64),
-    /// Tag 14: Authorize committee hot credential.
-    AuthCommitteeHotCert(StakeCredential, StakeCredential),
-    /// Tag 15: Resign committee cold credential.
-    ResignCommitteeColdCert(StakeCredential, Option<Anchor>),
-    /// Tag 16: Register DRep with deposit and optional anchor.
-    RegDRepCert(StakeCredential, u64, Option<Anchor>),
-    /// Tag 17: Unregister DRep with deposit refund.
-    UnregDRepCert(StakeCredential, u64),
-    /// Tag 18: Update DRep certificate with optional anchor.
-    UpdateDRepCert(StakeCredential, Option<Anchor>),
+    /// Tag 7: Account registration with deposit (`account_registration_deposit_cert`).
+    AccountRegistrationDeposit(StakeCredential, u64),
+    /// Tag 8: Account unregistration with deposit refund (`account_unregistration_deposit_cert`).
+    AccountUnregistrationDeposit(StakeCredential, u64),
+    /// Tag 9: Delegation to DRep (`delegation_to_drep_cert`).
+    DelegationToDrep(StakeCredential, DRep),
+    /// Tag 10: Delegation to stake pool and DRep (`delegation_to_stake_pool_and_drep_cert`).
+    DelegationToStakePoolAndDrep(StakeCredential, PoolKeyHash, DRep),
+    /// Tag 11: Account registration + delegation to stake pool (`account_registration_delegation_to_stake_pool_cert`).
+    AccountRegistrationDelegationToStakePool(StakeCredential, PoolKeyHash, u64),
+    /// Tag 12: Account registration + delegation to DRep (`account_registration_delegation_to_drep_cert`).
+    AccountRegistrationDelegationToDrep(StakeCredential, DRep, u64),
+    /// Tag 13: Account registration + delegation to stake pool and DRep (`account_registration_delegation_to_stake_pool_and_drep_cert`).
+    AccountRegistrationDelegationToStakePoolAndDrep(StakeCredential, PoolKeyHash, DRep, u64),
+    /// Tag 14: Committee authorization (`committee_authorization_cert`).
+    CommitteeAuthorization(StakeCredential, StakeCredential),
+    /// Tag 15: Committee resignation (`committee_resignation_cert`).
+    CommitteeResignation(StakeCredential, Option<Anchor>),
+    /// Tag 16: DRep registration with deposit (`drep_registration_cert`).
+    DrepRegistration(StakeCredential, u64, Option<Anchor>),
+    /// Tag 17: DRep unregistration with deposit refund (`drep_unregistration_cert`).
+    DrepUnregistration(StakeCredential, u64),
+    /// Tag 18: DRep update (`drep_update_cert`).
+    DrepUpdate(StakeCredential, Option<Anchor>),
 }
 
 // ---------------------------------------------------------------------------
