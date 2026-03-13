@@ -22,13 +22,13 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Formal ledger specification repository: <https://github.com/IntersectMBO/formal-ledger-specifications>
 
 ## Current Phase
-- Shelley: full block, header, tx body (keys 0–7 including certificates/withdrawals/update), witness set, UTxO, and VRF/OpCert types with CBOR codecs.
-- Allegra: `AllegraTxBody` (keys 0–8 including certificates/withdrawals/update) and `NativeScript` (6-variant timelock enum) with CBOR codecs.
-- Mary: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (keys 0–9 including certificates/withdrawals/update) with CBOR codecs.
-- Alonzo: `ExUnits`, `Redeemer` (opaque PlutusData), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 0–15 including certificates/withdrawals/update) with CBOR codecs.
+- Shelley: full block, header, tx body (keys 0–7 including certificates/withdrawals/update), `ShelleyUpdate` (typed `[{genesis_hash => protocol_param_update}, epoch]` with opaque param update values), witness set (keys 0–7: vkey, native_scripts, bootstrap_witnesses, plutus_v1/v2/v3 scripts, plutus_data, redeemers), typed `BootstrapWitness`, UTxO, and VRF/OpCert types with CBOR codecs.
+- Allegra: `AllegraTxBody` (keys 0–8 including certificates/withdrawals/update using `ShelleyUpdate`) and `NativeScript` (6-variant timelock enum) with CBOR codecs.
+- Mary: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (keys 0–9 including certificates/withdrawals/update using `ShelleyUpdate`) with CBOR codecs.
+- Alonzo: `ExUnits`, `Redeemer` (typed `PlutusData` payload), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 0–15 including certificates/withdrawals/update using `ShelleyUpdate`) with CBOR codecs.
 - Byron: `ByronBlock` enum (EBB/MainBlock) with lightweight envelope decoding for slot tracking.
-- Babbage: `DatumOption` (hash/inline), `BabbageTxOut` (dual-format array+map with script_ref), `BabbageTxBody` (keys 0–18 including certificates/withdrawals/update), `BabbageBlock` (Shelley block envelope with BabbageTxBody entries) with CBOR codecs.
-- Conway: `Vote`, `Voter` (5-variant), `GovActionId`, `VotingProcedure`, `ProposalProcedure` (opaque gov_action), `VotingProcedures` (nested BTreeMap), `ConwayTxBody` (keys 0–22 including certificates/withdrawals; key 6 update removed in Conway), `ConwayBlock` (Shelley block envelope with ConwayTxBody entries) with CBOR codecs. `Anchor` moved to `types.rs` for cross-era reuse.
+- Babbage: `DatumOption` (hash/inline typed `PlutusData`), `BabbageTxOut` (dual-format array+map with typed `ScriptRef`), `BabbageTxBody` (keys 0–18 including certificates/withdrawals/update using `ShelleyUpdate`), `BabbageBlock` (Shelley block envelope with BabbageTxBody entries) with CBOR codecs.
+- Conway: `Vote`, `Voter` (5-variant), `GovActionId`, `Constitution` (anchor + optional guardrails script hash), `GovAction` (7-variant typed enum: ParameterChange/HardForkInitiation/TreasuryWithdrawals/NoConfidence/UpdateCommittee/NewConstitution/InfoAction), `VotingProcedure`, `ProposalProcedure` (typed `GovAction`), `VotingProcedures` (nested BTreeMap), `ConwayTxBody` (keys 0–22 including certificates/withdrawals; key 6 update removed in Conway), `ConwayBlock` (Shelley block envelope with ConwayTxBody entries) with CBOR codecs. `Anchor` moved to `types.rs` for cross-era reuse.
 - Certificate hierarchy types (`DCert`, `DRep`, `PoolParams`, `Relay`, `PoolMetadata`, `UnitInterval`, `Anchor`) live in `types.rs` / `cbor.rs` since they span Shelley through Conway.
 - Full era type coverage: Byron → Conway.
 - Keep additions lightweight until generated types and real transition logic land.

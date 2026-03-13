@@ -81,11 +81,13 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Alonzo era types (`ExUnits`, `Redeemer`, `AlonzoTxOut`, `AlonzoTxBody`).
   - Byron envelope (`ByronBlock`).
   - Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`, `BabbageBlock`).
-  - Conway era types (`Vote`, `Voter`, `GovActionId`, `VotingProcedure`, `ProposalProcedure`, `VotingProcedures`, `ConwayTxBody`, `ConwayBlock`).
+  - Conway era types (`Vote`, `Voter`, `GovActionId`, `Constitution`, `GovAction` (7-variant typed enum: ParameterChange/HardForkInitiation/TreasuryWithdrawals/NoConfidence/UpdateCommittee/NewConstitution/InfoAction), `VotingProcedure`, `ProposalProcedure` (typed `GovAction`), `VotingProcedures`, `ConwayTxBody`, `ConwayBlock`).
   - Credential and address types (`StakeCredential`, `RewardAccount`, `Address` with Base/Enterprise/Pointer/Reward/Byron variants, `AddrKeyHash`, `ScriptHash`, `PoolKeyHash` type aliases).
   - Certificate hierarchy (`Anchor`, `UnitInterval`, `Relay`, `PoolMetadata`, `PoolParams`, `DRep`, `DCert` with 19 variants covering Shelley tags 0–5 and Conway tags 7–18).
   - Signed integer CBOR helpers.
-  - TxBody keys 4–6 (`certificates`, `withdrawals`, `update` as opaque CBOR for Shelley–Babbage; Conway omits key 6).
+  - TxBody keys 4–6 (`certificates`, `withdrawals`, `update` as typed `ShelleyUpdate` with opaque param values for Shelley–Babbage; Conway omits key 6).
+  - WitnessSet keys 0–7 (`vkey_witnesses`, `native_scripts`, `bootstrap_witnesses`, `plutus_v1_scripts`, `plutus_data` (typed `Vec<PlutusData>`), `redeemers` (typed `PlutusData` payload), `plutus_v2_scripts`, `plutus_v3_scripts`). Typed `BootstrapWitness`. Conway map-format redeemers supported.
+  - PlutusData AST (`Constr`/`Map`/`List`/`Integer`/`Bytes`) with full recursive CBOR codec including compact constructor tags 121–127, general form tag 102, and bignum encoding. `Script` enum (Native/PlutusV1/V2/V3), `ScriptRef` with tag-24 double encoding. `BabbageTxOut.script_ref` is now typed `Option<ScriptRef>`. `DatumOption::Inline` is now typed `PlutusData` (tag-24 double encoding). `Redeemer.data` is now typed `PlutusData`.
   - Full era type and block coverage from Byron through Conway is complete.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
 

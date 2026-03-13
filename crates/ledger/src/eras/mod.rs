@@ -16,8 +16,8 @@ pub use byron::BYRON_NAME;
 pub use byron::{ByronBlock, BYRON_SLOTS_PER_EPOCH};
 pub use conway::CONWAY_NAME;
 pub use conway::{
-    ConwayBlock, ConwayTxBody, GovActionId, ProposalProcedure, Vote, Voter, VotingProcedure,
-    VotingProcedures,
+    Constitution, ConwayBlock, ConwayTxBody, GovAction, GovActionId, ProposalProcedure, Vote,
+    Voter, VotingProcedure, VotingProcedures,
 };
 pub use mary::MARY_NAME;
 pub use mary::{
@@ -25,8 +25,9 @@ pub use mary::{
 };
 pub use shelley::SHELLEY_NAME;
 pub use shelley::{
-    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody,
-    ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet,
+    BootstrapWitness, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
+    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness,
+    ShelleyVrfCert, ShelleyWitnessSet,
 };
 
 /// Supported Cardano eras in canonical order from Byron through Conway.

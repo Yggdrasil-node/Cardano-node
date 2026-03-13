@@ -18,8 +18,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
-use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
+use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyUpdate, ShelleyWitnessSet};
 use crate::error::LedgerError;
+use crate::plutus::{PlutusData, ScriptRef};
 use crate::types::{DCert, HeaderHash, RewardAccount};
 
 pub const BABBAGE_NAME: &str = "Babbage";
@@ -32,17 +33,16 @@ pub const BABBAGE_NAME: &str = "Babbage";
 ///
 /// CDDL: `datum_option = [ 0, $hash32 // 1, data ]`
 ///
-/// Inline datum data is stored as opaque bytes (the inner content of
-/// `#6.24(bytes .cbor plutus_data)`) to avoid modeling the full
-/// recursive `plutus_data` grammar at this stage.
+/// Inline datum data is a typed `PlutusData` value wrapped in
+/// `#6.24(bytes .cbor plutus_data)` double encoding.
 ///
 /// Reference: `Cardano.Ledger.Babbage.TxBody` — `Datum`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DatumOption {
     /// Datum hash reference (tag 0).
     Hash([u8; 32]),
-    /// Inline datum as opaque CBOR bytes (tag 1).
-    Inline(Vec<u8>),
+    /// Inline datum as typed PlutusData (tag 1).
+    Inline(PlutusData),
 }
 
 impl CborEncode for DatumOption {
@@ -51,9 +51,11 @@ impl CborEncode for DatumOption {
             Self::Hash(hash) => {
                 enc.array(2).unsigned(0).bytes(hash);
             }
-            Self::Inline(data) => {
+            Self::Inline(pd) => {
                 enc.array(2).unsigned(1);
-                enc.tag(24).bytes(data);
+                let mut inner = Encoder::new();
+                pd.encode_cbor(&mut inner);
+                enc.tag(24).bytes(&inner.into_bytes());
             }
         }
     }
@@ -88,8 +90,10 @@ impl CborDecode for DatumOption {
                         actual: cbor_tag as u8,
                     });
                 }
-                let data = dec.bytes()?.to_vec();
-                Ok(Self::Inline(data))
+                let inner_bytes = dec.bytes()?;
+                let mut inner_dec = Decoder::new(inner_bytes);
+                let pd = PlutusData::decode_cbor(&mut inner_dec)?;
+                Ok(Self::Inline(pd))
             }
             _ => Err(LedgerError::CborTypeMismatch {
                 expected: 0,
@@ -119,9 +123,6 @@ impl CborDecode for DatumOption {
 /// On encode, the canonical post-Alonzo map format is used.
 /// On decode, both formats are accepted by peeking at the CBOR major type.
 ///
-/// Script references are kept as opaque bytes — the inner content of
-/// `#6.24(bytes .cbor script)`.
-///
 /// Reference: `Cardano.Ledger.Babbage.TxOut`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BabbageTxOut {
@@ -131,8 +132,8 @@ pub struct BabbageTxOut {
     pub amount: Value,
     /// Optional datum (hash or inline).
     pub datum_option: Option<DatumOption>,
-    /// Optional script reference as opaque CBOR bytes.
-    pub script_ref: Option<Vec<u8>>,
+    /// Optional inline script reference.
+    pub script_ref: Option<ScriptRef>,
 }
 
 impl CborEncode for BabbageTxOut {
@@ -159,10 +160,10 @@ impl CborEncode for BabbageTxOut {
             datum.encode_cbor(enc);
         }
 
-        // Key 3: script_ref as #6.24(bytes).
-        if let Some(script) = &self.script_ref {
+        // Key 3: script_ref.
+        if let Some(sref) = &self.script_ref {
             enc.unsigned(3);
-            enc.tag(24).bytes(script);
+            sref.encode_cbor(enc);
         }
     }
 }
@@ -218,7 +219,7 @@ fn decode_post_alonzo_txout(dec: &mut Decoder<'_>) -> Result<BabbageTxOut, Ledge
     let mut address: Option<Vec<u8>> = None;
     let mut amount: Option<Value> = None;
     let mut datum_option: Option<DatumOption> = None;
-    let mut script_ref: Option<Vec<u8>> = None;
+    let mut script_ref: Option<ScriptRef> = None;
 
     for _ in 0..map_len {
         let key = dec.unsigned()?;
@@ -233,14 +234,7 @@ fn decode_post_alonzo_txout(dec: &mut Decoder<'_>) -> Result<BabbageTxOut, Ledge
                 datum_option = Some(DatumOption::decode_cbor(dec)?);
             }
             3 => {
-                let cbor_tag = dec.tag()?;
-                if cbor_tag != 24 {
-                    return Err(LedgerError::CborTypeMismatch {
-                        expected: 24,
-                        actual: cbor_tag as u8,
-                    });
-                }
-                script_ref = Some(dec.bytes()?.to_vec());
+                script_ref = Some(ScriptRef::decode_cbor(dec)?);
             }
             _ => {
                 dec.skip()?;
@@ -313,8 +307,8 @@ pub struct BabbageTxBody {
     pub certificates: Option<Vec<DCert>>,
     /// Optional withdrawals: reward-account → lovelace (CDDL key 5).
     pub withdrawals: Option<BTreeMap<RewardAccount, u64>>,
-    /// Optional protocol-parameter update proposal, opaque CBOR (CDDL key 6).
-    pub update: Option<Vec<u8>>,
+    /// Optional protocol-parameter update proposal (CDDL key 6).
+    pub update: Option<ShelleyUpdate>,
     /// Optional auxiliary data hash (CDDL key 7).
     pub auxiliary_data_hash: Option<[u8; 32]>,
     /// Optional validity interval start (CDDL key 8).
@@ -421,9 +415,10 @@ impl CborEncode for BabbageTxBody {
             }
         }
 
-        // Key 6: update (opaque CBOR).
+        // Key 6: update.
         if let Some(update) = &self.update {
-            enc.unsigned(6).raw(update);
+            enc.unsigned(6);
+            update.encode_cbor(enc);
         }
 
         // Key 7: auxiliary_data_hash.
@@ -499,7 +494,7 @@ impl CborDecode for BabbageTxBody {
         let mut ttl: Option<u64> = None;
         let mut certificates: Option<Vec<DCert>> = None;
         let mut withdrawals: Option<BTreeMap<RewardAccount, u64>> = None;
-        let mut update: Option<Vec<u8>> = None;
+        let mut update: Option<ShelleyUpdate> = None;
         let mut auxiliary_data_hash: Option<[u8; 32]> = None;
         let mut validity_interval_start: Option<u64> = None;
         let mut mint: Option<MintAsset> = None;
@@ -555,10 +550,7 @@ impl CborDecode for BabbageTxBody {
                     withdrawals = Some(wdrl);
                 }
                 6 => {
-                    let start = dec.position();
-                    dec.skip()?;
-                    let end = dec.position();
-                    update = Some(dec.slice(start, end)?.to_vec());
+                    update = Some(ShelleyUpdate::decode_cbor(dec)?);
                 }
                 7 => {
                     let raw = dec.bytes()?;

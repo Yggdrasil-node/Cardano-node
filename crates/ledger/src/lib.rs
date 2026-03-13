@@ -9,6 +9,8 @@ pub mod cbor;
 /// Era modeling and era-local modules.
 pub mod eras;
 mod error;
+/// PlutusData AST and Script types.
+pub mod plutus;
 /// Ledger state containers and transition entry points.
 pub mod state;
 /// Transaction and block wrappers.
@@ -25,11 +27,12 @@ pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 pub use eras::Era;
 pub use eras::{
     AllegraTxBody, AlonzoTxBody, AlonzoTxOut, AssetName, BabbageBlock, BabbageTxBody, BabbageTxOut,
-    ByronBlock, ConwayBlock, ConwayTxBody, DatumOption, ExUnits, GovActionId, MaryTxBody,
-    MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId, ProposalProcedure, Redeemer,
-    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody,
-    ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet,
-    Value, Vote, Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
+    BootstrapWitness, ByronBlock, Constitution, ConwayBlock, ConwayTxBody, DatumOption, ExUnits,
+    GovAction, GovActionId, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId,
+    ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
+    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo,
+    ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, Value, Vote, Voter, VotingProcedure,
+    VotingProcedures, BYRON_SLOTS_PER_EPOCH,
 };
 
 // -- Error re-exports ---------------------------------------------------------
@@ -51,3 +54,6 @@ pub use types::{
     PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash, SlotNo, StakeCredential, TxId,
     UnitInterval, VrfKeyHash,
 };
+
+// -- Plutus re-exports --------------------------------------------------------
+pub use plutus::{PlutusData, Script, ScriptRef};

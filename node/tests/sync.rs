@@ -1656,8 +1656,8 @@ fn extract_tx_ids_from_shelley_block() {
         },
         transaction_bodies: vec![body1, body2],
         witness_sets: vec![
-            ShelleyWitnessSet { vkey_witnesses: vec![], bootstrap_witnesses: vec![] },
-            ShelleyWitnessSet { vkey_witnesses: vec![], bootstrap_witnesses: vec![] },
+            ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
+            ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
         ],
         transaction_metadata: std::collections::HashMap::new(),
     }));
@@ -1698,7 +1698,7 @@ fn evict_confirmed_removes_matching_mempool_entries() {
             },
             transaction_bodies: vec![body],
             witness_sets: vec![
-                ShelleyWitnessSet { vkey_witnesses: vec![], bootstrap_witnesses: vec![] },
+                ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
             ],
             transaction_metadata: std::collections::HashMap::new(),
         }))],
@@ -1969,7 +1969,13 @@ fn extract_tx_ids_babbage() {
         transaction_bodies: vec![body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };
@@ -1992,7 +1998,13 @@ fn extract_tx_ids_conway() {
         transaction_bodies: vec![body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };
@@ -2013,7 +2025,13 @@ fn babbage_block_round_trip_decode() {
         transaction_bodies: vec![body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };
@@ -2040,7 +2058,13 @@ fn conway_block_round_trip_decode() {
         transaction_bodies: vec![body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };
@@ -2068,7 +2092,13 @@ fn multi_era_block_to_block_babbage_with_txs() {
         transaction_bodies: vec![body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };
@@ -2090,7 +2120,13 @@ fn multi_era_block_to_block_conway_with_txs() {
         transaction_bodies: vec![body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };

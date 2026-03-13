@@ -6,7 +6,10 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::eras::allegra::NativeScript;
+use crate::eras::alonzo::{ExUnits, Redeemer};
 use crate::error::LedgerError;
+use crate::plutus::PlutusData;
 use crate::types::{DCert, RewardAccount};
 
 pub const SHELLEY_NAME: &str = "Shelley";
@@ -99,6 +102,77 @@ impl CborDecode for ShelleyTxOut {
 }
 
 // ---------------------------------------------------------------------------
+// ShelleyUpdate (typed update proposal)
+// ---------------------------------------------------------------------------
+
+/// A Shelley-era protocol parameter update proposal.
+///
+/// CDDL:
+/// ```text
+/// update = [ proposed_protocol_parameter_updates, epoch ]
+/// proposed_protocol_parameter_updates = { * genesis_hash => protocol_param_update }
+/// ```
+///
+/// The inner `protocol_param_update` values remain as opaque CBOR bytes
+/// since the map has 16+ optional keys with complex nested types.
+///
+/// Reference: `Cardano.Ledger.Shelley.PParams.Update`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyUpdate {
+    /// Map from genesis delegate key hash to proposed parameter updates
+    /// (each value is opaque CBOR encoding of `protocol_param_update`).
+    pub proposed_protocol_parameter_updates: BTreeMap<[u8; 28], Vec<u8>>,
+    /// Epoch in which the update takes effect.
+    pub epoch: u64,
+}
+
+impl CborEncode for ShelleyUpdate {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        enc.map(self.proposed_protocol_parameter_updates.len() as u64);
+        for (hash, param_update) in &self.proposed_protocol_parameter_updates {
+            enc.bytes(hash);
+            enc.raw(param_update);
+        }
+        enc.unsigned(self.epoch);
+    }
+}
+
+impl CborDecode for ShelleyUpdate {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let arr_len = dec.array()?;
+        if arr_len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: arr_len as usize,
+            });
+        }
+        let map_len = dec.map()?;
+        let mut proposed = BTreeMap::new();
+        for _ in 0..map_len {
+            let raw_hash = dec.bytes()?;
+            let hash: [u8; 28] =
+                raw_hash
+                    .try_into()
+                    .map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 28,
+                        actual: raw_hash.len(),
+                    })?;
+            let start = dec.position();
+            dec.skip()?;
+            let end = dec.position();
+            let param_update = dec.slice(start, end)?.to_vec();
+            proposed.insert(hash, param_update);
+        }
+        let epoch = dec.unsigned()?;
+        Ok(Self {
+            proposed_protocol_parameter_updates: proposed,
+            epoch,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Transaction body
 // ---------------------------------------------------------------------------
 
@@ -133,8 +207,8 @@ pub struct ShelleyTxBody {
     pub certificates: Option<Vec<DCert>>,
     /// Optional withdrawals: reward-account → lovelace (CDDL key 5).
     pub withdrawals: Option<BTreeMap<RewardAccount, u64>>,
-    /// Optional protocol-parameter update proposal, opaque CBOR (CDDL key 6).
-    pub update: Option<Vec<u8>>,
+    /// Optional protocol-parameter update proposal (CDDL key 6).
+    pub update: Option<ShelleyUpdate>,
     /// Optional auxiliary data hash (CDDL key 7).
     pub auxiliary_data_hash: Option<[u8; 32]>,
 }
@@ -191,9 +265,10 @@ impl CborEncode for ShelleyTxBody {
             }
         }
 
-        // Key 6: update (opaque CBOR).
+        // Key 6: update.
         if let Some(update) = &self.update {
-            enc.unsigned(6).raw(update);
+            enc.unsigned(6);
+            update.encode_cbor(enc);
         }
 
         // Key 7: auxiliary_data_hash (optional).
@@ -213,7 +288,7 @@ impl CborDecode for ShelleyTxBody {
         let mut ttl: Option<u64> = None;
         let mut certificates: Option<Vec<DCert>> = None;
         let mut withdrawals: Option<BTreeMap<RewardAccount, u64>> = None;
-        let mut update: Option<Vec<u8>> = None;
+        let mut update: Option<ShelleyUpdate> = None;
         let mut auxiliary_data_hash: Option<[u8; 32]> = None;
 
         for _ in 0..map_len {
@@ -260,10 +335,7 @@ impl CborDecode for ShelleyTxBody {
                     withdrawals = Some(wdrl);
                 }
                 6 => {
-                    let start = dec.position();
-                    dec.skip()?;
-                    let end = dec.position();
-                    update = Some(dec.slice(start, end)?.to_vec());
+                    update = Some(ShelleyUpdate::decode_cbor(dec)?);
                 }
                 7 => {
                     let raw = dec.bytes()?;
@@ -360,22 +432,119 @@ impl CborDecode for ShelleyVkeyWitness {
 }
 
 // ---------------------------------------------------------------------------
+// Bootstrap witness
+// ---------------------------------------------------------------------------
+
+/// A bootstrap witness used for Byron-era addresses in post-Byron transactions.
+///
+/// CDDL: `bootstrap_witness = [public_key : vkey, signature : signature,
+///         chain_code : bytes .size 32, attributes : bytes]`
+///
+/// Reference: `Cardano.Ledger.Shelley.TxWits` — `BootstrapWitness`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BootstrapWitness {
+    /// 32-byte Ed25519 verification key.
+    pub public_key: [u8; 32],
+    /// 64-byte Ed25519 signature.
+    pub signature: [u8; 64],
+    /// 32-byte chain code from Byron HD key derivation.
+    pub chain_code: [u8; 32],
+    /// Byron-era address attributes (serialized CBOR).
+    pub attributes: Vec<u8>,
+}
+
+impl CborEncode for BootstrapWitness {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(4)
+            .bytes(&self.public_key)
+            .bytes(&self.signature)
+            .bytes(&self.chain_code)
+            .bytes(&self.attributes);
+    }
+}
+
+impl CborDecode for BootstrapWitness {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 4 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 4,
+                actual: len as usize,
+            });
+        }
+        let pk_raw = dec.bytes()?;
+        let public_key: [u8; 32] =
+            pk_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: pk_raw.len(),
+                })?;
+        let sig_raw = dec.bytes()?;
+        let signature: [u8; 64] =
+            sig_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 64,
+                    actual: sig_raw.len(),
+                })?;
+        let cc_raw = dec.bytes()?;
+        let chain_code: [u8; 32] =
+            cc_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: cc_raw.len(),
+                })?;
+        let attributes = dec.bytes()?.to_vec();
+        Ok(Self {
+            public_key,
+            signature,
+            chain_code,
+            attributes,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Transaction witness set
 // ---------------------------------------------------------------------------
 
-/// The witness set for a Shelley-era transaction.
+/// The witness set for a transaction (all eras Shelley through Conway).
 ///
-/// CDDL: `transaction_witness_set = {? 0 : [* vkeywitness], ? 1 : [* native_script], ? 2 : [* bootstrap_witness]}`
-///
-/// Only VKey witnesses are modeled in this initial slice.
+/// CDDL (Conway superset):
+/// ```text
+/// transaction_witness_set = {
+///   ? 0 : [* vkeywitness],
+///   ? 1 : [* native_script],
+///   ? 2 : [* bootstrap_witness],
+///   ? 3 : [* plutus_v1_script],
+///   ? 4 : [* plutus_data],
+///   ? 5 : redeemers,
+///   ? 6 : [* plutus_v2_script],
+///   ? 7 : [* plutus_v3_script],
+/// }
+/// ```
 ///
 /// Reference: `Cardano.Ledger.Shelley.TxWits`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShelleyWitnessSet {
     /// VKey witnesses (CDDL key 0).
     pub vkey_witnesses: Vec<ShelleyVkeyWitness>,
-    /// Bootstrap witnesses are stored as opaque bytes for now (CDDL key 2).
-    pub bootstrap_witnesses: Vec<Vec<u8>>,
+    /// Native scripts (CDDL key 1, Allegra+).
+    pub native_scripts: Vec<NativeScript>,
+    /// Bootstrap witnesses for Byron-era addresses (CDDL key 2).
+    pub bootstrap_witnesses: Vec<BootstrapWitness>,
+    /// Plutus V1 scripts as opaque bytes (CDDL key 3, Alonzo+).
+    pub plutus_v1_scripts: Vec<Vec<u8>>,
+    /// Typed Plutus data items (CDDL key 4, Alonzo+).
+    pub plutus_data: Vec<PlutusData>,
+    /// Redeemers (CDDL key 5, Alonzo+).
+    pub redeemers: Vec<Redeemer>,
+    /// Plutus V2 scripts as opaque bytes (CDDL key 6, Babbage+).
+    pub plutus_v2_scripts: Vec<Vec<u8>>,
+    /// Plutus V3 scripts as opaque bytes (CDDL key 7, Conway+).
+    pub plutus_v3_scripts: Vec<Vec<u8>>,
 }
 
 impl CborEncode for ShelleyWitnessSet {
@@ -384,11 +553,30 @@ impl CborEncode for ShelleyWitnessSet {
         if !self.vkey_witnesses.is_empty() {
             count += 1;
         }
+        if !self.native_scripts.is_empty() {
+            count += 1;
+        }
         if !self.bootstrap_witnesses.is_empty() {
+            count += 1;
+        }
+        if !self.plutus_v1_scripts.is_empty() {
+            count += 1;
+        }
+        if !self.plutus_data.is_empty() {
+            count += 1;
+        }
+        if !self.redeemers.is_empty() {
+            count += 1;
+        }
+        if !self.plutus_v2_scripts.is_empty() {
+            count += 1;
+        }
+        if !self.plutus_v3_scripts.is_empty() {
             count += 1;
         }
         enc.map(count);
 
+        // Key 0: vkey witnesses
         if !self.vkey_witnesses.is_empty() {
             enc.unsigned(0).array(self.vkey_witnesses.len() as u64);
             for w in &self.vkey_witnesses {
@@ -396,10 +584,59 @@ impl CborEncode for ShelleyWitnessSet {
             }
         }
 
+        // Key 1: native scripts
+        if !self.native_scripts.is_empty() {
+            enc.unsigned(1).array(self.native_scripts.len() as u64);
+            for s in &self.native_scripts {
+                s.encode_cbor(enc);
+            }
+        }
+
+        // Key 2: bootstrap witnesses
         if !self.bootstrap_witnesses.is_empty() {
             enc.unsigned(2).array(self.bootstrap_witnesses.len() as u64);
             for bw in &self.bootstrap_witnesses {
-                enc.bytes(bw);
+                bw.encode_cbor(enc);
+            }
+        }
+
+        // Key 3: plutus v1 scripts
+        if !self.plutus_v1_scripts.is_empty() {
+            enc.unsigned(3).array(self.plutus_v1_scripts.len() as u64);
+            for s in &self.plutus_v1_scripts {
+                enc.bytes(s);
+            }
+        }
+
+        // Key 4: plutus data (typed PlutusData items)
+        if !self.plutus_data.is_empty() {
+            enc.unsigned(4).array(self.plutus_data.len() as u64);
+            for d in &self.plutus_data {
+                d.encode_cbor(enc);
+            }
+        }
+
+        // Key 5: redeemers (encoded as legacy array format)
+        if !self.redeemers.is_empty() {
+            enc.unsigned(5).array(self.redeemers.len() as u64);
+            for r in &self.redeemers {
+                r.encode_cbor(enc);
+            }
+        }
+
+        // Key 6: plutus v2 scripts
+        if !self.plutus_v2_scripts.is_empty() {
+            enc.unsigned(6).array(self.plutus_v2_scripts.len() as u64);
+            for s in &self.plutus_v2_scripts {
+                enc.bytes(s);
+            }
+        }
+
+        // Key 7: plutus v3 scripts
+        if !self.plutus_v3_scripts.is_empty() {
+            enc.unsigned(7).array(self.plutus_v3_scripts.len() as u64);
+            for s in &self.plutus_v3_scripts {
+                enc.bytes(s);
             }
         }
     }
@@ -409,7 +646,13 @@ impl CborDecode for ShelleyWitnessSet {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let map_len = dec.map()?;
         let mut vkey_witnesses = Vec::new();
+        let mut native_scripts = Vec::new();
         let mut bootstrap_witnesses = Vec::new();
+        let mut plutus_v1_scripts = Vec::new();
+        let mut plutus_data = Vec::new();
+        let mut redeemers = Vec::new();
+        let mut plutus_v2_scripts = Vec::new();
+        let mut plutus_v3_scripts = Vec::new();
 
         for _ in 0..map_len {
             let key = dec.unsigned()?;
@@ -420,10 +663,84 @@ impl CborDecode for ShelleyWitnessSet {
                         vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
                     }
                 }
+                1 => {
+                    let count = dec.array()?;
+                    for _ in 0..count {
+                        native_scripts.push(NativeScript::decode_cbor(dec)?);
+                    }
+                }
                 2 => {
                     let count = dec.array()?;
                     for _ in 0..count {
-                        bootstrap_witnesses.push(dec.bytes()?.to_vec());
+                        bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
+                    }
+                }
+                3 => {
+                    let count = dec.array()?;
+                    for _ in 0..count {
+                        plutus_v1_scripts.push(dec.bytes()?.to_vec());
+                    }
+                }
+                4 => {
+                    let count = dec.array()?;
+                    for _ in 0..count {
+                        plutus_data.push(PlutusData::decode_cbor(dec)?);
+                    }
+                }
+                5 => {
+                    // Redeemers: array format [* redeemer] (Alonzo/Babbage) or
+                    // map format { [tag, index] => [data, ex_units] } (Conway).
+                    let major = dec.peek_major()?;
+                    if major == 4 {
+                        let count = dec.array()?;
+                        for _ in 0..count {
+                            redeemers.push(Redeemer::decode_cbor(dec)?);
+                        }
+                    } else if major == 5 {
+                        let count = dec.map()?;
+                        for _ in 0..count {
+                            let kl = dec.array()?;
+                            if kl != 2 {
+                                return Err(LedgerError::CborInvalidLength {
+                                    expected: 2,
+                                    actual: kl as usize,
+                                });
+                            }
+                            let tag = dec.unsigned()? as u8;
+                            let index = dec.unsigned()?;
+                            let vl = dec.array()?;
+                            if vl != 2 {
+                                return Err(LedgerError::CborInvalidLength {
+                                    expected: 2,
+                                    actual: vl as usize,
+                                });
+                            }
+                            let data = PlutusData::decode_cbor(dec)?;
+                            let ex_units = ExUnits::decode_cbor(dec)?;
+                            redeemers.push(Redeemer {
+                                tag,
+                                index,
+                                data,
+                                ex_units,
+                            });
+                        }
+                    } else {
+                        return Err(LedgerError::CborTypeMismatch {
+                            expected: 4,
+                            actual: major,
+                        });
+                    }
+                }
+                6 => {
+                    let count = dec.array()?;
+                    for _ in 0..count {
+                        plutus_v2_scripts.push(dec.bytes()?.to_vec());
+                    }
+                }
+                7 => {
+                    let count = dec.array()?;
+                    for _ in 0..count {
+                        plutus_v3_scripts.push(dec.bytes()?.to_vec());
                     }
                 }
                 _ => {
@@ -434,7 +751,13 @@ impl CborDecode for ShelleyWitnessSet {
 
         Ok(Self {
             vkey_witnesses,
+            native_scripts,
             bootstrap_witnesses,
+            plutus_v1_scripts,
+            plutus_data,
+            redeemers,
+            plutus_v2_scripts,
+            plutus_v3_scripts,
         })
     }
 }

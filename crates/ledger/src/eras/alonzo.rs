@@ -9,8 +9,8 @@
 //!   (key 4), and redeemers (key 5).
 //! - The `transaction` tuple becomes 4-element with an `is_valid` flag.
 //!
-//! This module models new Alonzo-specific types. Plutus data is kept
-//! opaque (raw CBOR bytes) until a full evaluator is needed.
+//! This module models new Alonzo-specific types. Plutus data is typed
+//! using the `PlutusData` AST defined in `plutus.rs`.
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl>
@@ -20,7 +20,9 @@ use std::collections::BTreeMap;
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::ShelleyTxIn;
+use crate::eras::shelley::ShelleyUpdate;
 use crate::error::LedgerError;
+use crate::plutus::PlutusData;
 use crate::types::{DCert, RewardAccount};
 
 pub const ALONZO_NAME: &str = "Alonzo";
@@ -72,9 +74,6 @@ impl CborDecode for ExUnits {
 /// CDDL: `redeemer = [tag : redeemer_tag, index : uint,
 ///          data : plutus_data, ex_units : ex_units]`
 ///
-/// Plutus data is stored as opaque CBOR bytes to avoid modeling the
-/// full recursive `plutus_data` type at this stage.
-///
 /// Reference: `Cardano.Ledger.Alonzo.TxWits` — `Redeemer`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Redeemer {
@@ -82,8 +81,8 @@ pub struct Redeemer {
     pub tag: u8,
     /// Index into the relevant sorted set (inputs, policies, etc.).
     pub index: u64,
-    /// Plutus data payload as raw CBOR bytes.
-    pub data: Vec<u8>,
+    /// Typed Plutus data payload.
+    pub data: PlutusData,
     /// Execution budget for this redeemer.
     pub ex_units: ExUnits,
 }
@@ -92,8 +91,8 @@ impl CborEncode for Redeemer {
     fn encode_cbor(&self, enc: &mut Encoder) {
         enc.array(4)
             .unsigned(u64::from(self.tag))
-            .unsigned(self.index)
-            .raw(&self.data);
+            .unsigned(self.index);
+        self.data.encode_cbor(enc);
         self.ex_units.encode_cbor(enc);
     }
 }
@@ -109,11 +108,7 @@ impl CborDecode for Redeemer {
         }
         let tag = dec.unsigned()? as u8;
         let index = dec.unsigned()?;
-        // Capture the plutus_data item as raw CBOR bytes.
-        let data_start = dec.position();
-        dec.skip()?;
-        let data_end = dec.position();
-        let data = dec.slice(data_start, data_end)?.to_vec();
+        let data = PlutusData::decode_cbor(dec)?;
         let ex_units = ExUnits::decode_cbor(dec)?;
         Ok(Self {
             tag,
@@ -234,8 +229,8 @@ pub struct AlonzoTxBody {
     pub certificates: Option<Vec<DCert>>,
     /// Optional withdrawals: reward-account → lovelace (CDDL key 5).
     pub withdrawals: Option<BTreeMap<RewardAccount, u64>>,
-    /// Optional protocol-parameter update proposal, opaque CBOR (CDDL key 6).
-    pub update: Option<Vec<u8>>,
+    /// Optional protocol-parameter update proposal (CDDL key 6).
+    pub update: Option<ShelleyUpdate>,
     /// Optional auxiliary data hash (CDDL key 7).
     pub auxiliary_data_hash: Option<[u8; 32]>,
     /// Optional validity interval start (CDDL key 8).
@@ -327,9 +322,10 @@ impl CborEncode for AlonzoTxBody {
             }
         }
 
-        // Key 6: update (opaque CBOR).
+        // Key 6: update.
         if let Some(update) = &self.update {
-            enc.unsigned(6).raw(update);
+            enc.unsigned(6);
+            update.encode_cbor(enc);
         }
 
         // Key 7: auxiliary_data_hash.
@@ -386,7 +382,7 @@ impl CborDecode for AlonzoTxBody {
         let mut ttl: Option<u64> = None;
         let mut certificates: Option<Vec<DCert>> = None;
         let mut withdrawals: Option<BTreeMap<RewardAccount, u64>> = None;
-        let mut update: Option<Vec<u8>> = None;
+        let mut update: Option<ShelleyUpdate> = None;
         let mut auxiliary_data_hash: Option<[u8; 32]> = None;
         let mut validity_interval_start: Option<u64> = None;
         let mut mint: Option<MintAsset> = None;
@@ -439,10 +435,7 @@ impl CborDecode for AlonzoTxBody {
                     withdrawals = Some(wdrl);
                 }
                 6 => {
-                    let start = dec.position();
-                    dec.skip()?;
-                    let end = dec.position();
-                    update = Some(dec.slice(start, end)?.to_vec());
+                    update = Some(ShelleyUpdate::decode_cbor(dec)?);
                 }
                 7 => {
                     let raw = dec.bytes()?;

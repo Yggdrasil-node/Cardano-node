@@ -7,13 +7,13 @@
 //! - `VotingProcedure`: a vote cast on a governance action, with
 //!   optional anchor metadata.
 //! - `Anchor`: URL + data hash for off-chain metadata.
+//! - `GovAction`: typed governance action (7 variants matching CDDL tags 0–6).
+//! - `Constitution`: anchor + optional guardrails script hash.
 //! - `ProposalProcedure`: governance proposal with deposit, return
 //!   address, action body, and anchor.
 //! - `ConwayTxBody`: extends Babbage with keys 19 (`voting_procedures`),
 //!   20 (`proposal_procedures`), 21 (`current_treasury_value`),
 //!   22 (`treasury_donation`).
-//!
-//! Governance action bodies are kept as opaque CBOR bytes at this stage.
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway>
@@ -25,7 +25,7 @@ use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
-use crate::types::{Anchor, DCert, HeaderHash, RewardAccount};
+use crate::types::{Anchor, DCert, HeaderHash, RewardAccount, StakeCredential, UnitInterval};
 
 pub const CONWAY_NAME: &str = "Conway";
 
@@ -209,6 +209,429 @@ impl CborDecode for GovActionId {
 // The `Anchor` struct is defined in `crate::types`; CBOR impls are in `crate::cbor`.
 
 // ---------------------------------------------------------------------------
+// Constitution
+// ---------------------------------------------------------------------------
+
+/// On-chain constitution reference.
+///
+/// CDDL: `constitution = [anchor, guardrails_script_hash / null]`
+///
+/// Reference: `Cardano.Ledger.Conway.Governance.Procedures.Constitution`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Constitution {
+    /// Anchor pointing to off-chain constitution text.
+    pub anchor: Anchor,
+    /// Optional guardrails script hash (28 bytes).
+    pub guardrails_script_hash: Option<[u8; 28]>,
+}
+
+impl CborEncode for Constitution {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        self.anchor.encode_cbor(enc);
+        match &self.guardrails_script_hash {
+            Some(h) => {
+                enc.bytes(h);
+            }
+            None => {
+                enc.null();
+            }
+        }
+    }
+}
+
+impl CborDecode for Constitution {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let anchor = Anchor::decode_cbor(dec)?;
+        let guardrails_script_hash = if dec.peek_major()? == 7 {
+            dec.null()?;
+            None
+        } else {
+            let raw = dec.bytes()?;
+            let hash: [u8; 28] =
+                raw.try_into()
+                    .map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 28,
+                        actual: raw.len(),
+                    })?;
+            Some(hash)
+        };
+        Ok(Self {
+            anchor,
+            guardrails_script_hash,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GovAction
+// ---------------------------------------------------------------------------
+
+/// Typed governance action body.
+///
+/// CDDL:
+/// ```text
+/// gov_action =
+///   [ parameter_change_action
+///   // hard_fork_initiation_action
+///   // treasury_withdrawals_action
+///   // no_confidence
+///   // update_committee
+///   // new_constitution
+///   // info_action
+///   ]
+///
+/// parameter_change_action = (0, gov_action_id / null, protocol_param_update, policy_hash / null)
+/// hard_fork_initiation_action = (1, gov_action_id / null, [uint, uint])
+/// treasury_withdrawals_action = (2, { * reward_account => coin }, policy_hash / null)
+/// no_confidence = (3, gov_action_id / null)
+/// update_committee = (4, gov_action_id / null, set<committee_cold_credential>,
+///                      { * committee_cold_credential => epoch }, unit_interval)
+/// new_constitution = (5, gov_action_id / null, constitution)
+/// info_action = 6
+/// ```
+///
+/// `protocol_param_update` remains as opaque CBOR bytes since the full
+/// parameter map has 33+ optional fields with deeply nested types.
+///
+/// Reference: `Cardano.Ledger.Conway.Governance.Procedures.GovAction`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GovAction {
+    /// Propose a protocol parameter change (tag 0).
+    ParameterChange {
+        /// Previous governance action ID, or `None` for the first such action.
+        prev_action_id: Option<GovActionId>,
+        /// Protocol parameter update as opaque CBOR bytes.
+        protocol_param_update: Vec<u8>,
+        /// Optional guardrails (policy) script hash.
+        guardrails_script_hash: Option<[u8; 28]>,
+    },
+    /// Propose a hard fork (tag 1).
+    HardForkInitiation {
+        /// Previous governance action ID, or `None`.
+        prev_action_id: Option<GovActionId>,
+        /// Target protocol version `(major, minor)`.
+        protocol_version: (u64, u64),
+    },
+    /// Propose treasury withdrawals (tag 2).
+    TreasuryWithdrawals {
+        /// Map from reward account to withdrawal amount in lovelace.
+        withdrawals: BTreeMap<RewardAccount, u64>,
+        /// Optional guardrails (policy) script hash.
+        guardrails_script_hash: Option<[u8; 28]>,
+    },
+    /// Motion of no-confidence in the current committee (tag 3).
+    NoConfidence {
+        /// Previous governance action ID, or `None`.
+        prev_action_id: Option<GovActionId>,
+    },
+    /// Update the constitutional committee (tag 4).
+    UpdateCommittee {
+        /// Previous governance action ID, or `None`.
+        prev_action_id: Option<GovActionId>,
+        /// Committee members to remove.
+        members_to_remove: Vec<StakeCredential>,
+        /// Committee members to add, mapped to their term-limit epoch.
+        members_to_add: BTreeMap<StakeCredential, u64>,
+        /// New quorum threshold.
+        quorum: UnitInterval,
+    },
+    /// Propose a new constitution (tag 5).
+    NewConstitution {
+        /// Previous governance action ID, or `None`.
+        prev_action_id: Option<GovActionId>,
+        /// The new constitution.
+        constitution: Constitution,
+    },
+    /// Informational action with no on-chain effect (tag 6).
+    InfoAction,
+}
+
+/// Encode an optional `GovActionId` or CBOR null.
+fn encode_optional_gov_action_id(enc: &mut Encoder, id: &Option<GovActionId>) {
+    match id {
+        Some(gid) => gid.encode_cbor(enc),
+        None => {
+            enc.null();
+        }
+    }
+}
+
+/// Decode an optional `GovActionId` (CBOR null → None).
+fn decode_optional_gov_action_id(
+    dec: &mut Decoder<'_>,
+) -> Result<Option<GovActionId>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        Ok(Some(GovActionId::decode_cbor(dec)?))
+    }
+}
+
+/// Encode an optional 28-byte script hash or CBOR null.
+fn encode_optional_script_hash(enc: &mut Encoder, h: &Option<[u8; 28]>) {
+    match h {
+        Some(hash) => {
+            enc.bytes(hash);
+        }
+        None => {
+            enc.null();
+        }
+    }
+}
+
+/// Decode an optional 28-byte script hash (CBOR null → None).
+fn decode_optional_script_hash(dec: &mut Decoder<'_>) -> Result<Option<[u8; 28]>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        let raw = dec.bytes()?;
+        let hash: [u8; 28] =
+            raw.try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 28,
+                    actual: raw.len(),
+                })?;
+        Ok(Some(hash))
+    }
+}
+
+impl CborEncode for GovAction {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self {
+            Self::ParameterChange {
+                prev_action_id,
+                protocol_param_update,
+                guardrails_script_hash,
+            } => {
+                enc.array(4);
+                enc.unsigned(0);
+                encode_optional_gov_action_id(enc, prev_action_id);
+                enc.raw(protocol_param_update);
+                encode_optional_script_hash(enc, guardrails_script_hash);
+            }
+            Self::HardForkInitiation {
+                prev_action_id,
+                protocol_version,
+            } => {
+                enc.array(3);
+                enc.unsigned(1);
+                encode_optional_gov_action_id(enc, prev_action_id);
+                enc.array(2)
+                    .unsigned(protocol_version.0)
+                    .unsigned(protocol_version.1);
+            }
+            Self::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash,
+            } => {
+                enc.array(3);
+                enc.unsigned(2);
+                enc.map(withdrawals.len() as u64);
+                for (acct, coin) in withdrawals {
+                    acct.encode_cbor(enc);
+                    enc.unsigned(*coin);
+                }
+                encode_optional_script_hash(enc, guardrails_script_hash);
+            }
+            Self::NoConfidence { prev_action_id } => {
+                enc.array(2);
+                enc.unsigned(3);
+                encode_optional_gov_action_id(enc, prev_action_id);
+            }
+            Self::UpdateCommittee {
+                prev_action_id,
+                members_to_remove,
+                members_to_add,
+                quorum,
+            } => {
+                enc.array(5);
+                enc.unsigned(4);
+                encode_optional_gov_action_id(enc, prev_action_id);
+                // set<committee_cold_credential>
+                enc.array(members_to_remove.len() as u64);
+                for cred in members_to_remove {
+                    cred.encode_cbor(enc);
+                }
+                // { committee_cold_credential => epoch }
+                enc.map(members_to_add.len() as u64);
+                for (cred, epoch) in members_to_add {
+                    cred.encode_cbor(enc);
+                    enc.unsigned(*epoch);
+                }
+                quorum.encode_cbor(enc);
+            }
+            Self::NewConstitution {
+                prev_action_id,
+                constitution,
+            } => {
+                enc.array(3);
+                enc.unsigned(5);
+                encode_optional_gov_action_id(enc, prev_action_id);
+                constitution.encode_cbor(enc);
+            }
+            Self::InfoAction => {
+                enc.array(1);
+                enc.unsigned(6);
+            }
+        }
+    }
+}
+
+impl CborDecode for GovAction {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let tag = dec.unsigned()?;
+        match tag {
+            0 => {
+                // parameter_change_action = (0, gov_action_id / null, protocol_param_update, policy_hash / null)
+                if len != 4 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 4,
+                        actual: len as usize,
+                    });
+                }
+                let prev_action_id = decode_optional_gov_action_id(dec)?;
+                let start = dec.position();
+                dec.skip()?;
+                let end = dec.position();
+                let protocol_param_update = dec.slice(start, end)?.to_vec();
+                let guardrails_script_hash = decode_optional_script_hash(dec)?;
+                Ok(Self::ParameterChange {
+                    prev_action_id,
+                    protocol_param_update,
+                    guardrails_script_hash,
+                })
+            }
+            1 => {
+                // hard_fork_initiation_action = (1, gov_action_id / null, [uint, uint])
+                if len != 3 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 3,
+                        actual: len as usize,
+                    });
+                }
+                let prev_action_id = decode_optional_gov_action_id(dec)?;
+                let pv_len = dec.array()?;
+                if pv_len != 2 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 2,
+                        actual: pv_len as usize,
+                    });
+                }
+                let major = dec.unsigned()?;
+                let minor = dec.unsigned()?;
+                Ok(Self::HardForkInitiation {
+                    prev_action_id,
+                    protocol_version: (major, minor),
+                })
+            }
+            2 => {
+                // treasury_withdrawals_action = (2, { * reward_account => coin }, policy_hash / null)
+                if len != 3 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 3,
+                        actual: len as usize,
+                    });
+                }
+                let map_len = dec.map()?;
+                let mut withdrawals = BTreeMap::new();
+                for _ in 0..map_len {
+                    let acct = RewardAccount::decode_cbor(dec)?;
+                    let coin = dec.unsigned()?;
+                    withdrawals.insert(acct, coin);
+                }
+                let guardrails_script_hash = decode_optional_script_hash(dec)?;
+                Ok(Self::TreasuryWithdrawals {
+                    withdrawals,
+                    guardrails_script_hash,
+                })
+            }
+            3 => {
+                // no_confidence = (3, gov_action_id / null)
+                if len != 2 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 2,
+                        actual: len as usize,
+                    });
+                }
+                let prev_action_id = decode_optional_gov_action_id(dec)?;
+                Ok(Self::NoConfidence { prev_action_id })
+            }
+            4 => {
+                // update_committee = (4, gov_action_id / null, set<credential>, { credential => epoch }, unit_interval)
+                if len != 5 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 5,
+                        actual: len as usize,
+                    });
+                }
+                let prev_action_id = decode_optional_gov_action_id(dec)?;
+                // set<committee_cold_credential>
+                let remove_count = dec.array()?;
+                let mut members_to_remove = Vec::with_capacity(remove_count as usize);
+                for _ in 0..remove_count {
+                    members_to_remove.push(StakeCredential::decode_cbor(dec)?);
+                }
+                // { committee_cold_credential => epoch }
+                let add_count = dec.map()?;
+                let mut members_to_add = BTreeMap::new();
+                for _ in 0..add_count {
+                    let cred = StakeCredential::decode_cbor(dec)?;
+                    let epoch = dec.unsigned()?;
+                    members_to_add.insert(cred, epoch);
+                }
+                let quorum = UnitInterval::decode_cbor(dec)?;
+                Ok(Self::UpdateCommittee {
+                    prev_action_id,
+                    members_to_remove,
+                    members_to_add,
+                    quorum,
+                })
+            }
+            5 => {
+                // new_constitution = (5, gov_action_id / null, constitution)
+                if len != 3 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 3,
+                        actual: len as usize,
+                    });
+                }
+                let prev_action_id = decode_optional_gov_action_id(dec)?;
+                let constitution = Constitution::decode_cbor(dec)?;
+                Ok(Self::NewConstitution {
+                    prev_action_id,
+                    constitution,
+                })
+            }
+            6 => {
+                // info_action = 6
+                if len != 1 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 1,
+                        actual: len as usize,
+                    });
+                }
+                Ok(Self::InfoAction)
+            }
+            _ => Err(LedgerError::CborTypeMismatch {
+                expected: 6,
+                actual: tag as u8,
+            }),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // VotingProcedure
 // ---------------------------------------------------------------------------
 
@@ -275,9 +698,6 @@ impl CborDecode for VotingProcedure {
 ///   ]
 /// ```
 ///
-/// The `gov_action` field is stored as opaque CBOR bytes to avoid
-/// modeling the full recursive governance action grammar at this stage.
-///
 /// Reference: `Cardano.Ledger.Conway.Governance.Procedures.ProposalProcedure`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProposalProcedure {
@@ -285,8 +705,8 @@ pub struct ProposalProcedure {
     pub deposit: u64,
     /// Reward account receiving the deposit refund.
     pub reward_account: Vec<u8>,
-    /// Governance action body as opaque CBOR bytes.
-    pub gov_action: Vec<u8>,
+    /// Typed governance action body.
+    pub gov_action: GovAction,
     /// Off-chain metadata anchor.
     pub anchor: Anchor,
 }
@@ -296,7 +716,7 @@ impl CborEncode for ProposalProcedure {
         enc.array(4);
         enc.unsigned(self.deposit);
         enc.bytes(&self.reward_account);
-        enc.raw(&self.gov_action);
+        self.gov_action.encode_cbor(enc);
         self.anchor.encode_cbor(enc);
     }
 }
@@ -312,11 +732,7 @@ impl CborDecode for ProposalProcedure {
         }
         let deposit = dec.unsigned()?;
         let reward_account = dec.bytes()?.to_vec();
-        // Capture the governance action as opaque CBOR bytes.
-        let start = dec.position();
-        dec.skip()?;
-        let end = dec.position();
-        let gov_action = dec.slice(start, end)?.to_vec();
+        let gov_action = GovAction::decode_cbor(dec)?;
         let anchor = Anchor::decode_cbor(dec)?;
         Ok(Self {
             deposit,

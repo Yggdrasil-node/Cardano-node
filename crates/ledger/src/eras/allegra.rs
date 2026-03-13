@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
-use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut};
+use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut, ShelleyUpdate};
 use crate::error::LedgerError;
 use crate::types::{DCert, RewardAccount};
 
@@ -61,8 +61,8 @@ pub struct AllegraTxBody {
     pub certificates: Option<Vec<DCert>>,
     /// Optional withdrawals: reward-account → lovelace (CDDL key 5).
     pub withdrawals: Option<BTreeMap<RewardAccount, u64>>,
-    /// Optional protocol-parameter update proposal, opaque CBOR (CDDL key 6).
-    pub update: Option<Vec<u8>>,
+    /// Optional protocol-parameter update proposal (CDDL key 6).
+    pub update: Option<ShelleyUpdate>,
     /// Optional auxiliary data hash (CDDL key 7).
     pub auxiliary_data_hash: Option<[u8; 32]>,
     /// Optional lower-bound slot; tx invalid before this slot (CDDL key 8).
@@ -129,9 +129,10 @@ impl CborEncode for AllegraTxBody {
             }
         }
 
-        // Key 6: update (opaque CBOR).
+        // Key 6: update.
         if let Some(update) = &self.update {
-            enc.unsigned(6).raw(update);
+            enc.unsigned(6);
+            update.encode_cbor(enc);
         }
 
         // Key 7: auxiliary_data_hash (optional).
@@ -156,7 +157,7 @@ impl CborDecode for AllegraTxBody {
         let mut ttl: Option<u64> = None;
         let mut certificates: Option<Vec<DCert>> = None;
         let mut withdrawals: Option<BTreeMap<RewardAccount, u64>> = None;
-        let mut update: Option<Vec<u8>> = None;
+        let mut update: Option<ShelleyUpdate> = None;
         let mut auxiliary_data_hash: Option<[u8; 32]> = None;
         let mut validity_interval_start: Option<u64> = None;
 
@@ -204,10 +205,7 @@ impl CborDecode for AllegraTxBody {
                     withdrawals = Some(wdrl);
                 }
                 6 => {
-                    let start = dec.position();
-                    dec.skip()?;
-                    let end = dec.position();
-                    update = Some(dec.slice(start, end)?.to_vec());
+                    update = Some(ShelleyUpdate::decode_cbor(dec)?);
                 }
                 7 => {
                     let raw = dec.bytes()?;

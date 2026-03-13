@@ -1,11 +1,12 @@
 use yggdrasil_ledger::{
     Address, AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, BabbageBlock, BabbageTxBody,
-    BabbageTxOut, BaseAddress, Block, BlockHeader, BlockNo, ByronBlock, CborDecode, CborEncode,
-    ConwayBlock, ConwayTxBody, DCert, DRep, DatumOption, Decoder, Encoder, EnterpriseAddress, Era,
-    EpochNo, ExUnits, GovActionId, HeaderHash, LedgerError, LedgerState, MaryTxBody, MaryTxOut,
-    NativeScript, Nonce, Point, PointerAddress, PoolMetadata, PoolParams, ProposalProcedure,
-    Redeemer, Relay, RewardAccount, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
-    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness,
+    BabbageTxOut, BaseAddress, Block, BlockHeader, BlockNo, BootstrapWitness, ByronBlock,
+    CborDecode, CborEncode, Constitution, ConwayBlock, ConwayTxBody, DCert, DRep, DatumOption,
+    Decoder, Encoder, EnterpriseAddress, Era, EpochNo, ExUnits, GovAction, GovActionId, HeaderHash,
+    LedgerError, LedgerState, MaryTxBody, MaryTxOut, NativeScript, Nonce, PlutusData, Point,
+    PointerAddress, PoolMetadata, PoolParams, ProposalProcedure, Redeemer, Relay, RewardAccount,
+    Script, ScriptRef, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
+    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness,
     ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value, Vote,
     Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
 };
@@ -540,7 +541,13 @@ fn shelley_witness_set_cbor_round_trip() {
                 signature: [0xDD; 64],
             },
         ],
+        native_scripts: vec![],
         bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
     };
     let bytes = wset.to_cbor_bytes();
     let decoded =
@@ -552,7 +559,13 @@ fn shelley_witness_set_cbor_round_trip() {
 fn shelley_witness_set_empty_cbor_round_trip() {
     let wset = ShelleyWitnessSet {
         vkey_witnesses: vec![],
+        native_scripts: vec![],
         bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
     };
     let bytes = wset.to_cbor_bytes();
     // Empty witness set: map(0)
@@ -563,6 +576,263 @@ fn shelley_witness_set_empty_cbor_round_trip() {
     let decoded =
         ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("empty ShelleyWitnessSet round-trip");
     assert_eq!(wset, decoded);
+}
+
+#[test]
+fn bootstrap_witness_cbor_round_trip() {
+    let bw = BootstrapWitness {
+        public_key: [0x11; 32],
+        signature: [0x22; 64],
+        chain_code: [0x33; 32],
+        attributes: vec![0xA0], // empty CBOR map
+    };
+    let bytes = bw.to_cbor_bytes();
+    let decoded = BootstrapWitness::from_cbor_bytes(&bytes).expect("BootstrapWitness round-trip");
+    assert_eq!(bw, decoded);
+}
+
+#[test]
+fn witness_set_with_native_scripts_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![
+            NativeScript::ScriptPubkey([0xAA; 28]),
+            NativeScript::InvalidBefore(100),
+        ],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with native scripts");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_with_bootstrap_witnesses_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![BootstrapWitness {
+            public_key: [0x01; 32],
+            signature: [0x02; 64],
+            chain_code: [0x03; 32],
+            attributes: vec![0xA0],
+        }],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with bootstrap witnesses");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_with_plutus_v1_scripts_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![vec![0x01; 20], vec![0x02; 30]],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with plutus v1 scripts");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_with_plutus_data_round_trip() {
+    // A typed PlutusData value: integer 42
+    let datum = PlutusData::Integer(42);
+
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![datum],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with plutus data");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_with_redeemers_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(0),
+            ex_units: ExUnits {
+                mem: 1000,
+                steps: 2000,
+            },
+        }],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with redeemers");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_with_plutus_v2_scripts_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![vec![0x10; 24], vec![0x20; 16]],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with plutus v2 scripts");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_with_plutus_v3_scripts_round_trip() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![vec![0x30; 32]],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with plutus v3 scripts");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_all_keys_round_trip() {
+    // Plutus data: integer 99
+    let datum = PlutusData::Integer(99);
+
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![ShelleyVkeyWitness {
+            vkey: [0xAA; 32],
+            signature: [0xBB; 64],
+        }],
+        native_scripts: vec![NativeScript::ScriptPubkey([0xCC; 28])],
+        bootstrap_witnesses: vec![BootstrapWitness {
+            public_key: [0x01; 32],
+            signature: [0x02; 64],
+            chain_code: [0x03; 32],
+            attributes: vec![0xA0],
+        }],
+        plutus_v1_scripts: vec![vec![0x11; 20]],
+        plutus_data: vec![datum],
+        redeemers: vec![Redeemer {
+            tag: 1,
+            index: 0,
+            data: PlutusData::Integer(7),
+            ex_units: ExUnits {
+                mem: 500,
+                steps: 1000,
+            },
+        }],
+        plutus_v2_scripts: vec![vec![0x22; 16]],
+        plutus_v3_scripts: vec![vec![0x33; 8]],
+    };
+    let bytes = wset.to_cbor_bytes();
+
+    // Verify map count is 8 (all keys present)
+    let mut dec = Decoder::new(&bytes);
+    let count = dec.map().expect("map header");
+    assert_eq!(count, 8, "all 8 keys present in witness set");
+
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set all keys round-trip");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_map_count_only_includes_nonempty_keys() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![ShelleyVkeyWitness {
+            vkey: [0xAA; 32],
+            signature: [0xBB; 64],
+        }],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![vec![0x01; 20]],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let count = dec.map().expect("map header");
+    assert_eq!(count, 2, "only keys 0 and 3 populated");
+}
+
+#[test]
+fn witness_set_conway_map_redeemers_round_trip() {
+    // Build Conway-style map-format redeemers: { [tag, index] => [data, ex_units] }
+
+    // Redeemer data: integer 5
+    let mut denc = Encoder::new();
+    denc.unsigned(5);
+    let rdata = denc.into_bytes();
+
+    // ex_units: [300, 600]
+    let mut eu_enc = Encoder::new();
+    eu_enc.array(2).unsigned(300).unsigned(600);
+    let eu_bytes = eu_enc.into_bytes();
+
+    // Build the witness set with map-format redeemers via raw CBOR
+    let mut ws_enc = Encoder::new();
+    ws_enc.map(1); // one key in the witness set
+    ws_enc.unsigned(5); // key 5 = redeemers
+    // Conway map format: { [0, 0] => [data, [mem, steps]] }
+    ws_enc.map(1);
+    ws_enc.array(2).unsigned(0).unsigned(0); // key: [tag=0, index=0]
+    ws_enc.array(2);
+    ws_enc.raw(&rdata); // data
+    ws_enc.raw(&eu_bytes); // ex_units
+
+    let bytes = ws_enc.into_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("Conway map-format redeemers");
+    assert_eq!(decoded.redeemers.len(), 1);
+    assert_eq!(decoded.redeemers[0].tag, 0);
+    assert_eq!(decoded.redeemers[0].index, 0);
+    assert_eq!(decoded.redeemers[0].ex_units.mem, 300);
+    assert_eq!(decoded.redeemers[0].ex_units.steps, 600);
 }
 
 #[test]
@@ -589,7 +859,13 @@ fn shelley_tx_cbor_round_trip_no_metadata() {
                 vkey: [0xAA; 32],
                 signature: [0xBB; 64],
             }],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         },
         auxiliary_data: None,
     };
@@ -614,7 +890,13 @@ fn shelley_tx_encoding_is_three_element_array() {
         },
         witness_set: ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         },
         auxiliary_data: None,
     };
@@ -1057,7 +1339,13 @@ fn shelley_block_cbor_round_trip_with_txs() {
             vkey: [0xAA; 32],
             signature: [0xBB; 64],
         }],
+        native_scripts: vec![],
         bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
     };
     let block = ShelleyBlock {
         header: ShelleyHeader {
@@ -1876,15 +2164,10 @@ fn ex_units_cbor_round_trip() {
 
 #[test]
 fn redeemer_cbor_round_trip() {
-    // Build a minimal plutus_data (just an integer 42) as raw CBOR.
-    let mut data_enc = Encoder::new();
-    data_enc.unsigned(42);
-    let plutus_data_bytes = data_enc.into_bytes();
-
     let redeemer = Redeemer {
         tag: 0, // spend
         index: 0,
-        data: plutus_data_bytes,
+        data: PlutusData::Integer(42),
         ex_units: ExUnits {
             mem: 100_000,
             steps: 50_000_000,
@@ -1897,14 +2180,10 @@ fn redeemer_cbor_round_trip() {
 
 #[test]
 fn redeemer_mint_tag() {
-    let mut data_enc = Encoder::new();
-    data_enc.array(0); // empty list as data
-    let data = data_enc.into_bytes();
-
     let redeemer = Redeemer {
         tag: 1, // mint
         index: 2,
-        data,
+        data: PlutusData::List(vec![]),
         ex_units: ExUnits {
             mem: 0,
             steps: 0,
@@ -1914,6 +2193,167 @@ fn redeemer_mint_tag() {
     let decoded = Redeemer::from_cbor_bytes(&encoded).expect("decode mint Redeemer");
     assert_eq!(decoded.tag, 1);
     assert_eq!(decoded.index, 2);
+}
+
+// -----------------------------------------------------------------------
+// Phase 54 – Typed PlutusData in Redeemer, DatumOption, WitnessSet
+// -----------------------------------------------------------------------
+
+#[test]
+fn redeemer_with_complex_plutus_data() {
+    let complex_data = PlutusData::Constr(
+        0,
+        vec![
+            PlutusData::Integer(42),
+            PlutusData::Bytes(vec![0xDE, 0xAD]),
+            PlutusData::List(vec![PlutusData::Integer(-1), PlutusData::Integer(100)]),
+        ],
+    );
+    let redeemer = Redeemer {
+        tag: 0,
+        index: 3,
+        data: complex_data,
+        ex_units: ExUnits {
+            mem: 200_000,
+            steps: 100_000_000,
+        },
+    };
+    let encoded = redeemer.to_cbor_bytes();
+    let decoded = Redeemer::from_cbor_bytes(&encoded).expect("decode complex Redeemer");
+    assert_eq!(decoded, redeemer);
+}
+
+#[test]
+fn redeemer_with_map_plutus_data() {
+    let map_data = PlutusData::Map(vec![
+        (PlutusData::Integer(1), PlutusData::Bytes(vec![0x01])),
+        (PlutusData::Integer(2), PlutusData::Bytes(vec![0x02])),
+    ]);
+    let redeemer = Redeemer {
+        tag: 2, // cert
+        index: 0,
+        data: map_data,
+        ex_units: ExUnits { mem: 0, steps: 0 },
+    };
+    let encoded = redeemer.to_cbor_bytes();
+    let decoded = Redeemer::from_cbor_bytes(&encoded).expect("decode map Redeemer");
+    assert_eq!(decoded, redeemer);
+}
+
+#[test]
+fn datum_option_inline_complex_plutus_data() {
+    let complex = PlutusData::Constr(
+        2,
+        vec![
+            PlutusData::Map(vec![(
+                PlutusData::Bytes(b"key".to_vec()),
+                PlutusData::Integer(999),
+            )]),
+        ],
+    );
+    let datum = DatumOption::Inline(complex);
+    let mut enc = Encoder::new();
+    datum.encode_cbor(&mut enc);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    let decoded = DatumOption::decode_cbor(&mut dec).expect("decode complex inline datum");
+    assert_eq!(datum, decoded);
+}
+
+#[test]
+fn datum_option_inline_nested_list() {
+    let nested = PlutusData::List(vec![
+        PlutusData::List(vec![PlutusData::Integer(1), PlutusData::Integer(2)]),
+        PlutusData::Bytes(vec![0xFF]),
+    ]);
+    let datum = DatumOption::Inline(nested);
+    let encoded = datum.to_cbor_bytes();
+    let decoded = DatumOption::from_cbor_bytes(&encoded).expect("decode nested inline datum");
+    assert_eq!(datum, decoded);
+}
+
+#[test]
+fn witness_set_with_complex_plutus_data() {
+    let pd1 = PlutusData::Constr(0, vec![PlutusData::Integer(1)]);
+    let pd2 = PlutusData::Map(vec![(
+        PlutusData::Bytes(b"x".to_vec()),
+        PlutusData::Integer(-5),
+    )]);
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![pd1, pd2],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set complex plutus data");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn witness_set_with_typed_redeemer_and_plutus_data() {
+    let wset = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![PlutusData::Integer(42)],
+        redeemers: vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0xAB])]),
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
+        }],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let bytes = wset.to_cbor_bytes();
+    let decoded = ShelleyWitnessSet::from_cbor_bytes(&bytes)
+        .expect("witness set typed redeemer + data");
+    assert_eq!(wset, decoded);
+}
+
+#[test]
+fn babbage_txout_with_typed_inline_datum() {
+    let txout = BabbageTxOut {
+        address: vec![0x01; 28],
+        amount: Value::Coin(5_000_000),
+        datum_option: Some(DatumOption::Inline(PlutusData::Constr(
+            0,
+            vec![PlutusData::Integer(100), PlutusData::Bytes(vec![0xCA, 0xFE])],
+        ))),
+        script_ref: None,
+    };
+    let encoded = txout.to_cbor_bytes();
+    let decoded = BabbageTxOut::from_cbor_bytes(&encoded).expect("decode typed inline datum txout");
+    assert_eq!(txout, decoded);
+}
+
+#[test]
+fn babbage_txout_with_inline_datum_and_script_ref_typed() {
+    let txout = BabbageTxOut {
+        address: vec![0x03; 28],
+        amount: Value::Coin(10_000_000),
+        datum_option: Some(DatumOption::Inline(PlutusData::List(vec![
+            PlutusData::Integer(1),
+            PlutusData::Integer(2),
+        ]))),
+        script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey(
+            [0x00; 28],
+        )))),
+    };
+    let encoded = txout.to_cbor_bytes();
+    let decoded = BabbageTxOut::from_cbor_bytes(&encoded)
+        .expect("decode typed inline datum + script ref txout");
+    assert_eq!(txout, decoded);
 }
 
 #[test]
@@ -2271,8 +2711,8 @@ fn datum_option_hash_cbor_round_trip() {
 
 #[test]
 fn datum_option_inline_cbor_round_trip() {
-    // Inline datum: opaque CBOR bytes (e.g. an integer 42 = 0x18 0x2a).
-    let inline_data = vec![0x18, 0x2A];
+    // Inline datum: typed PlutusData integer 42.
+    let inline_data = PlutusData::Integer(42);
     let datum = DatumOption::Inline(inline_data.clone());
     let mut enc = Encoder::new();
     datum.encode_cbor(&mut enc);
@@ -2324,8 +2764,8 @@ fn babbage_txout_with_inline_datum_and_script_ref() {
     let txout = BabbageTxOut {
         address: vec![0x03; 28],
         amount: Value::Coin(10_000_000),
-        datum_option: Some(DatumOption::Inline(vec![0x05])),
-        script_ref: Some(vec![0x83, 0x00, 0x81, 0x00]), // opaque script bytes
+        datum_option: Some(DatumOption::Inline(PlutusData::Integer(5))),
+        script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey([0x00; 28])))),
     };
     let mut enc = Encoder::new();
     txout.encode_cbor(&mut enc);
@@ -2402,7 +2842,7 @@ fn babbage_tx_body_with_new_fields() {
         outputs: vec![BabbageTxOut {
             address: vec![0x02; 28],
             amount: Value::Coin(5_000_000),
-            datum_option: Some(DatumOption::Inline(vec![0x42])),
+            datum_option: Some(DatumOption::Inline(PlutusData::Integer(66))),
             script_ref: None,
         }],
         fee: 300_000,
@@ -2601,15 +3041,10 @@ fn voting_procedures_nested_map_cbor_round_trip() {
 
 #[test]
 fn proposal_procedure_cbor_round_trip() {
-    // Build a minimal governance action as opaque CBOR: [0] = info action
-    let mut action_enc = Encoder::new();
-    action_enc.array(1).unsigned(6); // 6 = InfoAction (no payload)
-    let gov_action = action_enc.into_bytes();
-
     let prop = ProposalProcedure {
         deposit: 500_000_000,
         reward_account: vec![0xE0, 0x01, 0x02, 0x03],
-        gov_action: gov_action.clone(),
+        gov_action: GovAction::InfoAction,
         anchor: Anchor {
             url: "https://gov.example/proposal.json".to_owned(),
             data_hash: [0xEE; 32],
@@ -2618,7 +3053,7 @@ fn proposal_procedure_cbor_round_trip() {
     let bytes = prop.to_cbor_bytes();
     let decoded = ProposalProcedure::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(prop, decoded);
-    assert_eq!(decoded.gov_action, gov_action);
+    assert_eq!(decoded.gov_action, GovAction::InfoAction);
 }
 
 #[test]
@@ -2666,10 +3101,8 @@ fn conway_tx_body_with_governance_fields() {
     let mut procedures = BTreeMap::new();
     procedures.insert(voter, inner);
 
-    // Minimal InfoAction as opaque CBOR
-    let mut action_enc = Encoder::new();
-    action_enc.array(1).unsigned(6);
-    let gov_action = action_enc.into_bytes();
+    // Minimal InfoAction as typed GovAction
+    let gov_action = GovAction::InfoAction;
 
     let body = ConwayTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: [0x11; 32], index: 0 }],
@@ -2863,7 +3296,13 @@ fn babbage_block_cbor_round_trip_with_tx() {
         transaction_bodies: vec![tx_body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };
@@ -2936,7 +3375,13 @@ fn conway_block_cbor_round_trip_with_tx() {
         transaction_bodies: vec![tx_body],
         witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
+            native_scripts: vec![],
             bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }],
         transaction_metadata: std::collections::HashMap::new(),
     };
@@ -3879,11 +4324,18 @@ fn shelley_tx_body_with_withdrawals_round_trip() {
 
 #[test]
 fn shelley_tx_body_with_update_round_trip() {
-    // Opaque CBOR payload: a simple CBOR array [1, 2, 3]
-    let update_cbor = {
+    use std::collections::BTreeMap;
+    let mut proposed = BTreeMap::new();
+    // Single genesis delegate with an opaque param update (empty map).
+    let param_update = {
         let mut enc = Encoder::new();
-        enc.array(3).unsigned(1).unsigned(2).unsigned(3);
+        enc.map(0);
         enc.into_bytes()
+    };
+    proposed.insert([0x01; 28], param_update);
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: proposed,
+        epoch: 100,
     };
 
     let body = ShelleyTxBody {
@@ -3899,7 +4351,7 @@ fn shelley_tx_body_with_update_round_trip() {
         ttl: 500_000,
         certificates: None,
         withdrawals: None,
-        update: Some(update_cbor),
+        update: Some(update),
         auxiliary_data_hash: None,
     };
     let bytes = body.to_cbor_bytes();
@@ -3913,10 +4365,16 @@ fn shelley_tx_body_with_all_keys_4_6_round_trip() {
     let mut wdrl = BTreeMap::new();
     wdrl.insert(sample_reward_account(), 1_000_000);
 
-    let update_cbor = {
+    let mut proposed = BTreeMap::new();
+    let param_update = {
         let mut enc = Encoder::new();
-        enc.unsigned(42);
+        enc.map(0);
         enc.into_bytes()
+    };
+    proposed.insert([0x02; 28], param_update);
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: proposed,
+        epoch: 42,
     };
 
     let body = ShelleyTxBody {
@@ -3932,7 +4390,7 @@ fn shelley_tx_body_with_all_keys_4_6_round_trip() {
         ttl: 500_000,
         certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
         withdrawals: Some(wdrl),
-        update: Some(update_cbor),
+        update: Some(update),
         auxiliary_data_hash: Some([0xFF; 32]),
     };
     let bytes = body.to_cbor_bytes();
@@ -4006,10 +4464,16 @@ fn alonzo_tx_body_with_certs_and_withdrawals_round_trip() {
     let mut wdrl = BTreeMap::new();
     wdrl.insert(sample_reward_account(), 4_000_000);
 
-    let update_cbor = {
+    let mut proposed = BTreeMap::new();
+    let param_update = {
         let mut enc = Encoder::new();
-        enc.map(0); // empty map as update
+        enc.map(0);
         enc.into_bytes()
+    };
+    proposed.insert([0x03; 28], param_update);
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: proposed,
+        epoch: 200,
     };
 
     let body = AlonzoTxBody {
@@ -4026,7 +4490,7 @@ fn alonzo_tx_body_with_certs_and_withdrawals_round_trip() {
         ttl: Some(800_000),
         certificates: Some(vec![DCert::StakeDeregistration(StakeCredential::AddrKeyHash([0x04; 28]))]),
         withdrawals: Some(wdrl),
-        update: Some(update_cbor),
+        update: Some(update),
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -4128,10 +4592,16 @@ fn shelley_tx_body_map_count_includes_keys_4_5_6() {
     let mut wdrl = BTreeMap::new();
     wdrl.insert(sample_reward_account(), 100);
 
-    let update_cbor = {
+    let mut proposed = BTreeMap::new();
+    let param_update = {
         let mut enc = Encoder::new();
-        enc.unsigned(0);
+        enc.map(0);
         enc.into_bytes()
+    };
+    proposed.insert([0x04; 28], param_update);
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: proposed,
+        epoch: 0,
     };
 
     let body = ShelleyTxBody {
@@ -4147,7 +4617,7 @@ fn shelley_tx_body_map_count_includes_keys_4_5_6() {
         ttl: 500_000,
         certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
         withdrawals: Some(wdrl),
-        update: Some(update_cbor),
+        update: Some(update),
         auxiliary_data_hash: None,
     };
     let bytes = body.to_cbor_bytes();
@@ -4214,4 +4684,531 @@ fn anchor_cbor_round_trip_types_module() {
     let bytes = anchor.to_cbor_bytes();
     let decoded = Anchor::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(anchor, decoded);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 52: PlutusData AST + Script Types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn plutus_data_integer_small_round_trip() {
+    let pd = PlutusData::Integer(42);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_negative_integer_round_trip() {
+    let pd = PlutusData::Integer(-100);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_big_uint_round_trip() {
+    // Value larger than u64::MAX requires big_uint encoding.
+    let big = i128::from(u64::MAX) + 1;
+    let pd = PlutusData::Integer(big);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_big_nint_round_trip() {
+    // Negative value whose magnitude exceeds u64::MAX.
+    let big_neg = -(i128::from(u64::MAX)) - 2;
+    let pd = PlutusData::Integer(big_neg);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_bytes_round_trip() {
+    let pd = PlutusData::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_empty_bytes_round_trip() {
+    let pd = PlutusData::Bytes(vec![]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_list_round_trip() {
+    let pd = PlutusData::List(vec![
+        PlutusData::Integer(1),
+        PlutusData::Integer(2),
+        PlutusData::Bytes(vec![0xFF]),
+    ]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_empty_list_round_trip() {
+    let pd = PlutusData::List(vec![]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_map_round_trip() {
+    let pd = PlutusData::Map(vec![
+        (PlutusData::Bytes(b"key1".to_vec()), PlutusData::Integer(10)),
+        (PlutusData::Integer(0), PlutusData::Bytes(b"val".to_vec())),
+    ]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_empty_map_round_trip() {
+    let pd = PlutusData::Map(vec![]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_constr_compact_round_trip() {
+    // Alternatives 0-6 use compact tags 121-127.
+    for alt in 0..=6u64 {
+        let pd = PlutusData::Constr(alt, vec![PlutusData::Integer(alt as i128)]);
+        let bytes = pd.to_cbor_bytes();
+        let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+        assert_eq!(pd, decoded, "failed for alternative {alt}");
+    }
+}
+
+#[test]
+fn plutus_data_constr_general_form_round_trip() {
+    // Alternative 7+ uses general form tag 102.
+    let pd = PlutusData::Constr(7, vec![PlutusData::Bytes(vec![0x01]), PlutusData::Integer(99)]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_constr_large_alternative_round_trip() {
+    let pd = PlutusData::Constr(1000, vec![]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_constr_empty_fields_round_trip() {
+    let pd = PlutusData::Constr(0, vec![]);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_nested_complex_round_trip() {
+    // Deeply nested structure exercising all variants.
+    let pd = PlutusData::Constr(
+        2,
+        vec![
+            PlutusData::Map(vec![
+                (
+                    PlutusData::Bytes(b"addr".to_vec()),
+                    PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xAA; 28])]),
+                ),
+                (
+                    PlutusData::Integer(-1),
+                    PlutusData::List(vec![PlutusData::Integer(100), PlutusData::Integer(200)]),
+                ),
+            ]),
+            PlutusData::List(vec![]),
+            PlutusData::Integer(0),
+        ],
+    );
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_zero_round_trip() {
+    let pd = PlutusData::Integer(0);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn plutus_data_negative_one_round_trip() {
+    let pd = PlutusData::Integer(-1);
+    let bytes = pd.to_cbor_bytes();
+    let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(pd, decoded);
+}
+
+#[test]
+fn script_native_round_trip() {
+    let s = Script::Native(NativeScript::ScriptPubkey([0xAB; 28]));
+    let bytes = s.to_cbor_bytes();
+    let decoded = Script::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(s, decoded);
+}
+
+#[test]
+fn script_plutus_v1_round_trip() {
+    let s = Script::PlutusV1(vec![0x01, 0x02, 0x03]);
+    let bytes = s.to_cbor_bytes();
+    let decoded = Script::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(s, decoded);
+}
+
+#[test]
+fn script_plutus_v2_round_trip() {
+    let s = Script::PlutusV2(vec![0x04, 0x05]);
+    let bytes = s.to_cbor_bytes();
+    let decoded = Script::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(s, decoded);
+}
+
+#[test]
+fn script_plutus_v3_round_trip() {
+    let s = Script::PlutusV3(vec![0x06, 0x07, 0x08, 0x09]);
+    let bytes = s.to_cbor_bytes();
+    let decoded = Script::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(s, decoded);
+}
+
+#[test]
+fn script_ref_native_round_trip() {
+    let sref = ScriptRef(Script::Native(NativeScript::InvalidBefore(1000)));
+    let bytes = sref.to_cbor_bytes();
+    let decoded = ScriptRef::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(sref, decoded);
+}
+
+#[test]
+fn script_ref_plutus_v2_round_trip() {
+    let sref = ScriptRef(Script::PlutusV2(vec![0xCA, 0xFE]));
+    let bytes = sref.to_cbor_bytes();
+    let decoded = ScriptRef::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(sref, decoded);
+}
+
+#[test]
+fn babbage_txout_with_typed_script_ref_round_trip() {
+    let txout = BabbageTxOut {
+        address: vec![0x61; 29],
+        amount: Value::Coin(5_000_000),
+        datum_option: None,
+        script_ref: Some(ScriptRef(Script::PlutusV1(vec![0x01, 0x02]))),
+    };
+    let bytes = txout.to_cbor_bytes();
+    let decoded = BabbageTxOut::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(txout, decoded);
+}
+
+#[test]
+fn babbage_txout_with_datum_and_typed_script_ref_round_trip() {
+    let txout = BabbageTxOut {
+        address: vec![0x61; 29],
+        amount: Value::Coin(2_000_000),
+        datum_option: Some(DatumOption::Hash([0xBB; 32])),
+        script_ref: Some(ScriptRef(Script::PlutusV3(vec![0xAA]))),
+    };
+    let bytes = txout.to_cbor_bytes();
+    let decoded = BabbageTxOut::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(txout, decoded);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 53: GovAction typed variants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gov_action_info_action_round_trip() {
+    let ga = GovAction::InfoAction;
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_no_confidence_round_trip() {
+    let ga = GovAction::NoConfidence {
+        prev_action_id: Some(GovActionId {
+            transaction_id: [0x11; 32],
+            gov_action_index: 0,
+        }),
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_no_confidence_null_prev_round_trip() {
+    let ga = GovAction::NoConfidence {
+        prev_action_id: None,
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_hard_fork_round_trip() {
+    let ga = GovAction::HardForkInitiation {
+        prev_action_id: Some(GovActionId {
+            transaction_id: [0xAA; 32],
+            gov_action_index: 3,
+        }),
+        protocol_version: (10, 0),
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_parameter_change_round_trip() {
+    // Opaque protocol_param_update: empty map
+    let param_update = {
+        let mut enc = Encoder::new();
+        enc.map(0);
+        enc.into_bytes()
+    };
+    let ga = GovAction::ParameterChange {
+        prev_action_id: None,
+        protocol_param_update: param_update,
+        guardrails_script_hash: Some([0xFF; 28]),
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_parameter_change_no_guardrails_round_trip() {
+    let param_update = {
+        let mut enc = Encoder::new();
+        enc.map(1).unsigned(0).unsigned(500);
+        enc.into_bytes()
+    };
+    let ga = GovAction::ParameterChange {
+        prev_action_id: Some(GovActionId {
+            transaction_id: [0xBB; 32],
+            gov_action_index: 1,
+        }),
+        protocol_param_update: param_update,
+        guardrails_script_hash: None,
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_treasury_withdrawals_round_trip() {
+    use std::collections::BTreeMap;
+    let mut withdrawals = BTreeMap::new();
+    withdrawals.insert(sample_reward_account(), 5_000_000);
+    let ga = GovAction::TreasuryWithdrawals {
+        withdrawals,
+        guardrails_script_hash: Some([0xCC; 28]),
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_treasury_withdrawals_no_guardrails_round_trip() {
+    use std::collections::BTreeMap;
+    let ga = GovAction::TreasuryWithdrawals {
+        withdrawals: BTreeMap::new(),
+        guardrails_script_hash: None,
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_update_committee_round_trip() {
+    use std::collections::BTreeMap;
+    let to_remove = vec![StakeCredential::AddrKeyHash([0x01; 28])];
+    let mut to_add = BTreeMap::new();
+    to_add.insert(StakeCredential::ScriptHash([0x02; 28]), 300u64);
+    let ga = GovAction::UpdateCommittee {
+        prev_action_id: None,
+        members_to_remove: to_remove,
+        members_to_add: to_add,
+        quorum: UnitInterval { numerator: 2, denominator: 3 },
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_new_constitution_round_trip() {
+    let ga = GovAction::NewConstitution {
+        prev_action_id: Some(GovActionId {
+            transaction_id: [0xDD; 32],
+            gov_action_index: 0,
+        }),
+        constitution: Constitution {
+            anchor: Anchor {
+                url: "https://constitution.example".to_owned(),
+                data_hash: [0xEE; 32],
+            },
+            guardrails_script_hash: Some([0xFF; 28]),
+        },
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn gov_action_new_constitution_no_guardrails_round_trip() {
+    let ga = GovAction::NewConstitution {
+        prev_action_id: None,
+        constitution: Constitution {
+            anchor: Anchor {
+                url: "https://example.com/constitution".to_owned(),
+                data_hash: [0xAA; 32],
+            },
+            guardrails_script_hash: None,
+        },
+    };
+    let bytes = ga.to_cbor_bytes();
+    let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(ga, decoded);
+}
+
+#[test]
+fn constitution_round_trip() {
+    let c = Constitution {
+        anchor: Anchor {
+            url: "https://constitution.cardano".to_owned(),
+            data_hash: [0x11; 32],
+        },
+        guardrails_script_hash: Some([0x22; 28]),
+    };
+    let bytes = c.to_cbor_bytes();
+    let decoded = Constitution::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(c, decoded);
+}
+
+#[test]
+fn constitution_null_guardrails_round_trip() {
+    let c = Constitution {
+        anchor: Anchor {
+            url: "https://example.com".to_owned(),
+            data_hash: [0x33; 32],
+        },
+        guardrails_script_hash: None,
+    };
+    let bytes = c.to_cbor_bytes();
+    let decoded = Constitution::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(c, decoded);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 53: ShelleyUpdate typed struct
+// ---------------------------------------------------------------------------
+
+#[test]
+fn shelley_update_round_trip() {
+    use std::collections::BTreeMap;
+    let mut proposed = BTreeMap::new();
+    let param_update = {
+        let mut enc = Encoder::new();
+        enc.map(1).unsigned(0).unsigned(1000);
+        enc.into_bytes()
+    };
+    proposed.insert([0x01; 28], param_update);
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: proposed,
+        epoch: 50,
+    };
+    let bytes = update.to_cbor_bytes();
+    let decoded = ShelleyUpdate::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(update, decoded);
+}
+
+#[test]
+fn shelley_update_multiple_delegates_round_trip() {
+    use std::collections::BTreeMap;
+    let mut proposed = BTreeMap::new();
+    let p1 = {
+        let mut enc = Encoder::new();
+        enc.map(0);
+        enc.into_bytes()
+    };
+    let p2 = {
+        let mut enc = Encoder::new();
+        enc.map(1).unsigned(1).unsigned(500_000);
+        enc.into_bytes()
+    };
+    proposed.insert([0x01; 28], p1);
+    proposed.insert([0x02; 28], p2);
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: proposed,
+        epoch: 200,
+    };
+    let bytes = update.to_cbor_bytes();
+    let decoded = ShelleyUpdate::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(update, decoded);
+}
+
+#[test]
+fn shelley_update_empty_proposals_round_trip() {
+    use std::collections::BTreeMap;
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: BTreeMap::new(),
+        epoch: 0,
+    };
+    let bytes = update.to_cbor_bytes();
+    let decoded = ShelleyUpdate::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(update, decoded);
+}
+
+#[test]
+fn proposal_procedure_with_typed_gov_action_all_variants() {
+    // Exercise proposal procedure with each GovAction variant
+    for gov_action in [
+        GovAction::InfoAction,
+        GovAction::NoConfidence { prev_action_id: None },
+        GovAction::HardForkInitiation {
+            prev_action_id: None,
+            protocol_version: (9, 0),
+        },
+    ] {
+        let prop = ProposalProcedure {
+            deposit: 1_000_000,
+            reward_account: vec![0xE0, 0x01],
+            gov_action,
+            anchor: Anchor {
+                url: "https://example.com".to_owned(),
+                data_hash: [0xAA; 32],
+            },
+        };
+        let bytes = prop.to_cbor_bytes();
+        let decoded = ProposalProcedure::from_cbor_bytes(&bytes).expect("decode");
+        assert_eq!(prop, decoded);
+    }
 }
