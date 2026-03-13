@@ -47,7 +47,10 @@ pub use state::LedgerState;
 
 // -- Tx/Block re-exports ------------------------------------------------------
 /// Transaction and block wrapper types.
-pub use tx::{Block, BlockHeader, Tx};
+pub use tx::{
+    AlonzoCompatibleSubmittedTx, Block, BlockHeader, MultiEraSubmittedTx,
+    ShelleyCompatibleSubmittedTx, Tx, compute_tx_id,
+};
 
 // -- Type re-exports ----------------------------------------------------------
 pub use types::{

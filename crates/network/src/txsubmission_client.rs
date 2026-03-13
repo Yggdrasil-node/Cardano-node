@@ -12,7 +12,8 @@ use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
-use yggdrasil_ledger::{Tx, TxId};
+use std::collections::{BTreeSet, VecDeque};
+use yggdrasil_ledger::{MultiEraSubmittedTx, Tx, TxId};
 
 // ---------------------------------------------------------------------------
 // Server request types
@@ -63,6 +64,46 @@ pub enum TxSubmissionClientError {
     /// Unexpected message from the server.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+
+    /// The server acknowledged more transaction identifiers than are
+    /// outstanding in the client FIFO.
+    #[error("server acknowledged {ack} txids but only {outstanding} are outstanding")]
+    AckedTooManyTxIds { ack: u16, outstanding: u16 },
+
+    /// The server used a blocking txid request while the client still has
+    /// outstanding unacknowledged transaction identifiers.
+    #[error("blocking txid request with {remaining} outstanding txids")]
+    BlockingRequestHasOutstandingTxIds { remaining: u16 },
+
+    /// The server used a non-blocking txid request even though the client has
+    /// no outstanding unacknowledged transaction identifiers.
+    #[error("non-blocking txid request with no outstanding txids")]
+    NonBlockingRequestWithoutOutstandingTxIds,
+
+    /// The server requested a transaction identifier that is not currently
+    /// outstanding and requestable.
+    #[error("server requested unavailable txid {txid}")]
+    RequestedUnavailableTxId { txid: TxId },
+
+    /// The client attempted to advertise the same outstanding transaction id
+    /// more than once.
+    #[error("duplicate outstanding advertised txid {txid}")]
+    DuplicateAdvertisedTxId { txid: TxId },
+
+    /// A blocking txid request must be answered with at least one txid or a
+    /// `MsgDone` termination.
+    #[error("blocking txid request cannot be answered with an empty txid list")]
+    EmptyBlockingReplyTxIds,
+
+    /// The client attempted to reply with more transactions than were
+    /// requested.
+    #[error("client returned {returned} txs but only {requested} were requested")]
+    TooManyTransactionsReturned { returned: usize, requested: usize },
+
+    /// The client attempted to return a typed transaction that was not part of
+    /// the current request.
+    #[error("client returned unrequested txid {txid}")]
+    ReturnedUnrequestedTxId { txid: TxId },
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +121,9 @@ pub enum TxSubmissionClientError {
 pub struct TxSubmissionClient {
     channel: MessageChannel,
     state: TxSubmissionState,
+    outstanding_txids: VecDeque<TxId>,
+    requestable_txids: BTreeSet<TxId>,
+    requested_txids: Vec<TxId>,
 }
 
 impl TxSubmissionClient {
@@ -90,12 +134,21 @@ impl TxSubmissionClient {
         Self {
             channel: MessageChannel::new(handle),
             state: TxSubmissionState::StInit,
+            outstanding_txids: VecDeque::new(),
+            requestable_txids: BTreeSet::new(),
+            requested_txids: Vec::new(),
         }
     }
 
     /// Returns the current protocol state.
     pub fn state(&self) -> TxSubmissionState {
         self.state
+    }
+
+    /// Returns the outstanding transaction-id FIFO maintained for
+    /// acknowledgement tracking.
+    pub fn outstanding_txids(&self) -> Vec<TxId> {
+        self.outstanding_txids.iter().copied().collect()
     }
 
     // -- helpers ----------------------------------------------------------
@@ -140,9 +193,30 @@ impl TxSubmissionClient {
         let msg = self.recv_msg().await?;
         match msg {
             TxSubmissionMessage::MsgRequestTxIds { blocking, ack, req } => {
+                self.apply_acknowledgements(ack)?;
+                if blocking {
+                    if !self.outstanding_txids.is_empty() {
+                        return Err(TxSubmissionClientError::BlockingRequestHasOutstandingTxIds {
+                            remaining: self.outstanding_txids.len() as u16,
+                        });
+                    }
+                } else if self.outstanding_txids.is_empty() {
+                    return Err(
+                        TxSubmissionClientError::NonBlockingRequestWithoutOutstandingTxIds,
+                    );
+                }
                 Ok(TxServerRequest::RequestTxIds { blocking, ack, req })
             }
             TxSubmissionMessage::MsgRequestTxs { txids } => {
+                let mut seen = BTreeSet::new();
+                for txid in &txids {
+                    if !seen.insert(*txid) || !self.requestable_txids.remove(txid) {
+                        return Err(TxSubmissionClientError::RequestedUnavailableTxId {
+                            txid: *txid,
+                        });
+                    }
+                }
+                self.requested_txids = txids.clone();
                 Ok(TxServerRequest::RequestTxs { txids })
             }
             other => Err(TxSubmissionClientError::UnexpectedMessage(
@@ -158,8 +232,26 @@ impl TxSubmissionClient {
         &mut self,
         txids: Vec<TxIdAndSize>,
     ) -> Result<(), TxSubmissionClientError> {
+        if matches!(self.state, TxSubmissionState::StTxIds { blocking: true }) && txids.is_empty() {
+            return Err(TxSubmissionClientError::EmptyBlockingReplyTxIds);
+        }
+        for item in &txids {
+            if self.requestable_txids.contains(&item.txid)
+                || self.outstanding_txids.iter().any(|txid| *txid == item.txid)
+            {
+                return Err(TxSubmissionClientError::DuplicateAdvertisedTxId {
+                    txid: item.txid,
+                });
+            }
+        }
+        let advertised_txids: Vec<_> = txids.iter().map(|item| item.txid).collect();
         self.send_msg(&TxSubmissionMessage::MsgReplyTxIds { txids })
-            .await
+            .await?;
+        for txid in advertised_txids {
+            self.outstanding_txids.push_back(txid);
+            self.requestable_txids.insert(txid);
+        }
+        Ok(())
     }
 
     /// Reply with transaction bodies.
@@ -169,8 +261,7 @@ impl TxSubmissionClient {
         &mut self,
         txs: Vec<Vec<u8>>,
     ) -> Result<(), TxSubmissionClientError> {
-        self.send_msg(&TxSubmissionMessage::MsgReplyTxs { txs })
-            .await
+        self.reply_txs_internal(None, txs).await
     }
 
     /// Reply with typed ledger transactions.
@@ -181,8 +272,22 @@ impl TxSubmissionClient {
         &mut self,
         txs: Vec<Tx>,
     ) -> Result<(), TxSubmissionClientError> {
-        self.reply_txs(txs.into_iter().map(|tx| tx.body).collect())
-            .await
+        let txids = txs.iter().map(|tx| tx.id).collect();
+        let txs = txs.into_iter().map(|tx| tx.body).collect();
+        self.reply_txs_internal(Some(txids), txs).await
+    }
+
+    /// Reply with typed multi-era submitted transactions.
+    ///
+    /// Each transaction is serialized using the exact or reconstructed CBOR
+    /// bytes carried by the ledger submission wrapper.
+    pub async fn reply_txs_multi_era(
+        &mut self,
+        txs: Vec<MultiEraSubmittedTx>,
+    ) -> Result<(), TxSubmissionClientError> {
+        let txids = txs.iter().map(MultiEraSubmittedTx::tx_id).collect();
+        let txs = txs.into_iter().map(|tx| tx.raw_cbor()).collect();
+        self.reply_txs_internal(Some(txids), txs).await
     }
 
     /// Send `MsgDone` to terminate the protocol.
@@ -190,5 +295,50 @@ impl TxSubmissionClient {
     /// The client must be in `StTxIds { blocking: true }`.
     pub async fn done(mut self) -> Result<(), TxSubmissionClientError> {
         self.send_msg(&TxSubmissionMessage::MsgDone).await
+    }
+
+    fn apply_acknowledgements(&mut self, ack: u16) -> Result<(), TxSubmissionClientError> {
+        if usize::from(ack) > self.outstanding_txids.len() {
+            return Err(TxSubmissionClientError::AckedTooManyTxIds {
+                ack,
+                outstanding: self.outstanding_txids.len() as u16,
+            });
+        }
+
+        for _ in 0..ack {
+            if let Some(txid) = self.outstanding_txids.pop_front() {
+                self.requestable_txids.remove(&txid);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn reply_txs_internal(
+        &mut self,
+        returned_txids: Option<Vec<TxId>>,
+        txs: Vec<Vec<u8>>,
+    ) -> Result<(), TxSubmissionClientError> {
+        let requested = self.requested_txids.clone();
+        if txs.len() > requested.len() {
+            return Err(TxSubmissionClientError::TooManyTransactionsReturned {
+                returned: txs.len(),
+                requested: requested.len(),
+            });
+        }
+
+        if let Some(returned_txids) = returned_txids {
+            let requested_set: BTreeSet<_> = requested.iter().copied().collect();
+            let mut seen = BTreeSet::new();
+            for txid in returned_txids {
+                if !seen.insert(txid) || !requested_set.contains(&txid) {
+                    return Err(TxSubmissionClientError::ReturnedUnrequestedTxId { txid });
+                }
+            }
+        }
+
+        self.send_msg(&TxSubmissionMessage::MsgReplyTxs { txs }).await?;
+        self.requested_txids.clear();
+        Ok(())
     }
 }

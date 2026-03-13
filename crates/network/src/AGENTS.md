@@ -25,5 +25,5 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 - TCP bearer and SDU framing are implemented and tested.
 - Mux/demux routing is implemented with per-protocol handles.
 - Large-message SDU segmentation/reassembly is implemented via `MAX_SEGMENT_SIZE` + `MessageChannel`.
-- Typed ChainSync, BlockFetch, KeepAlive, and TxSubmission client drivers are in place. TxSubmission now uses typed ledger `TxId` values for request/advertise flows and provides a typed `reply_txs_typed(Vec<Tx>)` client helper while preserving raw wire bodies.
+- Typed ChainSync, BlockFetch, KeepAlive, and TxSubmission client drivers are in place. TxSubmission now uses typed ledger `TxId` values for request/advertise flows, provides typed reply helpers for both `Vec<Tx>` and `Vec<MultiEraSubmittedTx>`, and maintains an outstanding/requestable TxId FIFO so invalid acknowledgements and transaction requests are rejected before replying while preserving raw wire bodies.
 - Next: typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical).

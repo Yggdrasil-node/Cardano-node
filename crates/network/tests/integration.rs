@@ -11,7 +11,7 @@ use yggdrasil_network::{
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
-use yggdrasil_ledger::{CborDecode, CborEncode, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo, Tx, TxId};
+use yggdrasil_ledger::{CborDecode, CborEncode, HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId};
 
 fn sample_vrf_cert(seed: u8) -> ShelleyVrfCert {
     ShelleyVrfCert {
@@ -62,11 +62,36 @@ fn sample_tx_id(seed: u8) -> TxId {
     TxId([seed; 32])
 }
 
-fn sample_tx(seed: u8) -> Tx {
-    Tx {
-        id: sample_tx_id(seed),
-        body: vec![seed, seed.wrapping_add(1), seed.wrapping_add(2)],
-    }
+fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
+    MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body: ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [seed; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 28],
+                amount: 2_000_000,
+            }],
+            fee: 150_000,
+            ttl: 123_456,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        },
+        witness_set: ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        auxiliary_data: Some(vec![0x81, seed]),
+    })
 }
 
 // ===========================================================================
@@ -2982,7 +3007,7 @@ async fn txsubmission_client_init_and_reply_txids() {
 
         // Send MsgRequestTxIds (non-blocking).
         let req = TxSubmissionMessage::MsgRequestTxIds {
-            blocking: false,
+            blocking: true,
             ack: 0,
             req: 3,
         };
@@ -3010,7 +3035,7 @@ async fn txsubmission_client_init_and_reply_txids() {
     assert_eq!(
         req,
         TxServerRequest::RequestTxIds {
-            blocking: false,
+            blocking: true,
             ack: 0,
             req: 3,
         }
@@ -3048,6 +3073,28 @@ async fn txsubmission_client_reply_txs() {
         // MsgInit.
         let _raw = sh.recv().await.expect("recv init");
 
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 2,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send request_tx_ids");
+
+        let raw = sh.recv().await.expect("recv reply_txids");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            TxSubmissionMessage::MsgReplyTxIds { txids } => {
+                assert_eq!(txids.len(), 2);
+                assert_eq!(txids[0].txid, sample_tx_id(0x0A));
+                assert_eq!(txids[1].txid, sample_tx_id(0x0B));
+            }
+            _ => panic!("expected MsgReplyTxIds"),
+        }
+
         // MsgRequestTxs.
         let req = TxSubmissionMessage::MsgRequestTxs {
             txids: vec![sample_tx_id(0x0A), sample_tx_id(0x0B)],
@@ -3068,6 +3115,29 @@ async fn txsubmission_client_reply_txs() {
     });
 
     client.init().await.expect("init");
+
+    let req = client.recv_request().await.expect("recv txid request");
+    assert_eq!(
+        req,
+        TxServerRequest::RequestTxIds {
+            blocking: true,
+            ack: 0,
+            req: 2,
+        }
+    );
+    client
+        .reply_tx_ids(vec![
+            TxIdAndSize {
+                txid: sample_tx_id(0x0A),
+                size: 6,
+            },
+            TxIdAndSize {
+                txid: sample_tx_id(0x0B),
+                size: 6,
+            },
+        ])
+        .await
+        .expect("reply_tx_ids");
 
     let req = client.recv_request().await.expect("recv_request");
     assert_eq!(
@@ -3136,6 +3206,10 @@ async fn txsubmission_client_done_from_blocking() {
 async fn txsubmission_client_full_session() {
     let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
     let mut client = TxSubmissionClient::new(c_handle);
+    let submitted = sample_shelley_submitted_tx(0x44);
+    let submitted_bytes = submitted.raw_cbor();
+    let submitted_size = submitted_bytes.len() as u32;
+    let submitted_txid = submitted.tx_id();
 
     let server = tokio::spawn(async move {
         let mut sh = s_handle;
@@ -3146,7 +3220,7 @@ async fn txsubmission_client_full_session() {
         // 2. Non-blocking MsgRequestTxIds.
         sh.send(
             TxSubmissionMessage::MsgRequestTxIds {
-                blocking: false,
+                blocking: true,
                 ack: 0,
                 req: 5,
             }
@@ -3180,7 +3254,7 @@ async fn txsubmission_client_full_session() {
         match msg {
             TxSubmissionMessage::MsgReplyTxs { txs } => {
                 assert_eq!(txs.len(), 1);
-                assert_eq!(txs[0], b"full-tx-body");
+                assert_eq!(txs[0], submitted_bytes);
             }
             _ => panic!("expected MsgReplyTxs"),
         }
@@ -3211,8 +3285,8 @@ async fn txsubmission_client_full_session() {
     assert!(matches!(req, TxServerRequest::RequestTxIds { .. }));
     client
         .reply_tx_ids(vec![TxIdAndSize {
-            txid: sample_tx_id(0x44),
-            size: 50,
+            txid: submitted_txid,
+            size: submitted_size,
         }])
         .await
         .expect("reply_tx_ids");
@@ -3222,14 +3296,11 @@ async fn txsubmission_client_full_session() {
     assert_eq!(
         req,
         TxServerRequest::RequestTxs {
-            txids: vec![sample_tx_id(0x44)],
+            txids: vec![submitted_txid],
         }
     );
     client
-        .reply_txs_typed(vec![Tx {
-            body: b"full-tx-body".to_vec(),
-            ..sample_tx(0x44)
-        }])
+        .reply_txs_multi_era(vec![submitted])
         .await
         .expect("reply_txs");
 
@@ -3243,6 +3314,237 @@ async fn txsubmission_client_full_session() {
         }
     ));
     client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_rejects_acknowledging_too_many_txids() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        let _ = sh.recv().await.expect("recv init");
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send first request");
+
+        let _ = sh.recv().await.expect("recv reply_txids");
+
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 2,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send invalid ack request");
+    });
+
+    client.init().await.expect("init");
+    let _ = client.recv_request().await.expect("recv first request");
+    client
+        .reply_tx_ids(vec![TxIdAndSize {
+            txid: sample_tx_id(0x31),
+            size: 10,
+        }])
+        .await
+        .expect("reply txids");
+
+    let err = client.recv_request().await.expect_err("ack should fail");
+    assert!(matches!(
+        err,
+        yggdrasil_network::TxSubmissionClientError::AckedTooManyTxIds {
+            ack: 2,
+            outstanding: 1,
+        }
+    ));
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_rejects_blocking_request_with_outstanding_txids() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        let _ = sh.recv().await.expect("recv init");
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send first request");
+
+        let _ = sh.recv().await.expect("recv reply_txids");
+
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send invalid blocking request");
+    });
+
+    client.init().await.expect("init");
+    let _ = client.recv_request().await.expect("recv first request");
+    client
+        .reply_tx_ids(vec![TxIdAndSize {
+            txid: sample_tx_id(0x32),
+            size: 10,
+        }])
+        .await
+        .expect("reply txids");
+
+    let err = client.recv_request().await.expect_err("blocking request should fail");
+    assert!(matches!(
+        err,
+        yggdrasil_network::TxSubmissionClientError::BlockingRequestHasOutstandingTxIds {
+            remaining: 1,
+        }
+    ));
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_rejects_unavailable_tx_requests() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        let _ = sh.recv().await.expect("recv init");
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send first request");
+
+        let _ = sh.recv().await.expect("recv reply_txids");
+
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxs {
+                txids: vec![sample_tx_id(0x99)],
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send invalid request_txs");
+    });
+
+    client.init().await.expect("init");
+    let _ = client.recv_request().await.expect("recv first request");
+    client
+        .reply_tx_ids(vec![TxIdAndSize {
+            txid: sample_tx_id(0x33),
+            size: 10,
+        }])
+        .await
+        .expect("reply txids");
+
+    let err = client.recv_request().await.expect_err("unknown txid request should fail");
+    assert!(matches!(
+        err,
+        yggdrasil_network::TxSubmissionClientError::RequestedUnavailableTxId { txid }
+        if txid == sample_tx_id(0x99)
+    ));
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_rejects_unrequested_typed_tx_reply() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        let _ = sh.recv().await.expect("recv init");
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send first request");
+
+        let _ = sh.recv().await.expect("recv reply_txids");
+
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxs {
+                txids: vec![sample_tx_id(0x44)],
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send request_txs");
+    });
+
+    client.init().await.expect("init");
+    let _ = client.recv_request().await.expect("recv first request");
+    client
+        .reply_tx_ids(vec![TxIdAndSize {
+            txid: sample_tx_id(0x44),
+            size: 50,
+        }])
+        .await
+        .expect("reply txids");
+
+    let _ = client.recv_request().await.expect("recv tx request");
+    let err = client
+        .reply_txs_multi_era(vec![sample_shelley_submitted_tx(0x55)])
+        .await
+        .expect_err("typed reply with wrong txid should fail");
+    assert!(matches!(
+        err,
+        yggdrasil_network::TxSubmissionClientError::ReturnedUnrequestedTxId { txid }
+        if txid == sample_shelley_submitted_tx(0x55).tx_id()
+    ));
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;

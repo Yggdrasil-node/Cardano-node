@@ -84,6 +84,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, TTL-aware admission (`insert_checked`, `purge_expired`), and iterator support.
 - `crates/ledger`:
   - `LedgerState` with dual UTxO: legacy `ShelleyUtxo` + generalized `MultiEraUtxo`, era-aware `apply_block()` dispatch (Shelley through Conway).
+  - Submitted-transaction abstractions in `tx.rs`: `compute_tx_id`, `ShelleyCompatibleSubmittedTx<TBody>`, `AlonzoCompatibleSubmittedTx<TBody>`, and `MultiEraSubmittedTx::from_cbor_bytes_for_era()` for Shelley-based transaction relay boundaries.
   - `MultiEraUtxo` with per-era apply methods, coin/multi-asset preservation, TTL/validity-interval checks.
   - `MultiEraTxOut` enum (Shelley/Mary/Alonzo/Babbage variants) with `coin()`/`value()`/`address()` accessors.
   - Allegra era types (`AllegraTxBody`, `NativeScript`).

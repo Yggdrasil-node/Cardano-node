@@ -1,15 +1,16 @@
 use yggdrasil_ledger::{
-    Address, AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, BabbageBlock, BabbageTxBody,
-    BabbageTxOut, BaseAddress, Block, BlockHeader, BlockNo, BootstrapWitness, ByronBlock,
-    CborDecode, CborEncode, Constitution, ConwayBlock, ConwayTxBody, DCert, DRep, DatumOption,
-    Decoder, Encoder, EnterpriseAddress, Era, EpochNo, ExUnits, GovAction, GovActionId, HeaderHash,
-    LedgerError, LedgerState, MaryTxBody, MaryTxOut, MultiEraTxOut, MultiEraUtxo, NativeScript,
-    Nonce, PlutusData, Point, PointerAddress, PoolMetadata, PoolParams, PraosHeader,
-    PraosHeaderBody, ProposalProcedure, Redeemer, Relay, RewardAccount, Script, ScriptRef,
-    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody,
-    ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert,
-    ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value, Vote, Voter,
-    VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
+    Address, AllegraTxBody, AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Anchor,
+    BabbageBlock, BabbageTxBody, BabbageTxOut, BaseAddress, Block, BlockHeader, BlockNo,
+    BootstrapWitness, ByronBlock, CborDecode, CborEncode, Constitution, ConwayBlock,
+    ConwayTxBody, DCert, DRep, DatumOption, Decoder, Encoder, EnterpriseAddress, Era, EpochNo,
+    ExUnits, GovAction, GovActionId, HeaderHash, LedgerError, LedgerState, MaryTxBody,
+    MaryTxOut, MultiEraSubmittedTx, MultiEraTxOut, MultiEraUtxo, NativeScript, Nonce,
+    PlutusData, Point, PointerAddress, PoolMetadata, PoolParams, PraosHeader, PraosHeaderBody,
+    ProposalProcedure, Redeemer, Relay, RewardAccount, Script, ScriptRef, ShelleyBlock,
+    ShelleyCompatibleSubmittedTx, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
+    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness,
+    ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value, Vote,
+    Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH, compute_tx_id,
 };
 
 #[test]
@@ -905,6 +906,187 @@ fn shelley_tx_encoding_is_three_element_array() {
     let mut dec = Decoder::new(&bytes);
     let len = dec.array().expect("top-level array");
     assert_eq!(len, 3, "Shelley tx must be a 3-element array");
+}
+
+#[test]
+fn shelley_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
+    let tx = ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x21; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 28],
+                amount: 3_000_000,
+            }],
+            fee: 175_000,
+            ttl: 31_000_000,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        },
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        Some(vec![0x81, 0x01]),
+    );
+
+    let bytes = tx.to_cbor_bytes();
+    let decoded = ShelleyCompatibleSubmittedTx::<ShelleyTxBody>::from_cbor_bytes(&bytes)
+        .expect("Shelley-compatible submitted tx round-trip");
+
+    assert_eq!(decoded, tx);
+    assert_eq!(decoded.raw_cbor, bytes);
+    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.body.to_cbor_bytes()));
+}
+
+#[test]
+fn alonzo_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
+    let tx = AlonzoCompatibleSubmittedTx::new(
+        AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x31; 32],
+                index: 1,
+            }],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 28],
+                amount: Value::Coin(2_500_000),
+                datum_hash: None,
+            }],
+            fee: 250_000,
+            ttl: Some(800_000),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        },
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        false,
+        Some(vec![0x81, 0x02]),
+    );
+
+    let bytes = tx.to_cbor_bytes();
+    let decoded = AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(&bytes)
+        .expect("Alonzo-compatible submitted tx round-trip");
+
+    assert_eq!(decoded, tx);
+    assert_eq!(decoded.raw_cbor, bytes);
+    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.body.to_cbor_bytes()));
+}
+
+#[test]
+fn multi_era_submitted_tx_decodes_shelley_and_alonzo_shapes() {
+    let shelley = ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x41; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 28],
+                amount: 4_000_000,
+            }],
+            fee: 180_000,
+            ttl: 32_000_000,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        },
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        None,
+    )
+    .to_cbor_bytes();
+
+    let alonzo = AlonzoCompatibleSubmittedTx::new(
+        AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x42; 32],
+                index: 0,
+            }],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 28],
+                amount: Value::Coin(5_000_000),
+                datum_hash: None,
+            }],
+            fee: 260_000,
+            ttl: Some(900_000),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        },
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        true,
+        None,
+    )
+    .to_cbor_bytes();
+
+    let shelley_decoded = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Shelley, &shelley)
+        .expect("decode Shelley submitted tx");
+    let alonzo_decoded = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Alonzo, &alonzo)
+        .expect("decode Alonzo submitted tx");
+
+    assert_eq!(shelley_decoded.era(), Era::Shelley);
+    assert_eq!(alonzo_decoded.era(), Era::Alonzo);
+    assert_eq!(shelley_decoded.tx_id(), compute_tx_id(&match &shelley_decoded {
+        MultiEraSubmittedTx::Shelley(tx) => tx.body.to_cbor_bytes(),
+        _ => unreachable!("decoded Shelley tx should stay Shelley"),
+    }));
+    assert_eq!(alonzo_decoded.tx_id(), compute_tx_id(&match &alonzo_decoded {
+        MultiEraSubmittedTx::Alonzo(tx) => tx.body.to_cbor_bytes(),
+        _ => unreachable!("decoded Alonzo tx should stay Alonzo"),
+    }));
+    assert_eq!(shelley_decoded.raw_cbor(), shelley);
+    assert_eq!(alonzo_decoded.raw_cbor(), alonzo);
 }
 
 #[test]

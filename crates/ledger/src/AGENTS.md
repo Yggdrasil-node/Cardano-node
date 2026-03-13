@@ -22,6 +22,7 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 ## Current Phase
 - Hand-rolled CBOR encoder/decoder supports major Cardano-required primitives including signed integers (`integer()`).
 - Shared typed core identifiers and point/nonce primitives are in place.
+- Shared transaction plumbing now includes `compute_tx_id` plus submitted-transaction wrappers for Shelley-family and Alonzo-family wire shapes, with `MultiEraSubmittedTx` as the era-directed decode boundary for node-to-node relay work.
 - Credential and address types landed: `StakeCredential` (key-hash/script-hash), `RewardAccount` (29-byte structured), `Address` (Base/Enterprise/Pointer/Reward/Byron variants), with CBOR codecs and variable-length natural encoding for pointer addresses.
 - Certificate hierarchy landed in `types.rs`: `Anchor` (moved from conway.rs), `UnitInterval` (tag-30 rational), `Relay` (3-variant), `PoolMetadata`, `PoolParams` (9-field inline group), `DRep` (4-variant Conway), `DCert` (19-variant flat enum covering Shelley tags 0–5 and Conway tags 7–18), all with CBOR codecs in `cbor.rs`.
 - `LedgerState` owns dual UTxO sets: `ShelleyUtxo` (legacy, for backward compat) and `MultiEraUtxo` (generalized). `apply_block()` dispatches per era with atomic block application and full CBOR decode + UTxO validation.
