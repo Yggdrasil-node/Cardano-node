@@ -14,7 +14,7 @@ pub use sync::{
 	decode_multi_era_blocks, decode_point, decode_shelley_blocks, decode_shelley_header,
 	evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
 	praos_header_body_to_consensus, praos_header_to_consensus, run_sync_service,
-	shelley_block_to_block, shelley_header_body_to_consensus, shelley_header_to_consensus,
+	shelley_block_to_block, alonzo_block_to_block, shelley_header_body_to_consensus, shelley_header_to_consensus,
 	shelley_opcert_to_consensus, sync_batch_apply, sync_batch_apply_verified, sync_step,
 	sync_step_decoded, sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed,
 	sync_until_typed, typed_find_intersect, verify_block_body_hash, verify_multi_era_block,

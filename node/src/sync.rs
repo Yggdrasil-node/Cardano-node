@@ -924,7 +924,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
 }
 
 /// Convert a typed Alonzo block into the generic ledger `Block` wrapper.
-fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
+pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
     let body = &block.header.body;
     let hash = block.header_hash();
     let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
@@ -1337,6 +1337,11 @@ pub struct MultiEraSyncProgress {
 pub fn extract_tx_ids(block: &MultiEraBlock) -> Vec<TxId> {
     match block {
         MultiEraBlock::Shelley(shelley) => shelley
+            .transaction_bodies
+            .iter()
+            .map(|body| compute_tx_id(&body.to_cbor_bytes()))
+            .collect(),
+        MultiEraBlock::Alonzo(alonzo) => alonzo
             .transaction_bodies
             .iter()
             .map(|body| compute_tx_id(&body.to_cbor_bytes()))
