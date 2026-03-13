@@ -514,6 +514,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "yggdrasil-consensus",
+ "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-mempool",
  "yggdrasil-network",

@@ -10,6 +10,7 @@ eyre.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 yggdrasil-consensus.workspace = true
+yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true
 yggdrasil-mempool.workspace = true
 yggdrasil-network.workspace = true

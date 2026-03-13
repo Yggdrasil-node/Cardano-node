@@ -24,4 +24,8 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`).
 - First sync orchestration slice is implemented (`sync_step`, `sync_steps`).
 - Shelley block deserialization bridge is implemented (`sync_step_decoded`, `decode_shelley_blocks`).
-- Next: staged handoff into ledger/storage apply paths and long-running sync loop integration.
+- Typed ChainSync decode bridge is implemented (`sync_step_typed`, `decode_shelley_header`, `decode_point`).
+- Typed multi-step orchestration is implemented (`sync_steps_typed`, `TypedSyncProgress`).
+- Bounded typed loop and storage handoff helpers are implemented (`sync_until_typed`, `apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`).
+- Typed intersection finding (`typed_find_intersect`), batch sync-and-apply (`sync_batch_apply`), and KeepAlive heartbeat (`keepalive_heartbeat`) are implemented.
+- Next: long-running managed sync service with graceful shutdown, then staged consensus/ledger integration on fetched blocks.

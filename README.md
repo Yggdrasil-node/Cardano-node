@@ -26,6 +26,12 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 - SDU segmentation/reassembly support for large protocol messages via mux segmentation and `MessageChannel` reassembly.
 - Node runtime bootstrap (`NodeConfig`, `PeerSession`, `bootstrap`) and first sync orchestration helpers (`sync_step`, `sync_steps`) coordinating ChainSync + BlockFetch.
 - Node Shelley decode bridge (`sync_step_decoded`, `decode_shelley_blocks`) for typed block handoff from BlockFetch bytes.
+- Node typed sync-step bridge (`sync_step_typed`, `decode_shelley_header`, `decode_point`) for decoding ChainSync header/point/tip payloads into ledger types.
+- Node typed multi-step orchestration (`sync_steps_typed`, `TypedSyncProgress`) for progress tracking across roll-forward and rollback sequences.
+- Bounded typed sync loop (`sync_until_typed`) and volatile storage handoff helpers (`apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`).
+- Typed intersection finding (`typed_find_intersect`) for chain resume from known points.
+- Batch sync-and-apply composition (`sync_batch_apply`) combining sync + volatile storage writes.
+- KeepAlive heartbeat runner (`keepalive_heartbeat`) for concurrent connection liveness.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
 ### In Progress
@@ -137,7 +143,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 ## Next Development Phases
 
-1. Extend decode bridging from Shelley block bodies to typed ChainSync point/tip/header structures.
-2. Extend sync orchestration from step helpers to a resilient long-running pipeline with storage handoff.
-3. Add staged consensus + ledger integration checks around fetched headers/blocks.
+1. Wire long-running managed sync service (continuous batch loop with graceful shutdown).
+2. Add staged consensus + ledger integration checks around fetched headers/blocks.
+3. Expand typed decode coverage beyond Shelley-first assumptions.
 4. Expand parity testing against pinned upstream fixtures and behavior traces.

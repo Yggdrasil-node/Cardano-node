@@ -60,7 +60,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - Workspace foundation is complete and compileable.
 - Active implementation work is in progress across `crates/crypto`, `crates/cddl-codegen`, `crates/ledger`, `crates/network`, and `node/`.
 - `crates/network` now includes handshake + mux + peer lifecycle, all four mini-protocol state machines/wire codecs, typed client drivers, and SDU segmentation/reassembly support for large protocol messages.
-- `node/` now includes connection bootstrap (`NodeConfig`, `PeerSession`, `bootstrap`), first sync orchestration (`sync_step`, `sync_steps`), and a Shelley block deserialization bridge (`sync_step_decoded`, `decode_shelley_blocks`).
+- `node/` now includes connection bootstrap (`NodeConfig`, `PeerSession`, `bootstrap`), first sync orchestration (`sync_step`, `sync_steps`), a Shelley block deserialization bridge (`sync_step_decoded`, `decode_shelley_blocks`), typed ChainSync decode helpers (`sync_step_typed`, `decode_shelley_header`, `decode_point`), bounded typed looping (`sync_until_typed`), volatile storage handoff helpers (`apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`), typed intersection finding (`typed_find_intersect`), batch sync-and-apply composition (`sync_batch_apply`), and KeepAlive heartbeat (`keepalive_heartbeat`).
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
 
 Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.
