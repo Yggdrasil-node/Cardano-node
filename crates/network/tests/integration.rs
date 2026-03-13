@@ -1929,6 +1929,7 @@ async fn chainsync_client_request_next_decoded_header_decodes_shelley_header() {
     let mut client = ChainSyncClient::new(c_handle);
     let header = sample_shelley_header();
     let tip = Point::BlockPoint(SlotNo(500), HeaderHash([0xCC; 32]));
+    let expected_header = header.clone();
 
     let server = tokio::spawn(async move {
         let mut sh = s_handle;
@@ -1946,7 +1947,7 @@ async fn chainsync_client_request_next_decoded_header_decodes_shelley_header() {
         .expect("request_next_decoded_header");
     assert_eq!(
         resp,
-        DecodedHeaderNextResponse::RollForward { header, tip }
+        DecodedHeaderNextResponse::RollForward { header: expected_header, tip }
     );
 
     server.await.expect("server task");

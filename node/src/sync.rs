@@ -15,7 +15,7 @@ use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_network::{
     BatchResponse, BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient,
     ChainSyncClientError, DecodedHeaderNextResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
-    TypedIntersectResponse, TypedNextResponse,
+    TypedIntersectResponse,
 };
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
