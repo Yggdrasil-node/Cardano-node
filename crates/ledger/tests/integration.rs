@@ -445,6 +445,9 @@ fn shelley_tx_body_cbor_round_trip_required_fields() {
         }],
         fee: 180_000,
         ttl: 50_000_000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     let bytes = body.to_cbor_bytes();
@@ -465,6 +468,9 @@ fn shelley_tx_body_cbor_with_metadata_hash() {
         }],
         fee: 200_000,
         ttl: 100_000_000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: Some([0xDD; 32]),
     };
     let bytes = body.to_cbor_bytes();
@@ -480,6 +486,9 @@ fn shelley_tx_body_encoding_is_map() {
         outputs: vec![],
         fee: 0,
         ttl: 0,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     let bytes = body.to_cbor_bytes();
@@ -495,6 +504,9 @@ fn shelley_tx_body_map_has_5_entries_with_metadata_hash() {
         outputs: vec![],
         fee: 0,
         ttl: 0,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: Some([0xFF; 32]),
     };
     let bytes = body.to_cbor_bytes();
@@ -567,6 +579,9 @@ fn shelley_tx_cbor_round_trip_no_metadata() {
             }],
             fee: 170_000,
             ttl: 30_000_000,
+            certificates: None,
+            withdrawals: None,
+            update: None,
             auxiliary_data_hash: None,
         },
         witness_set: ShelleyWitnessSet {
@@ -592,6 +607,9 @@ fn shelley_tx_encoding_is_three_element_array() {
             outputs: vec![],
             fee: 0,
             ttl: 0,
+            certificates: None,
+            withdrawals: None,
+            update: None,
             auxiliary_data_hash: None,
         },
         witness_set: ShelleyWitnessSet {
@@ -673,6 +691,9 @@ fn utxo_apply_tx_happy_path() {
         ],
         fee: 200_000,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -707,6 +728,9 @@ fn utxo_rejects_expired_tx() {
         outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 4_800_000 }],
         fee: 200_000,
         ttl: 99,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -726,6 +750,9 @@ fn utxo_rejects_missing_input() {
         outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 4_800_000 }],
         fee: 200_000,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -745,6 +772,9 @@ fn utxo_rejects_value_not_preserved() {
         outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 10_000_000 }],
         fee: 200_000,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -768,6 +798,9 @@ fn utxo_rejects_no_inputs() {
         outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 0 }],
         fee: 0,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     let err = utxo.apply_tx([0xEE; 32], &body, 500).expect_err("no inputs");
@@ -784,6 +817,9 @@ fn utxo_rejects_no_outputs() {
         outputs: vec![],
         fee: 5_000_000,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     let err = utxo.apply_tx([0xFF; 32], &body, 500).expect_err("no outputs");
@@ -801,6 +837,9 @@ fn utxo_ttl_equal_to_slot_is_valid() {
         outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 800_000 }],
         fee: 200_000,
         ttl: 500,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     utxo.apply_tx([0xAA; 32], &body, 500)
@@ -828,6 +867,9 @@ fn utxo_multi_input_multi_output() {
         ],
         fee: 500_000,
         ttl: 10_000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -853,6 +895,9 @@ fn utxo_chained_transactions() {
         ],
         fee: 200_000,
         ttl: 10_000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     utxo.apply_tx(tx1_id, &body1, 100).expect("tx1");
@@ -865,6 +910,9 @@ fn utxo_chained_transactions() {
         outputs: vec![ShelleyTxOut { address: vec![0xC0; 57], amount: 29_700_000 }],
         fee: 300_000,
         ttl: 10_000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     utxo.apply_tx(tx2_id, &body2, 200).expect("tx2");
@@ -999,6 +1047,9 @@ fn shelley_block_cbor_round_trip_with_txs() {
         outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 1_000_000 }],
         fee: 200_000,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
     let ws = ShelleyWitnessSet {
@@ -1108,6 +1159,9 @@ fn ledger_state_applies_block_with_utxo_transition() {
         ],
         fee: 100,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -1153,6 +1207,9 @@ fn ledger_state_rejects_expired_transaction() {
         }],
         fee: 100,
         ttl: 10,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -1186,6 +1243,9 @@ fn ledger_state_rejects_missing_input() {
         }],
         fee: 0,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -1238,6 +1298,9 @@ fn ledger_state_atomicity_on_second_tx_failure() {
         }],
         fee: 100,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -1252,6 +1315,9 @@ fn ledger_state_atomicity_on_second_tx_failure() {
         }],
         fee: 0,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -1318,6 +1384,9 @@ fn ledger_state_chained_transactions() {
         ],
         fee: 200,
         ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -1341,6 +1410,9 @@ fn ledger_state_chained_transactions() {
         }],
         fee: 100,
         ttl: 2000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     };
 
@@ -1372,6 +1444,9 @@ fn allegra_tx_body_roundtrip_all_fields() {
         }],
         fee: 200_000,
         ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: Some([0xBB; 32]),
         validity_interval_start: Some(500),
     };
@@ -1391,6 +1466,9 @@ fn allegra_tx_body_roundtrip_minimal() {
         outputs: vec![],
         fee: 100,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
     };
@@ -1407,6 +1485,9 @@ fn allegra_tx_body_optional_ttl_only() {
         outputs: vec![],
         fee: 50,
         ttl: Some(999),
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
     };
@@ -1423,6 +1504,9 @@ fn allegra_tx_body_validity_interval_start_only() {
         outputs: vec![],
         fee: 75,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: Some(42),
     };
@@ -1633,6 +1717,9 @@ fn mary_tx_body_required_fields_only() {
         }],
         fee: 200_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -1664,6 +1751,9 @@ fn mary_tx_body_all_optional_fields() {
         }],
         fee: 180_000,
         ttl: Some(100_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: Some([0xDD; 32]),
         validity_interval_start: Some(50_000),
         mint: Some(mint),
@@ -1698,6 +1788,9 @@ fn mary_tx_body_with_multi_asset_outputs() {
         ],
         fee: 170_000,
         ttl: Some(200_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -1753,6 +1846,9 @@ fn mary_tx_body_mint_signed_quantities_round_trip() {
         }],
         fee: 160_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
@@ -1865,6 +1961,9 @@ fn alonzo_tx_body_required_fields_only() {
         }],
         fee: 200_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -1899,6 +1998,9 @@ fn alonzo_tx_body_all_optional_fields() {
         }],
         fee: 300_000,
         ttl: Some(500_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: Some([0xBB; 32]),
         validity_interval_start: Some(100_000),
         mint: Some(mint),
@@ -1929,6 +2031,9 @@ fn alonzo_tx_body_collateral_only() {
         }],
         fee: 170_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -1991,6 +2096,9 @@ fn alonzo_tx_body_network_id_testnet() {
         }],
         fee: 150_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2265,6 +2373,9 @@ fn babbage_tx_body_required_fields_only() {
         }],
         fee: 200_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2296,6 +2407,9 @@ fn babbage_tx_body_with_new_fields() {
         }],
         fee: 300_000,
         ttl: Some(1_000_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2354,6 +2468,9 @@ fn babbage_tx_body_reference_inputs_only() {
         }],
         fee: 200_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2516,6 +2633,8 @@ fn conway_tx_body_required_fields_only() {
         }],
         fee: 200_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2562,6 +2681,8 @@ fn conway_tx_body_with_governance_fields() {
         }],
         fee: 300_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2628,6 +2749,8 @@ fn conway_tx_body_treasury_only() {
         }],
         fee: 180_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2721,6 +2844,9 @@ fn babbage_block_cbor_round_trip_with_tx() {
         }],
         fee: 200_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -2788,6 +2914,8 @@ fn conway_block_cbor_round_trip_with_tx() {
         }],
         fee: 300_000,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -3682,6 +3810,400 @@ fn pool_params_multiple_relays_and_owners_round_trip() {
 }
 
 // -- Moved Anchor: verify existing anchor tests still work -----------------
+
+// ---------------------------------------------------------------------------
+// Phase 50: TxBody Keys 4-6 (Certificates + Withdrawals + Update)
+// ---------------------------------------------------------------------------
+
+/// Helper: a simple reward account for withdrawal tests.
+fn sample_reward_account() -> RewardAccount {
+    // 0xE0 header = reward account keyhash on mainnet
+    let mut raw = [0u8; 29];
+    raw[0] = 0xE0;
+    raw[1..].copy_from_slice(&[0x11; 28]);
+    RewardAccount::from_bytes(&raw).expect("valid reward account")
+}
+
+#[test]
+fn shelley_tx_body_with_certificates_round_trip() {
+    let body = ShelleyTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 28],
+            amount: 1_000_000,
+        }],
+        fee: 200_000,
+        ttl: 500_000,
+        certificates: Some(vec![
+            DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28])),
+            DCert::StakeDeregistration(StakeCredential::ScriptHash([0x02; 28])),
+        ]),
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = ShelleyTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn shelley_tx_body_with_withdrawals_round_trip() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 5_000_000);
+
+    let body = ShelleyTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 28],
+            amount: 1_000_000,
+        }],
+        fee: 200_000,
+        ttl: 500_000,
+        certificates: None,
+        withdrawals: Some(wdrl),
+        update: None,
+        auxiliary_data_hash: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = ShelleyTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn shelley_tx_body_with_update_round_trip() {
+    // Opaque CBOR payload: a simple CBOR array [1, 2, 3]
+    let update_cbor = {
+        let mut enc = Encoder::new();
+        enc.array(3).unsigned(1).unsigned(2).unsigned(3);
+        enc.into_bytes()
+    };
+
+    let body = ShelleyTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 28],
+            amount: 1_000_000,
+        }],
+        fee: 200_000,
+        ttl: 500_000,
+        certificates: None,
+        withdrawals: None,
+        update: Some(update_cbor),
+        auxiliary_data_hash: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = ShelleyTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn shelley_tx_body_with_all_keys_4_6_round_trip() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 1_000_000);
+
+    let update_cbor = {
+        let mut enc = Encoder::new();
+        enc.unsigned(42);
+        enc.into_bytes()
+    };
+
+    let body = ShelleyTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 28],
+            amount: 2_000_000,
+        }],
+        fee: 200_000,
+        ttl: 500_000,
+        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        withdrawals: Some(wdrl),
+        update: Some(update_cbor),
+        auxiliary_data_hash: Some([0xFF; 32]),
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = ShelleyTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn allegra_tx_body_with_certs_and_withdrawals_round_trip() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 3_000_000);
+
+    let body = AllegraTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xCC; 32],
+            index: 1,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 28],
+            amount: 1_000_000,
+        }],
+        fee: 180_000,
+        ttl: Some(600_000),
+        certificates: Some(vec![DCert::StakeDelegation(
+            StakeCredential::AddrKeyHash([0x01; 28]),
+            [0x02; 28],
+        )]),
+        withdrawals: Some(wdrl),
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: Some(100),
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = AllegraTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn mary_tx_body_with_certs_and_withdrawals_round_trip() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 2_000_000);
+
+    let body = MaryTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xDD; 32],
+            index: 0,
+        }],
+        outputs: vec![MaryTxOut {
+            address: vec![0x61; 28],
+            amount: Value::Coin(1_000_000),
+        }],
+        fee: 190_000,
+        ttl: Some(700_000),
+        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::ScriptHash([0x03; 28]))]),
+        withdrawals: Some(wdrl),
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = MaryTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn alonzo_tx_body_with_certs_and_withdrawals_round_trip() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 4_000_000);
+
+    let update_cbor = {
+        let mut enc = Encoder::new();
+        enc.map(0); // empty map as update
+        enc.into_bytes()
+    };
+
+    let body = AlonzoTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xEE; 32],
+            index: 0,
+        }],
+        outputs: vec![AlonzoTxOut {
+            address: vec![0x61; 28],
+            amount: Value::Coin(1_000_000),
+            datum_hash: None,
+        }],
+        fee: 250_000,
+        ttl: Some(800_000),
+        certificates: Some(vec![DCert::StakeDeregistration(StakeCredential::AddrKeyHash([0x04; 28]))]),
+        withdrawals: Some(wdrl),
+        update: Some(update_cbor),
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = AlonzoTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn babbage_tx_body_with_certs_and_withdrawals_round_trip() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 6_000_000);
+
+    let body = BabbageTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xFF; 32],
+            index: 0,
+        }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x61; 28],
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 300_000,
+        ttl: None,
+        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x05; 28]))]),
+        withdrawals: Some(wdrl),
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = BabbageTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn conway_tx_body_with_certs_and_withdrawals_round_trip() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 7_000_000);
+
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAB; 32],
+            index: 0,
+        }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x61; 28],
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 350_000,
+        ttl: None,
+        certificates: Some(vec![
+            DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x06; 28])),
+            DCert::RegCert(StakeCredential::AddrKeyHash([0x07; 28]), 2_000_000),
+        ]),
+        withdrawals: Some(wdrl),
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    let decoded = ConwayTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
+
+#[test]
+fn shelley_tx_body_map_count_includes_keys_4_5_6() {
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 100);
+
+    let update_cbor = {
+        let mut enc = Encoder::new();
+        enc.unsigned(0);
+        enc.into_bytes()
+    };
+
+    let body = ShelleyTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 28],
+            amount: 1_000_000,
+        }],
+        fee: 200_000,
+        ttl: 500_000,
+        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        withdrawals: Some(wdrl),
+        update: Some(update_cbor),
+        auxiliary_data_hash: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    // Verify map header: keys 0,1,2,3,4,5,6 = 7 entries
+    let mut dec = Decoder::new(&bytes);
+    let map_len = dec.map().expect("map header");
+    assert_eq!(map_len, 7);
+}
+
+#[test]
+fn conway_tx_body_no_update_key_round_trip() {
+    // Conway does not support key 6 (update). Verify it round-trips correctly
+    // with only keys 4 and 5.
+    use std::collections::BTreeMap;
+    let mut wdrl = BTreeMap::new();
+    wdrl.insert(sample_reward_account(), 100);
+
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAB; 32],
+            index: 0,
+        }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x61; 28],
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        certificates: Some(vec![DCert::StakeRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        withdrawals: Some(wdrl),
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+    let bytes = body.to_cbor_bytes();
+    // Verify map header: keys 0,1,2,4,5 = 5 entries
+    let mut dec = Decoder::new(&bytes);
+    let map_len = dec.map().expect("map header");
+    assert_eq!(map_len, 5);
+
+    let decoded = ConwayTxBody::from_cbor_bytes(&bytes).expect("round-trip");
+    assert_eq!(body, decoded);
+}
 
 #[test]
 fn anchor_cbor_round_trip_types_module() {

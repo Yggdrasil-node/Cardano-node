@@ -25,7 +25,7 @@ use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
-use crate::types::{Anchor, HeaderHash};
+use crate::types::{Anchor, DCert, HeaderHash, RewardAccount};
 
 pub const CONWAY_NAME: &str = "Conway";
 
@@ -414,7 +414,7 @@ impl CborDecode for VotingProcedures {
 /// ```
 ///
 /// Note: key 6 (update) is removed in the Conway era.
-/// Certificates (4) and withdrawals (5) remain future work.
+/// Certificates (4) and withdrawals (5) are now modeled.
 ///
 /// Reference: `Cardano.Ledger.Conway.TxBody`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -428,6 +428,10 @@ pub struct ConwayTxBody {
     pub fee: u64,
     /// Optional TTL slot (CDDL key 3).
     pub ttl: Option<u64>,
+    /// Optional certificates (CDDL key 4).
+    pub certificates: Option<Vec<DCert>>,
+    /// Optional withdrawals: reward-account → lovelace (CDDL key 5).
+    pub withdrawals: Option<BTreeMap<RewardAccount, u64>>,
     /// Optional auxiliary data hash (CDDL key 7).
     pub auxiliary_data_hash: Option<[u8; 32]>,
     /// Optional validity interval start (CDDL key 8).
@@ -463,6 +467,12 @@ impl CborEncode for ConwayTxBody {
     fn encode_cbor(&self, enc: &mut Encoder) {
         let mut field_count: u64 = 3; // keys 0, 1, 2
         if self.ttl.is_some() {
+            field_count += 1;
+        }
+        if self.certificates.is_some() {
+            field_count += 1;
+        }
+        if self.withdrawals.is_some() {
             field_count += 1;
         }
         if self.auxiliary_data_hash.is_some() {
@@ -527,6 +537,23 @@ impl CborEncode for ConwayTxBody {
         // Key 3: ttl.
         if let Some(ttl) = self.ttl {
             enc.unsigned(3).unsigned(ttl);
+        }
+
+        // Key 4: certificates.
+        if let Some(certs) = &self.certificates {
+            enc.unsigned(4).array(certs.len() as u64);
+            for cert in certs {
+                cert.encode_cbor(enc);
+            }
+        }
+
+        // Key 5: withdrawals.
+        if let Some(withdrawals) = &self.withdrawals {
+            enc.unsigned(5).map(withdrawals.len() as u64);
+            for (acct, coin) in withdrawals {
+                acct.encode_cbor(enc);
+                enc.unsigned(*coin);
+            }
         }
 
         // Key 7: auxiliary_data_hash.
@@ -624,6 +651,8 @@ impl CborDecode for ConwayTxBody {
         let mut outputs: Option<Vec<BabbageTxOut>> = None;
         let mut fee: Option<u64> = None;
         let mut ttl: Option<u64> = None;
+        let mut certificates: Option<Vec<DCert>> = None;
+        let mut withdrawals: Option<BTreeMap<RewardAccount, u64>> = None;
         let mut auxiliary_data_hash: Option<[u8; 32]> = None;
         let mut validity_interval_start: Option<u64> = None;
         let mut mint: Option<MintAsset> = None;
@@ -663,6 +692,24 @@ impl CborDecode for ConwayTxBody {
                 }
                 3 => {
                     ttl = Some(dec.unsigned()?);
+                }
+                4 => {
+                    let count = dec.array()?;
+                    let mut certs = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        certs.push(DCert::decode_cbor(dec)?);
+                    }
+                    certificates = Some(certs);
+                }
+                5 => {
+                    let count = dec.map()?;
+                    let mut wdrl = BTreeMap::new();
+                    for _ in 0..count {
+                        let acct = RewardAccount::decode_cbor(dec)?;
+                        let coin = dec.unsigned()?;
+                        wdrl.insert(acct, coin);
+                    }
+                    withdrawals = Some(wdrl);
                 }
                 7 => {
                     let raw = dec.bytes()?;
@@ -767,6 +814,8 @@ impl CborDecode for ConwayTxBody {
                 actual: 0,
             })?,
             ttl,
+            certificates,
+            withdrawals,
             auxiliary_data_hash,
             validity_interval_start,
             mint,

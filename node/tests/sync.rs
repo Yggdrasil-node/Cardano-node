@@ -1629,6 +1629,9 @@ fn make_tx_body(fee: u64, ttl: u64) -> ShelleyTxBody {
         outputs: vec![],
         fee,
         ttl,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
     }
 }
@@ -1904,6 +1907,9 @@ fn make_babbage_tx_body(fee: u64) -> BabbageTxBody {
         }],
         fee,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -1931,6 +1937,8 @@ fn make_conway_tx_body(fee: u64) -> ConwayTxBody {
         }],
         fee,
         ttl: None,
+        certificates: None,
+        withdrawals: None,
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,

@@ -30,10 +30,11 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - CBOR codec (`cbor.rs`) supports all 8 major types plus signed integer helpers (`Encoder::integer`, `Decoder::integer`). Includes `skip()` for recursive item skipping and `CborEncode`/`CborDecode` traits.
 - Allegra era types landed: `AllegraTxBody` (optional TTL + validity interval start), `NativeScript` (6-variant timelock/multi-sig enum with recursive CBOR codec).
 - Mary era types landed: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (key 9 mint) with CBOR codecs; `pub(crate)` helpers shared cross-era.
-- Alonzo era types landed: `ExUnits`, `Redeemer` (opaque PlutusData as raw CBOR), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 11/13/14/15).
+- Alonzo era types landed: `ExUnits`, `Redeemer` (opaque PlutusData as raw CBOR), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 0–15 including certificates/withdrawals/update).
 - Byron envelope landed: `ByronBlock` enum (EBB/MainBlock) with lightweight decode for slot tracking, `BYRON_SLOTS_PER_EPOCH`.
-- Babbage era types landed: `DatumOption` (hash/inline datum), `BabbageTxOut` (dual-format decode: pre-Babbage array + post-Alonzo map, with script_ref), `BabbageTxBody` (keys 16 collateral_return, 17 total_collateral, 18 reference_inputs).
-- Conway era types landed: `Vote`, `Voter` (5-variant: CommitteeKeyHash/Script, DRepKeyHash/Script, StakePool), `GovActionId`, `VotingProcedure`, `ProposalProcedure` (opaque gov_action), `VotingProcedures` (nested BTreeMap), `ConwayTxBody` (keys 19 voting_procedures, 20 proposal_procedures, 21 current_treasury_value, 22 treasury_donation).
+- Babbage era types landed: `DatumOption` (hash/inline datum), `BabbageTxOut` (dual-format decode: pre-Babbage array + post-Alonzo map, with script_ref), `BabbageTxBody` (keys 0–18 including certificates/withdrawals/update).
+- Conway era types landed: `Vote`, `Voter` (5-variant: CommitteeKeyHash/Script, DRepKeyHash/Script, StakePool), `GovActionId`, `VotingProcedure`, `ProposalProcedure` (opaque gov_action), `VotingProcedures` (nested BTreeMap), `ConwayTxBody` (keys 0–22 including certificates/withdrawals; key 6 update removed in Conway).
+- TxBody keys 4-6 landed across all eras: `certificates` (`Option<Vec<DCert>>`), `withdrawals` (`Option<BTreeMap<RewardAccount, u64>>`), and `update` (`Option<Vec<u8>>` opaque CBOR, Shelley–Babbage only).
 - Certificate hierarchy landed in `types.rs`: `Anchor` (moved from conway.rs to types.rs), `UnitInterval` (tag-30 rational), `Relay` (3-variant: SingleHostAddr/SingleHostName/MultiHostName), `PoolMetadata`, `PoolParams` (9-field inline group), `DRep` (4-variant: KeyHash/ScriptHash/AlwaysAbstain/AlwaysNoConfidence), `DCert` (19-variant flat enum: Shelley tags 0–5, Conway tags 7–18), all with CBOR codecs.
 - Full era type coverage complete: Byron → Conway.
 - Keep the full era roadmap visible, but land only narrow reusable slices.

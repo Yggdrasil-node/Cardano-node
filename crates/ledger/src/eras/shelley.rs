@@ -3,10 +3,11 @@
 //! Types match the Shelley CDDL specification:
 //! <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/shelley/impl/cddl/data/shelley.cddl>
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::error::LedgerError;
+use crate::types::{DCert, RewardAccount};
 
 pub const SHELLEY_NAME: &str = "Shelley";
 
@@ -117,10 +118,6 @@ impl CborDecode for ShelleyTxOut {
 ///   }
 /// ```
 ///
-/// Only the required fields (0–3) and optional metadata hash (7) are
-/// modeled in this initial slice.  Certificates, withdrawals, and updates
-/// will be added when the corresponding types land.
-///
 /// Reference: `Cardano.Ledger.Shelley.TxBody`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShelleyTxBody {
@@ -132,13 +129,31 @@ pub struct ShelleyTxBody {
     pub fee: u64,
     /// Time-to-live — slot after which this transaction is invalid (CDDL key 3).
     pub ttl: u64,
+    /// Optional certificates (CDDL key 4).
+    pub certificates: Option<Vec<DCert>>,
+    /// Optional withdrawals: reward-account → lovelace (CDDL key 5).
+    pub withdrawals: Option<BTreeMap<RewardAccount, u64>>,
+    /// Optional protocol-parameter update proposal, opaque CBOR (CDDL key 6).
+    pub update: Option<Vec<u8>>,
     /// Optional auxiliary data hash (CDDL key 7).
     pub auxiliary_data_hash: Option<[u8; 32]>,
 }
 
 impl CborEncode for ShelleyTxBody {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        let field_count: u64 = 4 + u64::from(self.auxiliary_data_hash.is_some());
+        let mut field_count: u64 = 4; // keys 0, 1, 2, 3
+        if self.certificates.is_some() {
+            field_count += 1;
+        }
+        if self.withdrawals.is_some() {
+            field_count += 1;
+        }
+        if self.update.is_some() {
+            field_count += 1;
+        }
+        if self.auxiliary_data_hash.is_some() {
+            field_count += 1;
+        }
         enc.map(field_count);
 
         // Key 0: inputs (set encoded as array).
@@ -159,6 +174,28 @@ impl CborEncode for ShelleyTxBody {
         // Key 3: ttl.
         enc.unsigned(3).unsigned(self.ttl);
 
+        // Key 4: certificates.
+        if let Some(certs) = &self.certificates {
+            enc.unsigned(4).array(certs.len() as u64);
+            for cert in certs {
+                cert.encode_cbor(enc);
+            }
+        }
+
+        // Key 5: withdrawals.
+        if let Some(withdrawals) = &self.withdrawals {
+            enc.unsigned(5).map(withdrawals.len() as u64);
+            for (acct, coin) in withdrawals {
+                acct.encode_cbor(enc);
+                enc.unsigned(*coin);
+            }
+        }
+
+        // Key 6: update (opaque CBOR).
+        if let Some(update) = &self.update {
+            enc.unsigned(6).raw(update);
+        }
+
         // Key 7: auxiliary_data_hash (optional).
         if let Some(hash) = &self.auxiliary_data_hash {
             enc.unsigned(7).bytes(hash);
@@ -174,6 +211,9 @@ impl CborDecode for ShelleyTxBody {
         let mut outputs: Option<Vec<ShelleyTxOut>> = None;
         let mut fee: Option<u64> = None;
         let mut ttl: Option<u64> = None;
+        let mut certificates: Option<Vec<DCert>> = None;
+        let mut withdrawals: Option<BTreeMap<RewardAccount, u64>> = None;
+        let mut update: Option<Vec<u8>> = None;
         let mut auxiliary_data_hash: Option<[u8; 32]> = None;
 
         for _ in 0..map_len {
@@ -200,6 +240,30 @@ impl CborDecode for ShelleyTxBody {
                 }
                 3 => {
                     ttl = Some(dec.unsigned()?);
+                }
+                4 => {
+                    let count = dec.array()?;
+                    let mut certs = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        certs.push(DCert::decode_cbor(dec)?);
+                    }
+                    certificates = Some(certs);
+                }
+                5 => {
+                    let count = dec.map()?;
+                    let mut wdrl = BTreeMap::new();
+                    for _ in 0..count {
+                        let acct = RewardAccount::decode_cbor(dec)?;
+                        let coin = dec.unsigned()?;
+                        wdrl.insert(acct, coin);
+                    }
+                    withdrawals = Some(wdrl);
+                }
+                6 => {
+                    let start = dec.position();
+                    dec.skip()?;
+                    let end = dec.position();
+                    update = Some(dec.slice(start, end)?.to_vec());
                 }
                 7 => {
                     let raw = dec.bytes()?;
@@ -235,6 +299,9 @@ impl CborDecode for ShelleyTxBody {
                 expected: 1,
                 actual: 0,
             })?,
+            certificates,
+            withdrawals,
+            update,
             auxiliary_data_hash,
         })
     }
