@@ -27,7 +27,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - `node/` owns orchestration, CLI, and runtime integration.
 - `specs/upstream-test-vectors` officially test-vectors from the `IntersectMBO` repositories.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - `crates/crypto`: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class> and <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
 - `crates/cddl-codegen`: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras> and <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
 - `crates/ledger`: <https://github.com/IntersectMBO/cardano-ledger> and <https://github.com/IntersectMBO/formal-ledger-specifications>
@@ -39,6 +39,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 
 ## Non-Negotiable Rules
 - Always write typesafe Rust code.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly.
 - Always research the official relevant upstream IntersectMBO repositories before introducing any local terminology, behavior, or design that is not directly traceable to an upstream source.
 - New dependencies MUST be justified in `docs/DEPENDENCIES.md` before they are treated as accepted.

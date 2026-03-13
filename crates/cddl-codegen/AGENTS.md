@@ -15,10 +15,11 @@ Focus on deterministic parsing and reproducible generated artifacts.
 - Small supported CDDL subsets with tests MUST be preferred over broad speculative parsing.
 - Generated output MUST NOT be edited by hand.
 - Public parser and generator entry points MUST have Rustdocs when supported syntax, failure modes, or output guarantees are not obvious.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Generated type and field naming MUST remain traceable to upstream ledger schemas and official node terminology.
 - Schema handling and generated output MUST be explained with reference to the official node path through cardano-ledger and related IntersectMBO sources.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Era CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
 - Ledger binary and supporting libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
 - Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/>

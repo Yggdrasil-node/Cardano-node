@@ -15,10 +15,10 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Composition MUST be preferred over cross-crate shortcuts.
 - Major runtime entry points MUST have smoke coverage.
 - Public node-facing integration types and runtime helpers MUST have Rustdocs when startup, shutdown, configuration, or sync semantics are not obvious.
-- Naming and terminology MUST remain close to the official `cardano-node` so operational concepts map cleanly.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Integration behavior MUST always be explained by anchoring it in the official node and the relevant upstream IntersectMBO implementation.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Node integration repository: <https://github.com/IntersectMBO/cardano-node/>
 - Node runtime and packaging reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
 - Default network configuration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
@@ -36,7 +36,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Consensus header verification bridge (`verify_shelley_header`, `verify_multi_era_block`, `VerificationConfig`) is wired into the sync flow.
 - Block body hash verification (`verify_block_body_hash`, `VerificationConfig.verify_body_hash`) computes Blake2b-256 of block body elements and compares against the header-declared hash. Wired into `sync_batch_apply_verified`.
 - Block header hash computation uses real Blake2b-256.
-- Mempool sync eviction (`extract_tx_ids`, `evict_confirmed_from_mempool`) is implemented. TxSubmission runtime integration now includes `serve_txsubmission_request_from_mempool`, which serves one inbound TxSubmission request directly from fee-ordered mempool state using stored submitted-transaction bytes and sends `MsgDone` on blocking requests when the mempool is empty.
+- Mempool sync eviction (`extract_tx_ids`, `evict_confirmed_from_mempool`) is implemented. TxSubmission runtime integration now includes `serve_txsubmission_request_from_mempool` for one-shot fee-ordered request handling, plus `serve_txsubmission_request_from_reader`/`run_txsubmission_service` for upstream-style managed outbound serving using a `TxSubmissionMempoolReader`, `MempoolSnapshot`, and monotonic `last_idx` cursor. All paths relay stored submitted-transaction bytes and send `MsgDone` on blocking requests when no eligible transactions remain.
 - Verified sync service (`run_verified_sync_service`, `VerifiedSyncServiceConfig`, `VerifiedSyncServiceOutcome`) uses the multi-era verified pipeline with per-block nonce evolution tracking and optional ChainState tracking. Returns final `NonceEvolutionState` and `ChainState` on shutdown. CLI `run` command now uses this pipeline by default.
 - ChainState integration: `multi_era_block_to_chain_entry`, `track_chain_state`, `promote_stable_blocks` wire consensus `ChainState` into the sync flow. `VerifiedSyncServiceConfig.security_param` enables chain tracking with stability window enforcement.
 - Genesis parameters in `NodeConfigFile`: `epoch_length` (432000), `security_param_k` (2160), `active_slot_coeff` (0.05). Stability window computed as `3k/f`.

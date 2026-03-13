@@ -15,11 +15,12 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Public interfaces MUST remain stable unless a breaking change is clearly justified by protocol correctness.
 - Test vectors MUST exist before any claim of protocol compatibility is accepted.
 - Every public cryptographic type and function that defines protocol-relevant behavior, encoding, or security expectations MUST have proper Rustdocs.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Names MUST stay close to the official node, Cardano specs, and upstream crypto terminology unless a Rust-specific deviation is clearly justified.
 - Parity-sensitive choices MUST be explained by reference to the official `cardano-node` ecosystem and the relevant upstream IntersectMBO crypto packages.
 - Full cryptographic parity, vector coverage, and encoding compatibility are non-negotiable long-term targets.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Crypto abstractions and shared utilities: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/>
 - Praos-oriented crypto behavior and vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/>
 - Shared Cardano base packages: <https://github.com/IntersectMBO/cardano-base/>

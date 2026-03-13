@@ -14,10 +14,11 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Mini-protocols MUST be introduced incrementally, starting with ChainSync and BlockFetch.
 - Testable state transitions MUST be preferred over implicit runtime behavior.
 - Public protocol types, handshake surfaces, and state-machine functions MUST have Rustdocs where message flow or invariants are not self-evident.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Naming MUST mirror the official node and Ouroboros network specs so protocol traces and docs line up cleanly.
 - Wire behavior and protocol sequencing MUST be explained by reference to the official node and upstream Ouroboros network sources.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Networking repository root: <https://github.com/IntersectMBO/ouroboros-network/>
 - Multiplexer package: <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux/>
 - Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework/>

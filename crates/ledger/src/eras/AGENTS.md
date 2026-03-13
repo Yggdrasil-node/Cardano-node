@@ -14,9 +14,10 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Generic ledger logic MUST NOT be duplicated inside `eras/`.
 - Each era module MUST make it clear whether it is a placeholder or reflects a real upstream rule set.
 - Public era-specific types or helpers MUST have Rustdocs when the era difference is not obvious from naming alone.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Official era names, rule labels, and transition terminology from upstream ledger and node sources MUST be preferred.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Era sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
 - Formal ledger specification site: <https://intersectmbo.github.io/formal-ledger-specifications/site/>
 - Formal ledger specification repository: <https://github.com/IntersectMBO/formal-ledger-specifications/>

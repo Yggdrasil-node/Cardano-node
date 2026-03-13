@@ -14,10 +14,11 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Praos-specific logic MUST stay separate from future Genesis extensions.
 - Reproducible fixtures MUST exist before any claim of parity with Cardano behavior is accepted.
 - Public consensus types and functions MUST have Rustdocs when they encode protocol math, chain selection rules, or rollback semantics.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Names MUST track official consensus and `cardano-node` terminology so traces, fixtures, and parity checks remain comparable.
 - Consensus behavior MUST be explained by reference to the official node and upstream Ouroboros consensus sources before any local terminology is introduced.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Core consensus implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
 - Consensus repository documentation: <https://github.com/IntersectMBO/ouroboros-consensus/>
 - Formal consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec/>

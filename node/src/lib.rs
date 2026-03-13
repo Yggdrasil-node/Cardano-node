@@ -6,8 +6,9 @@ pub mod runtime;
 pub mod sync;
 
 pub use runtime::{
-	NodeConfig, PeerSession, TxSubmissionServiceError, bootstrap,
-	serve_txsubmission_request_from_mempool,
+	NodeConfig, PeerSession, TxSubmissionServiceError, TxSubmissionServiceOutcome,
+	bootstrap, run_txsubmission_service, serve_txsubmission_request_from_mempool,
+	serve_txsubmission_request_from_reader,
 };
 pub use sync::{
 	DecodedSyncStep, MultiEraBlock, MultiEraSyncProgress, MultiEraSyncStep, SyncError,

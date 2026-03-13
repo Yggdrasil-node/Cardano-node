@@ -14,10 +14,11 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Generated data types and handwritten transition logic MUST remain separated.
 - The project MUST keep a full era roadmap visible, but implementation MUST proceed one narrow slice at a time.
 - Public ledger modules, types, and state-transition functions MUST have Rustdocs where rule intent or invariants are not obvious from the signature.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Era, transaction, and rule naming MUST stay close to official ledger and `cardano-node` terminology.
 - Ledger behavior MUST be explained by reference to the official node, the ledger repository, and the formal ledger specifications rather than only local interpretation.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger/>
 - Era-specific sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
 - Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>

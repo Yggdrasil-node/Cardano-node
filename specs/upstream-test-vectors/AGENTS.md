@@ -12,6 +12,10 @@ This directory vendors official upstream vector and golden artifacts used for pa
 - Files are stored under a pinned upstream commit path for reproducibility.
 - Vendored files must not be hand-edited.
 
+## Non-Negotiable Rules
+
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
+
 ## Vendored Set (Current)
 
 - Repository: `IntersectMBO/cardano-base`

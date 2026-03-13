@@ -14,8 +14,9 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 - Do not duplicate era-specific rules in shared modules.
 - Maintain strong type wrappers for protocol-relevant identifiers (`SlotNo`, `BlockNo`, `HeaderHash`, `Point`, `TxId`).
 - Public shared APIs MUST have Rustdocs when semantics are non-obvious.
+- Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 
-## Upstream References (add or update as needed)
+## Official Upstream References (add or update as needed)
 - Ledger repository: <https://github.com/IntersectMBO/cardano-ledger>
 - Formal specs: <https://github.com/IntersectMBO/formal-ledger-specifications>
 

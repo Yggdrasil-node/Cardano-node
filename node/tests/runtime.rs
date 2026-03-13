@@ -10,7 +10,10 @@ use yggdrasil_ledger::{
     ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyWitnessSet, SlotNo, Value,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry};
-use yggdrasil_node::{NodeConfig, bootstrap, serve_txsubmission_request_from_mempool};
+use yggdrasil_node::{
+    NodeConfig, TxSubmissionServiceOutcome, bootstrap, run_txsubmission_service,
+    serve_txsubmission_request_from_mempool,
+};
 
 /// Spawn a responder that accepts a connection, then return the listen address.
 async fn spawn_responder(magic: u32) -> SocketAddr {
@@ -194,6 +197,34 @@ async fn spawn_txsubmission_responder(magic: u32, expected_txids: Vec<[u8; 32]>,
     addr
 }
 
+async fn spawn_txsubmission_idle_responder(magic: u32) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut conn = peer_accept(stream, magic, &[HandshakeVersion(15)])
+            .await
+            .expect("accept handshake");
+
+        let mut tx = conn
+            .protocols
+            .remove(&yggdrasil_network::MiniProtocolNum::TX_SUBMISSION)
+            .expect("txsubmission handle");
+
+        let raw = tx.recv().await.expect("recv init");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode init");
+        assert_eq!(msg, TxSubmissionMessage::MsgInit);
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        conn.mux.abort();
+    });
+
+    addr
+}
+
 #[tokio::test]
 async fn runtime_bootstrap_creates_all_drivers() {
     let magic = 42;
@@ -266,6 +297,100 @@ async fn runtime_serves_txsubmission_requests_from_mempool() {
     assert!(!serve_txsubmission_request_from_mempool(&mut session.tx_submission, &empty)
         .await
         .expect("send done"));
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    session.mux.abort();
+}
+
+#[tokio::test]
+async fn runtime_txsubmission_service_runs_to_protocol_completion() {
+    let magic = 62;
+    let shelley = sample_shelley_submitted_tx(0x31);
+    let alonzo = sample_alonzo_submitted_tx(0x52);
+    let expected_txids = vec![shelley.tx_id().0, alonzo.tx_id().0];
+    let expected_txs = vec![shelley.raw_cbor(), alonzo.raw_cbor()];
+    let addr = spawn_txsubmission_responder(magic, expected_txids, expected_txs).await;
+
+    let config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+
+    let mut session = bootstrap(&config).await.expect("bootstrap");
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool
+        .insert(MempoolEntry::from_multi_era_submitted_tx(
+            shelley,
+            100,
+            SlotNo(123_456),
+        ))
+        .expect("insert shelley entry");
+    mempool
+        .insert(MempoolEntry::from_multi_era_submitted_tx(
+            alonzo,
+            200,
+            SlotNo(234_567),
+        ))
+        .expect("insert alonzo entry");
+
+    let outcome: TxSubmissionServiceOutcome = run_txsubmission_service(
+        &mut session.tx_submission,
+        &mempool,
+        std::future::pending::<()>(),
+    )
+    .await
+    .expect("run txsubmission service");
+
+    assert_eq!(
+        outcome,
+        TxSubmissionServiceOutcome {
+            handled_requests: 3,
+            terminated_by_protocol: true,
+        }
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    session.mux.abort();
+}
+
+#[tokio::test]
+async fn runtime_txsubmission_service_stops_on_shutdown() {
+    let magic = 63;
+    let addr = spawn_txsubmission_idle_responder(magic).await;
+
+    let config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+
+    let mut session = bootstrap(&config).await.expect("bootstrap");
+    let mempool = Mempool::with_capacity(1_000_000);
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let _ = shutdown_tx.send(());
+    });
+
+    let outcome: TxSubmissionServiceOutcome = run_txsubmission_service(
+        &mut session.tx_submission,
+        &mempool,
+        async {
+            let _ = shutdown_rx.await;
+        },
+    )
+    .await
+    .expect("run txsubmission service with shutdown");
+
+    assert_eq!(
+        outcome,
+        TxSubmissionServiceOutcome {
+            handled_requests: 0,
+            terminated_by_protocol: false,
+        }
+    );
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     session.mux.abort();
