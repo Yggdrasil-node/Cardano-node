@@ -9,6 +9,9 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 
 use crate::peer_registry::PeerRegistry;
+use crate::peer_selection::{
+    resolve_peer_access_points, LocalRootConfig, PeerAccessPoint, PublicRootConfig,
+};
 use crate::root_peers::{
     ResolvedLocalRootGroup, ResolvedPublicRootPeers, RootPeerProviderState,
     TopologyConfig,
@@ -110,6 +113,74 @@ pub struct ScriptedRootPeerProvider {
     scripted_refreshes: VecDeque<Result<Option<RootPeerProviderRefresh>, RootPeerProviderError>>,
 }
 
+/// Static DNS-backed provider for configured bootstrap and public root peers.
+///
+/// This is a minimal crate-owned provider that re-resolves configured access
+/// points each time it is polled. Lookup failures are treated as absent
+/// results for the affected access point so the provider can continue emitting
+/// the currently resolvable subset.
+#[derive(Clone, Debug)]
+pub struct DnsRootPeerProvider {
+    config: DnsRootPeerProviderConfig,
+    last_refresh: Option<RootPeerProviderRefresh>,
+}
+
+/// Input configuration for the DNS-backed root-peer provider.
+#[derive(Clone, Debug)]
+pub enum DnsRootPeerProviderConfig {
+    /// Resolve configured local-root groups.
+    LocalRoots(Vec<LocalRootConfig>),
+    /// Resolve configured bootstrap peers.
+    BootstrapPeers(Vec<PeerAccessPoint>),
+    /// Resolve configured public-root groups.
+    PublicConfigPeers(Vec<PublicRootConfig>),
+    /// Resolve both bootstrap peers and configured public-root groups.
+    PublicRoots {
+        bootstrap_peers: Vec<PeerAccessPoint>,
+        public_roots: Vec<PublicRootConfig>,
+    },
+}
+
+impl DnsRootPeerProvider {
+    /// Create a DNS-backed provider for configured local-root groups.
+    pub fn local_roots(local_roots: Vec<LocalRootConfig>) -> Self {
+        Self {
+            config: DnsRootPeerProviderConfig::LocalRoots(local_roots),
+            last_refresh: None,
+        }
+    }
+
+    /// Create a DNS-backed provider for configured bootstrap peers.
+    pub fn bootstrap_peers(access_points: Vec<PeerAccessPoint>) -> Self {
+        Self {
+            config: DnsRootPeerProviderConfig::BootstrapPeers(access_points),
+            last_refresh: None,
+        }
+    }
+
+    /// Create a DNS-backed provider for configured public-root groups.
+    pub fn public_config_peers(public_roots: Vec<PublicRootConfig>) -> Self {
+        Self {
+            config: DnsRootPeerProviderConfig::PublicConfigPeers(public_roots),
+            last_refresh: None,
+        }
+    }
+
+    /// Create a DNS-backed provider for both bootstrap and configured public roots.
+    pub fn public_roots(
+        bootstrap_peers: Vec<PeerAccessPoint>,
+        public_roots: Vec<PublicRootConfig>,
+    ) -> Self {
+        Self {
+            config: DnsRootPeerProviderConfig::PublicRoots {
+                bootstrap_peers,
+                public_roots,
+            },
+            last_refresh: None,
+        }
+    }
+}
+
 impl ScriptedRootPeerProvider {
     /// Create a provider from scripted refresh results.
     pub fn new(
@@ -131,6 +202,100 @@ impl RootPeerProvider for ScriptedRootPeerProvider {
     fn refresh(&mut self) -> Result<Option<RootPeerProviderRefresh>, RootPeerProviderError> {
         self.scripted_refreshes.pop_front().unwrap_or(Ok(None))
     }
+}
+
+impl RootPeerProvider for DnsRootPeerProvider {
+    fn kind(&self) -> RootPeerProviderKind {
+        match self.config {
+            DnsRootPeerProviderConfig::LocalRoots(_) => RootPeerProviderKind::LocalRoots,
+            DnsRootPeerProviderConfig::BootstrapPeers(_) => RootPeerProviderKind::BootstrapPeers,
+            DnsRootPeerProviderConfig::PublicConfigPeers(_) => {
+                RootPeerProviderKind::PublicConfigPeers
+            }
+            DnsRootPeerProviderConfig::PublicRoots { .. } => RootPeerProviderKind::PublicRoots,
+        }
+    }
+
+    fn refresh(&mut self) -> Result<Option<RootPeerProviderRefresh>, RootPeerProviderError> {
+        let next = match &self.config {
+            DnsRootPeerProviderConfig::LocalRoots(local_roots) => {
+                RootPeerProviderRefresh::LocalRoots(resolve_local_root_groups(local_roots))
+            }
+            DnsRootPeerProviderConfig::BootstrapPeers(access_points) => {
+                RootPeerProviderRefresh::BootstrapPeers(resolve_access_points(access_points))
+            }
+            DnsRootPeerProviderConfig::PublicConfigPeers(public_roots) => {
+                RootPeerProviderRefresh::PublicConfigPeers(resolve_public_root_groups(public_roots))
+            }
+            DnsRootPeerProviderConfig::PublicRoots {
+                bootstrap_peers,
+                public_roots,
+            } => RootPeerProviderRefresh::PublicRoots(ResolvedPublicRootPeers {
+                bootstrap_peers: resolve_access_points(bootstrap_peers),
+                public_config_peers: resolve_public_root_groups(public_roots),
+            }),
+        };
+
+        if self.last_refresh.as_ref() == Some(&next) {
+            Ok(None)
+        } else {
+            self.last_refresh = Some(next.clone());
+            Ok(Some(next))
+        }
+    }
+}
+
+fn resolve_access_points(access_points: &[PeerAccessPoint]) -> Vec<SocketAddr> {
+    let mut resolved = Vec::new();
+
+    for access_point in access_points {
+        for addr in resolve_peer_access_points(access_point) {
+            if !resolved.contains(&addr) {
+                resolved.push(addr);
+            }
+        }
+    }
+
+    resolved
+}
+
+fn resolve_public_root_groups(public_roots: &[PublicRootConfig]) -> Vec<SocketAddr> {
+    let mut resolved = Vec::new();
+
+    for group in public_roots {
+        for addr in resolve_access_points(&group.access_points) {
+            if !resolved.contains(&addr) {
+                resolved.push(addr);
+            }
+        }
+    }
+
+    resolved
+}
+
+fn resolve_local_root_groups(local_roots: &[LocalRootConfig]) -> Vec<ResolvedLocalRootGroup> {
+    local_roots
+        .iter()
+        .map(|group| {
+            let mut peers = Vec::new();
+            for access_point in &group.access_points {
+                for addr in resolve_peer_access_points(access_point) {
+                    if !peers.contains(&addr) {
+                        peers.push(addr);
+                    }
+                }
+            }
+
+            ResolvedLocalRootGroup {
+                peers,
+                advertise: group.advertise,
+                trustable: group.trustable,
+                hot_valency: group.hot_valency,
+                warm_valency: group.effective_warm_valency(),
+                diffusion_mode: group.diffusion_mode,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -289,5 +454,203 @@ mod tests {
                 .expect("refresh")
         );
         assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn dns_root_peer_provider_resolves_bootstrap_peers_and_suppresses_noop_refreshes() {
+        let mut provider = DnsRootPeerProvider::bootstrap_peers(vec![PeerAccessPoint {
+            address: "127.0.0.10".to_owned(),
+            port: 3001,
+        }]);
+
+        assert_eq!(provider.kind(), RootPeerProviderKind::BootstrapPeers);
+        assert_eq!(
+            provider.refresh().expect("refresh"),
+            Some(RootPeerProviderRefresh::BootstrapPeers(vec![
+                "127.0.0.10:3001".parse().expect("addr"),
+            ]))
+        );
+        assert_eq!(provider.refresh().expect("refresh"), None);
+    }
+
+    #[test]
+    fn dns_root_peer_provider_resolves_public_root_groups() {
+        let mut provider = DnsRootPeerProvider::public_config_peers(vec![PublicRootConfig {
+            access_points: vec![
+                PeerAccessPoint {
+                    address: "127.0.0.20".to_owned(),
+                    port: 3001,
+                },
+                PeerAccessPoint {
+                    address: "127.0.0.21".to_owned(),
+                    port: 3001,
+                },
+            ],
+            advertise: false,
+        }]);
+
+        assert_eq!(provider.kind(), RootPeerProviderKind::PublicConfigPeers);
+        assert_eq!(
+            provider.refresh().expect("refresh"),
+            Some(RootPeerProviderRefresh::PublicConfigPeers(vec![
+                "127.0.0.20:3001".parse().expect("addr"),
+                "127.0.0.21:3001".parse().expect("addr"),
+            ]))
+        );
+    }
+
+    #[test]
+    fn dns_root_peer_provider_combines_bootstrap_and_public_roots() {
+        let mut provider = DnsRootPeerProvider::public_roots(
+            vec![PeerAccessPoint {
+                address: "127.0.0.30".to_owned(),
+                port: 3001,
+            }],
+            vec![PublicRootConfig {
+                access_points: vec![PeerAccessPoint {
+                    address: "127.0.0.31".to_owned(),
+                    port: 3001,
+                }],
+                advertise: false,
+            }],
+        );
+
+        assert_eq!(provider.kind(), RootPeerProviderKind::PublicRoots);
+        assert_eq!(
+            provider.refresh().expect("refresh"),
+            Some(RootPeerProviderRefresh::PublicRoots(ResolvedPublicRootPeers {
+                bootstrap_peers: vec!["127.0.0.30:3001".parse().expect("addr")],
+                public_config_peers: vec!["127.0.0.31:3001".parse().expect("addr")],
+            }))
+        );
+    }
+
+    #[test]
+    fn dns_root_peer_provider_resolves_local_roots_and_suppresses_noop_refreshes() {
+        let mut provider = DnsRootPeerProvider::local_roots(vec![
+            LocalRootConfig {
+                access_points: vec![
+                    PeerAccessPoint {
+                        address: "127.0.0.40".to_owned(),
+                        port: 3001,
+                    },
+                    PeerAccessPoint {
+                        address: "127.0.0.41".to_owned(),
+                        port: 3001,
+                    },
+                ],
+                advertise: true,
+                trustable: true,
+                hot_valency: 2,
+                warm_valency: Some(3),
+                diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+            },
+            LocalRootConfig {
+                access_points: vec![PeerAccessPoint {
+                    address: "127.0.0.42".to_owned(),
+                    port: 3002,
+                }],
+                advertise: false,
+                trustable: false,
+                hot_valency: 1,
+                warm_valency: None,
+                diffusion_mode: PeerDiffusionMode::InitiatorOnlyDiffusionMode,
+            },
+        ]);
+
+        assert_eq!(provider.kind(), RootPeerProviderKind::LocalRoots);
+
+        let refresh = provider.refresh().expect("refresh");
+        let expected = vec![
+            ResolvedLocalRootGroup {
+                peers: vec![
+                    "127.0.0.40:3001".parse().expect("addr"),
+                    "127.0.0.41:3001".parse().expect("addr"),
+                ],
+                advertise: true,
+                trustable: true,
+                hot_valency: 2,
+                warm_valency: 3,
+                diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+            },
+            ResolvedLocalRootGroup {
+                peers: vec!["127.0.0.42:3002".parse().expect("addr")],
+                advertise: false,
+                trustable: false,
+                hot_valency: 1,
+                warm_valency: 1,
+                diffusion_mode: PeerDiffusionMode::InitiatorOnlyDiffusionMode,
+            },
+        ];
+        assert_eq!(refresh, Some(RootPeerProviderRefresh::LocalRoots(expected)));
+
+        // Second poll with same config should be suppressed.
+        assert_eq!(provider.refresh().expect("refresh"), None);
+    }
+
+    #[test]
+    fn dns_local_root_provider_deduplicates_within_group() {
+        let mut provider = DnsRootPeerProvider::local_roots(vec![LocalRootConfig {
+            access_points: vec![
+                PeerAccessPoint {
+                    address: "127.0.0.50".to_owned(),
+                    port: 3001,
+                },
+                PeerAccessPoint {
+                    address: "127.0.0.50".to_owned(),
+                    port: 3001,
+                },
+            ],
+            advertise: false,
+            trustable: false,
+            hot_valency: 1,
+            warm_valency: None,
+            diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+        }]);
+
+        let refresh = provider.refresh().expect("refresh");
+        let expected = vec![ResolvedLocalRootGroup {
+            peers: vec!["127.0.0.50:3001".parse().expect("addr")],
+            advertise: false,
+            trustable: false,
+            hot_valency: 1,
+            warm_valency: 1,
+            diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+        }];
+        assert_eq!(refresh, Some(RootPeerProviderRefresh::LocalRoots(expected)));
+    }
+
+    #[test]
+    fn dns_local_root_provider_integrates_with_registry() {
+        let mut state = RootPeerProviderState::from_providers(RootPeerProviders {
+            local_roots: vec![],
+            public_roots: ResolvedPublicRootPeers::default(),
+            use_ledger_peers: UseLedgerPeers::DontUseLedgerPeers,
+            peer_snapshot_file: None,
+        });
+        let mut registry = PeerRegistry::default();
+
+        let mut provider = DnsRootPeerProvider::local_roots(vec![LocalRootConfig {
+            access_points: vec![PeerAccessPoint {
+                address: "127.0.0.60".to_owned(),
+                port: 3001,
+            }],
+            advertise: false,
+            trustable: true,
+            hot_valency: 1,
+            warm_valency: None,
+            diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+        }]);
+
+        assert!(refresh_root_peer_state_and_registry(&mut state, &mut registry, &mut provider)
+            .expect("refresh"));
+
+        let peer_addr: SocketAddr = "127.0.0.60:3001".parse().expect("addr");
+        let entry = registry.get(&peer_addr).expect("local root peer");
+        assert!(entry.sources.contains(&PeerSource::PeerSourceLocalRoot));
+        assert_eq!(entry.status, PeerStatus::PeerCold);
+
+        assert_eq!(state.providers().local_roots.len(), 1);
+        assert_eq!(state.providers().local_roots[0].peers, vec![peer_addr]);
     }
 }

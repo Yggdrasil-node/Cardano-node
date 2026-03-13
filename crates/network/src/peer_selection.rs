@@ -179,10 +179,22 @@ impl PeerAttemptState {
 
 /// Resolve a single access point to the first usable socket address.
 pub fn resolve_peer_access_point(access_point: &PeerAccessPoint) -> Option<SocketAddr> {
-    format!("{}:{}", access_point.address, access_point.port)
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut addrs| addrs.next())
+    resolve_peer_access_points(access_point).into_iter().next()
+}
+
+/// Resolve an access point to all usable socket addresses in stable order.
+pub fn resolve_peer_access_points(access_point: &PeerAccessPoint) -> Vec<SocketAddr> {
+    let mut resolved = Vec::new();
+
+    if let Ok(addrs) = format!("{}:{}", access_point.address, access_point.port).to_socket_addrs() {
+        for addr in addrs {
+            if !resolved.contains(&addr) {
+                resolved.push(addr);
+            }
+        }
+    }
+
+    resolved
 }
 
 /// Resolve ordered candidate peers from topology-style groups.

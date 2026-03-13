@@ -57,13 +57,14 @@ pub use peer_registry::{
     PeerStatus,
 };
 pub use root_peers::{
-    AfterSlot, RootPeerProviderState, RootPeerProviders, TopologyConfig,
-    UseBootstrapPeers, UseLedgerPeers, reconcile_root_peer_providers,
-    resolve_root_peer_providers,
+    AfterSlot, ResolvedLocalRootGroup, RootPeerProviderState, RootPeerProviders,
+    TopologyConfig, UseBootstrapPeers, UseLedgerPeers,
+    reconcile_root_peer_providers, resolve_root_peer_providers,
 };
 pub use root_peers_provider::{
-    RootPeerProvider, RootPeerProviderError, RootPeerProviderKind,
-    RootPeerProviderRefresh, ScriptedRootPeerProvider,
+    DnsRootPeerProvider, DnsRootPeerProviderConfig, RootPeerProvider,
+    RootPeerProviderError, RootPeerProviderKind, RootPeerProviderRefresh,
+    ScriptedRootPeerProvider,
     refresh_root_peer_state, refresh_root_peer_state_and_registry,
 };
 pub use peer_selection::{
@@ -71,6 +72,7 @@ pub use peer_selection::{
     PeerDiffusionMode, PublicRootConfig,
     bootstrap_targets, ordered_fallback_peers as ordered_peer_fallbacks,
     ordered_peer_candidates, peer_attempt_state, resolve_peer_access_point,
+    resolve_peer_access_points,
 };
 
 // -- Protocol re-exports ------------------------------------------------------
