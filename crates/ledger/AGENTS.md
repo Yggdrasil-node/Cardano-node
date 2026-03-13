@@ -32,5 +32,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Alonzo era types landed: `ExUnits`, `Redeemer` (opaque PlutusData as raw CBOR), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 11/13/14/15).
 - Byron envelope landed: `ByronBlock` enum (EBB/MainBlock) with lightweight decode for slot tracking, `BYRON_SLOTS_PER_EPOCH`.
 - Babbage era types landed: `DatumOption` (hash/inline datum), `BabbageTxOut` (dual-format decode: pre-Babbage array + post-Alonzo map, with script_ref), `BabbageTxBody` (keys 16 collateral_return, 17 total_collateral, 18 reference_inputs).
+- Conway era types landed: `Vote`, `Voter` (5-variant: CommitteeKeyHash/Script, DRepKeyHash/Script, StakePool), `GovActionId`, `Anchor`, `VotingProcedure`, `ProposalProcedure` (opaque gov_action), `VotingProcedures` (nested BTreeMap), `ConwayTxBody` (keys 19 voting_procedures, 20 proposal_procedures, 21 current_treasury_value, 22 treasury_donation).
+- Full era type coverage complete: Byron → Conway.
 - Keep the full era roadmap visible, but land only narrow reusable slices.
 - Prefer types and harnesses that will survive later era expansion.
