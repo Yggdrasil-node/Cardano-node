@@ -2178,3 +2178,138 @@ fn verify_multi_era_block_conway_passes() {
     let result = verify_multi_era_block(&me, &config);
     assert!(result.is_err());
 }
+
+// ===========================================================================
+// Cross-subsystem parity integration
+// ===========================================================================
+
+/// Tests the full pipeline: decode multi-era block → convert to Block →
+/// store in volatile → track in consensus ChainState → drain stable to
+/// immutable.
+#[test]
+fn cross_subsystem_block_to_chain_state_to_storage() {
+    use yggdrasil_consensus::{ChainEntry, ChainState, SecurityParam};
+    use yggdrasil_ledger::{Block, BlockNo, Era};
+    use yggdrasil_storage::{ImmutableStore, InMemoryImmutable, InMemoryVolatile, VolatileStore};
+
+    let k = SecurityParam(2);
+    let mut chain_state = ChainState::new(k);
+    let mut volatile = InMemoryVolatile::new();
+    let mut immutable = InMemoryImmutable::new();
+
+    // Create 4 blocks to push 2 past the stability window (k=2).
+    for i in 0u64..4 {
+        let hash = {
+            let mut h = [0u8; 32];
+            h[0] = i as u8;
+            HeaderHash(h)
+        };
+        let block = Block {
+            era: Era::Shelley,
+            header: BlockHeader {
+                hash,
+                prev_hash: if i == 0 {
+                    HeaderHash([0; 32])
+                } else {
+                    let mut h = [0u8; 32];
+                    h[0] = (i - 1) as u8;
+                    HeaderHash(h)
+                },
+                slot_no: SlotNo(i * 10),
+                block_no: BlockNo(i),
+                issuer_vkey: [0; 32],
+            },
+            transactions: vec![],
+        };
+
+        volatile.add_block(block.clone()).expect("volatile add");
+        chain_state
+            .roll_forward(ChainEntry {
+                hash,
+                slot: SlotNo(i * 10),
+                block_no: BlockNo(i),
+            })
+            .expect("chain forward");
+    }
+
+    assert_eq!(chain_state.stable_count(), 2);
+    assert_eq!(chain_state.volatile_len(), 4);
+
+    // Drain stable entries and promote to immutable.
+    let stable = chain_state.drain_stable();
+    for entry in &stable {
+        let block = volatile
+            .get_block(&entry.hash)
+            .expect("block in volatile");
+        immutable.append_block(block.clone()).expect("immutable append");
+    }
+
+    assert_eq!(immutable.len(), 2);
+    assert_eq!(chain_state.volatile_len(), 2);
+
+    // Verify immutable tip matches the last drained entry.
+    assert_eq!(
+        immutable.get_tip(),
+        Point::BlockPoint(stable[1].slot, stable[1].hash)
+    );
+}
+
+/// Tests rollback through consensus ChainState and volatile storage.
+#[test]
+fn cross_subsystem_rollback_flow() {
+    use yggdrasil_consensus::{ChainEntry, ChainState, SecurityParam};
+    use yggdrasil_ledger::{Block, BlockNo, Era};
+    use yggdrasil_storage::{InMemoryVolatile, VolatileStore};
+
+    let k = SecurityParam(5);
+    let mut chain_state = ChainState::new(k);
+    let mut volatile = InMemoryVolatile::new();
+
+    // Forward 3 blocks.
+    for i in 0u64..3 {
+        let hash = {
+            let mut h = [0u8; 32];
+            h[0] = i as u8;
+            HeaderHash(h)
+        };
+        let block = Block {
+            era: Era::Shelley,
+            header: BlockHeader {
+                hash,
+                prev_hash: HeaderHash([0; 32]),
+                slot_no: SlotNo(i * 10),
+                block_no: BlockNo(i),
+                issuer_vkey: [0; 32],
+            },
+            transactions: vec![],
+        };
+        volatile.add_block(block).expect("add");
+        chain_state
+            .roll_forward(ChainEntry {
+                hash,
+                slot: SlotNo(i * 10),
+                block_no: BlockNo(i),
+            })
+            .expect("forward");
+    }
+
+    // Rollback to block 1 (slot 10).
+    let rollback_point = Point::BlockPoint(SlotNo(10), {
+        let mut h = [0u8; 32];
+        h[0] = 1;
+        HeaderHash(h)
+    });
+    chain_state.roll_backward(&rollback_point).expect("rollback");
+    volatile.rollback_to(&rollback_point);
+
+    assert_eq!(chain_state.tip(), rollback_point);
+    assert_eq!(volatile.tip(), rollback_point);
+
+    // Block at slot 20 should be gone from volatile.
+    let removed_hash = {
+        let mut h = [0u8; 32];
+        h[0] = 2;
+        HeaderHash(h)
+    };
+    assert!(volatile.get_block(&removed_hash).is_none());
+}

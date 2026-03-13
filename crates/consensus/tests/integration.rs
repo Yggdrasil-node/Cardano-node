@@ -850,3 +850,115 @@ fn chain_state_security_param_accessor() {
     let cs = ChainState::new(SecurityParam(42));
     assert_eq!(cs.security_param(), SecurityParam(42));
 }
+
+// ===========================================================================
+// Mainnet protocol parameter parity
+// ===========================================================================
+//
+// These tests verify our consensus primitives against known Cardano mainnet
+// protocol constants. Values are sourced from the Shelley genesis file and
+// the upstream ouroboros-consensus configuration.
+//
+// Reference:
+//   https://github.com/IntersectMBO/cardano-node/blob/master/configuration/cardano/shelley-genesis.json
+
+/// Mainnet Shelley epoch size is 432,000 slots.
+#[test]
+fn mainnet_epoch_size() {
+    let epoch_size = EpochSize(432_000);
+    // First slot of epoch 1.
+    assert_eq!(epoch_first_slot(EpochNo(1), epoch_size), SlotNo(432_000));
+    // Last slot of epoch 0.
+    assert_eq!(slot_to_epoch(SlotNo(431_999), epoch_size), EpochNo(0));
+    // First slot of epoch 0.
+    assert_eq!(slot_to_epoch(SlotNo(0), epoch_size), EpochNo(0));
+    // Epoch transition boundary.
+    assert!(is_new_epoch(Some(SlotNo(431_999)), SlotNo(432_000), epoch_size));
+    assert!(!is_new_epoch(Some(SlotNo(431_998)), SlotNo(431_999), epoch_size));
+}
+
+/// Mainnet security parameter k = 2160.
+#[test]
+fn mainnet_security_param() {
+    let k = SecurityParam(2160);
+    let mut cs = ChainState::new(k);
+    assert_eq!(cs.security_param(), k);
+
+    // Add 2161 blocks — exactly 1 should be stable.
+    for i in 0u64..2161 {
+        cs.roll_forward(ChainEntry {
+            hash: HeaderHash([0x00; 32]),
+            slot: SlotNo(i),
+            block_no: BlockNo(i),
+        })
+        .expect("forward");
+    }
+    assert_eq!(cs.stable_count(), 1);
+    assert_eq!(cs.volatile_len(), 2161);
+
+    let drained = cs.drain_stable();
+    assert_eq!(drained.len(), 1);
+    assert_eq!(cs.volatile_len(), 2160);
+}
+
+/// Mainnet active slot coefficient is 1/20 = 0.05.
+#[test]
+fn mainnet_active_slot_coeff() {
+    let f = ActiveSlotCoeff(0.05);
+
+    // With full stake, threshold = f.
+    let t_full = leadership_threshold(f, 1.0).expect("valid");
+    assert!((t_full - 0.05).abs() < 1e-10);
+
+    // With half stake, threshold = 1 - (1 - 0.05)^0.5 ≈ 0.02532..
+    let t_half = leadership_threshold(f, 0.5).expect("valid");
+    let expected = 1.0 - (0.95_f64).powf(0.5);
+    assert!((t_half - expected).abs() < 1e-10);
+}
+
+/// Mainnet slots per KES period is 129,600 (= 36 hours at 1s slots).
+#[test]
+fn mainnet_kes_period() {
+    let slots_per_kes = 129_600u64;
+
+    // Slot 0 → KES period 0.
+    assert_eq!(kes_period_of_slot(0, slots_per_kes).expect("valid"), 0);
+    // Last slot in period 0.
+    assert_eq!(
+        kes_period_of_slot(129_599, slots_per_kes).expect("valid"),
+        0
+    );
+    // First slot of period 1.
+    assert_eq!(
+        kes_period_of_slot(129_600, slots_per_kes).expect("valid"),
+        1
+    );
+}
+
+/// Mainnet max KES evolutions is 62 (depth-6 SumKES: 2^6 - 2 = 62).
+#[test]
+fn mainnet_max_kes_evolutions() {
+    let max_kes = 62u64;
+    let slots_per_kes = 129_600u64;
+
+    // A cert issued at period 0 is valid for periods [0, 62).
+    let kes_seed = [0xAA; 32];
+    let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("valid");
+    let kes_vk = derive_sum_kes_vk(&kes_sk).expect("valid");
+    let cold_sk = SigningKey::from_bytes([0xBB; 32]);
+    let opcert = make_opcert(&cold_sk, &kes_vk, 0, 0);
+
+    check_kes_period(&opcert, 0, max_kes).expect("period 0 valid");
+    check_kes_period(&opcert, 61, max_kes).expect("period 61 valid");
+    assert_eq!(
+        check_kes_period(&opcert, 62, max_kes),
+        Err(ConsensusError::KesPeriodExpired {
+            current: 62,
+            cert_end: 62,
+        })
+    );
+
+    // Integration: slot in the middle of the first epoch.
+    let current_period = kes_period_of_slot(500_000, slots_per_kes).expect("valid");
+    assert_eq!(current_period, 3); // 500000 / 129600 = 3
+}
