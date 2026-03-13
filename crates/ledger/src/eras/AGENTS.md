@@ -22,7 +22,7 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Formal ledger specification repository: <https://github.com/IntersectMBO/formal-ledger-specifications>
 
 ## Current Phase
-- Shelley: full block, header, tx body (keys 0–7 including certificates/withdrawals/update), `ShelleyUpdate` (typed `[{genesis_hash => protocol_param_update}, epoch]` with opaque param update values), witness set (keys 0–7: vkey, native_scripts, bootstrap_witnesses, plutus_v1/v2/v3 scripts, plutus_data, redeemers), typed `BootstrapWitness`, UTxO, and VRF/OpCert types with CBOR codecs.
+- Shelley: full block, header, tx body (keys 0–7 including certificates/withdrawals/update), `ShelleyUpdate` (typed `[{genesis_hash => protocol_param_update}, epoch]` with opaque param update values), witness set (keys 0–7: vkey, native_scripts, bootstrap_witnesses, plutus_v1/v2/v3 scripts, plutus_data, redeemers), typed `BootstrapWitness`, UTxO, and VRF/OpCert types with CBOR codecs. Block-level field names align with upstream CDDL: `block_body_size`, `block_body_hash`, `operational_cert`, `transaction_witness_sets`.
 - Allegra: `AllegraTxBody` (keys 0–8 including certificates/withdrawals/update using `ShelleyUpdate`) and `NativeScript` (6-variant timelock enum) with CBOR codecs.
 - Mary: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (keys 0–9 including certificates/withdrawals/update using `ShelleyUpdate`) with CBOR codecs.
 - Alonzo: `ExUnits`, `Redeemer` (typed `PlutusData` payload), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 0–15 including certificates/withdrawals/update using `ShelleyUpdate`) with CBOR codecs.

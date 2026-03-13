@@ -1278,7 +1278,7 @@ pub struct ConwayBlock {
     /// Transaction bodies decoded with Conway-era key-map CBOR.
     pub transaction_bodies: Vec<ConwayTxBody>,
     /// Witness sets (parallel to transaction_bodies).
-    pub witness_sets: Vec<ShelleyWitnessSet>,
+    pub transaction_witness_sets: Vec<ShelleyWitnessSet>,
     /// Metadata map: transaction index → raw CBOR metadata bytes.
     pub transaction_metadata: HashMap<u64, Vec<u8>>,
 }
@@ -1300,8 +1300,8 @@ impl CborEncode for ConwayBlock {
             body.encode_cbor(enc);
         }
 
-        enc.array(self.witness_sets.len() as u64);
-        for ws in &self.witness_sets {
+        enc.array(self.transaction_witness_sets.len() as u64);
+        for ws in &self.transaction_witness_sets {
             ws.encode_cbor(enc);
         }
 
@@ -1351,7 +1351,7 @@ impl CborDecode for ConwayBlock {
         Ok(Self {
             header,
             transaction_bodies,
-            witness_sets,
+            transaction_witness_sets: witness_sets,
             transaction_metadata,
         })
     }

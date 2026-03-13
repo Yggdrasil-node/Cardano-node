@@ -350,9 +350,9 @@ fn sample_header_body() -> ShelleyHeaderBody {
         vrf_vkey: [0x22; 32],
         nonce_vrf: sample_vrf_cert(0x30),
         leader_vrf: sample_vrf_cert(0x40),
-        body_size: 1024,
-        body_hash: [0x55; 32],
-        opcert: sample_opcert(0x60),
+        block_body_size: 1024,
+        block_body_hash: [0x55; 32],
+        operational_cert: sample_opcert(0x60),
         protocol_version: (2, 0),
     }
 }
@@ -365,7 +365,7 @@ fn sample_block_bytes() -> Vec<u8> {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     block.to_cbor_bytes()
@@ -1484,7 +1484,7 @@ fn multi_era_block_to_block_shelley() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Shelley(Box::new(block));
@@ -1528,7 +1528,7 @@ fn apply_multi_era_step_rollforward_adds_block() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let step = MultiEraSyncStep::RollForward {
@@ -1552,7 +1552,7 @@ fn apply_multi_era_step_rollbackward_resets_tip() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let fwd_step = MultiEraSyncStep::RollForward {
@@ -1655,7 +1655,7 @@ fn extract_tx_ids_from_shelley_block() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body1, body2],
-        witness_sets: vec![
+        transaction_witness_sets: vec![
             ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
             ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
         ],
@@ -1697,7 +1697,7 @@ fn evict_confirmed_removes_matching_mempool_entries() {
                 signature: vec![0xDD; 448],
             },
             transaction_bodies: vec![body],
-            witness_sets: vec![
+            transaction_witness_sets: vec![
                 ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
             ],
             transaction_metadata: std::collections::HashMap::new(),
@@ -1744,7 +1744,7 @@ fn evict_confirmed_also_purges_expired() {
                 signature: vec![0xDD; 448],
             },
             transaction_bodies: vec![],
-            witness_sets: vec![],
+            transaction_witness_sets: vec![],
             transaction_metadata: std::collections::HashMap::new(),
         }))],
     };
@@ -1792,7 +1792,7 @@ fn sample_babbage_block_bytes() -> Vec<u8> {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     block.to_cbor_bytes()
@@ -1806,7 +1806,7 @@ fn sample_conway_block_bytes() -> Vec<u8> {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     block.to_cbor_bytes()
@@ -1863,7 +1863,7 @@ fn multi_era_block_to_block_babbage() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
@@ -1882,7 +1882,7 @@ fn multi_era_block_to_block_conway() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Conway(Box::new(block));
@@ -1967,7 +1967,7 @@ fn extract_tx_ids_babbage() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -1996,7 +1996,7 @@ fn extract_tx_ids_conway() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -2023,7 +2023,7 @@ fn babbage_block_round_trip_decode() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -2056,7 +2056,7 @@ fn conway_block_round_trip_decode() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -2090,7 +2090,7 @@ fn multi_era_block_to_block_babbage_with_txs() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -2118,7 +2118,7 @@ fn multi_era_block_to_block_conway_with_txs() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -2144,7 +2144,7 @@ fn verify_multi_era_block_babbage_passes() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
@@ -2167,7 +2167,7 @@ fn verify_multi_era_block_conway_passes() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Conway(Box::new(block));
@@ -2189,13 +2189,13 @@ fn verify_multi_era_block_conway_passes() {
 #[test]
 fn cross_subsystem_block_to_chain_state_to_storage() {
     use yggdrasil_consensus::{ChainEntry, ChainState, SecurityParam};
-    use yggdrasil_ledger::{Block, BlockNo, Era};
+    use yggdrasil_ledger::{Block, BlockHeader, BlockNo, Era};
     use yggdrasil_storage::{ImmutableStore, InMemoryImmutable, InMemoryVolatile, VolatileStore};
 
     let k = SecurityParam(2);
     let mut chain_state = ChainState::new(k);
-    let mut volatile = InMemoryVolatile::new();
-    let mut immutable = InMemoryImmutable::new();
+    let mut volatile = InMemoryVolatile::default();
+    let mut immutable = InMemoryImmutable::default();
 
     // Create 4 blocks to push 2 past the stability window (k=2).
     for i in 0u64..4 {
@@ -2258,12 +2258,12 @@ fn cross_subsystem_block_to_chain_state_to_storage() {
 #[test]
 fn cross_subsystem_rollback_flow() {
     use yggdrasil_consensus::{ChainEntry, ChainState, SecurityParam};
-    use yggdrasil_ledger::{Block, BlockNo, Era};
+    use yggdrasil_ledger::{Block, BlockHeader, BlockNo, Era};
     use yggdrasil_storage::{InMemoryVolatile, VolatileStore};
 
     let k = SecurityParam(5);
     let mut chain_state = ChainState::new(k);
-    let mut volatile = InMemoryVolatile::new();
+    let mut volatile = InMemoryVolatile::default();
 
     // Forward 3 blocks.
     for i in 0u64..3 {

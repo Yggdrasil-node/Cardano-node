@@ -1238,9 +1238,9 @@ fn sample_header_body() -> ShelleyHeaderBody {
         vrf_vkey: [0x22; 32],
         nonce_vrf: sample_vrf_cert(0x30),
         leader_vrf: sample_vrf_cert(0x40),
-        body_size: 1024,
-        body_hash: [0x55; 32],
-        opcert: sample_opcert(0x60),
+        block_body_size: 1024,
+        block_body_hash: [0x55; 32],
+        operational_cert: sample_opcert(0x60),
         protocol_version: (2, 0),
     }
 }
@@ -1315,7 +1315,7 @@ fn shelley_block_cbor_round_trip_no_txs() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
@@ -1354,7 +1354,7 @@ fn shelley_block_cbor_round_trip_with_txs() {
             signature: vec![0xCC; 448],
         },
         transaction_bodies: vec![body],
-        witness_sets: vec![ws],
+        transaction_witness_sets: vec![ws],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
@@ -1370,7 +1370,7 @@ fn shelley_block_is_four_element_array() {
             signature: vec![0xDD; 448],
         },
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
@@ -3237,9 +3237,9 @@ fn sample_shelley_header() -> ShelleyHeader {
                 output: vec![0x40; 32],
                 proof: [0x41; 80],
             },
-            body_size: 512,
-            body_hash: [0x55; 32],
-            opcert: ShelleyOpCert {
+            block_body_size: 512,
+            block_body_hash: [0x55; 32],
+            operational_cert: ShelleyOpCert {
                 hot_vkey: [0x60; 32],
                 sequence_number: 1,
                 kes_period: 0,
@@ -3256,7 +3256,7 @@ fn babbage_block_cbor_round_trip_empty() {
     let block = BabbageBlock {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
@@ -3295,7 +3295,7 @@ fn babbage_block_cbor_round_trip_with_tx() {
     let block = BabbageBlock {
         header: sample_shelley_header(),
         transaction_bodies: vec![tx_body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -3311,7 +3311,7 @@ fn babbage_block_cbor_round_trip_with_tx() {
     let decoded = BabbageBlock::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(decoded.transaction_bodies.len(), 1);
     assert_eq!(decoded.transaction_bodies[0].fee, 200_000);
-    assert_eq!(decoded.witness_sets.len(), 1);
+    assert_eq!(decoded.transaction_witness_sets.len(), 1);
 }
 
 #[test]
@@ -3319,7 +3319,7 @@ fn babbage_block_header_hash() {
     let block = BabbageBlock {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let h1 = block.header_hash();
@@ -3332,7 +3332,7 @@ fn conway_block_cbor_round_trip_empty() {
     let block = ConwayBlock {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let bytes = block.to_cbor_bytes();
@@ -3374,7 +3374,7 @@ fn conway_block_cbor_round_trip_with_tx() {
     let block = ConwayBlock {
         header: sample_shelley_header(),
         transaction_bodies: vec![tx_body],
-        witness_sets: vec![ShelleyWitnessSet {
+        transaction_witness_sets: vec![ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -3397,7 +3397,7 @@ fn conway_block_header_hash() {
     let block = ConwayBlock {
         header: sample_shelley_header(),
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
     let h1 = block.header_hash();
@@ -6107,15 +6107,15 @@ fn cbor_golden_shelley_block_round_trip() {
             vrf_vkey: [0xDD; 32],
             nonce_vrf: ShelleyVrfCert {
                 output: vec![0x11; 64],
-                proof: vec![0x22; 80],
+                proof: [0x22; 80],
             },
             leader_vrf: ShelleyVrfCert {
                 output: vec![0x44; 64],
-                proof: vec![0x55; 80],
+                proof: [0x55; 80],
             },
-            body_size: 256,
-            body_hash: [0xEE; 32],
-            opcert: ShelleyOpCert {
+            block_body_size: 256,
+            block_body_hash: [0xEE; 32],
+            operational_cert: ShelleyOpCert {
                 hot_vkey: [0xFF; 32],
                 sequence_number: 0,
                 kes_period: 0,
@@ -6129,7 +6129,7 @@ fn cbor_golden_shelley_block_round_trip() {
     let block = ShelleyBlock {
         header: header.clone(),
         transaction_bodies: vec![],
-        witness_sets: vec![],
+        transaction_witness_sets: vec![],
         transaction_metadata: std::collections::HashMap::new(),
     };
 

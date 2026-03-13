@@ -1097,11 +1097,11 @@ pub struct ShelleyHeaderBody {
     /// VRF certificate for the leader election proof.
     pub leader_vrf: ShelleyVrfCert,
     /// Size of the block body in bytes.
-    pub body_size: u32,
+    pub block_body_size: u32,
     /// Blake2b-256 hash of the block body.
-    pub body_hash: [u8; 32],
+    pub block_body_hash: [u8; 32],
     /// Operational certificate.
-    pub opcert: ShelleyOpCert,
+    pub operational_cert: ShelleyOpCert,
     /// Protocol version (major, minor).
     pub protocol_version: (u64, u64),
 }
@@ -1125,11 +1125,11 @@ impl CborEncode for ShelleyHeaderBody {
         self.nonce_vrf.encode_cbor(enc);
         self.leader_vrf.encode_cbor(enc);
 
-        enc.unsigned(u64::from(self.body_size));
-        enc.bytes(&self.body_hash);
+        enc.unsigned(u64::from(self.block_body_size));
+        enc.bytes(&self.block_body_hash);
 
         // operational_cert group (4 fields inlined)
-        self.opcert.encode_fields(enc);
+        self.operational_cert.encode_fields(enc);
 
         // protocol_version group (2 fields inlined)
         enc.unsigned(self.protocol_version.0);
@@ -1210,9 +1210,9 @@ impl CborDecode for ShelleyHeaderBody {
             vrf_vkey,
             nonce_vrf,
             leader_vrf,
-            body_size,
-            body_hash,
-            opcert,
+            block_body_size: body_size,
+            block_body_hash: body_hash,
+            operational_cert: opcert,
             protocol_version: (proto_major, proto_minor),
         })
     }
@@ -1311,7 +1311,7 @@ pub struct ShelleyBlock {
     /// Transaction bodies (parallel to witness_sets).
     pub transaction_bodies: Vec<ShelleyTxBody>,
     /// Witness sets (parallel to transaction_bodies).
-    pub witness_sets: Vec<ShelleyWitnessSet>,
+    pub transaction_witness_sets: Vec<ShelleyWitnessSet>,
     /// Metadata map: transaction index → raw CBOR metadata bytes.
     pub transaction_metadata: HashMap<u64, Vec<u8>>,
 }
@@ -1328,8 +1328,8 @@ impl CborEncode for ShelleyBlock {
         }
 
         // transaction_witness_sets
-        enc.array(self.witness_sets.len() as u64);
-        for ws in &self.witness_sets {
+        enc.array(self.transaction_witness_sets.len() as u64);
+        for ws in &self.transaction_witness_sets {
             ws.encode_cbor(enc);
         }
 
@@ -1383,7 +1383,7 @@ impl CborDecode for ShelleyBlock {
         Ok(Self {
             header,
             transaction_bodies,
-            witness_sets,
+            transaction_witness_sets: witness_sets,
             transaction_metadata,
         })
     }

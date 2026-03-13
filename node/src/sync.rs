@@ -658,9 +658,9 @@ pub fn shelley_header_body_to_consensus(body: &ShelleyHeaderBody) -> ConsensusHe
         prev_hash: body.prev_hash.map(HeaderHash),
         issuer_vk: VerificationKey::from_bytes(body.issuer_vkey),
         vrf_vk: VrfVerificationKey::from_bytes(body.vrf_vkey),
-        body_size: body.body_size,
-        body_hash: body.body_hash,
-        opcert: shelley_opcert_to_consensus(&body.opcert),
+        body_size: body.block_body_size,
+        body_hash: body.block_body_hash,
+        opcert: shelley_opcert_to_consensus(&body.operational_cert),
         protocol_version: body.protocol_version,
     }
 }

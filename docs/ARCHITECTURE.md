@@ -37,4 +37,6 @@ The project has a complete Cardano-era type system and a functional node binary:
 - File-backed storage implementations behind `ImmutableStore`, `VolatileStore`, and `LedgerStore` traits.
 - Consensus hardening with `SecurityParam`, `ChainState` volatile chain tracker, rollback depth enforcement, and stability window detection.
 
-The next architecture milestone is upstream parity testing and documentation refresh.
+Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas. 640 workspace tests pass across all crates.
+
+The next architecture milestone is end-to-end multi-peer management and mainnet sync endurance testing.
