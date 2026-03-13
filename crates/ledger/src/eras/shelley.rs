@@ -1276,6 +1276,214 @@ impl ShelleyHeader {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Praos header body (Babbage / Conway)
+// ---------------------------------------------------------------------------
+
+/// The body of a Praos-era block header (Babbage and Conway).
+///
+/// In Babbage/Conway, the two separate VRF certificates (`nonce_vrf` and
+/// `leader_vrf`) from the Shelley-era header are consolidated into a single
+/// `vrf_result`.  This yields a 14-element CBOR array (versus 15 in
+/// Shelley).
+///
+/// CDDL:
+/// ```text
+/// header_body = [
+///   block_number, slot, prev_hash,
+///   issuer_vkey, vrf_vkey,
+///   vrf_result,
+///   block_body_size, block_body_hash,
+///   operational_cert,  ; 4 inlined group fields
+///   protocol_version   ; 2 inlined group fields
+/// ]
+/// ```
+///
+/// Total: 14 elements in the CBOR array.
+///
+/// Reference: `Cardano.Ledger.Block` — `HeaderBody`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PraosHeaderBody {
+    /// Block height.
+    pub block_number: u64,
+    /// Slot in which this block was issued.
+    pub slot: u64,
+    /// Hash of the previous block header (`None` for genesis successor).
+    pub prev_hash: Option<[u8; 32]>,
+    /// Block issuer's Ed25519 verification key (32 bytes).
+    pub issuer_vkey: [u8; 32],
+    /// Block issuer's VRF verification key (32 bytes).
+    pub vrf_vkey: [u8; 32],
+    /// Combined VRF result (output + proof).
+    pub vrf_result: ShelleyVrfCert,
+    /// Size of the block body in bytes.
+    pub block_body_size: u32,
+    /// Blake2b-256 hash of the block body.
+    pub block_body_hash: [u8; 32],
+    /// Operational certificate.
+    pub operational_cert: ShelleyOpCert,
+    /// Protocol version (major, minor).
+    pub protocol_version: (u64, u64),
+}
+
+impl CborEncode for PraosHeaderBody {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(14);
+
+        enc.unsigned(self.block_number);
+        enc.unsigned(self.slot);
+
+        // prev_hash: hash32 / nil
+        match &self.prev_hash {
+            Some(h) => { enc.bytes(h); }
+            None => { enc.null(); }
+        }
+
+        enc.bytes(&self.issuer_vkey);
+        enc.bytes(&self.vrf_vkey);
+
+        self.vrf_result.encode_cbor(enc);
+
+        enc.unsigned(u64::from(self.block_body_size));
+        enc.bytes(&self.block_body_hash);
+
+        // operational_cert group (4 fields inlined)
+        self.operational_cert.encode_fields(enc);
+
+        // protocol_version group (2 fields inlined)
+        enc.unsigned(self.protocol_version.0);
+        enc.unsigned(self.protocol_version.1);
+    }
+}
+
+impl CborDecode for PraosHeaderBody {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 14 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 14,
+                actual: len as usize,
+            });
+        }
+
+        let block_number = dec.unsigned()?;
+        let slot = dec.unsigned()?;
+
+        // prev_hash: hash32 / nil
+        let prev_hash = if dec.peek_major()? == 7 {
+            dec.null()?;
+            None
+        } else {
+            let raw = dec.bytes()?;
+            let h: [u8; 32] =
+                raw.try_into()
+                    .map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 32,
+                        actual: raw.len(),
+                    })?;
+            Some(h)
+        };
+
+        let iv_raw = dec.bytes()?;
+        let issuer_vkey: [u8; 32] =
+            iv_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: iv_raw.len(),
+                })?;
+
+        let vv_raw = dec.bytes()?;
+        let vrf_vkey: [u8; 32] =
+            vv_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: vv_raw.len(),
+                })?;
+
+        let vrf_result = ShelleyVrfCert::decode_cbor(dec)?;
+
+        let body_size = dec.unsigned()? as u32;
+
+        let bh_raw = dec.bytes()?;
+        let body_hash: [u8; 32] =
+            bh_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 32,
+                    actual: bh_raw.len(),
+                })?;
+
+        let opcert = ShelleyOpCert::decode_fields(dec)?;
+
+        let proto_major = dec.unsigned()?;
+        let proto_minor = dec.unsigned()?;
+
+        Ok(Self {
+            block_number,
+            slot,
+            prev_hash,
+            issuer_vkey,
+            vrf_vkey,
+            vrf_result,
+            block_body_size: body_size,
+            block_body_hash: body_hash,
+            operational_cert: opcert,
+            protocol_version: (proto_major, proto_minor),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Praos header (Babbage / Conway)
+// ---------------------------------------------------------------------------
+
+/// A signed Praos-era block header: the body plus a KES signature.
+///
+/// CDDL: `header = [header_body, body_signature : kes_signature]`
+///
+/// Reference: `Cardano.Ledger.Block` — `Header`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PraosHeader {
+    /// The header body (chain-indexing + VRF result + opcert + version).
+    pub body: PraosHeaderBody,
+    /// KES signature bytes over the serialized header body.
+    pub signature: Vec<u8>,
+}
+
+impl CborEncode for PraosHeader {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        self.body.encode_cbor(enc);
+        enc.bytes(&self.signature);
+    }
+}
+
+impl CborDecode for PraosHeader {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let body = PraosHeaderBody::decode_cbor(dec)?;
+        let signature = dec.bytes()?.to_vec();
+        Ok(Self { body, signature })
+    }
+}
+
+impl PraosHeader {
+    /// Compute the Blake2b-256 hash of this header's CBOR encoding.
+    pub fn header_hash(&self) -> crate::types::HeaderHash {
+        let cbor = self.to_cbor_bytes();
+        let digest = yggdrasil_crypto::hash_bytes_256(&cbor);
+        crate::types::HeaderHash(digest.0)
+    }
+}
+
 impl ShelleyBlock {
     /// Compute the Blake2b-256 header hash for this block.
     ///

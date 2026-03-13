@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
-use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
+use crate::eras::shelley::{PraosHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
 use crate::types::{Anchor, DCert, HeaderHash, RewardAccount, StakeCredential, UnitInterval};
 
@@ -1256,8 +1256,9 @@ impl CborDecode for ConwayTxBody {
 
 /// A complete Conway-era block as it appears on the wire.
 ///
-/// Shares the Shelley block envelope structure but carries `ConwayTxBody`
-/// transaction bodies with governance extensions.
+/// Uses the Praos header format (14-element body with single `vrf_result`)
+/// instead of the Shelley header (15-element body with `nonce_vrf` +
+/// `leader_vrf`).
 ///
 /// CDDL:
 /// ```text
@@ -1274,8 +1275,8 @@ impl CborDecode for ConwayTxBody {
 /// `Ouroboros.Consensus.Shelley.Ledger.Block`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConwayBlock {
-    /// The signed block header (same format as Shelley).
-    pub header: ShelleyHeader,
+    /// The signed block header (Praos format).
+    pub header: PraosHeader,
     /// Transaction bodies decoded with Conway-era key-map CBOR.
     pub transaction_bodies: Vec<ConwayTxBody>,
     /// Witness sets (parallel to transaction_bodies).
@@ -1331,7 +1332,7 @@ impl CborDecode for ConwayBlock {
             });
         }
 
-        let header = ShelleyHeader::decode_cbor(dec)?;
+        let header = PraosHeader::decode_cbor(dec)?;
 
         let tb_count = dec.array()?;
         let mut transaction_bodies = Vec::with_capacity(tb_count as usize);

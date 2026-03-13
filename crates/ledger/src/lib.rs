@@ -31,10 +31,10 @@ pub use eras::{
     AllegraTxBody, AlonzoTxBody, AlonzoTxOut, AssetName, BabbageBlock, BabbageTxBody, BabbageTxOut,
     BootstrapWitness, ByronBlock, Constitution, ConwayBlock, ConwayTxBody, DatumOption, ExUnits,
     GovAction, GovActionId, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId,
-    ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
-    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo,
-    ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, Value, Vote, Voter, VotingProcedure,
-    VotingProcedures, BYRON_SLOTS_PER_EPOCH, compute_block_body_hash,
+    PraosHeader, PraosHeaderBody, ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, Value, Vote,
+    Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH, compute_block_body_hash,
 };
 
 // -- Error re-exports ---------------------------------------------------------
