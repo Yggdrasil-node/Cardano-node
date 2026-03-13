@@ -81,7 +81,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Genesis parameters: `NodeConfigFile` includes `epoch_length` (432000), `security_param_k` (2160), `active_slot_coeff` (0.05). CLI `run` command computes `stability_window = 3k/f` and builds `NonceEvolutionConfig` from config.
   - Network presets: `NetworkPreset` enum (`Mainnet | Preprod | Preview`) with `FromStr`/`Display` and per-network constructors. CLI `--network` flag selects preset. Configuration files for all three networks stored in `node/configuration/`.
   - Mempool eviction: `extract_tx_ids`, `evict_confirmed_from_mempool`.
-- `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, TTL-aware admission (`insert_checked`, `purge_expired`), and iterator support.
+- `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, TTL-aware admission (`insert_checked`, `purge_expired`), iterator support, and relay-facing entry conversion to/from ledger `MultiEraSubmittedTx` with stored era + raw submitted-transaction bytes.
 - `crates/ledger`:
   - `LedgerState` with dual UTxO: legacy `ShelleyUtxo` + generalized `MultiEraUtxo`, era-aware `apply_block()` dispatch (Shelley through Conway).
   - Submitted-transaction abstractions in `tx.rs`: `compute_tx_id`, `ShelleyCompatibleSubmittedTx<TBody>`, `AlonzoCompatibleSubmittedTx<TBody>`, and `MultiEraSubmittedTx::from_cbor_bytes_for_era()` for Shelley-based transaction relay boundaries.

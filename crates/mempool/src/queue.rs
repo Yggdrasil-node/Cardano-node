@@ -1,4 +1,4 @@
-use yggdrasil_ledger::{SlotNo, TxId};
+use yggdrasil_ledger::{Era, LedgerError, MultiEraSubmittedTx, SlotNo, TxId};
 
 /// A mempool entry carrying a transaction identifier and its fee for ordering.
 ///
@@ -8,17 +8,92 @@ use yggdrasil_ledger::{SlotNo, TxId};
 /// Reference: `Cardano.Ledger.TxIn` — `TxId`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MempoolEntry {
+    /// The era needed to decode the submitted transaction relay payload.
+    pub era: Era,
     /// The transaction identifier (Blake2b-256 of CBOR body).
     pub tx_id: TxId,
     /// The transaction fee in lovelace, used for ordering.
     pub fee: u64,
     /// The raw CBOR-encoded transaction body bytes.
     pub body: Vec<u8>,
+    /// The raw CBOR-encoded submitted transaction bytes used for relay.
+    pub raw_tx: Vec<u8>,
     /// Size of the transaction in bytes (for capacity tracking).
     pub size_bytes: usize,
     /// Time-to-live slot — the transaction is invalid after this slot.
     /// Matches the Shelley `ttl` field semantics: valid while `current_slot <= ttl`.
     pub ttl: SlotNo,
+}
+
+/// Error type for converting mempool entries into typed submitted transactions.
+#[derive(Debug, thiserror::Error)]
+pub enum MempoolRelayError {
+    /// The stored submitted transaction bytes could not be decoded for the
+    /// entry's era.
+    #[error("failed to decode submitted transaction for era {era:?}: {source}")]
+    Decode {
+        /// Era used to decode the submitted transaction payload.
+        era: Era,
+        /// Underlying ledger decode failure.
+        source: LedgerError,
+    },
+    /// The entry's stored body bytes do not match the decoded transaction
+    /// body.
+    #[error("mempool entry body bytes do not match decoded submitted transaction body")]
+    BodyMismatch,
+    /// The entry's stored `TxId` does not match the decoded transaction body.
+    #[error("mempool entry txid {expected} does not match decoded txid {actual}")]
+    TxIdMismatch {
+        /// TxId stored in the mempool entry.
+        expected: TxId,
+        /// TxId recomputed from the decoded submitted transaction.
+        actual: TxId,
+    },
+}
+
+impl MempoolEntry {
+    /// Build a mempool entry from a typed multi-era submitted transaction.
+    pub fn from_multi_era_submitted_tx(
+        tx: MultiEraSubmittedTx,
+        fee: u64,
+        ttl: SlotNo,
+    ) -> Self {
+        let era = tx.era();
+        let tx_id = tx.tx_id();
+        let body = tx.body_cbor();
+        let raw_tx = tx.raw_cbor();
+        let size_bytes = raw_tx.len();
+        Self {
+            era,
+            tx_id,
+            fee,
+            body,
+            raw_tx,
+            size_bytes,
+            ttl,
+        }
+    }
+
+    /// Decode the relay payload into a typed multi-era submitted transaction.
+    pub fn to_multi_era_submitted_tx(&self) -> Result<MultiEraSubmittedTx, MempoolRelayError> {
+        let tx = MultiEraSubmittedTx::from_cbor_bytes_for_era(self.era, &self.raw_tx).map_err(
+            |source| MempoolRelayError::Decode {
+                era: self.era,
+                source,
+            },
+        )?;
+        if tx.body_cbor() != self.body {
+            return Err(MempoolRelayError::BodyMismatch);
+        }
+        let actual = tx.tx_id();
+        if actual != self.tx_id {
+            return Err(MempoolRelayError::TxIdMismatch {
+                expected: self.tx_id,
+                actual,
+            });
+        }
+        Ok(tx)
+    }
 }
 
 /// Error type for mempool operations.

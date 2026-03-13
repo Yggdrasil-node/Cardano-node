@@ -9,6 +9,7 @@ use yggdrasil_ledger::{
     ConwayTxBody, Encoder, HeaderHash, Nonce, Point, PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
     ShelleyWitnessSet, SlotNo, TxId,
+    Era,
     compute_block_body_hash,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry};
@@ -1787,9 +1788,11 @@ fn evict_confirmed_removes_matching_mempool_entries() {
 
     let mut mempool = Mempool::with_capacity(1_000_000);
     let entry = MempoolEntry {
+        era: Era::Shelley,
         tx_id: id,
         fee: 500,
         body: body.to_cbor_bytes(),
+        raw_tx: body.to_cbor_bytes(),
         size_bytes: 100,
         ttl: SlotNo(10_000),
     };
@@ -1826,16 +1829,20 @@ fn evict_confirmed_also_purges_expired() {
 
     let mut mempool = Mempool::with_capacity(1_000_000);
     mempool.insert(MempoolEntry {
+        era: Era::Shelley,
         tx_id: id1,
         fee: 100,
         body: body1.to_cbor_bytes(),
+        raw_tx: body1.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(5),
     }).expect("insert body1");
     mempool.insert(MempoolEntry {
+        era: Era::Shelley,
         tx_id: id2,
         fee: 200,
         body: body2.to_cbor_bytes(),
+        raw_tx: body2.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(10_000),
     }).expect("insert body2");
@@ -1870,9 +1877,11 @@ fn evict_confirmed_rollback_does_nothing() {
 
     let mut mempool = Mempool::with_capacity(1_000_000);
     mempool.insert(MempoolEntry {
+        era: Era::Shelley,
         tx_id: id,
         fee: 100,
         body: body.to_cbor_bytes(),
+        raw_tx: body.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(10_000),
     }).expect("insert");

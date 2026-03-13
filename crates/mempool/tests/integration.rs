@@ -1,14 +1,87 @@
-use yggdrasil_ledger::{SlotNo, TxId};
-use yggdrasil_mempool::{Mempool, MempoolEntry, MempoolError};
+use yggdrasil_ledger::{
+    AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Era, MultiEraSubmittedTx,
+    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyWitnessSet, SlotNo, TxId, Value,
+};
+use yggdrasil_mempool::{Mempool, MempoolEntry, MempoolError, MempoolRelayError};
 
 fn make_entry(id_byte: u8, fee: u64, size: usize) -> MempoolEntry {
     MempoolEntry {
+        era: Era::Shelley,
         tx_id: TxId([id_byte; 32]),
         fee,
         body: vec![0u8; size],
+        raw_tx: vec![0u8; size],
         size_bytes: size,
         ttl: SlotNo(u64::MAX), // effectively no expiry
     }
+}
+
+fn empty_witness_set() -> ShelleyWitnessSet {
+    ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    }
+}
+
+fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
+    MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body: ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [seed; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 28],
+                amount: 1_500_000,
+            }],
+            fee: 123_000,
+            ttl: 5_000,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        },
+        witness_set: empty_witness_set(),
+        auxiliary_data: Some(vec![0x81, seed]),
+    })
+}
+
+fn sample_alonzo_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
+    MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
+        AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [seed; 32],
+                index: 1,
+            }],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 28],
+                amount: Value::Coin(2_000_000),
+                datum_hash: None,
+            }],
+            fee: 200_000,
+            ttl: Some(9_999),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        },
+        empty_witness_set(),
+        true,
+        Some(vec![0x81, seed.wrapping_add(1)]),
+    ))
 }
 
 #[test]
@@ -129,12 +202,58 @@ fn insert_after_removal_frees_capacity() {
 
 fn make_entry_with_ttl(id_byte: u8, fee: u64, size: usize, ttl: u64) -> MempoolEntry {
     MempoolEntry {
+        era: Era::Shelley,
         tx_id: TxId([id_byte; 32]),
         fee,
         body: vec![0u8; size],
+        raw_tx: vec![0u8; size],
         size_bytes: size,
         ttl: SlotNo(ttl),
     }
+}
+
+#[test]
+fn mempool_entry_round_trips_shelley_submitted_tx() {
+    let tx = sample_shelley_submitted_tx(0x10);
+    let entry = MempoolEntry::from_multi_era_submitted_tx(tx.clone(), 999, SlotNo(5_000));
+
+    assert_eq!(entry.era, Era::Shelley);
+    assert_eq!(entry.tx_id, tx.tx_id());
+    assert_eq!(entry.body, tx.body_cbor());
+    assert_eq!(entry.raw_tx, tx.raw_cbor());
+    assert_eq!(entry.size_bytes, entry.raw_tx.len());
+    assert_eq!(entry.to_multi_era_submitted_tx().expect("decode entry"), tx);
+}
+
+#[test]
+fn mempool_entry_round_trips_alonzo_submitted_tx() {
+    let tx = sample_alonzo_submitted_tx(0x20);
+    let entry = MempoolEntry::from_multi_era_submitted_tx(tx.clone(), 1_234, SlotNo(9_999));
+
+    assert_eq!(entry.era, Era::Alonzo);
+    assert_eq!(entry.tx_id, tx.tx_id());
+    assert_eq!(entry.body, tx.body_cbor());
+    assert_eq!(entry.raw_tx, tx.raw_cbor());
+    assert_eq!(entry.size_bytes, entry.raw_tx.len());
+    assert_eq!(entry.to_multi_era_submitted_tx().expect("decode entry"), tx);
+}
+
+#[test]
+fn mempool_entry_rejects_txid_mismatch_when_decoding() {
+    let tx = sample_shelley_submitted_tx(0x30);
+    let mut entry = MempoolEntry::from_multi_era_submitted_tx(tx.clone(), 10, SlotNo(5_000));
+    entry.tx_id = TxId([0xFF; 32]);
+
+    let err = entry
+        .to_multi_era_submitted_tx()
+        .expect_err("mismatched txid should fail");
+    assert!(matches!(
+        err,
+        MempoolRelayError::TxIdMismatch {
+            expected,
+            actual,
+        } if expected == TxId([0xFF; 32]) && actual == tx.tx_id()
+    ));
 }
 
 #[test]

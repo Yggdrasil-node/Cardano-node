@@ -25,11 +25,11 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Node integration reference: <https://github.com/IntersectMBO/cardano-node/>
 
 ## Current Phase
-- Mempool uses real ledger `TxId` for transaction identification and carries raw CBOR body bytes.
+- Mempool uses real ledger `TxId` for transaction identification, stores the transaction era plus both body CBOR and full submitted-transaction CBOR, and can convert entries to/from ledger `MultiEraSubmittedTx` for relay-facing integration.
 - Fee-descending ordering is implemented with duplicate detection and capacity enforcement.
 - `remove_by_id`, `contains`, `len`, `is_empty`, `size_bytes`, `iter`, and `remove_confirmed` are implemented.
 - Block-application eviction via `remove_confirmed` enables post-sync snipping of confirmed transactions.
 - TTL-aware admission via `insert_checked(entry, current_slot)` rejects transactions whose TTL has expired.
 - Periodic TTL expiry purge via `purge_expired(current_slot)` removes all stale entries.
 - Node-side `evict_confirmed_from_mempool` in `node/src/sync.rs` wires mempool eviction into the sync pipeline.
-- Next: add concurrency support for multi-producer intake, and integrate with ledger validation for full admission checks.
+- Next: add concurrency support for multi-producer intake, and integrate with ledger validation for full admission checks and network submission sourcing.
