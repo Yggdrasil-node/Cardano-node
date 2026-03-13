@@ -129,6 +129,17 @@ impl MultiEraUtxo {
         body: &ShelleyTxBody,
         current_slot: u64,
     ) -> Result<(), LedgerError> {
+        self.apply_shelley_tx_withdrawals(tx_id, body, current_slot, 0)
+    }
+
+    /// Applies a Shelley transaction body with a pre-validated withdrawal total.
+    pub fn apply_shelley_tx_withdrawals(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &ShelleyTxBody,
+        current_slot: u64,
+        withdrawal_total: u64,
+    ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
 
         // TTL check (mandatory in Shelley).
@@ -148,7 +159,7 @@ impl MultiEraUtxo {
             .iter()
             .map(|o| o.amount)
             .fold(0u64, u64::saturating_add);
-        check_coin_preservation(consumed, produced, body.fee)?;
+        check_coin_preservation(consumed.saturating_add(withdrawal_total), produced, body.fee)?;
 
         // State update.
         self.remove_inputs(&body.inputs);
@@ -173,6 +184,17 @@ impl MultiEraUtxo {
         tx_id: [u8; 32],
         body: &AllegraTxBody,
         current_slot: u64,
+    ) -> Result<(), LedgerError> {
+        self.apply_allegra_tx_withdrawals(tx_id, body, current_slot, 0)
+    }
+
+    /// Applies an Allegra transaction body with a pre-validated withdrawal total.
+    pub fn apply_allegra_tx_withdrawals(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &AllegraTxBody,
+        current_slot: u64,
+        withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
 
@@ -202,7 +224,7 @@ impl MultiEraUtxo {
             .iter()
             .map(|o| o.amount)
             .fold(0u64, u64::saturating_add);
-        check_coin_preservation(consumed, produced, body.fee)?;
+        check_coin_preservation(consumed.saturating_add(withdrawal_total), produced, body.fee)?;
 
         self.remove_inputs(&body.inputs);
         for (idx, output) in body.outputs.iter().enumerate() {
@@ -226,6 +248,17 @@ impl MultiEraUtxo {
         tx_id: [u8; 32],
         body: &MaryTxBody,
         current_slot: u64,
+    ) -> Result<(), LedgerError> {
+        self.apply_mary_tx_withdrawals(tx_id, body, current_slot, 0)
+    }
+
+    /// Applies a Mary transaction body with a pre-validated withdrawal total.
+    pub fn apply_mary_tx_withdrawals(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &MaryTxBody,
+        current_slot: u64,
+        withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
 
@@ -253,7 +286,7 @@ impl MultiEraUtxo {
             .iter()
             .map(|o| o.amount.coin())
             .fold(0u64, u64::saturating_add);
-        check_coin_preservation(consumed, produced, body.fee)?;
+        check_coin_preservation(consumed.saturating_add(withdrawal_total), produced, body.fee)?;
 
         // Multi-asset preservation.
         let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
@@ -280,56 +313,16 @@ impl MultiEraUtxo {
         body: &AlonzoTxBody,
         current_slot: u64,
     ) -> Result<(), LedgerError> {
-        validate_nonempty(&body.inputs, &body.outputs)?;
-
-        if let Some(ttl) = body.ttl {
-            if current_slot > ttl {
-                return Err(LedgerError::TxExpired {
-                    ttl,
-                    slot: current_slot,
-                });
-            }
-        }
-        if let Some(start) = body.validity_interval_start {
-            if current_slot < start {
-                return Err(LedgerError::TxNotYetValid {
-                    start,
-                    slot: current_slot,
-                });
-            }
-        }
-
-        let consumed = self.sum_consumed_coin(&body.inputs)?;
-        let produced: u64 = body
-            .outputs
-            .iter()
-            .map(|o| o.amount.coin())
-            .fold(0u64, u64::saturating_add);
-        check_coin_preservation(consumed, produced, body.fee)?;
-
-        let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
-        let produced_ma = sum_output_multi_asset_alonzo(&body.outputs);
-        check_multi_asset_preservation(&consumed_ma, &produced_ma, &body.mint)?;
-
-        self.remove_inputs(&body.inputs);
-        for (idx, output) in body.outputs.iter().enumerate() {
-            let txin = ShelleyTxIn {
-                transaction_id: tx_id,
-                index: idx as u16,
-            };
-            self.entries
-                .insert(txin, MultiEraTxOut::Alonzo(output.clone()));
-        }
-
-        Ok(())
+        self.apply_alonzo_tx_withdrawals(tx_id, body, current_slot, 0)
     }
 
-    /// Applies a Babbage transaction body to this UTxO set.
-    pub fn apply_babbage_tx(
+    /// Applies an Alonzo transaction body with a pre-validated withdrawal total.
+    pub fn apply_alonzo_tx_withdrawals(
         &mut self,
         tx_id: [u8; 32],
-        body: &BabbageTxBody,
+        body: &AlonzoTxBody,
         current_slot: u64,
+        withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
 
@@ -356,7 +349,69 @@ impl MultiEraUtxo {
             .iter()
             .map(|o| o.amount.coin())
             .fold(0u64, u64::saturating_add);
-        check_coin_preservation(consumed, produced, body.fee)?;
+        check_coin_preservation(consumed.saturating_add(withdrawal_total), produced, body.fee)?;
+
+        let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
+        let produced_ma = sum_output_multi_asset_alonzo(&body.outputs);
+        check_multi_asset_preservation(&consumed_ma, &produced_ma, &body.mint)?;
+
+        self.remove_inputs(&body.inputs);
+        for (idx, output) in body.outputs.iter().enumerate() {
+            let txin = ShelleyTxIn {
+                transaction_id: tx_id,
+                index: idx as u16,
+            };
+            self.entries
+                .insert(txin, MultiEraTxOut::Alonzo(output.clone()));
+        }
+
+        Ok(())
+    }
+
+    /// Applies a Babbage transaction body to this UTxO set.
+    pub fn apply_babbage_tx(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &BabbageTxBody,
+        current_slot: u64,
+    ) -> Result<(), LedgerError> {
+        self.apply_babbage_tx_withdrawals(tx_id, body, current_slot, 0)
+    }
+
+    /// Applies a Babbage transaction body with a pre-validated withdrawal total.
+    pub fn apply_babbage_tx_withdrawals(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &BabbageTxBody,
+        current_slot: u64,
+        withdrawal_total: u64,
+    ) -> Result<(), LedgerError> {
+        validate_nonempty(&body.inputs, &body.outputs)?;
+
+        if let Some(ttl) = body.ttl {
+            if current_slot > ttl {
+                return Err(LedgerError::TxExpired {
+                    ttl,
+                    slot: current_slot,
+                });
+            }
+        }
+        if let Some(start) = body.validity_interval_start {
+            if current_slot < start {
+                return Err(LedgerError::TxNotYetValid {
+                    start,
+                    slot: current_slot,
+                });
+            }
+        }
+
+        let consumed = self.sum_consumed_coin(&body.inputs)?;
+        let produced: u64 = body
+            .outputs
+            .iter()
+            .map(|o| o.amount.coin())
+            .fold(0u64, u64::saturating_add);
+        check_coin_preservation(consumed.saturating_add(withdrawal_total), produced, body.fee)?;
 
         let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
         let produced_ma = sum_output_multi_asset_babbage(&body.outputs);
@@ -384,6 +439,17 @@ impl MultiEraUtxo {
         body: &ConwayTxBody,
         current_slot: u64,
     ) -> Result<(), LedgerError> {
+        self.apply_conway_tx_withdrawals(tx_id, body, current_slot, 0)
+    }
+
+    /// Applies a Conway transaction body with a pre-validated withdrawal total.
+    pub fn apply_conway_tx_withdrawals(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &ConwayTxBody,
+        current_slot: u64,
+        withdrawal_total: u64,
+    ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
 
         if let Some(ttl) = body.ttl {
@@ -409,7 +475,7 @@ impl MultiEraUtxo {
             .iter()
             .map(|o| o.amount.coin())
             .fold(0u64, u64::saturating_add);
-        check_coin_preservation(consumed, produced, body.fee)?;
+        check_coin_preservation(consumed.saturating_add(withdrawal_total), produced, body.fee)?;
 
         let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
         let produced_ma = sum_output_multi_asset_babbage(&body.outputs);

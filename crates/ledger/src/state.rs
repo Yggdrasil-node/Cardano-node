@@ -4,7 +4,7 @@ use crate::eras::babbage::BabbageTxBody;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
-use crate::types::{Address, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount};
+use crate::types::{Address, DCert, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount};
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Era, LedgerError};
 use std::collections::BTreeMap;
@@ -12,8 +12,7 @@ use std::collections::BTreeMap;
 /// Registered stake-pool state carried by the ledger.
 ///
 /// This is a narrow container for pool registration data plus an optional
-/// retirement epoch. Certificate application will populate and update this
-/// structure in a later slice.
+/// retirement epoch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisteredPool {
     params: PoolParams,
@@ -286,7 +285,7 @@ impl LedgerStateSnapshot {
 /// `apply_block` decodes each transaction body according to the block's
 /// era and applies the UTxO transition rules via `MultiEraUtxo`.
 /// The state also carries stake-pool and reward-account containers for
-/// upcoming certificate and withdrawal work. A legacy `ShelleyUtxo`
+/// pool-certificate and withdrawal work. A legacy `ShelleyUtxO`
 /// accessor is retained for backward compatibility with existing tests
 /// that seed and inspect Shelley-only entries.
 ///
@@ -441,33 +440,98 @@ impl LedgerState {
         match tx {
             crate::tx::MultiEraSubmittedTx::Shelley(tx) => {
                 let mut staged = self.shelley_utxo.clone();
-                staged.apply_tx(crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0, &tx.body, current_slot.0)?;
+                let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_reward_accounts = self.reward_accounts.clone();
+                let withdrawal_total = apply_certificates_and_withdrawals(
+                    &mut staged_pool_state,
+                    &mut staged_reward_accounts,
+                    tx.body.certificates.as_deref(),
+                    tx.body.withdrawals.as_ref(),
+                )?;
+                staged.apply_tx_with_withdrawals(
+                    crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0,
+                    &tx.body,
+                    current_slot.0,
+                    withdrawal_total,
+                )?;
                 self.shelley_utxo = staged;
+                self.pool_state = staged_pool_state;
+                self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
-                staged.apply_allegra_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_reward_accounts = self.reward_accounts.clone();
+                let withdrawal_total = apply_certificates_and_withdrawals(
+                    &mut staged_pool_state,
+                    &mut staged_reward_accounts,
+                    tx.body.certificates.as_deref(),
+                    tx.body.withdrawals.as_ref(),
+                )?;
+                staged.apply_allegra_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
+                self.pool_state = staged_pool_state;
+                self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Mary(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
-                staged.apply_mary_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_reward_accounts = self.reward_accounts.clone();
+                let withdrawal_total = apply_certificates_and_withdrawals(
+                    &mut staged_pool_state,
+                    &mut staged_reward_accounts,
+                    tx.body.certificates.as_deref(),
+                    tx.body.withdrawals.as_ref(),
+                )?;
+                staged.apply_mary_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
+                self.pool_state = staged_pool_state;
+                self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
-                staged.apply_alonzo_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_reward_accounts = self.reward_accounts.clone();
+                let withdrawal_total = apply_certificates_and_withdrawals(
+                    &mut staged_pool_state,
+                    &mut staged_reward_accounts,
+                    tx.body.certificates.as_deref(),
+                    tx.body.withdrawals.as_ref(),
+                )?;
+                staged.apply_alonzo_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
+                self.pool_state = staged_pool_state;
+                self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
-                staged.apply_babbage_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_reward_accounts = self.reward_accounts.clone();
+                let withdrawal_total = apply_certificates_and_withdrawals(
+                    &mut staged_pool_state,
+                    &mut staged_reward_accounts,
+                    tx.body.certificates.as_deref(),
+                    tx.body.withdrawals.as_ref(),
+                )?;
+                staged.apply_babbage_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
+                self.pool_state = staged_pool_state;
+                self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Conway(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
-                staged.apply_conway_tx(tx.tx_id().0, &tx.body, current_slot.0)?;
+                let mut staged_pool_state = self.pool_state.clone();
+                let mut staged_reward_accounts = self.reward_accounts.clone();
+                let withdrawal_total = apply_certificates_and_withdrawals(
+                    &mut staged_pool_state,
+                    &mut staged_reward_accounts,
+                    tx.body.certificates.as_deref(),
+                    tx.body.withdrawals.as_ref(),
+                )?;
+                staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
+                self.pool_state = staged_pool_state;
+                self.reward_accounts = staged_reward_accounts;
             }
         }
 
@@ -499,10 +563,20 @@ impl LedgerState {
         // blocks (preserves backward compatibility with tests that seed
         // via utxo_mut()).
         let mut staged = self.shelley_utxo.clone();
+        let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
-            staged.apply_tx(tx_id.0, body, slot)?;
+            let withdrawal_total = apply_certificates_and_withdrawals(
+                &mut staged_pool_state,
+                &mut staged_reward_accounts,
+                body.certificates.as_deref(),
+                body.withdrawals.as_ref(),
+            )?;
+            staged.apply_tx_with_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.shelley_utxo = staged;
+        self.pool_state = staged_pool_state;
+        self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
 
@@ -525,10 +599,20 @@ impl LedgerState {
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         let mut staged = self.multi_era_utxo.clone();
+        let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
-            staged.apply_allegra_tx(tx_id.0, body, slot)?;
+            let withdrawal_total = apply_certificates_and_withdrawals(
+                &mut staged_pool_state,
+                &mut staged_reward_accounts,
+                body.certificates.as_deref(),
+                body.withdrawals.as_ref(),
+            )?;
+            staged.apply_allegra_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.multi_era_utxo = staged;
+        self.pool_state = staged_pool_state;
+        self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
 
@@ -551,10 +635,20 @@ impl LedgerState {
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         let mut staged = self.multi_era_utxo.clone();
+        let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
-            staged.apply_mary_tx(tx_id.0, body, slot)?;
+            let withdrawal_total = apply_certificates_and_withdrawals(
+                &mut staged_pool_state,
+                &mut staged_reward_accounts,
+                body.certificates.as_deref(),
+                body.withdrawals.as_ref(),
+            )?;
+            staged.apply_mary_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.multi_era_utxo = staged;
+        self.pool_state = staged_pool_state;
+        self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
 
@@ -577,10 +671,20 @@ impl LedgerState {
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         let mut staged = self.multi_era_utxo.clone();
+        let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
-            staged.apply_alonzo_tx(tx_id.0, body, slot)?;
+            let withdrawal_total = apply_certificates_and_withdrawals(
+                &mut staged_pool_state,
+                &mut staged_reward_accounts,
+                body.certificates.as_deref(),
+                body.withdrawals.as_ref(),
+            )?;
+            staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.multi_era_utxo = staged;
+        self.pool_state = staged_pool_state;
+        self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
 
@@ -603,10 +707,20 @@ impl LedgerState {
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         let mut staged = self.multi_era_utxo.clone();
+        let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
-            staged.apply_babbage_tx(tx_id.0, body, slot)?;
+            let withdrawal_total = apply_certificates_and_withdrawals(
+                &mut staged_pool_state,
+                &mut staged_reward_accounts,
+                body.certificates.as_deref(),
+                body.withdrawals.as_ref(),
+            )?;
+            staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.multi_era_utxo = staged;
+        self.pool_state = staged_pool_state;
+        self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
 
@@ -629,11 +743,94 @@ impl LedgerState {
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         let mut staged = self.multi_era_utxo.clone();
+        let mut staged_pool_state = self.pool_state.clone();
+        let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
-            staged.apply_conway_tx(tx_id.0, body, slot)?;
+            let withdrawal_total = apply_certificates_and_withdrawals(
+                &mut staged_pool_state,
+                &mut staged_reward_accounts,
+                body.certificates.as_deref(),
+                body.withdrawals.as_ref(),
+            )?;
+            staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.multi_era_utxo = staged;
+        self.pool_state = staged_pool_state;
+        self.reward_accounts = staged_reward_accounts;
         Ok(())
+    }
+}
+
+fn apply_certificates_and_withdrawals(
+    pool_state: &mut PoolState,
+    reward_accounts: &mut RewardAccounts,
+    certificates: Option<&[DCert]>,
+    withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
+) -> Result<u64, LedgerError> {
+    if let Some(certs) = certificates {
+        for cert in certs {
+            match cert {
+                DCert::PoolRegistration(params) => pool_state.register(params.clone()),
+                DCert::PoolRetirement(pool, epoch) => {
+                    if !pool_state.retire(*pool, *epoch) {
+                        return Err(LedgerError::PoolNotRegistered(*pool));
+                    }
+                }
+                other => return Err(LedgerError::UnsupportedCertificate(certificate_kind(other))),
+            }
+        }
+    }
+
+    let mut withdrawal_total = 0u64;
+    if let Some(entries) = withdrawals {
+        for (account, requested) in entries {
+            let Some(state) = reward_accounts.get_mut(account) else {
+                return Err(LedgerError::RewardAccountNotRegistered(*account));
+            };
+
+            let available = state.balance();
+            if *requested > available {
+                return Err(LedgerError::WithdrawalExceedsBalance {
+                    account: *account,
+                    requested: *requested,
+                    available,
+                });
+            }
+
+            state.set_balance(available - *requested);
+            withdrawal_total = withdrawal_total.saturating_add(*requested);
+        }
+    }
+
+    Ok(withdrawal_total)
+}
+
+fn certificate_kind(cert: &DCert) -> &'static str {
+    match cert {
+        DCert::AccountRegistration(_) => "AccountRegistration",
+        DCert::AccountUnregistration(_) => "AccountUnregistration",
+        DCert::DelegationToStakePool(_, _) => "DelegationToStakePool",
+        DCert::PoolRegistration(_) => "PoolRegistration",
+        DCert::PoolRetirement(_, _) => "PoolRetirement",
+        DCert::GenesisDelegation(_, _, _) => "GenesisDelegation",
+        DCert::AccountRegistrationDeposit(_, _) => "AccountRegistrationDeposit",
+        DCert::AccountUnregistrationDeposit(_, _) => "AccountUnregistrationDeposit",
+        DCert::DelegationToDrep(_, _) => "DelegationToDrep",
+        DCert::DelegationToStakePoolAndDrep(_, _, _) => "DelegationToStakePoolAndDrep",
+        DCert::AccountRegistrationDelegationToStakePool(_, _, _) => {
+            "AccountRegistrationDelegationToStakePool"
+        }
+        DCert::AccountRegistrationDelegationToDrep(_, _, _) => {
+            "AccountRegistrationDelegationToDrep"
+        }
+        DCert::AccountRegistrationDelegationToStakePoolAndDrep(_, _, _, _) => {
+            "AccountRegistrationDelegationToStakePoolAndDrep"
+        }
+        DCert::CommitteeAuthorization(_, _) => "CommitteeAuthorization",
+        DCert::CommitteeResignation(_, _) => "CommitteeResignation",
+        DCert::DrepRegistration(_, _, _) => "DrepRegistration",
+        DCert::DrepUnregistration(_, _) => "DrepUnregistration",
+        DCert::DrepUpdate(_, _) => "DrepUpdate",
     }
 }
 

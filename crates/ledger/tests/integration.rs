@@ -6291,6 +6291,202 @@ fn ledger_state_query_reward_balance_reads_reward_accounts() {
 }
 
 #[test]
+fn ledger_state_applies_pool_registration_certificate() {
+    let mut state = LedgerState::new(Era::Shelley);
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x90; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let params = sample_pool_params();
+    let operator = params.operator;
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x91,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x90; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::PoolRegistration(params.clone())]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("pool registration block");
+
+    let registered = state
+        .registered_pool(&operator)
+        .expect("pool should be registered");
+    assert_eq!(registered.params(), &params);
+    assert_eq!(registered.retiring_epoch(), None);
+}
+
+#[test]
+fn ledger_state_pool_retirement_requires_registered_pool() {
+    let mut state = LedgerState::new(Era::Shelley);
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x92; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x93,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x92; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::PoolRetirement([0xA4; 28], EpochNo(90))]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    let err = state.apply_block(&block).expect_err("missing pool should fail");
+    assert_eq!(err, LedgerError::PoolNotRegistered([0xA4; 28]));
+    assert_eq!(state.tip, Point::Origin);
+}
+
+#[test]
+fn ledger_state_applies_withdrawal_and_debits_reward_balance() {
+    use std::collections::BTreeMap;
+
+    let mut state = LedgerState::new(Era::Shelley);
+    let reward_account = sample_reward_account();
+    state.reward_accounts_mut().insert(
+        reward_account,
+        RewardAccountState::new(500_000, None),
+    );
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x94; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_500_000,
+        },
+    );
+
+    let mut withdrawals = BTreeMap::new();
+    withdrawals.insert(reward_account, 500_000);
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x95,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x94; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_900_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: None,
+            withdrawals: Some(withdrawals),
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("withdrawal block");
+    assert_eq!(state.query_reward_balance(&reward_account), 0);
+    assert_eq!(state.utxo().len(), 1);
+}
+
+#[test]
+fn ledger_state_rejects_withdrawal_above_balance() {
+    use std::collections::BTreeMap;
+
+    let mut state = LedgerState::new(Era::Shelley);
+    let reward_account = sample_reward_account();
+    state.reward_accounts_mut().insert(
+        reward_account,
+        RewardAccountState::new(400_000, None),
+    );
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x96; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_500_000,
+        },
+    );
+
+    let mut withdrawals = BTreeMap::new();
+    withdrawals.insert(reward_account, 500_000);
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0x97,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x96; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_900_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: None,
+            withdrawals: Some(withdrawals),
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    let err = state.apply_block(&block).expect_err("over-withdrawal should fail");
+    assert_eq!(
+        err,
+        LedgerError::WithdrawalExceedsBalance {
+            account: reward_account,
+            requested: 500_000,
+            available: 400_000,
+        }
+    );
+    assert_eq!(state.query_reward_balance(&reward_account), 400_000);
+    assert_eq!(state.tip, Point::Origin);
+}
+
+#[test]
 fn ledger_state_query_utxos_by_address_deduplicates_dual_views() {
     let mut state = LedgerState::new(Era::Mary);
     let address = Address::Enterprise(EnterpriseAddress {

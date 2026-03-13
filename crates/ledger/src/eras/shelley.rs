@@ -896,6 +896,17 @@ impl ShelleyUtxo {
         body: &ShelleyTxBody,
         current_slot: u64,
     ) -> Result<(), LedgerError> {
+        self.apply_tx_with_withdrawals(tx_id, body, current_slot, 0)
+    }
+
+    /// Applies a Shelley transaction body with a pre-validated withdrawal total.
+    pub fn apply_tx_with_withdrawals(
+        &mut self,
+        tx_id: [u8; 32],
+        body: &ShelleyTxBody,
+        current_slot: u64,
+        withdrawal_total: u64,
+    ) -> Result<(), LedgerError> {
         // 1. Non-empty inputs / outputs.
         if body.inputs.is_empty() {
             return Err(LedgerError::NoInputs);
@@ -925,9 +936,10 @@ impl ShelleyUtxo {
             .iter()
             .map(|o| o.amount)
             .fold(0u64, u64::saturating_add);
-        if consumed != produced.saturating_add(body.fee) {
+        let available = consumed.saturating_add(withdrawal_total);
+        if available != produced.saturating_add(body.fee) {
             return Err(LedgerError::ValueNotPreserved {
-                consumed,
+                consumed: available,
                 produced,
                 fee: body.fee,
             });

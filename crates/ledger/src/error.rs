@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::types::{PoolKeyHash, RewardAccount};
+
 /// Errors returned by ledger-facing helpers.
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum LedgerError {
@@ -48,6 +50,24 @@ pub enum LedgerError {
 
     #[error("transaction not yet valid: validity start {start} > current slot {slot}")]
     TxNotYetValid { start: u64, slot: u64 },
+
+    #[error("stake pool not registered: {0:02x?}")]
+    PoolNotRegistered(PoolKeyHash),
+
+    #[error("reward account not registered: {0:?}")]
+    RewardAccountNotRegistered(RewardAccount),
+
+    #[error(
+        "withdrawal exceeds reward balance for {account:?}: requested {requested}, available {available}"
+    )]
+    WithdrawalExceedsBalance {
+        account: RewardAccount,
+        requested: u64,
+        available: u64,
+    },
+
+    #[error("unsupported certificate kind in this ledger slice: {0}")]
+    UnsupportedCertificate(&'static str),
 
     #[error(
         "multi-asset not preserved for policy {policy:02x?} / asset {asset_name:02x?}: \
