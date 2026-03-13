@@ -14,7 +14,7 @@ use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
 use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_network::{
     BatchResponse, BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient,
-    ChainSyncClientError, KeepAliveClient, KeepAliveClientError, NextResponse,
+    ChainSyncClientError, DecodedHeaderNextResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
     TypedIntersectResponse, TypedNextResponse,
 };
 use yggdrasil_ledger::{
@@ -307,20 +307,20 @@ pub async fn sync_step_typed(
     block_fetch: &mut BlockFetchClient,
     from_point: Point,
 ) -> Result<TypedSyncStep, SyncError> {
-    let next = chain_sync.request_next_typed().await?;
+    let next = chain_sync.request_next_decoded_header::<ShelleyHeader>().await?;
 
     match next {
-        TypedNextResponse::RollForward { header, tip }
-        | TypedNextResponse::AwaitRollForward { header, tip } => {
+        DecodedHeaderNextResponse::RollForward { header, tip }
+        | DecodedHeaderNextResponse::AwaitRollForward { header, tip } => {
             let blocks = fetch_range_blocks_typed(block_fetch, from_point, tip).await?;
             Ok(TypedSyncStep::RollForward {
-                header: Box::new(decode_shelley_header(&header)?),
+                header: Box::new(header),
                 tip,
                 blocks: decode_shelley_blocks(&blocks)?,
             })
         }
-        TypedNextResponse::RollBackward { point, tip }
-        | TypedNextResponse::AwaitRollBackward { point, tip } => {
+        DecodedHeaderNextResponse::RollBackward { point, tip }
+        | DecodedHeaderNextResponse::AwaitRollBackward { point, tip } => {
             Ok(TypedSyncStep::RollBackward { point, tip })
         }
     }

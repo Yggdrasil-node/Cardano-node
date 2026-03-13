@@ -2,7 +2,7 @@ use yggdrasil_network::{
     BatchResponse, Bearer, BearerError, BlockFetchClient, BlockFetchMessage, BlockFetchState,
     ChainRange, ChainSyncMessage,
     ChainSyncState, ChainSyncClient, IntersectResponse, NextResponse,
-    TypedIntersectResponse, TypedNextResponse,
+    DecodedHeaderNextResponse, TypedIntersectResponse, TypedNextResponse,
     HandshakeMessage, HandshakeRequest, HandshakeState,
     HandshakeVersion, KeepAliveClient, KeepAliveMessage, KeepAliveState,
     MessageChannel, MiniProtocolDir, MiniProtocolNum, MuxChannel,
@@ -11,7 +11,42 @@ use yggdrasil_network::{
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
-use yggdrasil_ledger::{CborEncode, HeaderHash, Point, SlotNo};
+use yggdrasil_ledger::{CborEncode, HeaderHash, Point, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo};
+
+fn sample_vrf_cert(seed: u8) -> ShelleyVrfCert {
+    ShelleyVrfCert {
+        output: vec![seed; 32],
+        proof: [seed.wrapping_add(1); 80],
+    }
+}
+
+fn sample_opcert(seed: u8) -> ShelleyOpCert {
+    ShelleyOpCert {
+        hot_vkey: [seed; 32],
+        sequence_number: 42,
+        kes_period: 100,
+        sigma: [seed.wrapping_add(2); 64],
+    }
+}
+
+fn sample_shelley_header() -> ShelleyHeader {
+    ShelleyHeader {
+        body: ShelleyHeaderBody {
+            block_number: 1,
+            slot: 500,
+            prev_hash: Some([0xAA; 32]),
+            issuer_vkey: [0x11; 32],
+            vrf_vkey: [0x22; 32],
+            nonce_vrf: sample_vrf_cert(0x30),
+            leader_vrf: sample_vrf_cert(0x40),
+            block_body_size: 1024,
+            block_body_hash: [0x55; 32],
+            operational_cert: sample_opcert(0x60),
+            protocol_version: (2, 0),
+        },
+        signature: vec![0xDD; 448],
+    }
+}
 
 // ===========================================================================
 // Legacy scaffold test (preserved)
@@ -1881,6 +1916,66 @@ async fn chainsync_client_request_next_typed_decodes_points() {
         resp,
         TypedNextResponse::RollBackward { point, tip }
     );
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_request_next_decoded_header_decodes_shelley_header() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+    let header = sample_shelley_header();
+    let tip = Point::BlockPoint(SlotNo(500), HeaderHash([0xCC; 32]));
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv request");
+        let reply = ChainSyncMessage::MsgRollForward {
+            header: header.to_cbor_bytes(),
+            tip: tip.to_cbor_bytes(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let resp = client
+        .request_next_decoded_header::<ShelleyHeader>()
+        .await
+        .expect("request_next_decoded_header");
+    assert_eq!(
+        resp,
+        DecodedHeaderNextResponse::RollForward { header, tip }
+    );
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn chainsync_client_request_next_decoded_header_rejects_invalid_header() {
+    let (c_handle, s_handle, c_mux, s_mux) = chainsync_mux_pair().await;
+    let mut client = ChainSyncClient::new(c_handle);
+    let tip = Point::Origin;
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv request");
+        let reply = ChainSyncMessage::MsgRollForward {
+            header: vec![0x80],
+            tip: tip.to_cbor_bytes(),
+        };
+        sh.send(reply.to_cbor()).await.expect("send reply");
+    });
+
+    let err = client
+        .request_next_decoded_header::<ShelleyHeader>()
+        .await
+        .expect_err("invalid header should fail");
+    assert!(matches!(err, yggdrasil_network::ChainSyncClientError::HeaderDecode(_)));
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;

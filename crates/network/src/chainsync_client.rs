@@ -113,6 +113,40 @@ pub enum TypedIntersectResponse {
     },
 }
 
+/// The server's response to a `MsgRequestNext`, with both the header and any
+/// point/tip payloads decoded into ledger/domain values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DecodedHeaderNextResponse<H> {
+    /// A new header was rolled forward.
+    RollForward {
+        /// Decoded block header.
+        header: H,
+        /// Decoded current tip.
+        tip: Point,
+    },
+    /// The chain rolled backward to a prior point.
+    RollBackward {
+        /// Decoded rollback target point.
+        point: Point,
+        /// Decoded current tip.
+        tip: Point,
+    },
+    /// The server asked us to wait and then later delivered a roll-forward.
+    AwaitRollForward {
+        /// Decoded block header.
+        header: H,
+        /// Decoded current tip.
+        tip: Point,
+    },
+    /// The server asked us to wait and then later delivered a roll-backward.
+    AwaitRollBackward {
+        /// Decoded rollback target point.
+        point: Point,
+        /// Decoded current tip.
+        tip: Point,
+    },
+}
+
 // ---------------------------------------------------------------------------
 // Client error
 // ---------------------------------------------------------------------------
@@ -143,6 +177,10 @@ pub enum ChainSyncClientError {
     /// Point payload decode failure.
     #[error("point decode error: {0}")]
     PointDecode(String),
+
+    /// Header payload decode failure.
+    #[error("header decode error: {0}")]
+    HeaderDecode(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +238,11 @@ impl ChainSyncClient {
     fn decode_point(raw: &[u8]) -> Result<Point, ChainSyncClientError> {
         Point::from_cbor_bytes(raw)
             .map_err(|e| ChainSyncClientError::PointDecode(e.to_string()))
+    }
+
+    fn decode_header<H: CborDecode>(raw: &[u8]) -> Result<H, ChainSyncClientError> {
+        H::from_cbor_bytes(raw)
+            .map_err(|e| ChainSyncClientError::HeaderDecode(e.to_string()))
     }
 
     // -- public API -------------------------------------------------------
@@ -304,6 +347,33 @@ impl ChainSyncClient {
                     point: Self::decode_point(&point)?,
                     tip: Self::decode_point(&tip)?,
                 })
+            }
+        }
+    }
+
+    /// Send `MsgRequestNext` and decode the returned header plus any point/tip
+    /// payloads into typed values.
+    pub async fn request_next_decoded_header<H: CborDecode>(
+        &mut self,
+    ) -> Result<DecodedHeaderNextResponse<H>, ChainSyncClientError> {
+        match self.request_next_typed().await? {
+            TypedNextResponse::RollForward { header, tip } => {
+                Ok(DecodedHeaderNextResponse::RollForward {
+                    header: Self::decode_header(&header)?,
+                    tip,
+                })
+            }
+            TypedNextResponse::RollBackward { point, tip } => {
+                Ok(DecodedHeaderNextResponse::RollBackward { point, tip })
+            }
+            TypedNextResponse::AwaitRollForward { header, tip } => {
+                Ok(DecodedHeaderNextResponse::AwaitRollForward {
+                    header: Self::decode_header(&header)?,
+                    tip,
+                })
+            }
+            TypedNextResponse::AwaitRollBackward { point, tip } => {
+                Ok(DecodedHeaderNextResponse::AwaitRollBackward { point, tip })
             }
         }
     }
