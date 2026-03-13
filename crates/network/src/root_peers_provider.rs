@@ -7,6 +7,7 @@
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use crate::peer_registry::PeerRegistry;
 use crate::peer_selection::{
@@ -115,14 +116,94 @@ pub struct ScriptedRootPeerProvider {
 
 /// Static DNS-backed provider for configured bootstrap and public root peers.
 ///
-/// This is a minimal crate-owned provider that re-resolves configured access
-/// points each time it is polled. Lookup failures are treated as absent
-/// results for the affected access point so the provider can continue emitting
-/// the currently resolvable subset.
+/// Re-resolves configured access points on each poll. Lookup failures are
+/// treated as absent results for the affected access point so the provider
+/// can continue emitting the currently resolvable subset.
+///
+/// When a [`DnsRefreshPolicy`] is attached via [`with_policy`](Self::with_policy),
+/// the provider gates re-resolution behind a time-based schedule with
+/// exponential backoff on unchanged (stale) results, matching the upstream
+/// `clipTTLBelow`/`clipTTLAbove` constants.
 #[derive(Clone, Debug)]
 pub struct DnsRootPeerProvider {
     config: DnsRootPeerProviderConfig,
     last_refresh: Option<RootPeerProviderRefresh>,
+    schedule: Option<DnsRefreshSchedule>,
+}
+
+/// Time-gated refresh policy for DNS-backed root-peer providers.
+///
+/// Since `std::net::ToSocketAddrs` does not expose DNS TTL, we use
+/// configurable base and maximum intervals with exponential backoff on stale
+/// (unchanged) resolution results.  The defaults match the upstream
+/// `clipTTLBelow` (60 s) and `clipTTLAbove` (900 s / 15 min) constants from
+/// `ouroboros-network`.
+#[derive(Clone, Debug)]
+pub struct DnsRefreshPolicy {
+    /// Base delay between DNS re-resolution attempts (default 60 s).
+    pub base_interval: Duration,
+    /// Maximum delay after exponential backoff on stale results (default
+    /// 900 s / 15 min).
+    pub max_interval: Duration,
+}
+
+impl Default for DnsRefreshPolicy {
+    fn default() -> Self {
+        Self {
+            base_interval: Duration::from_secs(60),
+            max_interval: Duration::from_secs(900),
+        }
+    }
+}
+
+/// Internal schedule state tracking when the next DNS resolution should happen.
+#[derive(Clone, Debug)]
+struct DnsRefreshSchedule {
+    policy: DnsRefreshPolicy,
+    /// Number of consecutive unchanged-result resolutions.
+    stale_count: u32,
+    /// When the last DNS resolution was performed.
+    last_resolved_at: Option<Instant>,
+}
+
+impl DnsRefreshSchedule {
+    fn new(policy: DnsRefreshPolicy) -> Self {
+        Self {
+            policy,
+            stale_count: 0,
+            last_resolved_at: None,
+        }
+    }
+
+    /// Whether enough time has elapsed to perform a new resolution.
+    fn should_resolve(&self, now: Instant) -> bool {
+        match self.last_resolved_at {
+            None => true,
+            Some(last) => now.duration_since(last) >= self.current_interval(),
+        }
+    }
+
+    /// Current interval based on exponential backoff state.
+    ///
+    /// `base_interval * 2^stale_count`, capped at `max_interval`.
+    fn current_interval(&self) -> Duration {
+        let shift = self.stale_count.min(8);
+        let multiplier = 1u32.checked_shl(shift).unwrap_or(u32::MAX);
+        let backed_off = self.policy.base_interval.saturating_mul(multiplier);
+        backed_off.min(self.policy.max_interval)
+    }
+
+    /// Record that resolution produced changed results.
+    fn record_change(&mut self, now: Instant) {
+        self.stale_count = 0;
+        self.last_resolved_at = Some(now);
+    }
+
+    /// Record that resolution produced unchanged results.
+    fn record_stale(&mut self, now: Instant) {
+        self.stale_count = self.stale_count.saturating_add(1);
+        self.last_resolved_at = Some(now);
+    }
 }
 
 /// Input configuration for the DNS-backed root-peer provider.
@@ -147,6 +228,7 @@ impl DnsRootPeerProvider {
         Self {
             config: DnsRootPeerProviderConfig::LocalRoots(local_roots),
             last_refresh: None,
+            schedule: None,
         }
     }
 
@@ -155,6 +237,7 @@ impl DnsRootPeerProvider {
         Self {
             config: DnsRootPeerProviderConfig::BootstrapPeers(access_points),
             last_refresh: None,
+            schedule: None,
         }
     }
 
@@ -163,6 +246,7 @@ impl DnsRootPeerProvider {
         Self {
             config: DnsRootPeerProviderConfig::PublicConfigPeers(public_roots),
             last_refresh: None,
+            schedule: None,
         }
     }
 
@@ -177,7 +261,23 @@ impl DnsRootPeerProvider {
                 public_roots,
             },
             last_refresh: None,
+            schedule: None,
         }
+    }
+
+    /// Attach a time-gated refresh policy.
+    ///
+    /// When a policy is attached, the provider gates DNS re-resolution behind
+    /// a time-based schedule. After each resolution, the provider waits at
+    /// least `base_interval` before re-resolving. If consecutive resolutions
+    /// produce unchanged results, the wait doubles each time (exponential
+    /// backoff) up to `max_interval`.
+    ///
+    /// Without a policy, the provider resolves on every `refresh()` call and
+    /// suppresses unchanged results via value comparison alone.
+    pub fn with_policy(mut self, policy: DnsRefreshPolicy) -> Self {
+        self.schedule = Some(DnsRefreshSchedule::new(policy));
+        self
     }
 }
 
@@ -217,6 +317,15 @@ impl RootPeerProvider for DnsRootPeerProvider {
     }
 
     fn refresh(&mut self) -> Result<Option<RootPeerProviderRefresh>, RootPeerProviderError> {
+        // When a schedule is active, skip resolution if not enough time has
+        // elapsed since the last attempt.
+        let now = Instant::now();
+        if let Some(ref schedule) = self.schedule {
+            if !schedule.should_resolve(now) {
+                return Ok(None);
+            }
+        }
+
         let next = match &self.config {
             DnsRootPeerProviderConfig::LocalRoots(local_roots) => {
                 RootPeerProviderRefresh::LocalRoots(resolve_local_root_groups(local_roots))
@@ -237,9 +346,15 @@ impl RootPeerProvider for DnsRootPeerProvider {
         };
 
         if self.last_refresh.as_ref() == Some(&next) {
+            if let Some(ref mut schedule) = self.schedule {
+                schedule.record_stale(now);
+            }
             Ok(None)
         } else {
             self.last_refresh = Some(next.clone());
+            if let Some(ref mut schedule) = self.schedule {
+                schedule.record_change(now);
+            }
             Ok(Some(next))
         }
     }
@@ -652,5 +767,133 @@ mod tests {
 
         assert_eq!(state.providers().local_roots.len(), 1);
         assert_eq!(state.providers().local_roots[0].peers, vec![peer_addr]);
+    }
+
+    // -- Refresh-policy tests -------------------------------------------------
+
+    #[test]
+    fn refresh_schedule_current_interval_uses_exponential_backoff() {
+        let policy = DnsRefreshPolicy {
+            base_interval: Duration::from_secs(60),
+            max_interval: Duration::from_secs(900),
+        };
+        let mut schedule = DnsRefreshSchedule::new(policy);
+        let now = Instant::now();
+
+        // stale_count 0: base interval
+        assert_eq!(schedule.current_interval(), Duration::from_secs(60));
+
+        // stale 1: 120 s
+        schedule.record_stale(now);
+        assert_eq!(schedule.current_interval(), Duration::from_secs(120));
+
+        // stale 2: 240 s
+        schedule.record_stale(now);
+        assert_eq!(schedule.current_interval(), Duration::from_secs(240));
+
+        // stale 3: 480 s
+        schedule.record_stale(now);
+        assert_eq!(schedule.current_interval(), Duration::from_secs(480));
+
+        // stale 4: 960 s → capped at max 900 s
+        schedule.record_stale(now);
+        assert_eq!(schedule.current_interval(), Duration::from_secs(900));
+
+        // After a change: reset to base
+        schedule.record_change(now);
+        assert_eq!(schedule.current_interval(), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn refresh_schedule_should_resolve_gates_on_elapsed_time() {
+        let policy = DnsRefreshPolicy {
+            base_interval: Duration::from_secs(60),
+            max_interval: Duration::from_secs(900),
+        };
+        let mut schedule = DnsRefreshSchedule::new(policy);
+        let now = Instant::now();
+
+        // First call: always resolve (no prior resolution)
+        assert!(schedule.should_resolve(now));
+
+        schedule.record_change(now);
+
+        // Immediately after: should not resolve
+        assert!(!schedule.should_resolve(now));
+
+        // Just before base interval: still no
+        assert!(!schedule.should_resolve(now + Duration::from_secs(59)));
+
+        // At base interval: should resolve
+        assert!(schedule.should_resolve(now + Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn refresh_schedule_backoff_increases_wait_between_resolves() {
+        let policy = DnsRefreshPolicy {
+            base_interval: Duration::from_secs(60),
+            max_interval: Duration::from_secs(900),
+        };
+        let mut schedule = DnsRefreshSchedule::new(policy);
+        let t0 = Instant::now();
+
+        // First resolve at t0
+        schedule.record_stale(t0);
+
+        // After 60 s (base): would resolve if stale_count were 0, but
+        // stale_count is 1 so need 120 s.
+        assert!(!schedule.should_resolve(t0 + Duration::from_secs(60)));
+        assert!(!schedule.should_resolve(t0 + Duration::from_secs(119)));
+        assert!(schedule.should_resolve(t0 + Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn dns_provider_with_policy_first_call_resolves() {
+        let mut provider = DnsRootPeerProvider::bootstrap_peers(vec![PeerAccessPoint {
+            address: "127.0.0.10".to_owned(),
+            port: 3001,
+        }])
+        .with_policy(DnsRefreshPolicy {
+            base_interval: Duration::from_secs(3600),
+            max_interval: Duration::from_secs(7200),
+        });
+
+        // First call always resolves regardless of policy.
+        let first = provider.refresh().expect("refresh");
+        assert!(first.is_some());
+
+        // Second call within the 1-hour base interval: suppressed by schedule.
+        let second = provider.refresh().expect("refresh");
+        assert!(second.is_none());
+    }
+
+    #[test]
+    fn dns_provider_without_policy_resolves_every_call() {
+        let mut provider = DnsRootPeerProvider::bootstrap_peers(vec![PeerAccessPoint {
+            address: "127.0.0.10".to_owned(),
+            port: 3001,
+        }]);
+
+        // Without policy, every call resolves (but unchanged results are still
+        // suppressed via value comparison).
+        assert!(provider.refresh().expect("first").is_some());
+        // Second call: same result, suppressed by value comparison.
+        assert!(provider.refresh().expect("second").is_none());
+    }
+
+    #[test]
+    fn dns_provider_with_zero_interval_policy_resolves_every_call() {
+        let mut provider = DnsRootPeerProvider::bootstrap_peers(vec![PeerAccessPoint {
+            address: "127.0.0.10".to_owned(),
+            port: 3001,
+        }])
+        .with_policy(DnsRefreshPolicy {
+            base_interval: Duration::from_secs(0),
+            max_interval: Duration::from_secs(0),
+        });
+
+        // Zero interval: always resolves, but result unchanged → suppressed.
+        assert!(provider.refresh().expect("first").is_some());
+        assert!(provider.refresh().expect("second").is_none());
     }
 }

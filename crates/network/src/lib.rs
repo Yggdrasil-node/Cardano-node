@@ -62,9 +62,9 @@ pub use root_peers::{
     reconcile_root_peer_providers, resolve_root_peer_providers,
 };
 pub use root_peers_provider::{
-    DnsRootPeerProvider, DnsRootPeerProviderConfig, RootPeerProvider,
-    RootPeerProviderError, RootPeerProviderKind, RootPeerProviderRefresh,
-    ScriptedRootPeerProvider,
+    DnsRefreshPolicy, DnsRootPeerProvider, DnsRootPeerProviderConfig,
+    RootPeerProvider, RootPeerProviderError, RootPeerProviderKind,
+    RootPeerProviderRefresh, ScriptedRootPeerProvider,
     refresh_root_peer_state, refresh_root_peer_state_and_registry,
 };
 pub use peer_selection::{
