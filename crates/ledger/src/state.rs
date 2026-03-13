@@ -330,6 +330,113 @@ impl DrepState {
     }
 }
 
+/// Committee-member authorization state visible from the ledger.
+///
+/// This mirrors the Conway cert-state split where a known cold credential may
+/// have no hot key, an authorized hot key, or a recorded resignation anchor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommitteeAuthorization {
+    /// The member has an authorized hot credential.
+    CommitteeHotCredential(StakeCredential),
+    /// The member has resigned, optionally carrying an anchor.
+    CommitteeMemberResigned(Option<Anchor>),
+}
+
+/// State for a known constitutional-committee cold credential.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CommitteeMemberState {
+    authorization: Option<CommitteeAuthorization>,
+}
+
+impl CommitteeMemberState {
+    /// Creates member state with no authorized hot credential.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the member authorization state, if any.
+    pub fn authorization(&self) -> Option<&CommitteeAuthorization> {
+        self.authorization.as_ref()
+    }
+
+    /// Returns the authorized hot credential, if present.
+    pub fn hot_credential(&self) -> Option<StakeCredential> {
+        match self.authorization.as_ref() {
+            Some(CommitteeAuthorization::CommitteeHotCredential(credential)) => Some(*credential),
+            _ => None,
+        }
+    }
+
+    /// Returns the resignation anchor, if the member has resigned.
+    pub fn resignation_anchor(&self) -> Option<&Anchor> {
+        match self.authorization.as_ref() {
+            Some(CommitteeAuthorization::CommitteeMemberResigned(anchor)) => anchor.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Returns true when the member has a recorded resignation.
+    pub fn is_resigned(&self) -> bool {
+        matches!(
+            self.authorization,
+            Some(CommitteeAuthorization::CommitteeMemberResigned(_))
+        )
+    }
+
+    fn set_authorization(&mut self, authorization: Option<CommitteeAuthorization>) {
+        self.authorization = authorization;
+    }
+}
+
+/// Known constitutional-committee members visible from the ledger.
+///
+/// Membership itself is governed elsewhere in Conway state. This narrow local
+/// container tracks known cold credentials plus their hot-key authorization or
+/// resignation status so committee certificates can be applied atomically.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CommitteeState {
+    entries: BTreeMap<StakeCredential, CommitteeMemberState>,
+}
+
+impl CommitteeState {
+    /// Creates an empty committee-state container.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the state for `credential`, if present.
+    pub fn get(&self, credential: &StakeCredential) -> Option<&CommitteeMemberState> {
+        self.entries.get(credential)
+    }
+
+    /// Returns mutable state for `credential`, if present.
+    pub fn get_mut(&mut self, credential: &StakeCredential) -> Option<&mut CommitteeMemberState> {
+        self.entries.get_mut(credential)
+    }
+
+    /// Returns true when `credential` is a known committee member.
+    pub fn is_member(&self, credential: &StakeCredential) -> bool {
+        self.entries.contains_key(credential)
+    }
+
+    /// Iterates over known committee members in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&StakeCredential, &CommitteeMemberState)> {
+        self.entries.iter()
+    }
+
+    /// Inserts a known committee member with no authorized hot credential.
+    pub fn register(&mut self, credential: StakeCredential) -> bool {
+        self.entries
+            .insert(credential, CommitteeMemberState::new())
+            .is_none()
+    }
+
+    /// Removes a known committee member.
+    pub fn unregister(&mut self, credential: &StakeCredential) -> Option<CommitteeMemberState> {
+        self.entries.remove(credential)
+    }
+}
+
 /// Read-only snapshot of ledger-visible state.
 ///
 /// This snapshot preserves the current era, tip, stake-pool state,
@@ -343,6 +450,7 @@ pub struct LedgerStateSnapshot {
     tip: Point,
     pool_state: PoolState,
     stake_credentials: StakeCredentials,
+    committee_state: CommitteeState,
     drep_state: DrepState,
     reward_accounts: RewardAccounts,
     multi_era_utxo: MultiEraUtxo,
@@ -370,6 +478,11 @@ impl LedgerStateSnapshot {
         &self.stake_credentials
     }
 
+    /// Returns the committee-member state captured in this snapshot.
+    pub fn committee_state(&self) -> &CommitteeState {
+        &self.committee_state
+    }
+
     /// Returns the registered DRep state captured in this snapshot.
     pub fn drep_state(&self) -> &DrepState {
         &self.drep_state
@@ -391,6 +504,14 @@ impl LedgerStateSnapshot {
         credential: &StakeCredential,
     ) -> Option<&StakeCredentialState> {
         self.stake_credentials.get(credential)
+    }
+
+    /// Returns the committee-member state for `credential`, if present.
+    pub fn committee_member_state(
+        &self,
+        credential: &StakeCredential,
+    ) -> Option<&CommitteeMemberState> {
+        self.committee_state.get(credential)
     }
 
     /// Returns the registered DRep state for `drep`, if present.
@@ -482,6 +603,8 @@ pub struct LedgerState {
     pool_state: PoolState,
     /// Registered stake-credential state.
     stake_credentials: StakeCredentials,
+    /// Known committee-member state.
+    committee_state: CommitteeState,
     /// Registered DRep state.
     drep_state: DrepState,
     /// Reward-account balances and delegation pointers.
@@ -501,6 +624,7 @@ impl LedgerState {
             tip: Point::Origin,
             pool_state: PoolState::new(),
             stake_credentials: StakeCredentials::new(),
+            committee_state: CommitteeState::new(),
             drep_state: DrepState::new(),
             reward_accounts: RewardAccounts::new(),
             multi_era_utxo: MultiEraUtxo::new(),
@@ -526,6 +650,16 @@ impl LedgerState {
     /// Returns a mutable reference to registered stake-credential state.
     pub fn stake_credentials_mut(&mut self) -> &mut StakeCredentials {
         &mut self.stake_credentials
+    }
+
+    /// Returns a reference to known committee-member state.
+    pub fn committee_state(&self) -> &CommitteeState {
+        &self.committee_state
+    }
+
+    /// Returns a mutable reference to known committee-member state.
+    pub fn committee_state_mut(&mut self) -> &mut CommitteeState {
+        &mut self.committee_state
     }
 
     /// Returns a reference to registered DRep state.
@@ -559,6 +693,14 @@ impl LedgerState {
         credential: &StakeCredential,
     ) -> Option<&StakeCredentialState> {
         self.stake_credentials.get(credential)
+    }
+
+    /// Returns the committee-member state for `credential`, if present.
+    pub fn committee_member_state(
+        &self,
+        credential: &StakeCredential,
+    ) -> Option<&CommitteeMemberState> {
+        self.committee_state.get(credential)
     }
 
     /// Returns the registered DRep state for `drep`, if present.
@@ -609,6 +751,7 @@ impl LedgerState {
             tip: self.tip.clone(),
             pool_state: self.pool_state.clone(),
             stake_credentials: self.stake_credentials.clone(),
+            committee_state: self.committee_state.clone(),
             drep_state: self.drep_state.clone(),
             reward_accounts: self.reward_accounts.clone(),
             multi_era_utxo: self.multi_era_utxo.clone(),
@@ -665,11 +808,13 @@ impl LedgerState {
                 let mut staged = self.shelley_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
@@ -684,6 +829,7 @@ impl LedgerState {
                 self.shelley_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
@@ -691,11 +837,13 @@ impl LedgerState {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
@@ -705,6 +853,7 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
@@ -712,11 +861,13 @@ impl LedgerState {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
@@ -726,6 +877,7 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
@@ -733,11 +885,13 @@ impl LedgerState {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
@@ -747,6 +901,7 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
@@ -754,11 +909,13 @@ impl LedgerState {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
@@ -768,6 +925,7 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
@@ -775,11 +933,13 @@ impl LedgerState {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
@@ -789,6 +949,7 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
@@ -824,13 +985,15 @@ impl LedgerState {
         let mut staged = self.shelley_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
-            &mut staged_stake_credentials,
-            &mut staged_drep_state,
+                &mut staged_stake_credentials,
+                &mut staged_committee_state,
+                &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -840,6 +1003,7 @@ impl LedgerState {
         self.shelley_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
@@ -866,12 +1030,14 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
+                &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
@@ -882,6 +1048,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
@@ -908,12 +1075,14 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
+                &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
@@ -924,6 +1093,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
@@ -950,12 +1120,14 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
+                &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
@@ -966,6 +1138,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
@@ -992,12 +1165,14 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
+                &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
@@ -1008,6 +1183,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
@@ -1034,12 +1210,14 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
+                &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
@@ -1050,6 +1228,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
@@ -1059,6 +1238,7 @@ impl LedgerState {
 fn apply_certificates_and_withdrawals(
     pool_state: &mut PoolState,
     stake_credentials: &mut StakeCredentials,
+    committee_state: &mut CommitteeState,
     drep_state: &mut DrepState,
     reward_accounts: &mut RewardAccounts,
     certificates: Option<&[DCert]>,
@@ -1121,6 +1301,20 @@ fn apply_certificates_and_withdrawals(
                         *pool,
                     )?;
                     delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                }
+                DCert::CommitteeAuthorization(cold_credential, hot_credential) => {
+                    authorize_committee_hot_credential(
+                        committee_state,
+                        *cold_credential,
+                        *hot_credential,
+                    )?;
+                }
+                DCert::CommitteeResignation(cold_credential, anchor) => {
+                    resign_committee_cold_credential(
+                        committee_state,
+                        *cold_credential,
+                        anchor.clone(),
+                    )?;
                 }
                 DCert::PoolRegistration(params) => pool_state.register(params.clone()),
                 DCert::PoolRetirement(pool, epoch) => {
@@ -1228,6 +1422,44 @@ fn delegate_stake_credential(
         }
     }
 
+    Ok(())
+}
+
+fn authorize_committee_hot_credential(
+    committee_state: &mut CommitteeState,
+    cold_credential: StakeCredential,
+    hot_credential: StakeCredential,
+) -> Result<(), LedgerError> {
+    let Some(member_state) = committee_state.get_mut(&cold_credential) else {
+        return Err(LedgerError::CommitteeIsUnknown(cold_credential));
+    };
+
+    if member_state.is_resigned() {
+        return Err(LedgerError::CommitteeHasPreviouslyResigned(cold_credential));
+    }
+
+    member_state.set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(
+        hot_credential,
+    )));
+    Ok(())
+}
+
+fn resign_committee_cold_credential(
+    committee_state: &mut CommitteeState,
+    cold_credential: StakeCredential,
+    anchor: Option<Anchor>,
+) -> Result<(), LedgerError> {
+    let Some(member_state) = committee_state.get_mut(&cold_credential) else {
+        return Err(LedgerError::CommitteeIsUnknown(cold_credential));
+    };
+
+    if member_state.is_resigned() {
+        return Err(LedgerError::CommitteeHasPreviouslyResigned(cold_credential));
+    }
+
+    member_state.set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(
+        anchor,
+    )));
     Ok(())
 }
 

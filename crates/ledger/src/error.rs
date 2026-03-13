@@ -66,6 +66,12 @@ pub enum LedgerError {
     #[error("drep not registered: {0:?}")]
     DrepNotRegistered(DRep),
 
+    #[error("committee cold credential is unknown: {0:?}")]
+    CommitteeIsUnknown(StakeCredential),
+
+    #[error("committee cold credential has previously resigned: {0:?}")]
+    CommitteeHasPreviouslyResigned(StakeCredential),
+
     #[error(
         "stake credential has non-zero reward balance: {credential:?} has {balance} lovelace"
     )]

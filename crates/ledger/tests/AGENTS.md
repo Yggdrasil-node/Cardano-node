@@ -9,10 +9,13 @@ Keep tests in this directory close to ledger rules and era-specific invariants.
 - Era codec round-trips.
 - UTxO, submitted-transaction, and block application behavior.
 - Cross-era regression tests.
+- Folder-backed integration tests under `tests/integration/`.
 
 ##  Rules *Non-Negotiable*
 - Tests here MUST pin rule behavior tightly enough to catch serialization and transition regressions.
 - Era-specific expectations MUST stay explicit rather than being hidden behind generic helpers.
+- Keep integration modules grouped by ledger domain or era family, not by arbitrary file size.
+- Shared test helpers in `tests/integration/` MUST stay minimal and use `pub(super)` visibility.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
@@ -22,3 +25,4 @@ Keep tests in this directory close to ledger rules and era-specific invariants.
 
 ## Current Phase
 - Tests in this directory protect codec round-trips, submitted-transaction handling, UTxO evolution, and era-specific block application behavior.
+- The integration test crate is now split into focused modules for Shelley, Allegra/Mary, Alonzo, Byron, Babbage, Conway, Praos block envelopes, and ledger-state subdomains.
