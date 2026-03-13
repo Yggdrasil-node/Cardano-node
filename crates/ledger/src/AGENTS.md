@@ -9,7 +9,7 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 - `cbor.rs`, `types.rs`, generic ledger state helpers, and module wiring under `crates/ledger/src`.
 - Boundaries between shared ledger infrastructure and `eras/` era-specific logic.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Keep CBOR behavior deterministic and round-trip tested.
 - Do not duplicate era-specific rules in shared modules.
 - Maintain strong type wrappers for protocol-relevant identifiers (`SlotNo`, `BlockNo`, `HeaderHash`, `Point`, `TxId`).

@@ -9,7 +9,7 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Transaction admission, prioritization, eviction, and rollback-aware removal.
 - Boundaries between queue policy, ledger validation, and network submission.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Admission checks and prioritization logic MUST remain explicit and testable.
 - Mempool ordering MUST NOT be coupled to networking concerns.
 - Ledger validation MUST be treated as an input contract, not a hidden side effect.

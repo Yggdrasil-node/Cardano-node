@@ -9,7 +9,7 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Handshake, multiplexing, mini-protocol state machines, and peer lifecycle.
 - Node-to-node and node-to-client protocol surfaces.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Handshake and multiplexing interfaces MUST remain independent from peer policy logic.
 - Mini-protocols MUST be introduced incrementally, starting with ChainSync and BlockFetch.
 - Testable state transitions MUST be preferred over implicit runtime behavior.

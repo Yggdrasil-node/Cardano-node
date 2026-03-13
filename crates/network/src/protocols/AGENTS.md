@@ -9,7 +9,7 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - ChainSync, BlockFetch, and later operational mini-protocols.
 - Protocol states, legal transitions, and shared naming conventions.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Each protocol module MUST stay self-contained around one protocol state machine.
 - Legal transitions MUST be modeled explicitly before transport or peer policy concerns are added.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

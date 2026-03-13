@@ -8,7 +8,7 @@ This directory contains preview reference configuration artifacts only.
 ## Scope
 - Preview `config.json`, `topology.json`, and genesis reference files.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Do not hand-edit these reference files.
 - Use them only as provenance and shape references for Yggdrasil configuration handling.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

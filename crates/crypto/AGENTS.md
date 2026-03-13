@@ -9,7 +9,7 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Hashing, signing, VRF, KES, and cryptographic encodings.
 - Stable interfaces used by ledger, consensus, and networking code.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Secret comparisons MUST remain constant-time.
 - Dependencies MUST be audited for hidden FFI, native build steps, and parity risks before adoption.
 - Public interfaces MUST remain stable unless a breaking change is clearly justified by protocol correctness.

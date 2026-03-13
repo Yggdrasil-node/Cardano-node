@@ -10,7 +10,7 @@ Keep these documents synchronized with the implemented workspace, not with specu
 - Project-wide workflow, dependency policy, specification provenance, and architecture updates.
 - Documentation changes that reflect implemented behavior or accepted policy.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Documentation in this directory MUST describe current behavior or explicitly labeled near-term policy, not aspirational features.
 - Dependency decisions MUST be recorded in `DEPENDENCIES.md` before a new crate is treated as accepted.
 - Architecture and workflow changes MUST stay consistent with the actual crate graph and verification commands used in the workspace.

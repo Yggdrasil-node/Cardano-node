@@ -10,7 +10,7 @@ Keep tests in this directory aligned with official wire behavior and typed proto
 - Wire codec and segmentation or reassembly coverage.
 - Peer lifecycle and driver regressions.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Tests here MUST validate wire tags, message ordering, and protocol boundaries explicitly.
 - Network tests MUST not hide ledger decode assumptions that belong in other crates.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

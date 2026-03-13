@@ -8,7 +8,7 @@ This directory corresponds to a single pinned upstream commit snapshot.
 ## Scope
 - Vendored artifacts from `IntersectMBO/cardano-base` commit `db52f43b38ba5d8927feb2199d4913fe6c0f974d`.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Preserve this directory as a faithful commit-scoped snapshot.
 - Any refresh MUST use a new commit directory rather than mutating provenance in place.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

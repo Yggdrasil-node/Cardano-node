@@ -9,7 +9,7 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 - `bearer.rs`, `multiplexer.rs`, `mux.rs`, `peer.rs`, and typed client drivers.
 - CBOR message boundary handling, segmentation/reassembly, and protocol-handle composition.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Keep wire framing deterministic and byte-accurate.
 - Do not leak protocol business logic from `protocols/` state machines into transport primitives.
 - Preserve strict separation between raw transport (`ProtocolHandle`) and higher-level message orchestration (`MessageChannel`, client drivers).

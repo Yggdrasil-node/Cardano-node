@@ -8,7 +8,7 @@ This directory is a vendored mirror root for upstream `cardano-base` fixture con
 ## Scope
 - Pinned commit snapshots of `IntersectMBO/cardano-base` vector material.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Do not hand-edit vendored upstream files below this directory.
 - Add or update only by syncing from an explicitly pinned upstream commit.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

@@ -9,7 +9,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Runtime orchestration, CLI, sync lifecycle, and top-level process behavior.
 - Integration of storage, consensus, ledger, mempool, and network crates.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - The node crate MUST remain an integration layer and MUST NOT absorb ledger or consensus business logic.
 - Configuration, runtime startup, and sync orchestration MUST stay explicit.
 - Composition MUST be preferred over cross-crate shortcuts.

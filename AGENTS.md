@@ -37,7 +37,7 @@ You are implementing a pure typesafe Rust Cardano node with no FFI dependencies,
 - `crates/network`: <https://github.com/IntersectMBO/ouroboros-network/> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
 - `node/`: <https://github.com/IntersectMBO/cardano-node/> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Always write typesafe Rust code.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.

@@ -9,7 +9,7 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Era-specific data, behavior differences, and transition markers.
 - Shared naming and boundary consistency across Byron through Conway.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - One file or module SHOULD stay focused on one era concern whenever possible.
 - Generic ledger logic MUST NOT be duplicated inside `eras/`.
 - Each era module MUST make it clear whether it is a placeholder or reflects a real upstream rule set.

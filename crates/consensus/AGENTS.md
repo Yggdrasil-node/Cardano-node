@@ -9,7 +9,7 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Praos and future Genesis-specific consensus behavior.
 - Chain selection, rollback coordination, and epoch or slot math.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Slots, epochs, density inputs, and other protocol values MUST use explicit types.
 - Praos-specific logic MUST stay separate from future Genesis extensions.
 - Reproducible fixtures MUST exist before any claim of parity with Cardano behavior is accepted.

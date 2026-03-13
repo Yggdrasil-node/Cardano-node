@@ -9,7 +9,7 @@ This directory contains reference configuration files and per-network presets us
 - `mainnet/`, `preprod/`, and `preview/` preset directories.
 - Reference `config.json`, `topology.json`, and genesis files used to mirror official network layout.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Treat the vendored configuration files here as reference inputs, not as the source of truth for local runtime configuration code.
 - Preserve the official file naming and preset split so parity work stays traceable.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

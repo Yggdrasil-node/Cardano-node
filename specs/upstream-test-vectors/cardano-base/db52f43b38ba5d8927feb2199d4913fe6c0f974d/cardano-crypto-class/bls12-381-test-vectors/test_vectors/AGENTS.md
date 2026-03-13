@@ -8,7 +8,7 @@ This directory contains raw upstream BLS12-381 vector files.
 ## Scope
 - File-level vector corpora consumed by crypto tests.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Files here are raw vendored fixtures and MUST remain byte-for-byte upstream copies.
 - Additions or refreshes MUST come from the pinned upstream source, not local editing.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

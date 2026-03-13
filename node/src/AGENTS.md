@@ -9,7 +9,7 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - `main.rs` (CLI entry point), `config.rs` (JSON config types), `runtime.rs`, `sync.rs`, and library exports under `node/src`.
 - Peer bootstrap wiring, configuration parsing, and sync control flow coordination.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Keep ledger and consensus business rules outside `node/src`.
 - Favor small, explicit orchestration steps that are easy to smoke-test.
 - Propagate typed errors and avoid hidden retries/backoff logic unless explicitly required.

@@ -9,7 +9,7 @@ This directory owns consensus implementation modules, not integration glue.
 - `chain_state`, `nonce`, `header`, `leader`, and operational certificate logic.
 - Typed consensus math and verification rules.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Consensus math and rollback rules MUST stay explicit and typed.
 - Source modules here MUST remain independent of node runtime orchestration concerns.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

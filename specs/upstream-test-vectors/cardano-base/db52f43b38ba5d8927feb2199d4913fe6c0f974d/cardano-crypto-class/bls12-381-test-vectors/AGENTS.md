@@ -8,7 +8,7 @@ This directory groups upstream BLS12-381 vector corpora used for crypto parity v
 ## Scope
 - BLS12-381 vector package layout and provenance.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Corpus files here are vendored upstream artifacts and MUST NOT be edited by hand.
 - Keep names and grouping aligned with upstream `cardano-crypto-class` packaging.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

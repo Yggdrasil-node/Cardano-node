@@ -9,7 +9,7 @@ Keep tests in this directory focused on deterministic parser and generator behav
 - Parser fixtures and generator regression tests.
 - Reproducibility checks for pinned CDDL inputs and generated output shape.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Tests here MUST validate supported syntax and generation behavior, not speculative future grammar.
 - Fixture inputs MUST remain pinned and traceable to upstream or documented local reductions.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

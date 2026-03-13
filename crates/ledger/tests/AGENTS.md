@@ -10,7 +10,7 @@ Keep tests in this directory close to ledger rules and era-specific invariants.
 - UTxO, submitted-transaction, and block application behavior.
 - Cross-era regression tests.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Tests here MUST pin rule behavior tightly enough to catch serialization and transition regressions.
 - Era-specific expectations MUST stay explicit rather than being hidden behind generic helpers.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

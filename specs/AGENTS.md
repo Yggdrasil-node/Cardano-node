@@ -10,7 +10,7 @@ This directory holds reproducible specification inputs and pinned upstream artif
 - Vendored upstream corpora and fixtures under child spec directories.
 - Provenance tracking for pinned revisions used by generators or parity tests.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Specification inputs in this directory MUST remain traceable to an upstream source or an explicitly documented local derivation.
 - Vendored upstream artifacts MUST NOT be hand-edited.
 - Pinned revisions used for generation or validation MUST be recorded alongside the affected implementation or tests.

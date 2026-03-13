@@ -8,7 +8,7 @@ This directory contains raw upstream Praos VRF vector files used by crypto parit
 ## Scope
 - File-level standard and batch-compatible VRF vector corpora.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Files here are raw vendored fixtures and MUST remain byte-for-byte upstream copies.
 - Do not rewrite, normalize, or rename upstream vector files locally.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

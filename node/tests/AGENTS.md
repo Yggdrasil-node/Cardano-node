@@ -9,7 +9,7 @@ Keep tests in this directory focused on node orchestration and cross-crate integ
 - Runtime bootstrap, sync service, shutdown, and TxSubmission integration tests.
 - Managed service behavior and configuration-facing smoke coverage.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Tests here MUST stay at the integration boundary and MUST NOT become the primary place for ledger or consensus unit logic.
 - Runtime coverage MUST protect startup, shutdown, and protocol-completion paths.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

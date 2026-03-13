@@ -8,7 +8,7 @@ This directory contains vendored fixture content from upstream `cardano-crypto-c
 ## Scope
 - BLS12-381 upstream test-vector packages and related fixture layout.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Maintain upstream directory naming and corpus layout exactly.
 - Treat this directory as read-only vendored input.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

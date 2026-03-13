@@ -9,7 +9,7 @@ This directory owns queue policy and typed mempool views, not ledger validation 
 - Queue ordering, snapshot traversal, duplicate detection, and eviction helpers.
 - Shared and non-shared mempool reader implementations.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Queue semantics MUST remain explicit and locally testable from this directory.
 - Networking protocol concerns MUST not leak into mempool internals here.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

@@ -9,7 +9,7 @@ This directory owns storage interfaces and implementations, including rollback-a
 - Immutable, volatile, and ledger store implementations.
 - Persistence helpers and typed snapshot interfaces.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Persistence semantics here MUST remain explicit and independent of node orchestration code.
 - File-format pragmatism is acceptable, but migration and recovery paths MUST remain possible.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

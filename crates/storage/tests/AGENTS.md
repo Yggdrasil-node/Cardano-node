@@ -9,7 +9,7 @@ Use this directory to pin persistence and rollback expectations for storage back
 - Trait conformance tests.
 - Reopen persistence, rollback deletion, and snapshot coverage.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Tests here MUST validate behavior visible through storage traits, not private implementation details alone.
 - File-backed regressions MUST preserve deterministic on-disk behavior for the current format.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

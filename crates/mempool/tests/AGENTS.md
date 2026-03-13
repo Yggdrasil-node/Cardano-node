@@ -9,7 +9,7 @@ Use this directory to pin queue semantics and mempool boundary behavior.
 - Admission and duplicate rejection.
 - Ordering, TTL expiry, snapshot traversal, and block-confirmation eviction.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Tests here MUST assert queue behavior directly rather than relying on node integration side effects.
 - Snapshot and shared-reader coverage MUST protect monotonic cursor semantics.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.

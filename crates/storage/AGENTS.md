@@ -9,7 +9,7 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Immutable storage, volatile rollback windows, and snapshot persistence.
 - Interfaces that consensus and node integration can build on without file-format lock-in.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Storage traits MUST be designed before file formats are treated as stable.
 - Immutable and volatile concerns MUST remain separate.
 - The design MUST preserve a path toward crash recovery and future migrations.

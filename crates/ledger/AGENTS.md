@@ -9,7 +9,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Era modeling, transaction and block state transitions, and ledger state evolution.
 - Separation between generated wire types and handwritten rules.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Specification provenance MUST stay close to each ledger rule.
 - Generated data types and handwritten transition logic MUST remain separated.
 - The project MUST keep a full era roadmap visible, but implementation MUST proceed one narrow slice at a time.

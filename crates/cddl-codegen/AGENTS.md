@@ -9,7 +9,7 @@ Focus on deterministic parsing and reproducible generated artifacts.
 - Parsing pinned CDDL inputs and generating Rust-facing type output.
 - Separating supported subsets from future parsing ambitions.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Upstream schemas MUST be treated as pinned inputs and the exact revision used MUST be recorded.
 - Handwritten parser logic and generated output templates MUST remain separated.
 - Small supported CDDL subsets with tests MUST be preferred over broad speculative parsing.

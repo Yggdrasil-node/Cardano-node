@@ -10,7 +10,7 @@ Keep this directory as a crate index, not as a place for cross-cutting implement
 - Maintaining crate boundaries, ownership, and dependency direction.
 - Keeping crate-local AGENTS files aligned with the actual responsibility of each crate.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Each child crate MUST own a clear protocol or subsystem boundary before new code is added.
 - Shared behavior MUST live in the appropriate crate, not in this directory.
 - Cross-crate dependency direction MUST stay aligned with `docs/ARCHITECTURE.md`.

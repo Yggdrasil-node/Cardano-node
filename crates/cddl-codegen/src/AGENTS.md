@@ -10,7 +10,7 @@ Focus on small parser and generator internals that are deterministic, testable, 
 - Parser modules, generator modules, builtin type mapping, and fixture-driven behavior.
 - Internal structure that supports reproducible generation from pinned schemas.
 
-## Non-Negotiable Rules
+##  Rules *Non-Negotiable*
 - Parsing and generation concerns MUST remain separated.
 - Supported syntax MUST only be added with focused tests and explicit output expectations.
 - Conservative failures MUST be preferred over permissive guessing when schema input is ambiguous.
