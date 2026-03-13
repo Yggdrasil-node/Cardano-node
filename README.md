@@ -6,9 +6,18 @@
 
 Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and serialization parity with the upstream Cardano node.
 
+## Quick Navigation
+
+- [Current Status](#current-status)
+- [Workspace Layout](#workspace-layout)
+- [Commands](#commands)
+- [Documentation](#documentation)
+- [Next Development Phases](#next-development-phases)
+
 ## Current Status
 
-Implemented currently:
+### Implemented
+
 - Cargo workspace with stable crate boundaries for crypto, cddl-codegen, ledger, storage, consensus, mempool, network, and node integration.
 - Crypto primitives with vector-backed verification/proving coverage (Blake2b, Ed25519, VRF, SimpleKES, SumKES).
 - Ledger core typed identifiers and hand-rolled CBOR codec; Shelley-era transaction/header/block structures and a first UTxO transition slice.
@@ -19,7 +28,8 @@ Implemented currently:
 - Node Shelley decode bridge (`sync_step_decoded`, `decode_shelley_blocks`) for typed block handoff from BlockFetch bytes.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
-Still in progress:
+### In Progress
+
 - Full typed payload bridging from all network protocol payloads into ledger/domain structures.
 - Deeper ledger rule completeness and multi-era transition coverage.
 - End-to-end storage/consensus-integrated sync loop and multi-peer management.
@@ -102,6 +112,8 @@ Still in progress:
 
 ## Commands
 
+Workspace aliases:
+
 ```bash
 cargo check-all
 cargo test-all
@@ -118,10 +130,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 ## Documentation
 
-- Architecture: `docs/ARCHITECTURE.md`
-- Dependency policy: `docs/DEPENDENCIES.md`
-- Specification priority: `docs/SPECS.md`
-- Contribution workflow: `docs/CONTRIBUTING.md`
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Dependency policy: [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)
+- Specification priority: [docs/SPECS.md](docs/SPECS.md)
+- Contribution workflow: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 
 ## Next Development Phases
 
