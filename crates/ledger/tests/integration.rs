@@ -2682,6 +2682,8 @@ fn byron_block_variant_accessors() {
     let ebb = ByronBlock::EpochBoundary {
         epoch: 2,
         prev_hash: [0x55; 32],
+        chain_difficulty: 0,
+        raw_header: vec![],
     };
     assert_eq!(ebb.epoch(), 2);
     assert_eq!(*ebb.prev_hash(), [0x55; 32]);
@@ -2690,6 +2692,8 @@ fn byron_block_variant_accessors() {
         epoch: 3,
         slot_in_epoch: 100,
         prev_hash: [0x66; 32],
+        chain_difficulty: 1,
+        raw_header: vec![],
     };
     assert_eq!(main.epoch(), 3);
     assert_eq!(*main.prev_hash(), [0x66; 32]);

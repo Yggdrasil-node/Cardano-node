@@ -17,7 +17,8 @@ use yggdrasil_network::{
     ChainSyncClientError, IntersectResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
 };
 use yggdrasil_ledger::{
-    AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock,
+    AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
+    CborDecode, CborEncode, ConwayBlock,
     Decoder, Era, HeaderHash, LedgerError, Nonce, Point, PraosHeader, PraosHeaderBody,
     ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
@@ -931,11 +932,14 @@ pub fn verify_praos_header(
 /// opaque bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MultiEraBlock {
-    /// An opaque Byron-era block. Full structural decode is not yet
-    /// implemented; the raw CBOR bytes are preserved.
+    /// A decoded Byron-era block carrying header-level metadata
+    /// extracted from the raw CBOR envelope.
     Byron {
-        /// Raw CBOR bytes of the Byron block.
-        raw: Vec<u8>,
+        /// Structurally decoded Byron block with header metadata and
+        /// raw header annotation for hash computation.
+        block: ByronBlock,
+        /// The era tag from the outer wire envelope (0 = EBB, 1 = main).
+        era_tag: u64,
     },
     /// A fully decoded Shelley-era block (also covers Allegra/Mary
     /// which share the Shelley 4-element block envelope and tx body format).
@@ -993,7 +997,18 @@ pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
 
     match tag {
         era_tag::BYRON_EBB | era_tag::BYRON_MAIN => {
-            Ok(MultiEraBlock::Byron { raw: raw.to_vec() })
+            let body_start = dec.position();
+            dec.skip().map_err(SyncError::LedgerDecode)?;
+            let body_bytes = &raw[body_start..dec.position()];
+            let byron = if tag == era_tag::BYRON_EBB {
+                ByronBlock::decode_ebb(body_bytes).map_err(SyncError::LedgerDecode)?
+            } else {
+                ByronBlock::decode_main(body_bytes).map_err(SyncError::LedgerDecode)?
+            };
+            Ok(MultiEraBlock::Byron {
+                block: byron,
+                era_tag: tag,
+            })
         }
         era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => {
             // Shelley/Allegra/Mary blocks are 4-element CBOR arrays.
@@ -1055,23 +1070,27 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 /// Convert a `MultiEraBlock` into the generic ledger `Block` wrapper.
 ///
 /// All Shelley-family eras (Shelley/Allegra/Mary/Alonzo, Babbage, Conway)
-/// are fully decoded using the common block envelope. Byron blocks produce
-/// a minimal `Block` whose header hash is the Blake2b-256 of the raw CBOR
-/// envelope; other header fields are zeroed because Byron structural
-/// decode is not yet implemented.
+/// are fully decoded using the common block envelope. Byron blocks
+/// populate real header fields from structural decode:
+/// - `hash`: `Blake2b-256(prefix ++ raw_header_cbor)`
+/// - `prev_hash`: from Byron consensus data
+/// - `slot_no`: absolute slot via `epoch * 21600 + slot_in_epoch`
+/// - `block_no`: `chain_difficulty` from consensus data
+/// - `issuer_vkey`: zeroed (Byron uses a different signature scheme)
+/// - `transactions`: empty (Byron tx decode not yet implemented)
 pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
     match block {
         MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley),
         MultiEraBlock::Alonzo(alonzo) => alonzo_block_to_block(alonzo),
         MultiEraBlock::Babbage(babbage) => babbage_block_to_block(babbage),
         MultiEraBlock::Conway(conway) => conway_block_to_block(conway),
-        MultiEraBlock::Byron { raw } => Block {
+        MultiEraBlock::Byron { block: byron, .. } => Block {
             era: Era::Byron,
             header: BlockHeader {
-                hash: HeaderHash(hash_bytes_256(raw).0),
-                prev_hash: HeaderHash([0u8; 32]),
-                slot_no: SlotNo(0),
-                block_no: BlockNo(0),
+                hash: byron.header_hash(),
+                prev_hash: HeaderHash(*byron.prev_hash()),
+                slot_no: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
+                block_no: BlockNo(byron.chain_difficulty()),
                 issuer_vkey: [0u8; 32],
             },
             transactions: vec![],
@@ -1481,12 +1500,15 @@ pub async fn sync_step_multi_era(
 
 /// Extract a [`ChainEntry`] from a [`MultiEraBlock`] for chain state tracking.
 ///
-/// Byron blocks return `None` because the opaque envelope does not expose
-/// a decoded block number.  Chain state tracking begins at the
-/// Shelley/Allegra boundary, consistent with nonce evolution.
+/// All eras including Byron now return `Some`, enabling full chain state
+/// tracking from genesis.
 pub fn multi_era_block_to_chain_entry(block: &MultiEraBlock) -> Option<ChainEntry> {
     match block {
-        MultiEraBlock::Byron { .. } => None,
+        MultiEraBlock::Byron { block: byron, .. } => Some(ChainEntry {
+            hash: byron.header_hash(),
+            slot: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
+            block_no: BlockNo(byron.chain_difficulty()),
+        }),
         MultiEraBlock::Shelley(b) => Some(ChainEntry {
             hash: b.header_hash(),
             slot: SlotNo(b.header.body.slot),
