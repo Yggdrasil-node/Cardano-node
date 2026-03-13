@@ -11,7 +11,7 @@ use yggdrasil_network::{
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
-use yggdrasil_ledger::{CborDecode, CborEncode, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo};
+use yggdrasil_ledger::{CborDecode, CborEncode, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo, Tx, TxId};
 
 fn sample_vrf_cert(seed: u8) -> ShelleyVrfCert {
     ShelleyVrfCert {
@@ -56,6 +56,17 @@ fn sample_shelley_block_bytes() -> Vec<u8> {
         transaction_metadata_set: std::collections::HashMap::new(),
     }
     .to_cbor_bytes()
+}
+
+fn sample_tx_id(seed: u8) -> TxId {
+    TxId([seed; 32])
+}
+
+fn sample_tx(seed: u8) -> Tx {
+    Tx {
+        id: sample_tx_id(seed),
+        body: vec![seed, seed.wrapping_add(1), seed.wrapping_add(2)],
+    }
 }
 
 // ===========================================================================
@@ -768,7 +779,7 @@ fn tx_submission_happy_path() {
     state = state
         .transition(&TxSubmissionMessage::MsgReplyTxIds {
             txids: vec![TxIdAndSize {
-                txid: vec![1, 2, 3],
+                txid: sample_tx_id(1),
                 size: 100,
             }],
         })
@@ -777,7 +788,7 @@ fn tx_submission_happy_path() {
 
     state = state
         .transition(&TxSubmissionMessage::MsgRequestTxs {
-            txids: vec![vec![1, 2, 3]],
+            txids: vec![sample_tx_id(1)],
         })
         .expect("MsgRequestTxs from StIdle");
     assert_eq!(state, TxSubmissionState::StTxs);
@@ -854,11 +865,11 @@ fn tx_submission_cbor_reply_txids() {
     let msg = TxSubmissionMessage::MsgReplyTxIds {
         txids: vec![
             TxIdAndSize {
-                txid: vec![0xDE, 0xAD],
+                txid: sample_tx_id(0xDE),
                 size: 256,
             },
             TxIdAndSize {
-                txid: vec![0xBE, 0xEF],
+                txid: sample_tx_id(0xBE),
                 size: 512,
             },
         ],
@@ -879,11 +890,24 @@ fn tx_submission_cbor_reply_txids_empty() {
 #[test]
 fn tx_submission_cbor_request_txs() {
     let msg = TxSubmissionMessage::MsgRequestTxs {
-        txids: vec![vec![1, 2, 3], vec![4, 5, 6]],
+        txids: vec![sample_tx_id(1), sample_tx_id(2)],
     };
     let bytes = msg.to_cbor();
     let decoded = TxSubmissionMessage::from_cbor(&bytes).expect("decode MsgRequestTxs");
     assert_eq!(msg, decoded);
+}
+
+#[test]
+fn tx_submission_cbor_request_txs_rejects_invalid_txid_length() {
+    let bytes = vec![0x82, 0x02, 0x81, 0x42, 0xAA, 0xBB];
+    let err = TxSubmissionMessage::from_cbor(&bytes).expect_err("short txid should fail");
+    assert!(matches!(
+        err,
+        yggdrasil_ledger::LedgerError::CborInvalidLength {
+            expected: 32,
+            actual: 2,
+        }
+    ));
 }
 
 #[test]
@@ -2970,9 +2994,9 @@ async fn txsubmission_client_init_and_reply_txids() {
         match msg {
             TxSubmissionMessage::MsgReplyTxIds { txids } => {
                 assert_eq!(txids.len(), 2);
-                assert_eq!(txids[0].txid, b"tx-1");
+                assert_eq!(txids[0].txid, sample_tx_id(0x11));
                 assert_eq!(txids[0].size, 100);
-                assert_eq!(txids[1].txid, b"tx-2");
+                assert_eq!(txids[1].txid, sample_tx_id(0x22));
                 assert_eq!(txids[1].size, 200);
             }
             _ => panic!("expected MsgReplyTxIds"),
@@ -2995,11 +3019,11 @@ async fn txsubmission_client_init_and_reply_txids() {
     client
         .reply_tx_ids(vec![
             TxIdAndSize {
-                txid: b"tx-1".to_vec(),
+                txid: sample_tx_id(0x11),
                 size: 100,
             },
             TxIdAndSize {
-                txid: b"tx-2".to_vec(),
+                txid: sample_tx_id(0x22),
                 size: 200,
             },
         ])
@@ -3026,7 +3050,7 @@ async fn txsubmission_client_reply_txs() {
 
         // MsgRequestTxs.
         let req = TxSubmissionMessage::MsgRequestTxs {
-            txids: vec![b"tx-a".to_vec(), b"tx-b".to_vec()],
+            txids: vec![sample_tx_id(0x0A), sample_tx_id(0x0B)],
         };
         sh.send(req.to_cbor()).await.expect("send request_txs");
 
@@ -3046,7 +3070,12 @@ async fn txsubmission_client_reply_txs() {
     client.init().await.expect("init");
 
     let req = client.recv_request().await.expect("recv_request");
-    assert!(matches!(req, TxServerRequest::RequestTxs { .. }));
+    assert_eq!(
+        req,
+        TxServerRequest::RequestTxs {
+            txids: vec![sample_tx_id(0x0A), sample_tx_id(0x0B)],
+        }
+    );
 
     client
         .reply_txs(vec![b"body-a".to_vec(), b"body-b".to_vec()])
@@ -3138,7 +3167,7 @@ async fn txsubmission_client_full_session() {
         // 4. MsgRequestTxs for that tx.
         sh.send(
             TxSubmissionMessage::MsgRequestTxs {
-                txids: vec![txids[0].txid.clone()],
+                txids: vec![txids[0].txid],
             }
             .to_cbor(),
         )
@@ -3182,7 +3211,7 @@ async fn txsubmission_client_full_session() {
     assert!(matches!(req, TxServerRequest::RequestTxIds { .. }));
     client
         .reply_tx_ids(vec![TxIdAndSize {
-            txid: b"my-tx".to_vec(),
+            txid: sample_tx_id(0x44),
             size: 50,
         }])
         .await
@@ -3190,9 +3219,17 @@ async fn txsubmission_client_full_session() {
 
     // Fetch request: reply with the tx body.
     let req = client.recv_request().await.expect("2");
-    assert!(matches!(req, TxServerRequest::RequestTxs { .. }));
+    assert_eq!(
+        req,
+        TxServerRequest::RequestTxs {
+            txids: vec![sample_tx_id(0x44)],
+        }
+    );
     client
-        .reply_txs(vec![b"full-tx-body".to_vec()])
+        .reply_txs_typed(vec![Tx {
+            body: b"full-tx-body".to_vec(),
+            ..sample_tx(0x44)
+        }])
         .await
         .expect("reply_txs");
 

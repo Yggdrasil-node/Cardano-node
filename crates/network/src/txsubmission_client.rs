@@ -12,6 +12,7 @@ use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
+use yggdrasil_ledger::{Tx, TxId};
 
 // ---------------------------------------------------------------------------
 // Server request types
@@ -32,7 +33,7 @@ pub enum TxServerRequest {
     /// The server asks for specific transactions by id.
     RequestTxs {
         /// Transaction identifiers to fetch.
-        txids: Vec<Vec<u8>>,
+        txids: Vec<TxId>,
     },
 }
 
@@ -169,6 +170,18 @@ impl TxSubmissionClient {
         txs: Vec<Vec<u8>>,
     ) -> Result<(), TxSubmissionClientError> {
         self.send_msg(&TxSubmissionMessage::MsgReplyTxs { txs })
+            .await
+    }
+
+    /// Reply with typed ledger transactions.
+    ///
+    /// The wire protocol carries only serialized transaction bodies, so this
+    /// helper strips the canonical `Tx` wrapper to preserve a typed client API.
+    pub async fn reply_txs_typed(
+        &mut self,
+        txs: Vec<Tx>,
+    ) -> Result<(), TxSubmissionClientError> {
+        self.reply_txs(txs.into_iter().map(|tx| tx.body).collect())
             .await
     }
 

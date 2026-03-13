@@ -25,7 +25,7 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - ChainSync has 5 states (StIdle, StCanAwait, StMustReply, StIntersect, StDone), 8 message variants with validated transitions, and a CBOR wire codec.
 - BlockFetch has 4 states (StIdle, StBusy, StStreaming, StDone), 6 message variants with validated transitions, and a CBOR wire codec.
 - KeepAlive has 3 states (StClient, StServer, StDone), 3 message variants with validated transitions, and a CBOR wire codec.
-- TxSubmission2 has 5 states (StInit, StIdle, StTxIds, StTxs, StDone), 6 message variants with validated transitions, and a CBOR wire codec. MsgDone only legal from blocking StTxIds.
+- TxSubmission2 has 5 states (StInit, StIdle, StTxIds, StTxs, StDone), 6 message variants with validated transitions, and a CBOR wire codec. MsgDone only legal from blocking StTxIds. Transaction identifiers now use ledger `TxId`; transaction bodies remain raw bytes.
 - Wire tags and naming match upstream `Ouroboros.Network.Protocol.{ChainSync,BlockFetch,KeepAlive,TxSubmission2}.Type`.
-- Payload types are opaque (`Vec<u8>`); typed point/tip/header/block payloads will come with CBOR codec work.
+- Payload typing is incremental: point/tip/header/block payloads are typed where practical, TxSubmission ids are typed, and transaction bodies stay raw until typed transaction codecs are available.
 - PeerSharing protocol deferred until needed.

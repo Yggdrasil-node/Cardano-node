@@ -48,8 +48,8 @@ pub enum TxSubmissionState {
 /// Reference: `(txid, SizeInBytes)` tuples in TxSubmission2 protocol.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TxIdAndSize {
-    /// Opaque transaction identifier.
-    pub txid: Vec<u8>,
+    /// Blake2b-256 transaction identifier.
+    pub txid: TxId,
     /// Size of the serialized transaction in bytes.
     pub size: u32,
 }
@@ -67,7 +67,8 @@ pub struct TxIdAndSize {
 /// |  3  | `MsgReplyTxs`      |
 /// |  4  | `MsgDone`          |
 ///
-/// `txid` and `tx` are opaque byte vectors at this layer.
+/// Transaction identifiers use the canonical ledger `TxId` wrapper.
+/// Serialized transaction bodies remain opaque byte vectors at this layer.
 ///
 /// Reference: `Ouroboros.Network.Protocol.TxSubmission2.Type` — `Message`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,7 +104,7 @@ pub enum TxSubmissionMessage {
     /// Transition: `StIdle → StTxs`.
     MsgRequestTxs {
         /// Transaction identifiers to fetch.
-        txids: Vec<Vec<u8>>,
+        txids: Vec<TxId>,
     },
 
     /// `[3, [*tx]]` — client replies with requested transactions.
@@ -199,7 +200,7 @@ impl TxSubmissionMessage {
 // ---------------------------------------------------------------------------
 
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
-use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::{LedgerError, TxId};
 
 impl TxSubmissionMessage {
     /// Encode this message to CBOR bytes.
@@ -228,14 +229,16 @@ impl TxSubmissionMessage {
                 enc.array(2).unsigned(1);
                 enc.array(txids.len() as u64);
                 for item in txids {
-                    enc.array(2).bytes(&item.txid).unsigned(u64::from(item.size));
+                    enc.array(2)
+                        .bytes(&item.txid.0)
+                        .unsigned(u64::from(item.size));
                 }
             }
             Self::MsgRequestTxs { txids } => {
                 enc.array(2).unsigned(2);
                 enc.array(txids.len() as u64);
                 for txid in txids {
-                    enc.bytes(txid);
+                    enc.bytes(&txid.0);
                 }
             }
             Self::MsgReplyTxs { txs } => {
@@ -276,7 +279,7 @@ impl TxSubmissionMessage {
                             actual: inner_len as usize,
                         });
                     }
-                    let txid = dec.bytes()?.to_vec();
+                    let txid = decode_txid(dec.bytes()?)?;
                     let size = dec.unsigned()? as u32;
                     txids.push(TxIdAndSize { txid, size });
                 }
@@ -286,7 +289,7 @@ impl TxSubmissionMessage {
                 let count = dec.array()?;
                 let mut txids = Vec::with_capacity(count as usize);
                 for _ in 0..count {
-                    txids.push(dec.bytes()?.to_vec());
+                    txids.push(decode_txid(dec.bytes()?)?);
                 }
                 Self::MsgRequestTxs { txids }
             }
@@ -311,4 +314,12 @@ impl TxSubmissionMessage {
         }
         Ok(msg)
     }
+}
+
+fn decode_txid(raw: &[u8]) -> Result<TxId, LedgerError> {
+    let bytes: [u8; 32] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+        expected: 32,
+        actual: raw.len(),
+    })?;
+    Ok(TxId(bytes))
 }
