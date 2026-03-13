@@ -31,6 +31,18 @@ pub struct HeaderBody {
     pub issuer_vkey: VerificationKey,
     /// VRF verification key for the block issuer.
     pub vrf_vkey: VrfVerificationKey,
+    /// Leader VRF output (hash of the certified VRF evaluation).
+    ///
+    /// For TPraos (Shelley–Alonzo) this comes from the `leader_vrf` cert;
+    /// for Praos (Babbage/Conway) from the single `vrf_result`.
+    pub leader_vrf_output: Vec<u8>,
+    /// Leader VRF proof (80-byte standard ECVRF proof).
+    pub leader_vrf_proof: [u8; 80],
+    /// Nonce VRF output (TPraos only — Shelley through Alonzo).
+    /// `None` for Praos-era blocks where the single `vrf_result` covers both.
+    pub nonce_vrf_output: Option<Vec<u8>>,
+    /// Nonce VRF proof (TPraos only).
+    pub nonce_vrf_proof: Option<[u8; 80]>,
     /// Size of the block body in bytes.
     pub block_body_size: u32,
     /// Hash of the block body (Blake2b-256).

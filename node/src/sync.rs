@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use yggdrasil_consensus::{ConsensusError, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, OpCert as ConsensusOpCert, verify_header};
+use yggdrasil_consensus::{ActiveSlotCoeff, ConsensusError, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, OpCert as ConsensusOpCert, verify_header, verify_leader_proof};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
@@ -18,7 +18,8 @@ use yggdrasil_network::{
 };
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock,
-    Decoder, Era, HeaderHash, LedgerError, Point, PraosHeader, PraosHeaderBody, ShelleyBlock,
+    Decoder, Era, HeaderHash, LedgerError, Nonce, Point, PraosHeader, PraosHeaderBody,
+    ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
     compute_block_body_hash,
 };
@@ -663,6 +664,10 @@ pub fn shelley_header_body_to_consensus(body: &ShelleyHeaderBody) -> ConsensusHe
         prev_hash: body.prev_hash.map(HeaderHash),
         issuer_vkey: VerificationKey::from_bytes(body.issuer_vkey),
         vrf_vkey: VrfVerificationKey::from_bytes(body.vrf_vkey),
+        leader_vrf_output: body.leader_vrf.output.clone(),
+        leader_vrf_proof: body.leader_vrf.proof,
+        nonce_vrf_output: Some(body.nonce_vrf.output.clone()),
+        nonce_vrf_proof: Some(body.nonce_vrf.proof),
         block_body_size: body.block_body_size,
         block_body_hash: body.block_body_hash,
         operational_cert: shelley_opcert_to_consensus(&body.operational_cert),
@@ -722,6 +727,10 @@ pub fn praos_header_body_to_consensus(body: &PraosHeaderBody) -> ConsensusHeader
         prev_hash: body.prev_hash.map(HeaderHash),
         issuer_vkey: VerificationKey::from_bytes(body.issuer_vkey),
         vrf_vkey: VrfVerificationKey::from_bytes(body.vrf_vkey),
+        leader_vrf_output: body.vrf_result.output.clone(),
+        leader_vrf_proof: body.vrf_result.proof,
+        nonce_vrf_output: None,
+        nonce_vrf_proof: None,
         block_body_size: body.block_body_size,
         block_body_hash: body.block_body_hash,
         operational_cert: shelley_opcert_to_consensus(&body.operational_cert),
@@ -1030,6 +1039,81 @@ pub struct VerificationConfig {
     pub max_kes_evolutions: u64,
     /// Whether to verify the block body hash against the header.
     pub verify_body_hash: bool,
+}
+
+/// Parameters required for VRF leader-eligibility verification.
+///
+/// VRF verification is intentionally separate from basic header verification
+/// because it requires epoch-level protocol state (the epoch nonce) and
+/// stake-distribution context (the issuer's relative stake and the active
+/// slot coefficient) that are not available during initial chain sync.
+///
+/// Reference: `validateVRFSignature` in
+/// `Ouroboros.Consensus.Protocol.Praos`.
+#[derive(Clone, Debug)]
+pub struct VrfVerificationParams {
+    /// Epoch nonce for the current epoch.
+    pub epoch_nonce: Nonce,
+    /// Relative stake (σ) of the block issuer, in the range `[0.0, 1.0]`.
+    pub sigma: f64,
+    /// Active slot coefficient `f` from genesis.
+    pub active_slot_coeff: ActiveSlotCoeff,
+}
+
+/// Verify the VRF leader-eligibility proof in a multi-era block header.
+///
+/// Checks that the VRF proof in the header is valid for the block's slot
+/// and the given epoch nonce, and that the VRF output meets the leadership
+/// threshold for the issuer's relative stake.
+///
+/// Expects standard (draft-03) 80-byte VRF proofs per CDDL
+/// `vrf_cert = [bytes, bytes .size 80]`.
+///
+/// Byron blocks are skipped (no VRF).
+///
+/// # Returns
+///
+/// * `Ok(true)` — VRF proof is valid and output meets leader threshold.
+/// * `Ok(false)` — VRF proof is valid but output does not meet threshold.
+/// * `Err` — VRF proof is malformed or verification failed.
+pub fn verify_block_vrf(
+    block: &MultiEraBlock,
+    params: &VrfVerificationParams,
+) -> Result<bool, SyncError> {
+    let (vrf_vkey_bytes, leader_proof, slot) = match block {
+        MultiEraBlock::Shelley(s) => (
+            s.header.body.vrf_vkey,
+            &s.header.body.leader_vrf.proof,
+            SlotNo(s.header.body.slot),
+        ),
+        MultiEraBlock::Alonzo(a) => (
+            a.header.body.vrf_vkey,
+            &a.header.body.leader_vrf.proof,
+            SlotNo(a.header.body.slot),
+        ),
+        MultiEraBlock::Babbage(b) => (
+            b.header.body.vrf_vkey,
+            &b.header.body.vrf_result.proof,
+            SlotNo(b.header.body.slot),
+        ),
+        MultiEraBlock::Conway(c) => (
+            c.header.body.vrf_vkey,
+            &c.header.body.vrf_result.proof,
+            SlotNo(c.header.body.slot),
+        ),
+        MultiEraBlock::Byron { .. } => return Ok(true),
+    };
+
+    let vk = VrfVerificationKey::from_bytes(vrf_vkey_bytes);
+    verify_leader_proof(
+        &vk,
+        slot,
+        params.epoch_nonce.clone(),
+        leader_proof,
+        params.sigma,
+        params.active_slot_coeff,
+    )
+    .map_err(SyncError::Consensus)
 }
 
 /// Verify that the block body hash declared in the header matches the actual
