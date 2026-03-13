@@ -11,7 +11,7 @@ use yggdrasil_network::{
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
-use yggdrasil_ledger::{CborEncode, HeaderHash, Point, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo};
+use yggdrasil_ledger::{CborDecode, CborEncode, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo};
 
 fn sample_vrf_cert(seed: u8) -> ShelleyVrfCert {
     ShelleyVrfCert {
@@ -46,6 +46,16 @@ fn sample_shelley_header() -> ShelleyHeader {
         },
         signature: vec![0xDD; 448],
     }
+}
+
+fn sample_shelley_block_bytes() -> Vec<u8> {
+    ShelleyBlock {
+        header: sample_shelley_header(),
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }
+    .to_cbor_bytes()
 }
 
 // ===========================================================================
@@ -2294,6 +2304,235 @@ async fn blockfetch_client_request_range_single_block() {
 
     let done = client.recv_block().await.expect("recv_block batch_done");
     assert_eq!(done, None);
+    assert_eq!(client.state(), BlockFetchState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_recv_block_decoded_decodes_shelley_block() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("send start_batch");
+        sh.send(
+            BlockFetchMessage::MsgBlock {
+                block: sample_shelley_block_bytes(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send block");
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("send batch_done");
+    });
+
+    let resp = client
+        .request_range(ChainRange {
+            lower: b"a".to_vec(),
+            upper: b"b".to_vec(),
+        })
+        .await
+        .expect("request_range");
+    assert_eq!(resp, BatchResponse::StartedBatch);
+
+    let blk = client
+        .recv_block_decoded::<ShelleyBlock>()
+        .await
+        .expect("recv_block_decoded")
+        .expect("expected block");
+    assert_eq!(blk.header.body.block_number, 1);
+    assert_eq!(blk.header.body.slot, 500);
+
+    let done = client
+        .recv_block_decoded::<ShelleyBlock>()
+        .await
+        .expect("recv_block_decoded batch_done");
+    assert_eq!(done, None);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_recv_block_decoded_rejects_invalid_block() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("send start_batch");
+        sh.send(
+            BlockFetchMessage::MsgBlock {
+                block: b"not-a-cbor-block".to_vec(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send invalid block");
+    });
+
+    let resp = client
+        .request_range(ChainRange {
+            lower: b"a".to_vec(),
+            upper: b"b".to_vec(),
+        })
+        .await
+        .expect("request_range");
+    assert_eq!(resp, BatchResponse::StartedBatch);
+
+    let err = client
+        .recv_block_decoded::<ShelleyBlock>()
+        .await
+        .expect_err("invalid block should fail");
+    assert!(matches!(err, yggdrasil_network::BlockFetchClientError::BlockDecode(_)));
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_recv_block_raw_with_returns_raw_and_decoded() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+    let raw_block = sample_shelley_block_bytes();
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("send start_batch");
+        sh.send(BlockFetchMessage::MsgBlock { block: raw_block }.to_cbor())
+            .await
+            .expect("send block");
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("send batch_done");
+    });
+
+    let resp = client
+        .request_range(ChainRange {
+            lower: b"a".to_vec(),
+            upper: b"b".to_vec(),
+        })
+        .await
+        .expect("request_range");
+    assert_eq!(resp, BatchResponse::StartedBatch);
+
+    let (raw, blk) = client
+        .recv_block_raw_decoded::<ShelleyBlock>()
+        .await
+        .expect("recv_block_raw_decoded")
+        .expect("expected block");
+    assert_eq!(raw, sample_shelley_block_bytes());
+    assert_eq!(blk.header.body.block_number, 1);
+
+    assert_eq!(client.recv_block_raw_decoded::<ShelleyBlock>().await.expect("done"), None);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_request_range_collect_decoded_collects_full_batch() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("send start_batch");
+        for _ in 0..2 {
+            sh.send(
+                BlockFetchMessage::MsgBlock {
+                    block: sample_shelley_block_bytes(),
+                }
+                .to_cbor(),
+            )
+            .await
+            .expect("send block");
+        }
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("send batch_done");
+    });
+
+    let blocks = client
+        .request_range_collect_decoded::<ShelleyBlock>(ChainRange {
+            lower: b"a".to_vec(),
+            upper: b"b".to_vec(),
+        })
+        .await
+        .expect("request_range_collect_decoded");
+    assert_eq!(blocks.len(), 2);
+    assert!(blocks.iter().all(|block| block.header.body.block_number == 1));
+    assert_eq!(client.state(), BlockFetchState::StIdle);
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn blockfetch_client_request_range_collect_points_raw_with_collects_pairs() {
+    let (c_handle, s_handle, c_mux, s_mux) = blockfetch_mux_pair().await;
+    let mut client = BlockFetchClient::new(c_handle);
+    let lower = Point::Origin;
+    let upper = Point::BlockPoint(SlotNo(50), HeaderHash([0x50; 32]));
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+        let _raw = sh.recv().await.expect("recv");
+
+        sh.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("send start_batch");
+        sh.send(
+            BlockFetchMessage::MsgBlock {
+                block: sample_shelley_block_bytes(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send block");
+        sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("send batch_done");
+    });
+
+    let blocks = client
+        .request_range_collect_points_raw_with(lower, upper, ShelleyBlock::from_cbor_bytes)
+        .await
+        .expect("request_range_collect_points_raw_with");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].0, sample_shelley_block_bytes());
+    assert_eq!(blocks[0].1.header.body.slot, 500);
     assert_eq!(client.state(), BlockFetchState::StIdle);
 
     server.await.expect("server task");

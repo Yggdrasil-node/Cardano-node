@@ -9,7 +9,7 @@
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
-use yggdrasil_ledger::{CborEncode, Point};
+use yggdrasil_ledger::{CborDecode, CborEncode, LedgerError, Point};
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -47,6 +47,10 @@ pub enum BlockFetchClientError {
     /// CBOR decode failure.
     #[error("CBOR decode error: {0}")]
     Decode(String),
+
+    /// Decoding a streamed block payload into a domain type failed.
+    #[error("block decode error: {0}")]
+    BlockDecode(#[from] LedgerError),
 
     /// Unexpected message from the server.
     #[error("unexpected message: {0}")]
@@ -144,6 +148,39 @@ impl BlockFetchClient {
         .await
     }
 
+    /// Request a range and collect the full batch as raw block payloads.
+    ///
+    /// If the server returns `MsgNoBlocks`, an empty vector is returned.
+    pub async fn request_range_collect(
+        &mut self,
+        range: ChainRange,
+    ) -> Result<Vec<Vec<u8>>, BlockFetchClientError> {
+        let mut blocks = Vec::new();
+        match self.request_range(range).await? {
+            BatchResponse::NoBlocks => Ok(blocks),
+            BatchResponse::StartedBatch => {
+                while let Some(block) = self.recv_block().await? {
+                    blocks.push(block);
+                }
+                Ok(blocks)
+            }
+        }
+    }
+
+    /// Request a typed point range and collect the full batch as raw block
+    /// payloads.
+    pub async fn request_range_collect_points(
+        &mut self,
+        lower: Point,
+        upper: Point,
+    ) -> Result<Vec<Vec<u8>>, BlockFetchClientError> {
+        self.request_range_collect(ChainRange {
+            lower: lower.to_cbor_bytes(),
+            upper: upper.to_cbor_bytes(),
+        })
+        .await
+    }
+
     /// Receive the next block in the current batch.
     ///
     /// Returns `Some(block_bytes)` for each `MsgBlock`, or `None` when the
@@ -159,6 +196,180 @@ impl BlockFetchClient {
                 other.tag_name().to_string(),
             )),
         }
+    }
+
+    /// Receive the next block in the current batch and decode it into a typed
+    /// ledger/domain value.
+    ///
+    /// Returns `Some(block)` for each `MsgBlock`, or `None` when the server
+    /// sends `MsgBatchDone` (returning to `StIdle`).
+    pub async fn recv_block_decoded<B: CborDecode>(
+        &mut self,
+    ) -> Result<Option<B>, BlockFetchClientError> {
+        match self.recv_block().await? {
+            Some(block) => Ok(Some(B::from_cbor_bytes(&block)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Request a range and collect the full batch as decoded blocks.
+    pub async fn request_range_collect_decoded<B: CborDecode>(
+        &mut self,
+        range: ChainRange,
+    ) -> Result<Vec<B>, BlockFetchClientError> {
+        let mut blocks = Vec::new();
+        match self.request_range(range).await? {
+            BatchResponse::NoBlocks => Ok(blocks),
+            BatchResponse::StartedBatch => {
+                while let Some(block) = self.recv_block_decoded::<B>().await? {
+                    blocks.push(block);
+                }
+                Ok(blocks)
+            }
+        }
+    }
+
+    /// Request a typed point range and collect the full batch as decoded
+    /// blocks.
+    pub async fn request_range_collect_points_decoded<B: CborDecode>(
+        &mut self,
+        lower: Point,
+        upper: Point,
+    ) -> Result<Vec<B>, BlockFetchClientError> {
+        self.request_range_collect_decoded(ChainRange {
+            lower: lower.to_cbor_bytes(),
+            upper: upper.to_cbor_bytes(),
+        })
+        .await
+    }
+
+    /// Receive the next block in the current batch and decode it using a
+    /// caller-supplied function.
+    ///
+    /// This is useful when block decoding is not a simple `CborDecode`
+    /// implementation on the target type, but still reports `LedgerError`.
+    pub async fn recv_block_with<B, F>(
+        &mut self,
+        decode: F,
+    ) -> Result<Option<B>, BlockFetchClientError>
+    where
+        F: FnOnce(&[u8]) -> Result<B, LedgerError>,
+    {
+        match self.recv_block().await? {
+            Some(block) => Ok(Some(decode(&block)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Request a range and collect the full batch using a caller-supplied
+    /// decoder.
+    pub async fn request_range_collect_with<B, F>(
+        &mut self,
+        range: ChainRange,
+        decode: F,
+    ) -> Result<Vec<B>, BlockFetchClientError>
+    where
+        F: Fn(&[u8]) -> Result<B, LedgerError>,
+    {
+        let mut blocks = Vec::new();
+        match self.request_range(range).await? {
+            BatchResponse::NoBlocks => Ok(blocks),
+            BatchResponse::StartedBatch => {
+                while let Some(block) = self.recv_block_with(&decode).await? {
+                    blocks.push(block);
+                }
+                Ok(blocks)
+            }
+        }
+    }
+
+    /// Request a typed point range and collect the full batch using a
+    /// caller-supplied decoder.
+    pub async fn request_range_collect_points_with<B, F>(
+        &mut self,
+        lower: Point,
+        upper: Point,
+        decode: F,
+    ) -> Result<Vec<B>, BlockFetchClientError>
+    where
+        F: Fn(&[u8]) -> Result<B, LedgerError>,
+    {
+        self.request_range_collect_with(
+            ChainRange {
+                lower: lower.to_cbor_bytes(),
+                upper: upper.to_cbor_bytes(),
+            },
+            decode,
+        )
+        .await
+    }
+
+    /// Receive the next block in the current batch, returning both the raw
+    /// bytes and the decoded value.
+    pub async fn recv_block_raw_decoded<B: CborDecode>(
+        &mut self,
+    ) -> Result<Option<(Vec<u8>, B)>, BlockFetchClientError> {
+        self.recv_block_raw_with(B::from_cbor_bytes).await
+    }
+
+    /// Receive the next block in the current batch, returning both the raw
+    /// bytes and the result of a caller-supplied decoder.
+    pub async fn recv_block_raw_with<B, F>(
+        &mut self,
+        decode: F,
+    ) -> Result<Option<(Vec<u8>, B)>, BlockFetchClientError>
+    where
+        F: FnOnce(&[u8]) -> Result<B, LedgerError>,
+    {
+        match self.recv_block().await? {
+            Some(block) => {
+                let decoded = decode(&block)?;
+                Ok(Some((block, decoded)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Request a range and collect the full batch as `(raw, decoded)` pairs.
+    pub async fn request_range_collect_raw_with<B, F>(
+        &mut self,
+        range: ChainRange,
+        decode: F,
+    ) -> Result<Vec<(Vec<u8>, B)>, BlockFetchClientError>
+    where
+        F: Fn(&[u8]) -> Result<B, LedgerError>,
+    {
+        let mut blocks = Vec::new();
+        match self.request_range(range).await? {
+            BatchResponse::NoBlocks => Ok(blocks),
+            BatchResponse::StartedBatch => {
+                while let Some(block) = self.recv_block_raw_with(&decode).await? {
+                    blocks.push(block);
+                }
+                Ok(blocks)
+            }
+        }
+    }
+
+    /// Request a typed point range and collect the full batch as `(raw,
+    /// decoded)` pairs.
+    pub async fn request_range_collect_points_raw_with<B, F>(
+        &mut self,
+        lower: Point,
+        upper: Point,
+        decode: F,
+    ) -> Result<Vec<(Vec<u8>, B)>, BlockFetchClientError>
+    where
+        F: Fn(&[u8]) -> Result<B, LedgerError>,
+    {
+        self.request_range_collect_raw_with(
+            ChainRange {
+                lower: lower.to_cbor_bytes(),
+                upper: upper.to_cbor_bytes(),
+            },
+            decode,
+        )
+        .await
     }
 
     /// Send `MsgClientDone` to terminate the protocol cleanly.

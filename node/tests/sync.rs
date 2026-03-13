@@ -1703,7 +1703,7 @@ async fn sync_step_multi_era_rollforward() {
     let step = sync_step_multi_era(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        Point::Origin.to_cbor_bytes(),
+        Point::Origin,
     )
     .await
     .expect("sync step multi era");

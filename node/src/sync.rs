@@ -13,9 +13,9 @@ use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
 use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_network::{
-    BatchResponse, BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient,
+    BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient,
     ChainSyncClientError, DecodedHeaderNextResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
-    TypedIntersectResponse,
+    TypedIntersectResponse, TypedNextResponse,
 };
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
@@ -212,41 +212,66 @@ pub fn decode_point(raw_point: &[u8]) -> Result<Point, SyncError> {
     Point::from_cbor_bytes(raw_point).map_err(SyncError::LedgerDecode)
 }
 
+fn map_blockfetch_error(err: BlockFetchClientError) -> SyncError {
+    match err {
+        BlockFetchClientError::BlockDecode(err) => SyncError::LedgerDecode(err),
+        other => SyncError::BlockFetch(other),
+    }
+}
+
 async fn fetch_range_blocks(
     block_fetch: &mut BlockFetchClient,
     lower: Vec<u8>,
     upper: Vec<u8>,
 ) -> Result<Vec<Vec<u8>>, SyncError> {
-    let mut blocks = Vec::new();
-    let range = ChainRange { lower, upper };
-
-    match block_fetch.request_range(range).await? {
-        BatchResponse::NoBlocks => Ok(blocks),
-        BatchResponse::StartedBatch => {
-            while let Some(block) = block_fetch.recv_block().await? {
-                blocks.push(block);
-            }
-            Ok(blocks)
-        }
-    }
+    block_fetch
+        .request_range_collect(ChainRange { lower, upper })
+        .await
+        .map_err(SyncError::BlockFetch)
 }
 
 async fn fetch_range_blocks_typed(
     block_fetch: &mut BlockFetchClient,
     lower: Point,
     upper: Point,
-) -> Result<Vec<Vec<u8>>, SyncError> {
-    let mut blocks = Vec::new();
+) -> Result<Vec<ShelleyBlock>, SyncError> {
+    block_fetch
+        .request_range_collect_points_decoded::<ShelleyBlock>(lower, upper)
+        .await
+        .map_err(map_blockfetch_error)
+}
 
-    match block_fetch.request_range_points(lower, upper).await? {
-        BatchResponse::NoBlocks => Ok(blocks),
-        BatchResponse::StartedBatch => {
-            while let Some(block) = block_fetch.recv_block().await? {
-                blocks.push(block);
-            }
-            Ok(blocks)
-        }
-    }
+async fn fetch_range_blocks_multi_era(
+    block_fetch: &mut BlockFetchClient,
+    lower: Point,
+    upper: Point,
+) -> Result<Vec<MultiEraBlock>, SyncError> {
+    block_fetch
+        .request_range_collect_points_with(lower, upper, decode_multi_era_block_ledger)
+        .await
+        .map_err(map_blockfetch_error)
+}
+
+async fn fetch_range_blocks_multi_era_raw_decoded(
+    block_fetch: &mut BlockFetchClient,
+    lower: Point,
+    upper: Point,
+) -> Result<Vec<(Vec<u8>, MultiEraBlock)>, SyncError> {
+    block_fetch
+        .request_range_collect_points_raw_with(lower, upper, decode_multi_era_block_ledger)
+        .await
+        .map_err(map_blockfetch_error)
+}
+
+async fn fetch_range_blocks_decoded(
+    block_fetch: &mut BlockFetchClient,
+    lower: Vec<u8>,
+    upper: Vec<u8>,
+) -> Result<Vec<ShelleyBlock>, SyncError> {
+    block_fetch
+        .request_range_collect_decoded::<ShelleyBlock>(ChainRange { lower, upper })
+        .await
+        .map_err(map_blockfetch_error)
 }
 
 /// Execute one sync step:
@@ -285,18 +310,18 @@ pub async fn sync_step_decoded(
     block_fetch: &mut BlockFetchClient,
     from_point: Vec<u8>,
 ) -> Result<DecodedSyncStep, SyncError> {
-    let step = sync_step(chain_sync, block_fetch, from_point).await?;
-    match step {
-        SyncStep::RollForward {
+    let next = chain_sync.request_next().await?;
+    match next {
+        NextResponse::RollForward { header, tip }
+        | NextResponse::AwaitRollForward { header, tip } => Ok(DecodedSyncStep::RollForward {
             header,
-            tip,
-            blocks,
-        } => Ok(DecodedSyncStep::RollForward {
-            header,
-            tip,
-            blocks: decode_shelley_blocks(&blocks)?,
+            tip: tip.clone(),
+            blocks: fetch_range_blocks_decoded(block_fetch, from_point, tip).await?,
         }),
-        SyncStep::RollBackward { point, tip } => Ok(DecodedSyncStep::RollBackward { point, tip }),
+        NextResponse::RollBackward { point, tip }
+        | NextResponse::AwaitRollBackward { point, tip } => {
+            Ok(DecodedSyncStep::RollBackward { point, tip })
+        }
     }
 }
 
@@ -316,7 +341,7 @@ pub async fn sync_step_typed(
             Ok(TypedSyncStep::RollForward {
                 header: Box::new(header),
                 tip,
-                blocks: decode_shelley_blocks(&blocks)?,
+                blocks,
             })
         }
         DecodedHeaderNextResponse::RollBackward { point, tip }
@@ -997,29 +1022,29 @@ mod era_tag {
 /// Shelley block codec. Alonzo (tag 5) uses the 5-element Alonzo block
 /// codec. Babbage (tag 6) and Conway (tag 7) use their own 5-element
 /// block codecs with era-appropriate transaction body types.
-pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
+fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
     // Peek at the structure: expect a 2-element array [tag, body].
     use yggdrasil_ledger::cbor::Decoder;
     let mut dec = Decoder::new(raw);
-    let arr_len = dec.array().map_err(SyncError::LedgerDecode)?;
+    let arr_len = dec.array()?;
     if arr_len != 2 {
-        return Err(SyncError::LedgerDecode(LedgerError::CborInvalidLength {
+        return Err(LedgerError::CborInvalidLength {
             expected: 2,
             actual: arr_len as usize,
-        }));
+        });
     }
 
-    let tag = dec.unsigned().map_err(SyncError::LedgerDecode)?;
+    let tag = dec.unsigned()?;
 
     match tag {
         era_tag::BYRON_EBB | era_tag::BYRON_MAIN => {
             let body_start = dec.position();
-            dec.skip().map_err(SyncError::LedgerDecode)?;
+            dec.skip()?;
             let body_bytes = &raw[body_start..dec.position()];
             let byron = if tag == era_tag::BYRON_EBB {
-                ByronBlock::decode_ebb(body_bytes).map_err(SyncError::LedgerDecode)?
+                ByronBlock::decode_ebb(body_bytes)?
             } else {
-                ByronBlock::decode_main(body_bytes).map_err(SyncError::LedgerDecode)?
+                ByronBlock::decode_main(body_bytes)?
             };
             Ok(MultiEraBlock::Byron {
                 block: byron,
@@ -1029,44 +1054,44 @@ pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
         era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => {
             // Shelley/Allegra/Mary blocks are 4-element CBOR arrays.
             let body_start = dec.position();
-            dec.skip().map_err(SyncError::LedgerDecode)?;
+            dec.skip()?;
             let body_bytes = &raw[body_start..dec.position()];
-            let block = ShelleyBlock::from_cbor_bytes(body_bytes)
-                .map_err(SyncError::LedgerDecode)?;
+            let block = ShelleyBlock::from_cbor_bytes(body_bytes)?;
             Ok(MultiEraBlock::Shelley(Box::new(block)))
         }
         era_tag::ALONZO => {
             // Alonzo blocks are 5-element CBOR arrays (added invalid_transactions).
             let body_start = dec.position();
-            dec.skip().map_err(SyncError::LedgerDecode)?;
+            dec.skip()?;
             let body_bytes = &raw[body_start..dec.position()];
-            let block = AlonzoBlock::from_cbor_bytes(body_bytes)
-                .map_err(SyncError::LedgerDecode)?;
+            let block = AlonzoBlock::from_cbor_bytes(body_bytes)?;
             Ok(MultiEraBlock::Alonzo(Box::new(block)))
         }
         era_tag::BABBAGE => {
             let body_start = dec.position();
-            dec.skip().map_err(SyncError::LedgerDecode)?;
+            dec.skip()?;
             let body_bytes = &raw[body_start..dec.position()];
-            let block = BabbageBlock::from_cbor_bytes(body_bytes)
-                .map_err(SyncError::LedgerDecode)?;
+            let block = BabbageBlock::from_cbor_bytes(body_bytes)?;
             Ok(MultiEraBlock::Babbage(Box::new(block)))
         }
         era_tag::CONWAY => {
             let body_start = dec.position();
-            dec.skip().map_err(SyncError::LedgerDecode)?;
+            dec.skip()?;
             let body_bytes = &raw[body_start..dec.position()];
-            let block = ConwayBlock::from_cbor_bytes(body_bytes)
-                .map_err(SyncError::LedgerDecode)?;
+            let block = ConwayBlock::from_cbor_bytes(body_bytes)?;
             Ok(MultiEraBlock::Conway(Box::new(block)))
         }
         unsupported => {
-            Err(SyncError::LedgerDecode(LedgerError::CborTypeMismatch {
+            Err(LedgerError::CborTypeMismatch {
                 expected: 2, // Shelley era tag
                 actual: unsupported as u8,
-            }))
+            })
         }
     }
+}
+
+pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
+    decode_multi_era_block_ledger(raw).map_err(SyncError::LedgerDecode)
 }
 
 /// Decode a list of raw block payloads into multi-era blocks.
@@ -1075,8 +1100,8 @@ pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
 pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlock>, SyncError> {
     raw_blocks
         .iter()
-        .map(|raw| decode_multi_era_block(raw))
-        .collect()
+    .map(|raw| decode_multi_era_block(raw))
+    .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1490,23 +1515,22 @@ pub enum MultiEraSyncStep {
 pub async fn sync_step_multi_era(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
-    from_point: Vec<u8>,
+    from_point: Point,
 ) -> Result<MultiEraSyncStep, SyncError> {
-    let step = sync_step(chain_sync, block_fetch, from_point).await?;
-    match step {
-        SyncStep::RollForward {
-            header,
-            tip,
-            blocks,
-        } => Ok(MultiEraSyncStep::RollForward {
-            raw_header: header,
-            tip: decode_point(&tip)?,
-            blocks: decode_multi_era_blocks(&blocks)?,
-        }),
-        SyncStep::RollBackward { point, tip } => Ok(MultiEraSyncStep::RollBackward {
-            point: decode_point(&point)?,
-            tip: decode_point(&tip)?,
-        }),
+    let next = chain_sync.request_next_typed().await?;
+    match next {
+        TypedNextResponse::RollForward { header, tip }
+        | TypedNextResponse::AwaitRollForward { header, tip } => {
+            Ok(MultiEraSyncStep::RollForward {
+                raw_header: header,
+                tip,
+                blocks: fetch_range_blocks_multi_era(block_fetch, from_point, tip).await?,
+            })
+        }
+        TypedNextResponse::RollBackward { point, tip }
+        | TypedNextResponse::AwaitRollBackward { point, tip } => {
+            Ok(MultiEraSyncStep::RollBackward { point, tip })
+        }
     }
 }
 
@@ -1652,56 +1676,46 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
     let mut rollback_count = 0usize;
 
     for _ in 0..batch_size {
-        let raw_step = sync_step(
-            chain_sync,
-            block_fetch,
-            from_point.to_cbor_bytes(),
-        )
-        .await?;
+        let next = chain_sync.request_next_typed().await?;
 
-        let me_step = match raw_step {
-            SyncStep::RollForward {
-                header,
-                tip,
-                blocks: raw_blocks,
-            } => {
-                // Body-hash verification on raw bytes (before decode).
+        let me_step = match next {
+            TypedNextResponse::RollForward { header, tip }
+            | TypedNextResponse::AwaitRollForward { header, tip } => {
+                let raw_and_decoded =
+                    fetch_range_blocks_multi_era_raw_decoded(block_fetch, from_point, tip).await?;
+
                 if let Some(config) = verification {
                     if config.verify_body_hash {
-                        for raw in &raw_blocks {
+                        for (raw, _) in &raw_and_decoded {
                             verify_block_body_hash(raw)?;
                         }
                     }
                 }
 
-                let decoded_tip = decode_point(&tip)?;
-                let decoded_blocks = decode_multi_era_blocks(&raw_blocks)?;
+                let decoded_blocks: Vec<MultiEraBlock> =
+                    raw_and_decoded.into_iter().map(|(_, block)| block).collect();
 
-                // Header verification on decoded blocks.
                 if let Some(config) = verification {
                     for block in &decoded_blocks {
                         verify_multi_era_block(block, config)?;
                     }
                 }
 
-                from_point = decoded_tip;
+                from_point = tip;
                 fetched_blocks += decoded_blocks.len();
 
                 MultiEraSyncStep::RollForward {
                     raw_header: header,
-                    tip: decoded_tip,
+                    tip,
                     blocks: decoded_blocks,
                 }
             }
-            SyncStep::RollBackward { point, tip } => {
-                let decoded_point = decode_point(&point)?;
-                from_point = decoded_point;
+            TypedNextResponse::RollBackward { point, tip }
+            | TypedNextResponse::AwaitRollBackward { point, tip } => {
+                from_point = point;
                 rollback_count += 1;
 
-                MultiEraSyncStep::RollBackward {
-                    point: decoded_point,
-                    tip: decode_point(&tip)?,
-                }
+                MultiEraSyncStep::RollBackward { point, tip }
             }
         };
 
