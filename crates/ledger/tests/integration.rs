@@ -6,9 +6,10 @@ use yggdrasil_ledger::{
     ExUnits, GovAction, GovActionId, HeaderHash, LedgerError, LedgerState, MaryTxBody,
     MaryTxOut, MultiEraSubmittedTx, MultiEraTxOut, MultiEraUtxo, NativeScript, Nonce,
     PlutusData, Point, PointerAddress, PoolMetadata, PoolParams, PraosHeader, PraosHeaderBody,
-    ProposalProcedure, Redeemer, Relay, RewardAccount, RewardAccountState, Script, ScriptRef,
-    ShelleyBlock, ShelleyCompatibleSubmittedTx, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
-    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo,
+    ProposalProcedure, Redeemer, RegisteredDrep, Relay, RewardAccount, RewardAccountState,
+    Script, ScriptRef, ShelleyBlock, ShelleyCompatibleSubmittedTx, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyUpdate, ShelleyUtxo,
     ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId,
     UnitInterval, Value, Vote, Voter, VotingProcedure, VotingProcedures,
     BYRON_SLOTS_PER_EPOCH, compute_tx_id,
@@ -6521,6 +6522,201 @@ fn ledger_state_rejects_unregistration_with_nonzero_rewards() {
         }
     );
     assert!(state.stake_credentials().is_registered(&credential));
+}
+
+#[test]
+fn ledger_state_registers_and_updates_drep() {
+    let mut state = LedgerState::new(Era::Conway);
+    let credential = StakeCredential::AddrKeyHash([0x61; 28]);
+    let drep = DRep::KeyHash([0x61; 28]);
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xA2; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let anchor = Anchor {
+        url: "https://example.com/drep.json".to_string(),
+        data_hash: [0x62; 32],
+    };
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0xA3,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xA2; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![
+                DCert::DrepRegistration(credential, 2_000_000, Some(anchor.clone())),
+                DCert::DrepUpdate(credential, None),
+            ]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("drep registration block");
+    let registered = state.registered_drep(&drep).expect("registered drep");
+    assert_eq!(registered.deposit(), 2_000_000);
+    assert_eq!(registered.anchor(), None);
+}
+
+#[test]
+fn ledger_state_delegates_registered_stake_credential_to_drep() {
+    let mut state = LedgerState::new(Era::Conway);
+    let credential = StakeCredential::AddrKeyHash([0x63; 28]);
+    let drep_credential = StakeCredential::AddrKeyHash([0x64; 28]);
+    let drep = DRep::KeyHash([0x64; 28]);
+    state.stake_credentials_mut().register(credential);
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new(3_000_000, None));
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xA4; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0xA5,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xA4; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::DelegationToDrep(credential, drep)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("drep delegation block");
+    assert_eq!(
+        state
+            .stake_credential_state(&credential)
+            .expect("delegated credential")
+            .delegated_drep(),
+        Some(DRep::KeyHash(drep_credential.hash().to_owned()))
+    );
+}
+
+#[test]
+fn ledger_state_allows_builtin_drep_delegation_without_registration() {
+    let mut state = LedgerState::new(Era::Conway);
+    let credential = StakeCredential::AddrKeyHash([0x65; 28]);
+    state.stake_credentials_mut().register(credential);
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xA6; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0xA7,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xA6; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::DelegationToDrep(credential, DRep::AlwaysAbstain)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    state.apply_block(&block).expect("builtin drep delegation");
+    assert_eq!(
+        state
+            .stake_credential_state(&credential)
+            .expect("credential state")
+            .delegated_drep(),
+        Some(DRep::AlwaysAbstain)
+    );
+}
+
+#[test]
+fn ledger_state_rejects_unregistered_drep_delegation() {
+    let mut state = LedgerState::new(Era::Conway);
+    let credential = StakeCredential::AddrKeyHash([0x66; 28]);
+    let drep = DRep::KeyHash([0x67; 28]);
+    state.stake_credentials_mut().register(credential);
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xA8; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_100_000,
+        },
+    );
+
+    let block = make_shelley_block_with_txs(
+        12,
+        1,
+        0xA9,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xA8; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_000_000,
+            }],
+            fee: 100_000,
+            ttl: 20,
+            certificates: Some(vec![DCert::DelegationToDrep(credential, drep)]),
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
+
+    let err = state.apply_block(&block).expect_err("unregistered drep should fail");
+    assert_eq!(err, LedgerError::DrepNotRegistered(drep));
 }
 
 #[test]

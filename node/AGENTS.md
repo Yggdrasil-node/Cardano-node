@@ -19,7 +19,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Integration behavior MUST always be explained by anchoring it in the official node and the relevant upstream IntersectMBO implementation.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References (add or update as needed)
+## Official Upstream References *Always research and add or update links as needed*
 - Node integration repository: <https://github.com/IntersectMBO/cardano-node/>
 - Node runtime and packaging reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
 - Default network configuration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>

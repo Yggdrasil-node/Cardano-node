@@ -15,7 +15,7 @@ Keep tests in this directory focused on deterministic parser and generator behav
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References (add or update as needed)
+## Official Upstream References *Always research and add or update links as needed*
 - Era CDDL roots used for reduced fixtures: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
 - Ledger binary support library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
 

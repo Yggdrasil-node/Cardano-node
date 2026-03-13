@@ -27,7 +27,7 @@ You are implementing a pure typesafe Rust Cardano node with no FFI dependencies,
 - `node/` owns orchestration, CLI, and runtime integration.
 - `specs/upstream-test-vectors` officially test-vectors from the `IntersectMBO` repositories.
 
-## Official Upstream References (add or update as needed)
+## Official Upstream References *Always research and add or update links as needed*
 - `crates/crypto`: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class> and <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
 - `crates/cddl-codegen`: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras> and <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
 - `crates/ledger`: <https://github.com/IntersectMBO/cardano-ledger> and <https://github.com/IntersectMBO/formal-ledger-specifications>

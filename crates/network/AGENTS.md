@@ -19,7 +19,7 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Wire behavior and protocol sequencing MUST be explained by reference to the official node and upstream Ouroboros network sources.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References (add or update as needed)
+## Official Upstream References *Always research and add or update links as needed*
 - Networking repository root: <https://github.com/IntersectMBO/ouroboros-network/>
 - Multiplexer package: <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux/>
 - Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework/>

@@ -44,8 +44,8 @@ pub use error::LedgerError;
 // -- State re-exports ---------------------------------------------------------
 /// Top-level ledger state wrapper.
 pub use state::{
-    LedgerState, LedgerStateSnapshot, PoolState, RegisteredPool, RewardAccountState,
-    RewardAccounts, StakeCredentialState, StakeCredentials,
+    DrepState, LedgerState, LedgerStateSnapshot, PoolState, RegisteredDrep, RegisteredPool,
+    RewardAccountState, RewardAccounts, StakeCredentialState, StakeCredentials,
 };
 
 // -- Tx/Block re-exports ------------------------------------------------------

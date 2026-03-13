@@ -18,7 +18,7 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - Naming MUST stay aligned with the official node and network spec so the implementation remains easy to compare against upstream traces and docs.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References (add or update as needed)
+## Official Upstream References *Always research and add or update links as needed*
 - Protocol implementations: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols>
 - Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework>
 - Shelley networking spec PDF: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>

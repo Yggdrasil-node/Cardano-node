@@ -5,7 +5,8 @@ use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
 use crate::types::{
-    Address, DCert, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount, StakeCredential,
+    Address, Anchor, DCert, DRep, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount,
+    StakeCredential,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Era, LedgerError};
@@ -179,12 +180,16 @@ impl RewardAccounts {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StakeCredentialState {
     delegated_pool: Option<PoolKeyHash>,
+    delegated_drep: Option<DRep>,
 }
 
 impl StakeCredentialState {
-    /// Creates stake-credential state with the given delegation target.
-    pub fn new(delegated_pool: Option<PoolKeyHash>) -> Self {
-        Self { delegated_pool }
+    /// Creates stake-credential state with the given delegation targets.
+    pub fn new(delegated_pool: Option<PoolKeyHash>, delegated_drep: Option<DRep>) -> Self {
+        Self {
+            delegated_pool,
+            delegated_drep,
+        }
     }
 
     /// Returns the delegated pool, if any.
@@ -192,9 +197,19 @@ impl StakeCredentialState {
         self.delegated_pool
     }
 
+    /// Returns the delegated DRep, if any.
+    pub fn delegated_drep(&self) -> Option<DRep> {
+        self.delegated_drep
+    }
+
     /// Replaces the delegated pool reference.
     pub fn set_delegated_pool(&mut self, delegated_pool: Option<PoolKeyHash>) {
         self.delegated_pool = delegated_pool;
+    }
+
+    /// Replaces the delegated DRep reference.
+    pub fn set_delegated_drep(&mut self, delegated_drep: Option<DRep>) {
+        self.delegated_drep = delegated_drep;
     }
 }
 
@@ -233,13 +248,85 @@ impl StakeCredentials {
     /// Registers a stake credential with no delegation target.
     pub fn register(&mut self, credential: StakeCredential) -> bool {
         self.entries
-            .insert(credential, StakeCredentialState::new(None))
+            .insert(credential, StakeCredentialState::new(None, None))
             .is_none()
     }
 
     /// Removes a registered stake credential.
     pub fn unregister(&mut self, credential: &StakeCredential) -> Option<StakeCredentialState> {
         self.entries.remove(credential)
+    }
+}
+
+/// Registered DRep state visible from the ledger.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegisteredDrep {
+    anchor: Option<Anchor>,
+    deposit: u64,
+}
+
+impl RegisteredDrep {
+    /// Creates registered DRep state.
+    pub fn new(deposit: u64, anchor: Option<Anchor>) -> Self {
+        Self { anchor, deposit }
+    }
+
+    /// Returns the current DRep anchor, if any.
+    pub fn anchor(&self) -> Option<&Anchor> {
+        self.anchor.as_ref()
+    }
+
+    /// Returns the current DRep deposit value.
+    pub fn deposit(&self) -> u64 {
+        self.deposit
+    }
+
+    /// Replaces the current DRep anchor.
+    pub fn set_anchor(&mut self, anchor: Option<Anchor>) {
+        self.anchor = anchor;
+    }
+}
+
+/// DRep registry visible from the ledger.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DrepState {
+    entries: BTreeMap<DRep, RegisteredDrep>,
+}
+
+impl DrepState {
+    /// Creates an empty DRep registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the registered state for `drep`, if present.
+    pub fn get(&self, drep: &DRep) -> Option<&RegisteredDrep> {
+        self.entries.get(drep)
+    }
+
+    /// Returns mutable registered state for `drep`, if present.
+    pub fn get_mut(&mut self, drep: &DRep) -> Option<&mut RegisteredDrep> {
+        self.entries.get_mut(drep)
+    }
+
+    /// Returns true when `drep` is registered.
+    pub fn is_registered(&self, drep: &DRep) -> bool {
+        self.entries.contains_key(drep)
+    }
+
+    /// Iterates over registered DReps in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&DRep, &RegisteredDrep)> {
+        self.entries.iter()
+    }
+
+    /// Registers a DRep.
+    pub fn register(&mut self, drep: DRep, state: RegisteredDrep) -> bool {
+        self.entries.insert(drep, state).is_none()
+    }
+
+    /// Unregisters a DRep.
+    pub fn unregister(&mut self, drep: &DRep) -> Option<RegisteredDrep> {
+        self.entries.remove(drep)
     }
 }
 
@@ -256,6 +343,7 @@ pub struct LedgerStateSnapshot {
     tip: Point,
     pool_state: PoolState,
     stake_credentials: StakeCredentials,
+    drep_state: DrepState,
     reward_accounts: RewardAccounts,
     multi_era_utxo: MultiEraUtxo,
     shelley_utxo: ShelleyUtxo,
@@ -282,6 +370,11 @@ impl LedgerStateSnapshot {
         &self.stake_credentials
     }
 
+    /// Returns the registered DRep state captured in this snapshot.
+    pub fn drep_state(&self) -> &DrepState {
+        &self.drep_state
+    }
+
     /// Returns the reward-account state captured in this snapshot.
     pub fn reward_accounts(&self) -> &RewardAccounts {
         &self.reward_accounts
@@ -298,6 +391,11 @@ impl LedgerStateSnapshot {
         credential: &StakeCredential,
     ) -> Option<&StakeCredentialState> {
         self.stake_credentials.get(credential)
+    }
+
+    /// Returns the registered DRep state for `drep`, if present.
+    pub fn registered_drep(&self, drep: &DRep) -> Option<&RegisteredDrep> {
+        self.drep_state.get(drep)
     }
 
     /// Returns the reward-account state for `account`, if present.
@@ -384,6 +482,8 @@ pub struct LedgerState {
     pool_state: PoolState,
     /// Registered stake-credential state.
     stake_credentials: StakeCredentials,
+    /// Registered DRep state.
+    drep_state: DrepState,
     /// Reward-account balances and delegation pointers.
     reward_accounts: RewardAccounts,
     /// Multi-era UTxO set.
@@ -401,6 +501,7 @@ impl LedgerState {
             tip: Point::Origin,
             pool_state: PoolState::new(),
             stake_credentials: StakeCredentials::new(),
+            drep_state: DrepState::new(),
             reward_accounts: RewardAccounts::new(),
             multi_era_utxo: MultiEraUtxo::new(),
             shelley_utxo: ShelleyUtxo::new(),
@@ -427,6 +528,16 @@ impl LedgerState {
         &mut self.stake_credentials
     }
 
+    /// Returns a reference to registered DRep state.
+    pub fn drep_state(&self) -> &DrepState {
+        &self.drep_state
+    }
+
+    /// Returns a mutable reference to registered DRep state.
+    pub fn drep_state_mut(&mut self) -> &mut DrepState {
+        &mut self.drep_state
+    }
+
     /// Returns a reference to reward-account state.
     pub fn reward_accounts(&self) -> &RewardAccounts {
         &self.reward_accounts
@@ -448,6 +559,11 @@ impl LedgerState {
         credential: &StakeCredential,
     ) -> Option<&StakeCredentialState> {
         self.stake_credentials.get(credential)
+    }
+
+    /// Returns the registered DRep state for `drep`, if present.
+    pub fn registered_drep(&self, drep: &DRep) -> Option<&RegisteredDrep> {
+        self.drep_state.get(drep)
     }
 
     /// Returns the reward-account state for `account`, if present.
@@ -493,6 +609,7 @@ impl LedgerState {
             tip: self.tip.clone(),
             pool_state: self.pool_state.clone(),
             stake_credentials: self.stake_credentials.clone(),
+            drep_state: self.drep_state.clone(),
             reward_accounts: self.reward_accounts.clone(),
             multi_era_utxo: self.multi_era_utxo.clone(),
             shelley_utxo: self.shelley_utxo.clone(),
@@ -548,10 +665,12 @@ impl LedgerState {
                 let mut staged = self.shelley_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -565,16 +684,19 @@ impl LedgerState {
                 self.shelley_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -583,16 +705,19 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Mary(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -601,16 +726,19 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -619,16 +747,19 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -637,16 +768,19 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
             crate::tx::MultiEraSubmittedTx::Conway(tx) => {
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
+                let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
+                    &mut staged_drep_state,
                     &mut staged_reward_accounts,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
@@ -655,6 +789,7 @@ impl LedgerState {
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
+                self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
             }
         }
@@ -689,11 +824,13 @@ impl LedgerState {
         let mut staged = self.shelley_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
             &mut staged_stake_credentials,
+            &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -703,6 +840,7 @@ impl LedgerState {
         self.shelley_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -728,11 +866,13 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
-            &mut staged_stake_credentials,
+                &mut staged_stake_credentials,
+                &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -742,6 +882,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -767,11 +908,13 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
-            &mut staged_stake_credentials,
+                &mut staged_stake_credentials,
+                &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -781,6 +924,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -806,11 +950,13 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
-            &mut staged_stake_credentials,
+                &mut staged_stake_credentials,
+                &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -820,6 +966,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -845,11 +992,13 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
-            &mut staged_stake_credentials,
+                &mut staged_stake_credentials,
+                &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -859,6 +1008,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -884,11 +1034,13 @@ impl LedgerState {
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
+        let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         for (tx_id, body) in &decoded {
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
-            &mut staged_stake_credentials,
+                &mut staged_stake_credentials,
+                &mut staged_drep_state,
                 &mut staged_reward_accounts,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
@@ -898,6 +1050,7 @@ impl LedgerState {
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
+        self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         Ok(())
     }
@@ -906,6 +1059,7 @@ impl LedgerState {
 fn apply_certificates_and_withdrawals(
     pool_state: &mut PoolState,
     stake_credentials: &mut StakeCredentials,
+    drep_state: &mut DrepState,
     reward_accounts: &mut RewardAccounts,
     certificates: Option<&[DCert]>,
     withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
@@ -940,11 +1094,48 @@ fn apply_certificates_and_withdrawals(
                         *pool,
                     )?;
                 }
+                DCert::DelegationToDrep(credential, drep) => {
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                }
+                DCert::DelegationToStakePoolAndDrep(credential, pool, drep) => {
+                    delegate_stake_credential(
+                        pool_state,
+                        stake_credentials,
+                        reward_accounts,
+                        *credential,
+                        *pool,
+                    )?;
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                }
+                DCert::AccountRegistrationDelegationToDrep(credential, drep, _) => {
+                    register_stake_credential(stake_credentials, *credential)?;
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                }
+                DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, _) => {
+                    register_stake_credential(stake_credentials, *credential)?;
+                    delegate_stake_credential(
+                        pool_state,
+                        stake_credentials,
+                        reward_accounts,
+                        *credential,
+                        *pool,
+                    )?;
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                }
                 DCert::PoolRegistration(params) => pool_state.register(params.clone()),
                 DCert::PoolRetirement(pool, epoch) => {
                     if !pool_state.retire(*pool, *epoch) {
                         return Err(LedgerError::PoolNotRegistered(*pool));
                     }
+                }
+                DCert::DrepRegistration(credential, deposit, anchor) => {
+                    register_drep(drep_state, *credential, *deposit, anchor.clone())?;
+                }
+                DCert::DrepUnregistration(credential, _) => {
+                    unregister_drep(drep_state, *credential)?;
+                }
+                DCert::DrepUpdate(credential, anchor) => {
+                    update_drep(drep_state, *credential, anchor.clone())?;
                 }
                 other => return Err(LedgerError::UnsupportedCertificate(certificate_kind(other))),
             }
@@ -1038,6 +1229,72 @@ fn delegate_stake_credential(
     }
 
     Ok(())
+}
+
+fn register_drep(
+    drep_state: &mut DrepState,
+    credential: StakeCredential,
+    deposit: u64,
+    anchor: Option<Anchor>,
+) -> Result<(), LedgerError> {
+    let drep = drep_from_credential(credential);
+    if !drep_state.register(drep, RegisteredDrep::new(deposit, anchor)) {
+        return Err(LedgerError::DrepAlreadyRegistered(drep));
+    }
+
+    Ok(())
+}
+
+fn unregister_drep(drep_state: &mut DrepState, credential: StakeCredential) -> Result<(), LedgerError> {
+    let drep = drep_from_credential(credential);
+    if drep_state.unregister(&drep).is_none() {
+        return Err(LedgerError::DrepNotRegistered(drep));
+    }
+
+    Ok(())
+}
+
+fn update_drep(
+    drep_state: &mut DrepState,
+    credential: StakeCredential,
+    anchor: Option<Anchor>,
+) -> Result<(), LedgerError> {
+    let drep = drep_from_credential(credential);
+    let Some(state) = drep_state.get_mut(&drep) else {
+        return Err(LedgerError::DrepNotRegistered(drep));
+    };
+
+    state.set_anchor(anchor);
+    Ok(())
+}
+
+fn delegate_drep(
+    stake_credentials: &mut StakeCredentials,
+    drep_state: &DrepState,
+    credential: StakeCredential,
+    drep: DRep,
+) -> Result<(), LedgerError> {
+    let Some(state) = stake_credentials.get_mut(&credential) else {
+        return Err(LedgerError::StakeCredentialNotRegistered(credential));
+    };
+
+    if !is_builtin_drep(drep) && !drep_state.is_registered(&drep) {
+        return Err(LedgerError::DrepNotRegistered(drep));
+    }
+
+    state.set_delegated_drep(Some(drep));
+    Ok(())
+}
+
+fn drep_from_credential(credential: StakeCredential) -> DRep {
+    match credential {
+        StakeCredential::AddrKeyHash(hash) => DRep::KeyHash(hash),
+        StakeCredential::ScriptHash(hash) => DRep::ScriptHash(hash),
+    }
+}
+
+fn is_builtin_drep(drep: DRep) -> bool {
+    matches!(drep, DRep::AlwaysAbstain | DRep::AlwaysNoConfidence)
 }
 
 fn certificate_kind(cert: &DCert) -> &'static str {
