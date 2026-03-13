@@ -2,5 +2,5 @@
 
 mod queue;
 
-/// Queue wrapper and transaction entry type.
-pub use queue::{Mempool, MempoolEntry};
+/// Queue wrapper, transaction entry type, and mempool error.
+pub use queue::{Mempool, MempoolEntry, MempoolError};

@@ -9,13 +9,14 @@ use yggdrasil_ledger::{
     ShelleyOpCert, ShelleyVrfCert, SlotNo,
 };
 use yggdrasil_node::{
-    DecodedSyncStep, MultiEraBlock, NodeConfig, SyncServiceConfig, SyncStep,
-    TypedIntersectResult, TypedSyncStep, apply_typed_progress_to_volatile, bootstrap,
-    decode_multi_era_block, decode_multi_era_blocks, keepalive_heartbeat, run_sync_service,
-    shelley_block_to_block, shelley_header_body_to_consensus, shelley_header_to_consensus,
-    shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded, sync_step_typed,
-    sync_steps, sync_steps_typed, sync_until_typed, typed_find_intersect, verify_shelley_header,
-    SHELLEY_KES_DEPTH,
+    DecodedSyncStep, MultiEraBlock, MultiEraSyncStep, NodeConfig, SyncServiceConfig, SyncStep,
+    TypedIntersectResult, TypedSyncStep, VerificationConfig, apply_multi_era_step_to_volatile,
+    apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
+    keepalive_heartbeat, multi_era_block_to_block, run_sync_service,
+    shelley_header_body_to_consensus, shelley_header_to_consensus, shelley_opcert_to_consensus,
+    sync_batch_apply, sync_step, sync_step_decoded, sync_step_multi_era, sync_step_typed,
+    sync_steps, sync_steps_typed, sync_until_typed, typed_find_intersect,
+    verify_multi_era_block, verify_shelley_header, SHELLEY_KES_DEPTH,
 };
 use yggdrasil_storage::{InMemoryVolatile, VolatileStore};
 
@@ -354,6 +355,7 @@ fn sample_header_body() -> ShelleyHeaderBody {
     }
 }
 
+/// Build a sample block and return its CBOR encoding.
 fn sample_block_bytes() -> Vec<u8> {
     let block = ShelleyBlock {
         header: ShelleyHeader {
@@ -365,6 +367,15 @@ fn sample_block_bytes() -> Vec<u8> {
         transaction_metadata: std::collections::HashMap::new(),
     };
     block.to_cbor_bytes()
+}
+
+/// Compute the expected Blake2b-256 header hash for the sample block.
+fn sample_header_hash() -> HeaderHash {
+    let header = ShelleyHeader {
+        body: sample_header_body(),
+        signature: vec![0xDD; 448],
+    };
+    header.header_hash()
 }
 
 async fn spawn_decoded_rollforward_responder(magic: u32, block_bytes: Vec<u8>) -> SocketAddr {
@@ -906,7 +917,7 @@ async fn apply_typed_progress_to_volatile_applies_forwards_and_rollbacks() {
     // Shelley block point.
     assert_eq!(
         store.tip(),
-        Point::BlockPoint(SlotNo(500), HeaderHash([0x55; 32]))
+        Point::BlockPoint(SlotNo(500), sample_header_hash())
     );
 
     session.mux.abort();
@@ -1150,7 +1161,7 @@ async fn sync_batch_apply_updates_volatile_store() {
     // Store tip should reflect the block that was appended.
     assert_eq!(
         store.tip(),
-        Point::BlockPoint(SlotNo(500), HeaderHash([0x55; 32]))
+        Point::BlockPoint(SlotNo(500), sample_header_hash())
     );
 
     session.mux.abort();
@@ -1183,6 +1194,425 @@ async fn keepalive_heartbeat_terminates_on_connection_close() {
         matches!(err, yggdrasil_node::SyncError::KeepAlive(_)),
         "expected KeepAlive error, got {err:?}"
     );
+
+    session.mux.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 33: Managed sync service tests
+// ---------------------------------------------------------------------------
+
+async fn spawn_service_responder(
+    magic: u32,
+    header_bytes: Vec<u8>,
+    tip_bytes: Vec<u8>,
+    block_bytes: Vec<u8>,
+    steps: usize,
+) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut conn = peer_accept(stream, magic, &[HandshakeVersion(15)])
+            .await
+            .expect("accept handshake");
+
+        let mut cs = conn
+            .protocols
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("chainsync handle");
+        let mut bf = conn
+            .protocols
+            .remove(&MiniProtocolNum::BLOCK_FETCH)
+            .expect("blockfetch handle");
+
+        for _ in 0..steps {
+            let cs_req = cs.recv().await.expect("cs recv");
+            let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
+            assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
+
+            cs.send(
+                ChainSyncMessage::MsgRollForward {
+                    header: header_bytes.clone(),
+                    tip: tip_bytes.clone(),
+                }
+                .to_cbor(),
+            )
+            .await
+            .expect("send rollforward");
+
+            let bf_req = bf.recv().await.expect("bf recv");
+            let _bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
+
+            bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+                .await
+                .expect("start batch");
+            bf.send(
+                BlockFetchMessage::MsgBlock {
+                    block: block_bytes.clone(),
+                }
+                .to_cbor(),
+            )
+            .await
+            .expect("send block");
+            bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+                .await
+                .expect("batch done");
+        }
+
+        // After serving the requested steps, keep the connection alive
+        // long enough for the service loop's shutdown to fire while the
+        // next batch is blocked waiting for more protocol messages.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        conn.mux.abort();
+    });
+
+    addr
+}
+
+#[tokio::test]
+async fn run_sync_service_shutdown_after_batches() {
+    let magic = 300;
+    let header = ShelleyHeader {
+        body: sample_header_body(),
+        signature: vec![0xAB; 448],
+    };
+    let tip = Point::BlockPoint(SlotNo(500), sample_header_hash());
+
+    // Serve 1 step (1 batch of size 1).
+    let addr = spawn_service_responder(
+        magic,
+        header.to_cbor_bytes(),
+        tip.to_cbor_bytes(),
+        sample_block_bytes(),
+        1,
+    )
+    .await;
+
+    let config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+
+    let mut session = bootstrap(&config).await.expect("bootstrap");
+    let mut store = InMemoryVolatile::default();
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let svc_config = SyncServiceConfig {
+        batch_size: 1,
+        keepalive_interval: None,
+    };
+
+    // Signal shutdown after a brief pause to allow at least partial work.
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = shutdown_tx.send(());
+    });
+
+    let outcome = run_sync_service(
+        &mut session.chain_sync,
+        &mut session.block_fetch,
+        &mut store,
+        Point::Origin,
+        &svc_config,
+        async { shutdown_rx.await.ok(); },
+    )
+    .await
+    .expect("sync service");
+
+    // The service should have completed at least one batch before shutdown.
+    assert!(outcome.batches_completed >= 1, "expected at least 1 batch, got {}", outcome.batches_completed);
+    assert!(outcome.total_blocks >= 1);
+
+    session.mux.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 34: Consensus header verification bridge tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn shelley_opcert_to_consensus_preserves_fields() {
+    let opcert = ShelleyOpCert {
+        hot_vkey: [0x11; 32],
+        sequence_number: 99,
+        kes_period: 200,
+        sigma: [0x22; 64],
+    };
+
+    let consensus = shelley_opcert_to_consensus(&opcert);
+    assert_eq!(consensus.cert_counter, 99);
+    assert_eq!(consensus.kes_period, 200);
+}
+
+#[test]
+fn shelley_header_body_to_consensus_preserves_fields() {
+    let body = sample_header_body();
+    let consensus = shelley_header_body_to_consensus(&body);
+    assert_eq!(consensus.block_no.0, 1);
+    assert_eq!(consensus.slot_no.0, 500);
+    assert_eq!(consensus.body_size, 1024);
+    assert_eq!(consensus.body_hash, [0x55; 32]);
+    assert_eq!(consensus.protocol_version, (2, 0));
+    assert_eq!(consensus.opcert.cert_counter, 42);
+}
+
+#[test]
+fn shelley_header_to_consensus_builds_header() {
+    let header = ShelleyHeader {
+        body: sample_header_body(),
+        signature: vec![0xCC; 448],
+    };
+    let result = shelley_header_to_consensus(&header);
+    assert!(result.is_ok(), "expected Ok, got {result:?}");
+    let consensus_hdr = result.expect("conversion should succeed");
+    assert_eq!(consensus_hdr.body.slot_no.0, 500);
+}
+
+#[test]
+fn shelley_header_to_consensus_rejects_bad_kes_length() {
+    let header = ShelleyHeader {
+        body: sample_header_body(),
+        signature: vec![0xCC; 100], // wrong length
+    };
+    let result = shelley_header_to_consensus(&header);
+    assert!(result.is_err());
+}
+
+#[test]
+fn verify_shelley_header_returns_error_for_dummy_data() {
+    // Dummy header won't pass real crypto verification.
+    let header = ShelleyHeader {
+        body: sample_header_body(),
+        signature: vec![0xDD; 448],
+    };
+    let result = verify_shelley_header(&header, 129600, 62);
+    assert!(result.is_err());
+}
+
+#[test]
+fn shelley_kes_depth_matches_expected() {
+    assert_eq!(SHELLEY_KES_DEPTH, 6);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 35: Multi-era block decode tests
+// ---------------------------------------------------------------------------
+
+/// Build a multi-era envelope: `[era_tag, block_body_cbor]`.
+fn build_multi_era_envelope(tag: u64, block_body: &[u8]) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(tag);
+    let mut out = enc.into_bytes();
+    out.extend_from_slice(block_body);
+    out
+}
+
+#[test]
+fn decode_multi_era_block_byron_ebb() {
+    let envelope = build_multi_era_envelope(0, &[0x80]); // tag 0 = Byron EBB
+    let result = decode_multi_era_block(&envelope).expect("decode");
+    match result {
+        MultiEraBlock::Byron { raw } => assert_eq!(raw, envelope),
+        other => panic!("expected Byron, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_multi_era_block_byron_main() {
+    let envelope = build_multi_era_envelope(1, &[0x80]); // tag 1 = Byron Main
+    let result = decode_multi_era_block(&envelope).expect("decode");
+    match result {
+        MultiEraBlock::Byron { raw } => assert_eq!(raw, envelope),
+        other => panic!("expected Byron, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_multi_era_block_shelley() {
+    let block_body = sample_block_bytes();
+    let envelope = build_multi_era_envelope(2, &block_body);
+    let result = decode_multi_era_block(&envelope).expect("decode shelley");
+    match result {
+        MultiEraBlock::Shelley(block) => {
+            assert_eq!(block.header.body.slot, 500);
+            assert_eq!(block.header.body.block_number, 1);
+        }
+        other => panic!("expected Shelley, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_multi_era_block_unsupported_tag() {
+    let envelope = build_multi_era_envelope(6, &[0x80]); // Babbage not yet supported
+    let result = decode_multi_era_block(&envelope);
+    assert!(result.is_err());
+}
+
+#[test]
+fn decode_multi_era_block_empty_input() {
+    let result = decode_multi_era_block(&[]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn decode_multi_era_blocks_batch() {
+    let shelley_envelope = build_multi_era_envelope(2, &sample_block_bytes());
+    let byron_envelope = build_multi_era_envelope(0, &[0x80]);
+    let blocks =
+        decode_multi_era_blocks(&[shelley_envelope, byron_envelope]).expect("decode batch");
+    assert_eq!(blocks.len(), 2);
+    assert!(matches!(blocks[0], MultiEraBlock::Shelley(_)));
+    assert!(matches!(blocks[1], MultiEraBlock::Byron { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 37: Verified multi-era sync pipeline
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_era_block_to_block_shelley() {
+    let block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Shelley(Box::new(block));
+    let generic = multi_era_block_to_block(&me);
+    assert_eq!(generic.era, yggdrasil_ledger::Era::Shelley);
+    assert_eq!(generic.header.slot_no, SlotNo(500));
+    assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
+    assert_eq!(generic.header.hash, sample_header_hash());
+}
+
+#[test]
+fn multi_era_block_to_block_byron() {
+    let me = MultiEraBlock::Byron {
+        raw: vec![0x82, 0x00, 0x80],
+    };
+    let generic = multi_era_block_to_block(&me);
+    assert_eq!(generic.era, yggdrasil_ledger::Era::Byron);
+    // Header hash should be Blake2b-256 of the raw CBOR.
+    let expected_hash = yggdrasil_crypto::hash_bytes_256(&[0x82, 0x00, 0x80]);
+    assert_eq!(generic.header.hash, HeaderHash(expected_hash.0));
+    assert!(generic.transactions.is_empty());
+}
+
+#[test]
+fn verify_multi_era_block_byron_is_noop() {
+    let me = MultiEraBlock::Byron {
+        raw: vec![0x82, 0x00, 0x80],
+    };
+    let config = VerificationConfig {
+        slots_per_kes_period: 129600,
+        max_kes_evolutions: 62,
+    };
+    assert!(verify_multi_era_block(&me, &config).is_ok());
+}
+
+#[test]
+fn apply_multi_era_step_rollforward_adds_block() {
+    let block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let step = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::BlockPoint(SlotNo(500), sample_header_hash()),
+        blocks: vec![MultiEraBlock::Shelley(Box::new(block))],
+    };
+    let mut store = InMemoryVolatile::default();
+    apply_multi_era_step_to_volatile(&mut store, &step).expect("apply");
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(500), sample_header_hash())
+    );
+}
+
+#[test]
+fn apply_multi_era_step_rollbackward_resets_tip() {
+    let block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let fwd_step = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::BlockPoint(SlotNo(500), sample_header_hash()),
+        blocks: vec![MultiEraBlock::Shelley(Box::new(block))],
+    };
+    let mut store = InMemoryVolatile::default();
+    apply_multi_era_step_to_volatile(&mut store, &fwd_step).expect("apply fwd");
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(500), sample_header_hash())
+    );
+
+    let rb_step = MultiEraSyncStep::RollBackward {
+        point: Point::Origin,
+        tip: Point::Origin,
+    };
+    apply_multi_era_step_to_volatile(&mut store, &rb_step).expect("apply rb");
+    assert_eq!(store.tip(), Point::Origin);
+}
+
+#[tokio::test]
+async fn sync_step_multi_era_rollforward() {
+    let magic = 501;
+    let header = ShelleyHeader {
+        body: sample_header_body(),
+        signature: vec![0xDD; 448],
+    };
+    let tip = Point::BlockPoint(SlotNo(500), sample_header_hash());
+    // Wrap the raw block in a multi-era envelope [2, block_body] for Shelley.
+    let block_bytes = build_multi_era_envelope(2, &sample_block_bytes());
+    let addr = spawn_typed_rollforward_responder(
+        magic,
+        header.to_cbor_bytes(),
+        tip.to_cbor_bytes(),
+        block_bytes,
+    )
+    .await;
+
+    let config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+
+    let mut session = bootstrap(&config).await.expect("bootstrap");
+    let step = sync_step_multi_era(
+        &mut session.chain_sync,
+        &mut session.block_fetch,
+        Point::Origin.to_cbor_bytes(),
+    )
+    .await
+    .expect("sync step multi era");
+
+    match step {
+        MultiEraSyncStep::RollForward { blocks, .. } => {
+            assert_eq!(blocks.len(), 1);
+            assert!(matches!(blocks[0], MultiEraBlock::Shelley(_)));
+        }
+        other => panic!("expected RollForward, got {other:?}"),
+    }
 
     session.mux.abort();
 }

@@ -1,29 +1,149 @@
+use yggdrasil_ledger::TxId;
+
 /// A mempool entry carrying a transaction identifier and its fee for ordering.
+///
+/// The `tx_id` is the Blake2b-256 hash of the CBOR-encoded transaction body,
+/// matching the upstream Cardano `TxId` representation.
+///
+/// Reference: `Cardano.Ledger.TxIn` — `TxId`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MempoolEntry {
-    pub tx_id: String,
+    /// The transaction identifier (Blake2b-256 of CBOR body).
+    pub tx_id: TxId,
+    /// The transaction fee in lovelace, used for ordering.
     pub fee: u64,
+    /// The raw CBOR-encoded transaction body bytes.
+    pub body: Vec<u8>,
+    /// Size of the transaction in bytes (for capacity tracking).
+    pub size_bytes: usize,
 }
 
-/// A minimal fee-ordered mempool.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// Error type for mempool operations.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum MempoolError {
+    /// The transaction is already in the mempool.
+    #[error("duplicate transaction: {0:?}")]
+    Duplicate(TxId),
+    /// Adding this transaction would exceed the mempool capacity.
+    #[error("mempool capacity exceeded: {current} + {incoming} > {limit}")]
+    CapacityExceeded {
+        /// Current total bytes in the mempool.
+        current: usize,
+        /// Size of the incoming transaction.
+        incoming: usize,
+        /// Maximum capacity in bytes.
+        limit: usize,
+    },
+}
+
+/// A fee-ordered mempool with capacity tracking and duplicate detection.
+///
+/// Entries are ordered by descending fee so that `pop_best` always returns
+/// the highest-fee transaction. Size tracking prevents unbounded growth.
+///
+/// Reference: `Ouroboros.Consensus.Mempool.API` — `Mempool`.
+#[derive(Clone, Debug, Default)]
 pub struct Mempool {
     entries: Vec<MempoolEntry>,
+    /// Maximum aggregate size in bytes (0 = unlimited).
+    max_bytes: usize,
+    /// Current total size in bytes of all entries.
+    current_bytes: usize,
 }
 
 impl Mempool {
-    /// Inserts an entry and keeps the queue ordered by descending fee.
-    pub fn insert(&mut self, entry: MempoolEntry) {
-        self.entries.push(entry);
-        self.entries.sort_by(|left, right| right.fee.cmp(&left.fee));
+    /// Create a new mempool with the given maximum capacity in bytes.
+    ///
+    /// A `max_bytes` of 0 means no capacity limit.
+    pub fn with_capacity(max_bytes: usize) -> Self {
+        Self {
+            entries: Vec::new(),
+            max_bytes,
+            current_bytes: 0,
+        }
     }
 
-    /// Removes and returns the currently best-fee entry, if any.
+    /// Insert an entry if it does not already exist and fits within capacity.
+    ///
+    /// Keeps the queue ordered by descending fee.
+    pub fn insert(&mut self, entry: MempoolEntry) -> Result<(), MempoolError> {
+        if self.entries.iter().any(|e| e.tx_id == entry.tx_id) {
+            return Err(MempoolError::Duplicate(entry.tx_id));
+        }
+        if self.max_bytes > 0 && self.current_bytes + entry.size_bytes > self.max_bytes {
+            return Err(MempoolError::CapacityExceeded {
+                current: self.current_bytes,
+                incoming: entry.size_bytes,
+                limit: self.max_bytes,
+            });
+        }
+        self.current_bytes += entry.size_bytes;
+        self.entries.push(entry);
+        self.entries.sort_by(|left, right| right.fee.cmp(&left.fee));
+        Ok(())
+    }
+
+    /// Remove and return the highest-fee entry, if any.
     pub fn pop_best(&mut self) -> Option<MempoolEntry> {
         if self.entries.is_empty() {
             None
         } else {
-            Some(self.entries.remove(0))
+            let entry = self.entries.remove(0);
+            self.current_bytes -= entry.size_bytes;
+            Some(entry)
         }
+    }
+
+    /// Remove a transaction by its identifier. Returns `true` if found.
+    pub fn remove_by_id(&mut self, tx_id: &TxId) -> bool {
+        if let Some(pos) = self.entries.iter().position(|e| &e.tx_id == tx_id) {
+            let entry = self.entries.remove(pos);
+            self.current_bytes -= entry.size_bytes;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check whether a transaction with the given id exists in the mempool.
+    pub fn contains(&self, tx_id: &TxId) -> bool {
+        self.entries.iter().any(|e| &e.tx_id == tx_id)
+    }
+
+    /// Number of transactions currently in the mempool.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the mempool is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Current aggregate size of all entries in bytes.
+    pub fn size_bytes(&self) -> usize {
+        self.current_bytes
+    }
+
+    /// Iterator over entries in fee-descending order.
+    pub fn iter(&self) -> impl Iterator<Item = &MempoolEntry> {
+        self.entries.iter()
+    }
+
+    /// Remove all transactions whose identifiers appear in the given block's
+    /// transaction list, as they have been confirmed on-chain.
+    ///
+    /// Returns the number of entries removed.
+    pub fn remove_confirmed(&mut self, confirmed_tx_ids: &[TxId]) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|e| {
+            if confirmed_tx_ids.contains(&e.tx_id) {
+                self.current_bytes -= e.size_bytes;
+                false
+            } else {
+                true
+            }
+        });
+        before - self.entries.len()
     }
 }

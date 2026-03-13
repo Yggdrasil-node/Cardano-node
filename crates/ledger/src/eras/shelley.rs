@@ -871,6 +871,30 @@ impl CborDecode for ShelleyHeader {
     }
 }
 
+impl ShelleyHeader {
+    /// Compute the Blake2b-256 hash of this header's CBOR encoding.
+    ///
+    /// This is the canonical block identifier used in `Point(slot, hash)`
+    /// and the `HeaderHash` type. The hash covers the full header including
+    /// the KES signature.
+    ///
+    /// Reference: `Ouroboros.Consensus.Block.Abstract` — `HeaderHash`.
+    pub fn header_hash(&self) -> crate::types::HeaderHash {
+        let cbor = self.to_cbor_bytes();
+        let digest = yggdrasil_crypto::hash_bytes_256(&cbor);
+        crate::types::HeaderHash(digest.0)
+    }
+}
+
+impl ShelleyBlock {
+    /// Compute the Blake2b-256 header hash for this block.
+    ///
+    /// Equivalent to `self.header.header_hash()`.
+    pub fn header_hash(&self) -> crate::types::HeaderHash {
+        self.header.header_hash()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Full Shelley block
 // ---------------------------------------------------------------------------

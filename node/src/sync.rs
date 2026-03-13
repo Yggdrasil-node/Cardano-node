@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use yggdrasil_consensus::{ConsensusError, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, OpCert as ConsensusOpCert, verify_header};
+use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
 use yggdrasil_crypto::vrf::VrfVerificationKey;
@@ -142,22 +143,19 @@ pub struct TypedSyncProgress {
     pub rollback_count: usize,
 }
 
-/// Build a deterministic placeholder `TxId` from an opaque transaction body.
+/// Compute a `TxId` as the Blake2b-256 hash of the CBOR-encoded transaction
+/// body, matching the upstream Cardano transaction identifier.
 ///
-/// This is a temporary bridge until full transaction-id hashing parity is
-/// wired through the node integration path.
-fn tx_id_from_body_placeholder(body: &[u8]) -> TxId {
-    let mut out = [0u8; 32];
-    let n = usize::min(32, body.len());
-    out[..n].copy_from_slice(&body[..n]);
-    TxId(out)
+/// Reference: `Cardano.Ledger.TxIn` — `TxId`.
+fn compute_tx_id(body: &[u8]) -> TxId {
+    TxId(hash_bytes_256(body).0)
 }
 
 /// Convert a typed Shelley block into the generic ledger `Block` wrapper used
 /// by storage traits.
 pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
     let body = &block.header.body;
-    let hash = HeaderHash(body.body_hash);
+    let hash = block.header_hash();
     let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
 
     let transactions: Vec<Tx> = block
@@ -166,7 +164,7 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
         .map(|tx_body| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
-                id: tx_id_from_body_placeholder(&raw),
+                id: compute_tx_id(&raw),
                 body: raw,
             }
         })
@@ -726,7 +724,7 @@ pub enum MultiEraBlock {
     },
     /// A fully decoded Shelley-era block (also covers Allegra/Mary/Alonzo
     /// which share the Shelley block envelope in the wire format).
-    Shelley(ShelleyBlock),
+    Shelley(Box<ShelleyBlock>),
 }
 
 /// Cardano mainnet era tags used in the multi-era block envelope.
@@ -781,7 +779,7 @@ pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
             let body_bytes = &raw[body_start..dec.position()];
             let block = ShelleyBlock::from_cbor_bytes(body_bytes)
                 .map_err(SyncError::LedgerDecode)?;
-            Ok(MultiEraBlock::Shelley(block))
+            Ok(MultiEraBlock::Shelley(Box::new(block)))
         }
         unsupported => {
             Err(SyncError::LedgerDecode(LedgerError::CborTypeMismatch {
@@ -800,4 +798,207 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
         .iter()
         .map(|raw| decode_multi_era_block(raw))
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Phase 37: Verified multi-era sync pipeline
+// ---------------------------------------------------------------------------
+
+/// Convert a `MultiEraBlock` into the generic ledger `Block` wrapper.
+///
+/// Shelley-family blocks are fully decoded via `shelley_block_to_block`.
+/// Byron blocks produce a minimal `Block` whose header hash is the
+/// Blake2b-256 of the raw CBOR envelope; other header fields are zeroed
+/// because Byron structural decode is not yet implemented.
+pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
+    match block {
+        MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley),
+        MultiEraBlock::Byron { raw } => Block {
+            era: Era::Byron,
+            header: BlockHeader {
+                hash: HeaderHash(hash_bytes_256(raw).0),
+                prev_hash: HeaderHash([0u8; 32]),
+                slot_no: SlotNo(0),
+                block_no: BlockNo(0),
+                issuer_vkey: [0u8; 32],
+            },
+            transactions: vec![],
+        },
+    }
+}
+
+/// Verification parameters for Shelley-family header validation.
+///
+/// These correspond to Shelley genesis parameters and are used by
+/// `verify_multi_era_block` and the verified sync pipeline.
+///
+/// Reference: `shelleyGenesisConfig` in `cardano-node` configuration.
+#[derive(Clone, Copy, Debug)]
+pub struct VerificationConfig {
+    /// Number of slots per KES period (mainnet: 129600).
+    pub slots_per_kes_period: u64,
+    /// Maximum number of KES evolutions (mainnet: 62).
+    pub max_kes_evolutions: u64,
+}
+
+/// Verify the header of a multi-era block.
+///
+/// Shelley-family blocks are verified using `verify_shelley_header`.
+/// Byron blocks pass through without verification (no KES in Byron).
+pub fn verify_multi_era_block(
+    block: &MultiEraBlock,
+    config: &VerificationConfig,
+) -> Result<(), SyncError> {
+    match block {
+        MultiEraBlock::Shelley(shelley) => {
+            verify_shelley_header(
+                &shelley.header,
+                config.slots_per_kes_period,
+                config.max_kes_evolutions,
+            )
+        }
+        MultiEraBlock::Byron { .. } => Ok(()),
+    }
+}
+
+/// A typed sync step with multi-era block decoding.
+///
+/// Unlike `TypedSyncStep` (which always decodes as Shelley), this variant
+/// preserves the per-block era tag and supports Byron + Shelley-family blocks.
+#[derive(Clone, Debug)]
+pub enum MultiEraSyncStep {
+    /// Roll forward with decoded multi-era blocks.
+    RollForward {
+        /// Raw header bytes as announced by the peer.
+        raw_header: Vec<u8>,
+        /// Decoded chain tip.
+        tip: Point,
+        /// Decoded multi-era blocks.
+        blocks: Vec<MultiEraBlock>,
+    },
+    /// Roll backward to a given point.
+    RollBackward {
+        /// Decoded rollback target point.
+        point: Point,
+        /// Decoded chain tip.
+        tip: Point,
+    },
+}
+
+/// Perform a single sync step with multi-era block decoding.
+///
+/// Like `sync_step_typed` but uses `decode_multi_era_blocks` instead of
+/// `decode_shelley_blocks`, preserving era-specific block wrappers.
+pub async fn sync_step_multi_era(
+    chain_sync: &mut ChainSyncClient,
+    block_fetch: &mut BlockFetchClient,
+    from_point: Vec<u8>,
+) -> Result<MultiEraSyncStep, SyncError> {
+    let step = sync_step(chain_sync, block_fetch, from_point).await?;
+    match step {
+        SyncStep::RollForward {
+            header,
+            tip,
+            blocks,
+        } => Ok(MultiEraSyncStep::RollForward {
+            raw_header: header,
+            tip: decode_point(&tip)?,
+            blocks: decode_multi_era_blocks(&blocks)?,
+        }),
+        SyncStep::RollBackward { point, tip } => Ok(MultiEraSyncStep::RollBackward {
+            point: decode_point(&point)?,
+            tip: decode_point(&tip)?,
+        }),
+    }
+}
+
+/// Apply one multi-era sync step into a volatile store.
+///
+/// Roll-forward blocks are converted to generic `Block` values and appended.
+/// Roll-backward steps trigger a store rollback to the given point.
+pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
+    store: &mut S,
+    step: &MultiEraSyncStep,
+) -> Result<(), SyncError> {
+    match step {
+        MultiEraSyncStep::RollForward { blocks, .. } => {
+            for b in blocks {
+                store.add_block(multi_era_block_to_block(b))?;
+            }
+        }
+        MultiEraSyncStep::RollBackward { point, .. } => {
+            store.rollback_to(point);
+        }
+    }
+    Ok(())
+}
+
+/// Execute one batch of verified multi-era sync and apply results to storage.
+///
+/// This combines `sync_step_multi_era` with optional header verification
+/// (via `verify_multi_era_block`) and `apply_multi_era_step_to_volatile`
+/// into a single composable batch.
+///
+/// If `verification` is `Some`, every Shelley-family block header is
+/// verified before being applied to the store. Byron blocks pass through
+/// without verification.
+pub async fn sync_batch_apply_verified<S: VolatileStore>(
+    chain_sync: &mut ChainSyncClient,
+    block_fetch: &mut BlockFetchClient,
+    store: &mut S,
+    mut from_point: Point,
+    batch_size: usize,
+    verification: Option<&VerificationConfig>,
+) -> Result<MultiEraSyncProgress, SyncError> {
+    let mut steps = Vec::new();
+    let mut fetched_blocks = 0usize;
+    let mut rollback_count = 0usize;
+
+    for _ in 0..batch_size {
+        let me_step = sync_step_multi_era(
+            chain_sync,
+            block_fetch,
+            from_point.to_cbor_bytes(),
+        )
+        .await?;
+
+        match &me_step {
+            MultiEraSyncStep::RollForward { tip, blocks, .. } => {
+                if let Some(config) = verification {
+                    for block in blocks {
+                        verify_multi_era_block(block, config)?;
+                    }
+                }
+                from_point = *tip;
+                fetched_blocks += blocks.len();
+            }
+            MultiEraSyncStep::RollBackward { point, .. } => {
+                from_point = *point;
+                rollback_count += 1;
+            }
+        }
+
+        apply_multi_era_step_to_volatile(store, &me_step)?;
+        steps.push(me_step);
+    }
+
+    Ok(MultiEraSyncProgress {
+        current_point: from_point,
+        steps,
+        fetched_blocks,
+        rollback_count,
+    })
+}
+
+/// Progress summary from a multi-era sync batch.
+#[derive(Clone, Debug)]
+pub struct MultiEraSyncProgress {
+    /// Current chain point after all steps in this batch.
+    pub current_point: Point,
+    /// Individual multi-era steps in order of execution.
+    pub steps: Vec<MultiEraSyncStep>,
+    /// Total number of fetched blocks across all roll-forward steps.
+    pub fetched_blocks: usize,
+    /// Number of rollback steps observed.
+    pub rollback_count: usize,
 }

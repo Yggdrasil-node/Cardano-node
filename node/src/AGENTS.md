@@ -28,4 +28,9 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Typed multi-step orchestration is implemented (`sync_steps_typed`, `TypedSyncProgress`).
 - Bounded typed loop and storage handoff helpers are implemented (`sync_until_typed`, `apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`).
 - Typed intersection finding (`typed_find_intersect`), batch sync-and-apply (`sync_batch_apply`), and KeepAlive heartbeat (`keepalive_heartbeat`) are implemented.
-- Next: long-running managed sync service with graceful shutdown, then staged consensus/ledger integration on fetched blocks.
+- Managed sync service (`run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`) with `tokio::select!` shutdown control is implemented.
+- Consensus header verification bridge (`shelley_opcert_to_consensus`, `shelley_header_body_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`) is implemented.
+- Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque and Shelley decoded is implemented.
+- Block header hash computation uses real Blake2b-256 via `ShelleyHeader::header_hash()`; `shelley_block_to_block` and `compute_tx_id` use proper cryptographic hashing.
+- Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`) is implemented wiring consensus verification into the multi-era sync flow.
+- Next: expand multi-era decode to Babbage/Conway, integrate mempool eviction with sync pipeline, add persistent storage backend.
