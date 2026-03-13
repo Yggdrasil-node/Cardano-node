@@ -11,6 +11,7 @@ use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::peer_selection::{LocalRootConfig, PeerAccessPoint, PublicRootConfig};
+use crate::root_peers_provider::RootPeerProviderRefresh;
 
 /// Slot threshold used by `UseLedgerPeers`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -314,11 +315,14 @@ pub struct RootPeerProviderState {
 }
 
 impl RootPeerProviderState {
+    /// Create provider state from an already reconciled provider snapshot.
+    pub fn from_providers(providers: RootPeerProviders) -> Self {
+        Self { providers }
+    }
+
     /// Create provider state from a topology configuration.
     pub fn from_topology(topology: &TopologyConfig) -> Self {
-        Self {
-            providers: topology.resolved_root_providers(),
-        }
+        Self::from_providers(topology.resolved_root_providers())
     }
 
     /// Current reconciled provider snapshot.
@@ -381,6 +385,23 @@ impl RootPeerProviderState {
             bootstrap_peers: self.providers.public_roots.bootstrap_peers.clone(),
             public_config_peers,
         })
+    }
+
+    /// Apply a provider refresh to the current state.
+    pub fn apply_refresh(&mut self, refresh: RootPeerProviderRefresh) -> bool {
+        match refresh {
+            RootPeerProviderRefresh::Topology(topology) => self.replace_topology(&topology),
+            RootPeerProviderRefresh::LocalRoots(local_roots) => self.replace_local_roots(local_roots),
+            RootPeerProviderRefresh::BootstrapPeers(bootstrap_peers) => {
+                self.replace_bootstrap_peers(bootstrap_peers)
+            }
+            RootPeerProviderRefresh::PublicConfigPeers(public_config_peers) => {
+                self.replace_public_config_peers(public_config_peers)
+            }
+            RootPeerProviderRefresh::PublicRoots(public_roots) => {
+                self.replace_public_roots(public_roots)
+            }
+        }
     }
 
     fn replace_providers(&mut self, next: RootPeerProviders) -> bool {

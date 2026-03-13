@@ -22,6 +22,8 @@ pub mod multiplexer;
 pub mod peer;
 /// Topology root-peer domain types and resolved provider snapshots.
 pub mod root_peers;
+/// Refresh-oriented provider interfaces for time-varying root peers.
+pub mod root_peers_provider;
 /// Peer candidate resolution and ordering helpers for runtime bootstrap.
 pub mod peer_selection;
 /// Mini-protocol state machine modules.
@@ -52,6 +54,10 @@ pub use root_peers::{
     AfterSlot, RootPeerProviderState, RootPeerProviders, TopologyConfig,
     UseBootstrapPeers, UseLedgerPeers, reconcile_root_peer_providers,
     resolve_root_peer_providers,
+};
+pub use root_peers_provider::{
+    RootPeerProvider, RootPeerProviderError, RootPeerProviderKind,
+    RootPeerProviderRefresh, ScriptedRootPeerProvider, refresh_root_peer_state,
 };
 pub use peer_selection::{
     LocalRootConfig, PeerAccessPoint, PeerAttemptState, PeerBootstrapTargets,
