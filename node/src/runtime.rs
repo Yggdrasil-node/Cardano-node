@@ -18,7 +18,7 @@ use yggdrasil_network::{
     BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
     MiniProtocolNum, NodeToNodeVersionData, PeerConnection, PeerError, TxIdAndSize,
     TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
-    bootstrap_targets,
+    PeerAttemptState, peer_attempt_state,
 };
 use yggdrasil_ledger::{LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
 use yggdrasil_mempool::{
@@ -473,12 +473,13 @@ pub async fn bootstrap_with_fallbacks(
     fallback_peer_addrs: &[SocketAddr],
 ) -> Result<PeerSession, PeerError> {
     let tracer = NodeTracer::disabled();
-    bootstrap_with_fallbacks_inner(config, fallback_peer_addrs, &tracer).await
+    let mut attempt_state = peer_attempt_state(config.peer_addr, fallback_peer_addrs);
+    bootstrap_with_attempt_state(config, &mut attempt_state, &tracer).await
 }
 
-async fn bootstrap_with_fallbacks_inner(
+async fn bootstrap_with_attempt_state(
     config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
+    attempt_state: &mut PeerAttemptState,
     tracer: &NodeTracer,
 ) -> Result<PeerSession, PeerError> {
     let proposals: Vec<(HandshakeVersion, NodeToNodeVersionData)> = config
@@ -497,8 +498,7 @@ async fn bootstrap_with_fallbacks_inner(
         })
         .collect();
 
-    let candidate_peer_addrs =
-        bootstrap_targets(config.peer_addr, fallback_peer_addrs).candidate_peer_addrs();
+    let candidate_peer_addrs = attempt_state.attempt_order();
 
     let mut last_error = None;
     let mut connected_peer_addr = config.peer_addr;
@@ -528,6 +528,7 @@ async fn bootstrap_with_fallbacks_inner(
                     ]),
                 );
                 connected_peer_addr = peer_addr;
+                attempt_state.record_success(peer_addr);
                 conn_opt = Some(conn);
                 break;
             }
@@ -654,6 +655,7 @@ where
     let mut last_connected_peer_addr = None;
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
+    let mut attempt_state = peer_attempt_state(node_config.peer_addr, fallback_peer_addrs);
 
     loop {
         let mut session = tokio::select! {
@@ -679,7 +681,7 @@ where
                 });
             }
 
-            result = bootstrap_with_fallbacks_inner(node_config, fallback_peer_addrs, tracer) => result?,
+            result = bootstrap_with_attempt_state(node_config, &mut attempt_state, tracer) => result?,
         };
 
         if had_session {

@@ -33,7 +33,7 @@ The project has a complete Cardano-era type system and a functional node binary:
 - Full era type coverage from Byron through Conway with typed CBOR codecs.
 - Multi-era UTxO validation with coin and multi-asset preservation checks.
 - Network transport + mux + handshake + peer lifecycle with all four mini-protocol state machines, wire codecs, and typed client drivers.
-- Reusable peer candidate ordering and hostname resolution now live in `crates/network`; `node` only parses the upstream topology/config shape and feeds those helpers into runtime startup.
+- Reusable peer candidate ordering, bootstrap-target sequencing, reconnect attempt ordering, and preferred-peer retry state now live in `crates/network`; `node` only parses the upstream topology/config shape and feeds those helpers into runtime startup.
 - Multi-era block decode (all 7 era tags) with consensus header verification (KES/OpCert).
 - Node binary with `clap` CLI (`run` + `default-config`), JSON configuration, upstream-aligned tracing config fields, local runtime trace emission, and managed sync service with graceful shutdown.
 - Mempool with TTL-aware admission, fee ordering, and block-application eviction.

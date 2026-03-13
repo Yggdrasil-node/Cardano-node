@@ -37,6 +37,13 @@ pub struct PeerBootstrapTargets {
     fallback_peers: Vec<SocketAddr>,
 }
 
+/// Mutable peer attempt state for repeated bootstrap or reconnect loops.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerAttemptState {
+    targets: PeerBootstrapTargets,
+    preferred_peer: Option<SocketAddr>,
+}
+
 impl PeerBootstrapTargets {
     /// Construct bootstrap targets with duplicate fallback peers removed while
     /// preserving order.
@@ -87,6 +94,36 @@ impl PeerBootstrapTargets {
             }
             _ => candidates,
         }
+    }
+}
+
+impl PeerAttemptState {
+    /// Create attempt state from stable bootstrap targets.
+    pub fn new(targets: PeerBootstrapTargets) -> Self {
+        Self {
+            targets,
+            preferred_peer: None,
+        }
+    }
+
+    /// Stable bootstrap targets tracked by this attempt state.
+    pub fn targets(&self) -> &PeerBootstrapTargets {
+        &self.targets
+    }
+
+    /// Currently preferred peer, typically the most recent successful peer.
+    pub fn preferred_peer(&self) -> Option<SocketAddr> {
+        self.preferred_peer
+    }
+
+    /// Ordered candidate peers for the next bootstrap attempt.
+    pub fn attempt_order(&self) -> Vec<SocketAddr> {
+        self.targets.attempt_order(self.preferred_peer)
+    }
+
+    /// Record a successful peer so the next reconnect attempt can prefer it.
+    pub fn record_success(&mut self, peer_addr: SocketAddr) {
+        self.preferred_peer = Some(peer_addr);
     }
 }
 
@@ -163,6 +200,14 @@ pub fn bootstrap_targets(
     fallback_peers: &[SocketAddr],
 ) -> PeerBootstrapTargets {
     PeerBootstrapTargets::new(primary_peer, fallback_peers)
+}
+
+/// Build reusable attempt state from a primary peer and ordered fallbacks.
+pub fn peer_attempt_state(
+    primary_peer: SocketAddr,
+    fallback_peers: &[SocketAddr],
+) -> PeerAttemptState {
+    PeerAttemptState::new(bootstrap_targets(primary_peer, fallback_peers))
 }
 
 fn extend_group(addrs: &mut Vec<SocketAddr>, group: &PeerRootGroup) {
@@ -319,6 +364,38 @@ mod tests {
         assert_eq!(
             targets.attempt_order(Some("127.0.0.99:3001".parse().expect("addr"))),
             targets.candidate_peer_addrs()
+        );
+    }
+
+    #[test]
+    fn peer_attempt_state_tracks_preferred_peer() {
+        let primary: SocketAddr = "127.0.0.10:3001".parse().expect("addr");
+        let mut state = peer_attempt_state(
+            primary,
+            &[
+                "127.0.0.11:3001".parse().expect("addr"),
+                "127.0.0.12:3001".parse().expect("addr"),
+            ],
+        );
+
+        assert_eq!(state.preferred_peer(), None);
+        assert_eq!(
+            state.attempt_order(),
+            vec![
+                primary,
+                "127.0.0.11:3001".parse().expect("addr"),
+                "127.0.0.12:3001".parse().expect("addr"),
+            ]
+        );
+
+        state.record_success("127.0.0.12:3001".parse().expect("addr"));
+        assert_eq!(
+            state.attempt_order(),
+            vec![
+                "127.0.0.12:3001".parse().expect("addr"),
+                primary,
+                "127.0.0.11:3001".parse().expect("addr"),
+            ]
         );
     }
 }

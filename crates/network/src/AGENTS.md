@@ -13,7 +13,7 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 ##  Rules *Non-Negotiable*
 - Keep wire framing deterministic and byte-accurate.
 - Do not leak protocol business logic from `protocols/` state machines into transport primitives.
-- Keep reusable peer candidate resolution and ordering logic here rather than in `node`, while avoiding full peer-governor state in low-level transport helpers.
+- Keep reusable peer candidate resolution, bootstrap-target sequencing, and reconnect attempt ordering here rather than in `node`, while avoiding full peer-governor state in low-level transport helpers.
 - Preserve strict separation between raw transport (`ProtocolHandle`) and higher-level message orchestration (`MessageChannel`, client drivers).
 - Any receive-path buffering or boundary detection changes MUST ship with regression tests for partial/incremental payload delivery.
 - Public transport and driver APIs MUST include Rustdocs when behavior is non-obvious.
