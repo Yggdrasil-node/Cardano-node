@@ -13,19 +13,19 @@ use std::fmt;
 /// Absolute slot number on the blockchain.
 ///
 /// Reference: `Cardano.Slotting.Slot` — `SlotNo`.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct SlotNo(pub u64);
 
 /// Absolute block number (height of the chain).
 ///
 /// Reference: `Cardano.Slotting.Block` — `BlockNo`.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct BlockNo(pub u64);
 
 /// Epoch number.
 ///
 /// Reference: `Cardano.Slotting.Slot` — `EpochNo`.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct EpochNo(pub u64);
 
 // ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ pub struct EpochNo(pub u64);
 /// Blake2b-256 hash of a block header, used as the primary block identifier.
 ///
 /// Reference: `Ouroboros.Consensus.Block.Abstract` — `HeaderHash`.
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct HeaderHash(pub [u8; 32]);
 
 impl fmt::Debug for HeaderHash {
@@ -53,7 +53,7 @@ impl fmt::Display for HeaderHash {
 /// Blake2b-256 hash of a serialized transaction body.
 ///
 /// Reference: `Cardano.Ledger.TxIn` — `TxId`.
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct TxId(pub [u8; 32]);
 
 impl fmt::Debug for TxId {
@@ -79,6 +79,7 @@ impl fmt::Display for TxId {
 /// Reference: `Ouroboros.Network.Block` — `Point` (with `GenesisPoint` and
 /// `BlockPoint` patterns).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Point {
     /// The genesis pseudo-block (before any real block).
     Origin,

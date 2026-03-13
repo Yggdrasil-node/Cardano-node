@@ -19,27 +19,22 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 ### Implemented
 
 - Cargo workspace with stable crate boundaries for crypto, cddl-codegen, ledger, storage, consensus, mempool, network, and node integration.
-- Crypto primitives with vector-backed verification/proving coverage (Blake2b, Ed25519, VRF, SimpleKES, SumKES).
-- Ledger core typed identifiers and hand-rolled CBOR codec; Shelley-era transaction/header/block structures and a first UTxO transition slice.
-- Network stack: SDU framing, async bearer transport, mux/demux, handshake, peer lifecycle, and full state machines + CBOR wire codecs for ChainSync, BlockFetch, KeepAlive, and TxSubmission2.
-- Typed mini-protocol client drivers for all four data protocols.
-- SDU segmentation/reassembly support for large protocol messages via mux segmentation and `MessageChannel` reassembly.
-- Node runtime bootstrap (`NodeConfig`, `PeerSession`, `bootstrap`) and first sync orchestration helpers (`sync_step`, `sync_steps`) coordinating ChainSync + BlockFetch.
-- Node Shelley decode bridge (`sync_step_decoded`, `decode_shelley_blocks`) for typed block handoff from BlockFetch bytes.
-- Node typed sync-step bridge (`sync_step_typed`, `decode_shelley_header`, `decode_point`) for decoding ChainSync header/point/tip payloads into ledger types.
-- Node typed multi-step orchestration (`sync_steps_typed`, `TypedSyncProgress`) for progress tracking across roll-forward and rollback sequences.
-- Bounded typed sync loop (`sync_until_typed`) and volatile storage handoff helpers (`apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`).
-- Typed intersection finding (`typed_find_intersect`) for chain resume from known points.
-- Batch sync-and-apply composition (`sync_batch_apply`) combining sync + volatile storage writes.
-- KeepAlive heartbeat runner (`keepalive_heartbeat`) for concurrent connection liveness.
+- **Crypto**: Blake2b-256/512, Ed25519, VRF (standard + batchcompat), SimpleKES, SumKES (depth 0–6+), with upstream vector-backed coverage and zeroize hardening.
+- **Ledger**: Full era type coverage Byron through Conway. Hand-rolled CBOR codec. Multi-era UTxO (`MultiEraUtxo`, `MultiEraTxOut`) with era-aware `apply_block()` dispatch, coin/multi-asset preservation, TTL/validity-interval checks. PlutusData AST with full CBOR support. Certificate hierarchy (19 variants). Credential, address, and governance types.
+- **Network**: SDU framing, async bearer transport, mux/demux, handshake, peer lifecycle. All four mini-protocol state machines + CBOR wire codecs + typed client drivers (ChainSync, BlockFetch, KeepAlive, TxSubmission2). SDU segmentation/reassembly for large protocol messages.
+- **Consensus**: Praos leader election, typed chain selection (VRF tiebreaker), epoch math, OpCert verification, KES period checks, block header verification with SumKES.
+- **Storage**: Trait-based `ImmutableStore`, `VolatileStore`, `LedgerStore` with in-memory implementations.
+- **Mempool**: Fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, TTL-aware admission, block-application eviction.
+- **Node CLI**: `clap`-based binary with `run` (connect to peer and sync) and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides.
+- **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Graceful shutdown via Ctrl-C signal handling.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
 ### In Progress
 
-- Full typed payload bridging from all network protocol payloads into ledger/domain structures.
-- Deeper ledger rule completeness and multi-era transition coverage.
-- End-to-end storage/consensus-integrated sync loop and multi-peer management.
-- Full upstream parity validation against official node traces and fixtures.
+- On-disk storage backends behind existing storage traits.
+- Consensus hardening (chain selection refinement, rollback handling).
+- Upstream parity testing against official node traces and fixtures.
+- End-to-end multi-peer management.
 
 ## Workspace Layout
 
@@ -143,7 +138,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 ## Next Development Phases
 
-1. Wire long-running managed sync service (continuous batch loop with graceful shutdown).
-2. Add staged consensus + ledger integration checks around fetched headers/blocks.
-3. Expand typed decode coverage beyond Shelley-first assumptions.
-4. Expand parity testing against pinned upstream fixtures and behavior traces.
+1. Implement on-disk storage backends (immutable append-only, volatile with rollback) behind existing storage traits.
+2. Harden consensus: chain selection refinement, rollback handling, fixed-point leadership arithmetic.
+3. Expand upstream parity testing with vendored ledger and consensus test vectors.
+4. Documentation refresh to reflect full era coverage and CLI capabilities.

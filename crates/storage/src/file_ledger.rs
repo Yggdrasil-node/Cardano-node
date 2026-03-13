@@ -1,0 +1,72 @@
+//! File-backed implementation of [`LedgerStore`].
+//!
+//! Each snapshot is stored as a file named `snapshot_{slot}.dat` inside the
+//! data directory. The most recently saved snapshot is tracked in memory.
+//!
+//! Reference: `Ouroboros.Consensus.Storage.LedgerDB` in the official node.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use yggdrasil_ledger::SlotNo;
+
+use crate::error::StorageError;
+use crate::ledger_db::LedgerStore;
+
+/// File-backed ledger snapshot store.
+///
+/// Snapshots are persisted as `snapshot_{slot}.dat` files inside `data_dir`.
+pub struct FileLedgerStore {
+    data_dir: PathBuf,
+    /// Ordered (slot, data) pairs loaded at startup.
+    snapshots: Vec<(SlotNo, Vec<u8>)>,
+}
+
+impl FileLedgerStore {
+    /// Opens or creates a file-backed ledger store at `data_dir`.
+    ///
+    /// Existing snapshot files are scanned and loaded, sorted by slot number.
+    pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+        let data_dir = data_dir.as_ref().to_path_buf();
+        fs::create_dir_all(&data_dir)?;
+
+        let mut snapshots = Vec::new();
+        for entry in fs::read_dir(&data_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(slot_str) = name.strip_prefix("snapshot_").and_then(|s| s.strip_suffix(".dat")) {
+                    if let Ok(slot) = slot_str.parse::<u64>() {
+                        let data = fs::read(&path)?;
+                        snapshots.push((SlotNo(slot), data));
+                    }
+                }
+            }
+        }
+
+        snapshots.sort_by_key(|(slot, _)| *slot);
+
+        Ok(Self { data_dir, snapshots })
+    }
+
+    fn snapshot_path(&self, slot: SlotNo) -> PathBuf {
+        self.data_dir.join(format!("snapshot_{}.dat", slot.0))
+    }
+}
+
+impl LedgerStore for FileLedgerStore {
+    fn save_snapshot(&mut self, slot: SlotNo, data: Vec<u8>) -> Result<(), StorageError> {
+        let path = self.snapshot_path(slot);
+        fs::write(&path, &data)?;
+        self.snapshots.push((slot, data));
+        Ok(())
+    }
+
+    fn latest_snapshot(&self) -> Option<(SlotNo, &[u8])> {
+        self.snapshots.last().map(|(s, d)| (*s, d.as_slice()))
+    }
+
+    fn count(&self) -> usize {
+        self.snapshots.len()
+    }
+}

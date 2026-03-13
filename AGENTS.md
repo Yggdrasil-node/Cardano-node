@@ -60,7 +60,8 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - Workspace foundation is complete and compileable.
 - Active implementation work is in progress across `crates/crypto`, `crates/cddl-codegen`, `crates/ledger`, `crates/network`, and `node/`.
 - `crates/network` now includes handshake + mux + peer lifecycle, all four mini-protocol state machines/wire codecs, typed client drivers, and SDU segmentation/reassembly support for large protocol messages.
-- `node/` orchestration and sync pipeline:
+- `node/` orchestration, CLI, and sync pipeline:
+  - CLI: `clap`-based binary with `run` (connect + sync) and `default-config` (emit JSON) subcommands. CLI flags override config file values. JSON configuration via `NodeConfigFile` (serde).
   - Bootstrap: `NodeConfig`, `PeerSession`, `bootstrap`.
   - Raw sync: `sync_step`, `sync_steps`, `sync_step_decoded`, `decode_shelley_blocks`.
   - Typed sync: `sync_step_typed`, `decode_shelley_header`, `decode_point`, `sync_steps_typed`, `sync_until_typed`.

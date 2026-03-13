@@ -26,16 +26,12 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 
 ## Current Phase
 - Keep the node crate thin and integration-focused.
+- **CLI**: `clap`-based binary with `run` (connect + sync) and `default-config` (emit JSON) subcommands. CLI flags (`--peer`, `--network-magic`, `--no-verify`, `--batch-size`) override config-file values.
+- **Configuration**: `NodeConfigFile` (JSON, serde) with peer address, network magic, protocol versions, KES parameters, and keepalive interval. `default_config()` returns mainnet defaults.
 - Runtime bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`) with smoke coverage.
-- First sync orchestration slice is implemented (`sync_step`, `sync_steps`) to coordinate ChainSync and BlockFetch without embedding ledger/consensus rules.
-- Block deserialization bridge is implemented for Shelley (`sync_step_decoded`, `decode_shelley_blocks`) as a typed handoff stage from network payloads.
-- Typed ChainSync decode bridge is implemented (`sync_step_typed`, `decode_shelley_header`, `decode_point`) for header/point/tip payloads.
-- Typed multi-step orchestration is implemented (`sync_steps_typed`, `TypedSyncProgress`) for deterministic step-by-step progress tracking.
-- Bounded typed loop + storage handoff helpers are implemented (`sync_until_typed`, `apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`).
-- Typed intersection finding (`typed_find_intersect`), batch sync-and-apply (`sync_batch_apply`), and KeepAlive heartbeat (`keepalive_heartbeat`) are implemented.
-- Managed sync service with graceful shutdown (`run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`) is implemented.
-- Consensus header verification bridge (`shelley_opcert_to_consensus`, `shelley_header_body_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`) is implemented.
+- Full sync orchestration stack is implemented: `sync_step`, `sync_steps`, typed decode bridges, bounded loops, intersection finding, batch apply, managed sync service with graceful shutdown via `tokio::signal::ctrl_c`.
 - Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque, Shelley/Allegra/Mary/Alonzo decoded as `ShelleyBlock`, Babbage decoded as `BabbageBlock`, and Conway decoded as `ConwayBlock` is implemented. All seven era tags (0–7) are handled.
-- Block header hash computation (`ShelleyHeader::header_hash`, `ShelleyBlock::header_hash`, `BabbageBlock::header_hash`, `ConwayBlock::header_hash`) with proper Blake2b-256 of CBOR-encoded headers is implemented; `shelley_block_to_block`, `babbage_block_to_block`, `conway_block_to_block`, and `compute_tx_id` use real Blake2b-256.
-- Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `MultiEraSyncStep`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`, `MultiEraSyncProgress`) is implemented for all eras.
+- Consensus header verification bridge (`verify_shelley_header`, `verify_multi_era_block`, `VerificationConfig`) is wired into the sync flow.
+- Block header hash computation uses real Blake2b-256.
+- Mempool sync eviction (`extract_tx_ids`, `evict_confirmed_from_mempool`) is implemented.
 - Prefer smokeable runtime wiring over feature-rich operational behavior at this stage.

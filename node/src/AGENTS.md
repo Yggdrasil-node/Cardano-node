@@ -6,8 +6,8 @@ description: Guidance for node runtime and sync orchestration implementation det
 Focus on runtime composition of network clients and orchestration helpers that remain thin integration layers.
 
 ## Scope
-- `runtime.rs`, `sync.rs`, and library exports under `node/src`.
-- Peer bootstrap wiring and sync control flow coordination.
+- `main.rs` (CLI entry point), `config.rs` (JSON config types), `runtime.rs`, `sync.rs`, and library exports under `node/src`.
+- Peer bootstrap wiring, configuration parsing, and sync control flow coordination.
 
 ## Non-Negotiable Rules
 - Keep ledger and consensus business rules outside `node/src`.
@@ -21,17 +21,11 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - `ouroboros-consensus` integration behavior: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus>
 
 ## Current Phase
+- **CLI**: `main.rs` uses `clap` with `run` (connect + sync) and `default-config` (emit JSON) subcommands. CLI flags (`--peer`, `--network-magic`, `--no-verify`, `--batch-size`, `--config`) override config-file values.
+- **Config**: `config.rs` defines `NodeConfigFile` (serde JSON) with peer address, network magic, protocol versions, KES params, keepalive interval. `default_config()` returns mainnet defaults.
 - Bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`).
-- First sync orchestration slice is implemented (`sync_step`, `sync_steps`).
-- Shelley block deserialization bridge is implemented (`sync_step_decoded`, `decode_shelley_blocks`).
-- Typed ChainSync decode bridge is implemented (`sync_step_typed`, `decode_shelley_header`, `decode_point`).
-- Typed multi-step orchestration is implemented (`sync_steps_typed`, `TypedSyncProgress`).
-- Bounded typed loop and storage handoff helpers are implemented (`sync_until_typed`, `apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`).
-- Typed intersection finding (`typed_find_intersect`), batch sync-and-apply (`sync_batch_apply`), and KeepAlive heartbeat (`keepalive_heartbeat`) are implemented.
-- Managed sync service (`run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`) with `tokio::select!` shutdown control is implemented.
-- Consensus header verification bridge (`shelley_opcert_to_consensus`, `shelley_header_body_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`) is implemented.
-- Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque, Shelley/Allegra/Mary/Alonzo decoded as `ShelleyBlock`, Babbage decoded as `BabbageBlock`, and Conway decoded as `ConwayBlock` is implemented.
-- Block conversion (`multi_era_block_to_block`, `babbage_block_to_block`, `conway_block_to_block`) produces generic `Block` values for all eras with proper `Era` tags, header fields, and transaction ID computation.
-- Block header hash computation uses real Blake2b-256 via `ShelleyHeader::header_hash()`; `shelley_block_to_block`, `babbage_block_to_block`, `conway_block_to_block`, and `compute_tx_id` use proper cryptographic hashing.
-- Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`) is implemented wiring consensus verification into the multi-era sync flow for all eras.
-- Mempool sync eviction: `extract_tx_ids` extracts TxIds from all multi-era blocks (Shelley/Babbage/Conway), `evict_confirmed_from_mempool` removes confirmed and TTL-expired entries from the mempool after each sync step.
+- Full sync orchestration stack: `sync_step`, typed decode bridges, bounded loops, intersection finding, batch apply, managed sync service with `tokio::select!` shutdown + `ctrl_c` signal handling.
+- Multi-era block decode for all 7 era tags (Byron through Conway).
+- Consensus header verification bridge and verified multi-era sync pipeline.
+- Block header hash computation uses real Blake2b-256.
+- Mempool sync eviction: `extract_tx_ids` + `evict_confirmed_from_mempool`.

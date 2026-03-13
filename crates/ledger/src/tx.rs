@@ -8,7 +8,7 @@ use crate::types::{BlockNo, HeaderHash, SlotNo, TxId};
 /// payload.
 ///
 /// Reference: `Cardano.Ledger.Core` — `Tx` / `TxId`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Tx {
     /// Blake2b-256 hash of the serialized transaction body.
     pub id: TxId,
@@ -19,7 +19,7 @@ pub struct Tx {
 /// A block header containing the essential chain-indexing fields.
 ///
 /// Reference: upstream `HeaderBody` in `cardano-ledger`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BlockHeader {
     /// Hash of this header (Blake2b-256).
     pub hash: HeaderHash,
@@ -36,7 +36,7 @@ pub struct BlockHeader {
 /// A block carrying its header and a body of transactions.
 ///
 /// Reference: `Ouroboros.Consensus.Block.Abstract` — `Block`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Block {
     /// The era this block belongs to.
     pub era: Era,

@@ -27,10 +27,12 @@ Yggdrasil is organized as a Rust workspace with explicit crate boundaries so pro
 - Build parity tooling alongside implementation rather than as a final afterthought.
 
 ## Current Milestone
-The project is past pure scaffolding and now includes a working protocol/runtime foundation:
-- Network transport + mux + handshake + peer lifecycle are implemented.
-- All four current mini-protocols have state machines, wire codecs, and typed client drivers.
-- Node bootstrap and first sync orchestration helpers are implemented.
-- First typed decode bridge is implemented for Shelley blocks fetched via BlockFetch.
+The project has a complete Cardano-era type system and a functional node binary:
+- Full era type coverage from Byron through Conway with typed CBOR codecs.
+- Multi-era UTxO validation with coin and multi-asset preservation checks.
+- Network transport + mux + handshake + peer lifecycle with all four mini-protocol state machines, wire codecs, and typed client drivers.
+- Multi-era block decode (all 7 era tags) with consensus header verification (KES/OpCert).
+- Node binary with `clap` CLI (`run` + `default-config`), JSON configuration, and managed sync service with graceful shutdown.
+- Mempool with TTL-aware admission, fee ordering, and block-application eviction.
 
-The next architecture milestone is broad typed payload flow from network protocol messages into ledger/storage boundaries, then staged consensus integration on top.
+The next architecture milestone is on-disk storage backends, consensus hardening (rollback, chain selection), and upstream parity testing.
