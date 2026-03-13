@@ -1,5 +1,5 @@
 ---
-name: Workspace Crates
+name: workspace-crates
 description: Guidance for maintaining crate boundaries and shared conventions across the Rust workspace crates.
 ---
 
@@ -15,7 +15,14 @@ Keep this directory as a crate index, not as a place for cross-cutting implement
 - Shared behavior MUST live in the appropriate crate, not in this directory.
 - Cross-crate dependency direction MUST stay aligned with `docs/ARCHITECTURE.md`.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+
+## Official Upstream References (add or update as needed)
+- Workspace architecture anchor: <https://github.com/IntersectMBO/cardano-node/>
+- Ledger and era package layout: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+- Consensus package layout: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
+- Networking package layout: <https://github.com/IntersectMBO/ouroboros-network/>
+- Crypto package layout: <https://github.com/IntersectMBO/cardano-base/>
 
 ## Current Layout
 - `crypto`: cryptographic primitives and encodings.

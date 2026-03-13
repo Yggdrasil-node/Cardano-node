@@ -17,14 +17,14 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Public node-facing integration types and runtime helpers MUST have Rustdocs when startup, shutdown, configuration, or sync semantics are not obvious.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Integration behavior MUST always be explained by anchoring it in the official node and the relevant upstream IntersectMBO implementation.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References (add or update as needed)
 - Node integration repository: <https://github.com/IntersectMBO/cardano-node/>
 - Node runtime and packaging reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
 - Default network configuration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
 - Submit API and auxiliary integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
-- Enviorment configuration references "preview, Preprod, mainnet: <https://book.world.dev.cardano.org/env-preview.html>, <https://book.world.dev.cardano.org/env-preprod.html>, <https://book.world.dev.cardano.org/env-mainnet.html>
+- Environment configuration references: <https://book.world.dev.cardano.org/env-preview.html>, <https://book.world.dev.cardano.org/env-preprod.html>, <https://book.world.dev.cardano.org/env-mainnet.html>
 
 ## Current Phase
 - Keep the node crate thin and integration-focused.

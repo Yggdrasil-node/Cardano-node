@@ -17,7 +17,7 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Naming MUST mirror the official node and Ouroboros network specs so protocol traces and docs line up cleanly.
 - Wire behavior and protocol sequencing MUST be explained by reference to the official node and upstream Ouroboros network sources.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References (add or update as needed)
 - Networking repository root: <https://github.com/IntersectMBO/ouroboros-network/>

@@ -14,4 +14,11 @@ Keep tests in this directory close to ledger rules and era-specific invariants.
 - Tests here MUST pin rule behavior tightly enough to catch serialization and transition regressions.
 - Era-specific expectations MUST stay explicit rather than being hidden behind generic helpers.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+
+## Official Upstream References (add or update as needed)
+- Ledger test corpus root: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+- Formal ledger rules: <https://github.com/IntersectMBO/formal-ledger-specifications>
+
+## Current Phase
+- Tests in this directory protect codec round-trips, submitted-transaction handling, UTxO evolution, and era-specific block application behavior.

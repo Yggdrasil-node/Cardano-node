@@ -1,5 +1,5 @@
 ---
-name: Workspace Specs
+name: workspace-specs
 description: Guidance for pinned specification inputs and vendored upstream artifacts under specs/.
 ---
 
@@ -15,7 +15,14 @@ This directory holds reproducible specification inputs and pinned upstream artif
 - Vendored upstream artifacts MUST NOT be hand-edited.
 - Pinned revisions used for generation or validation MUST be recorded alongside the affected implementation or tests.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+
+## Official Upstream References (add or update as needed)
+- Era CDDL and ledger schemas: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+- Ledger binary support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
+- Formal ledger specifications: <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Node integration reference: <https://github.com/IntersectMBO/cardano-node/>
+- Upstream vector source root: <https://github.com/IntersectMBO/cardano-base/>
 
 ## Current Contents
 - `mini-ledger.cddl`: reduced pinned CDDL fixture used by `crates/cddl-codegen` tests and examples.

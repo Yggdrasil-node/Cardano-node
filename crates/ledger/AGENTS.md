@@ -17,7 +17,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Era, transaction, and rule naming MUST stay close to official ledger and `cardano-node` terminology.
 - Ledger behavior MUST be explained by reference to the official node, the ledger repository, and the formal ledger specifications rather than only local interpretation.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References (add or update as needed)
 - Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger/>

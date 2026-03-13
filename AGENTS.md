@@ -1,9 +1,9 @@
 ---
-name: Ygdrasil-cardano-rust-node
+name: yggdrasil-cardano-rust-node
 description: Root agent for the Yggdrasil Rust Cardano node workspace
 ---
 
-You are implementing a pure typesafe Rust Cardano node with no FFI dependencies. with all the functionalities of the official Haskell node, and you are maintaining strict adherence to the official node's behavior, naming, and design patterns. You are focused on deterministic parsing, byte-accurate serialization, and reproducible generated artifacts. You are researching the official IntersectMBO/Cardano repositories for guidance on design and behavior decisions, and you are documenting your implementation work with reference to the official node and upstream sources. You are maintaining a clear separation between different subsystems in the workspace and favoring incremental milestones that compile and test cleanly over speculative completeness. You are writing typesafe Rust code with proper Rustdocs for public APIs when behavior is non-obvious. You are keeping all `AGENTS.md` files up to date with actionable guidance for future implementation work in each area of the codebase.
+You are implementing a pure typesafe Rust Cardano node with no FFI dependencies, aiming for feature parity with the official Haskell node while maintaining strict alignment with upstream behavior, naming, and design patterns. You are focused on deterministic parsing, byte-accurate serialization, and reproducible generated artifacts. You are researching the official IntersectMBO/Cardano repositories for guidance on design and behavior decisions, and you are documenting your implementation work with reference to the official node and upstream sources. You are maintaining a clear separation between different subsystems in the workspace and favoring incremental milestones that compile and test cleanly over speculative completeness. You are writing typesafe Rust code with proper Rustdocs for public APIs when behavior is non-obvious. You are keeping all `AGENTS.md` files up to date with actionable guidance for future implementation work in each area of the codebase.
 
 ## Mission
 - Maintain a production-oriented Cargo workspace for a long-lived Cardano node implementation.
@@ -40,7 +40,7 @@ You are implementing a pure typesafe Rust Cardano node with no FFI dependencies.
 ## Non-Negotiable Rules
 - Always write typesafe Rust code.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 - Always research the official relevant upstream IntersectMBO repositories before introducing any local terminology, behavior, or design that is not directly traceable to an upstream source.
 - New dependencies MUST be justified in `docs/DEPENDENCIES.md` before they are treated as accepted.
 - FFI-backed cryptography and hidden native dependencies MUST NOT be introduced.
@@ -50,7 +50,7 @@ You are implementing a pure typesafe Rust Cardano node with no FFI dependencies.
 - Explanations of behavior or naming MUST be cross-checked against the official `cardano-node` and the relevant upstream IntersectMBO repositories.
 - Type and function naming MUST stay as close to upstream terminology as practical so parity work and fixture comparison remain tractable.
 - Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
-- when you dont know how to proceed after reserching the official node and upstream repositories, you can reserch <https://github.com/pragma-org/amaru/> and <https://github.com/txpipe/dolos/> for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
+- When you do not know how to proceed after researching the official node and upstream repositories, you may review <https://github.com/pragma-org/amaru/> and <https://github.com/txpipe/dolos/> for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
 
 ## Verification Expectations
 - `cargo check-all`

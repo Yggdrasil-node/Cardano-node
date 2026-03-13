@@ -13,4 +13,11 @@ Use this directory to pin queue semantics and mempool boundary behavior.
 - Tests here MUST assert queue behavior directly rather than relying on node integration side effects.
 - Snapshot and shared-reader coverage MUST protect monotonic cursor semantics.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+
+## Official Upstream References (add or update as needed)
+- Consensus mempool package: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
+- Submit API integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
+
+## Current Phase
+- Tests in this directory pin duplicate rejection, fee ordering, TTL expiry, shared snapshots, and confirmation-driven eviction.

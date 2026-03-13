@@ -1,5 +1,5 @@
 ---
-name: Workspace Docs
+name: workspace-docs
 description: Guidance for maintaining project policy and architecture documents under docs/.
 ---
 
@@ -15,7 +15,14 @@ Keep these documents synchronized with the implemented workspace, not with specu
 - Dependency decisions MUST be recorded in `DEPENDENCIES.md` before a new crate is treated as accepted.
 - Architecture and workflow changes MUST stay consistent with the actual crate graph and verification commands used in the workspace.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+
+## Official Upstream References (add or update as needed)
+- Node integration and operational behavior: <https://github.com/IntersectMBO/cardano-node/>
+- Ledger implementation and schemas: <https://github.com/IntersectMBO/cardano-ledger/>
+- Formal ledger specifications: <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Consensus implementation and reports: <https://github.com/IntersectMBO/ouroboros-consensus/>
+- Networking implementation and specification: <https://github.com/IntersectMBO/ouroboros-network/>
 
 ## Maintenance Guidance
 - Update these docs in the same change when a subsystem milestone materially changes.

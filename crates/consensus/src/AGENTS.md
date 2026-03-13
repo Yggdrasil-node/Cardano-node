@@ -13,7 +13,12 @@ This directory owns consensus implementation modules, not integration glue.
 - Consensus math and rollback rules MUST stay explicit and typed.
 - Source modules here MUST remain independent of node runtime orchestration concerns.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Current Focus
+## Official Upstream References (add or update as needed)
+- Consensus source tree: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/>
+- Cardano consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/>
+- Consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec/>
+
+## Current Phase
 - Preserve the current separation between header verification, epoch nonce evolution, and volatile chain tracking.

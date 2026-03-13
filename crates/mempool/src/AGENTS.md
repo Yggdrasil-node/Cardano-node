@@ -13,7 +13,11 @@ This directory owns queue policy and typed mempool views, not ledger validation 
 - Queue semantics MUST remain explicit and locally testable from this directory.
 - Networking protocol concerns MUST not leak into mempool internals here.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Current Focus
+## Official Upstream References (add or update as needed)
+- Consensus mempool design context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/>
+- Submit API integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
+
+## Current Phase
 - Preserve the separation between fee ordering and TxSubmission snapshot ordering.

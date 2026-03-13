@@ -13,4 +13,12 @@ Use this directory for deterministic vector-backed crypto validation.
 - New cryptographic behavior MUST land with vectors or deterministic fixtures in this directory.
 - Do not weaken exact-byte or parity assertions into loose shape-only checks.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If anything of the context is outdated, missing, or incorrect, edit the file accordingly. make sure that single line exceeding ".maxTokenizationLineLength"
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+
+## Official Upstream References (add or update as needed)
+- Praos vector source: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test_vectors/>
+- BLS12-381 vector source: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>
+- Shared crypto test sources: <https://github.com/IntersectMBO/cardano-base/tree/master/>
+
+## Current Phase
+- Tests in this directory validate Ed25519, KES, Praos VRF proof generation and verification, and upstream vector parity.
