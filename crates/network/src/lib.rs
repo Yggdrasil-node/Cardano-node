@@ -14,6 +14,8 @@ pub mod chainsync_client;
 pub mod handshake;
 /// KeepAlive client driver — typed, state-machine-correct protocol loop.
 pub mod keepalive_client;
+/// Refresh-oriented provider interfaces for time-varying ledger peers.
+pub mod ledger_peers_provider;
 /// Multiplexer / demultiplexer — SDU routing between bearer and protocol channels.
 pub mod mux;
 /// Multiplexer framing, SDU header, and protocol numbering.
@@ -66,6 +68,11 @@ pub use root_peers_provider::{
     RootPeerProvider, RootPeerProviderError, RootPeerProviderKind,
     RootPeerProviderRefresh, ScriptedRootPeerProvider,
     refresh_root_peer_state, refresh_root_peer_state_and_registry,
+};
+pub use ledger_peers_provider::{
+    LedgerPeerProvider, LedgerPeerProviderError, LedgerPeerProviderKind,
+    LedgerPeerProviderRefresh, LedgerPeerSnapshot, ScriptedLedgerPeerProvider,
+    apply_ledger_peer_refresh, refresh_ledger_peer_registry,
 };
 pub use peer_selection::{
     LocalRootConfig, PeerAccessPoint, PeerAttemptState, PeerBootstrapTargets,
