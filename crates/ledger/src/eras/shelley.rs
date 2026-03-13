@@ -1286,6 +1286,50 @@ impl ShelleyBlock {
 }
 
 // ---------------------------------------------------------------------------
+// Block body hash computation
+// ---------------------------------------------------------------------------
+
+/// Compute the Blake2b-256 block body hash from raw block CBOR bytes.
+///
+/// In Cardano, the block body hash covers all block array elements after
+/// the header. The hash is computed over the raw serialized CBOR bytes of
+/// those elements concatenated:
+///
+/// - Shelley/Allegra/Mary (4-element block):
+///   `Blake2b-256(txBodies_bytes || witnesses_bytes || metadata_bytes)`
+/// - Alonzo/Babbage/Conway (5-element block):
+///   `Blake2b-256(txBodies_bytes || witnesses_bytes || auxData_bytes || invalidTxs_bytes)`
+///
+/// The `block_bytes` parameter is the raw CBOR of the inner block (after
+/// the multi-era `[era_tag, block_body]` envelope has been peeled).
+///
+/// Reference: `Cardano.Ledger.Shelley.BlockChain.bbHash` (Shelley) and
+/// `Cardano.Ledger.Alonzo.TxSeq.hashAnnotated` (Alonzo onwards).
+pub fn compute_block_body_hash(block_bytes: &[u8]) -> Result<[u8; 32], crate::LedgerError> {
+    let mut dec = crate::cbor::Decoder::new(block_bytes);
+    let arr_len = dec.array()?;
+    if arr_len < 4 || arr_len > 5 {
+        return Err(crate::LedgerError::CborInvalidLength {
+            expected: 4,
+            actual: arr_len as usize,
+        });
+    }
+
+    // Skip element 0 (header).
+    dec.skip()?;
+
+    // Elements 1..arr_len are the block body.
+    let body_start = dec.position();
+    for _ in 1..arr_len {
+        dec.skip()?;
+    }
+    let body_end = dec.position();
+
+    let body_bytes = dec.slice(body_start, body_end)?;
+    Ok(yggdrasil_crypto::hash_bytes_256(body_bytes).0)
+}
+
+// ---------------------------------------------------------------------------
 // Full Shelley block
 // ---------------------------------------------------------------------------
 

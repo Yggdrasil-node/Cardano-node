@@ -27,7 +27,7 @@ pub use shelley::SHELLEY_NAME;
 pub use shelley::{
     BootstrapWitness, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
     ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness,
-    ShelleyVrfCert, ShelleyWitnessSet,
+    ShelleyVrfCert, ShelleyWitnessSet, compute_block_body_hash,
 };
 
 /// Supported Cardano eras in canonical order from Byron through Conway.

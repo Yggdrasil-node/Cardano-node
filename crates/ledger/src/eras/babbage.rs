@@ -670,7 +670,8 @@ impl CborDecode for BabbageTxBody {
 ///   header,
 ///   transaction_bodies       : [* transaction_body],
 ///   transaction_witness_sets : [* transaction_witness_set],
-///   auxiliary_data_set       : {* uint => auxiliary_data}
+///   auxiliary_data_set       : {* transaction_index => auxiliary_data},
+///   invalid_transactions     : [* transaction_index]
 /// ]
 /// ```
 ///
@@ -686,6 +687,8 @@ pub struct BabbageBlock {
     pub transaction_witness_sets: Vec<ShelleyWitnessSet>,
     /// Auxiliary data map: transaction index → raw CBOR auxiliary data bytes.
     pub auxiliary_data_set: HashMap<u64, Vec<u8>>,
+    /// Indices of transactions whose Phase-2 scripts failed validation.
+    pub invalid_transactions: Vec<u64>,
 }
 
 impl BabbageBlock {
@@ -697,7 +700,7 @@ impl BabbageBlock {
 
 impl CborEncode for BabbageBlock {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(4);
+        enc.array(5);
         self.header.encode_cbor(enc);
 
         enc.array(self.transaction_bodies.len() as u64);
@@ -715,15 +718,20 @@ impl CborEncode for BabbageBlock {
             enc.unsigned(idx);
             enc.raw(meta);
         }
+
+        enc.array(self.invalid_transactions.len() as u64);
+        for &idx in &self.invalid_transactions {
+            enc.unsigned(idx);
+        }
     }
 }
 
 impl CborDecode for BabbageBlock {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 4 {
+        if len != 5 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 4,
+                expected: 5,
                 actual: len as usize,
             });
         }
@@ -753,11 +761,18 @@ impl CborDecode for BabbageBlock {
             transaction_metadata.insert(idx, raw);
         }
 
+        let inv_count = dec.array()?;
+        let mut invalid_transactions = Vec::with_capacity(inv_count as usize);
+        for _ in 0..inv_count {
+            invalid_transactions.push(dec.unsigned()?);
+        }
+
         Ok(Self {
             header,
             transaction_bodies,
             transaction_witness_sets: witness_sets,
             auxiliary_data_set: transaction_metadata,
+            invalid_transactions,
         })
     }
 }

@@ -34,7 +34,7 @@ pub use eras::{
     ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
     ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo,
     ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, Value, Vote, Voter, VotingProcedure,
-    VotingProcedures, BYRON_SLOTS_PER_EPOCH,
+    VotingProcedures, BYRON_SLOTS_PER_EPOCH, compute_block_body_hash,
 };
 
 // -- Error re-exports ---------------------------------------------------------

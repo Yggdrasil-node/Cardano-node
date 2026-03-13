@@ -3258,6 +3258,7 @@ fn babbage_block_cbor_round_trip_empty() {
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
     };
     let bytes = block.to_cbor_bytes();
     let decoded = BabbageBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3306,6 +3307,7 @@ fn babbage_block_cbor_round_trip_with_tx() {
             plutus_v3_scripts: vec![],
         }],
         auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
     };
     let bytes = block.to_cbor_bytes();
     let decoded = BabbageBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3321,6 +3323,7 @@ fn babbage_block_header_hash() {
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
     };
     let h1 = block.header_hash();
     let h2 = block.header.header_hash();
@@ -3334,6 +3337,7 @@ fn conway_block_cbor_round_trip_empty() {
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
     };
     let bytes = block.to_cbor_bytes();
     let decoded = ConwayBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3385,6 +3389,7 @@ fn conway_block_cbor_round_trip_with_tx() {
             plutus_v3_scripts: vec![],
         }],
         auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
     };
     let bytes = block.to_cbor_bytes();
     let decoded = ConwayBlock::from_cbor_bytes(&bytes).expect("decode");
@@ -3399,6 +3404,7 @@ fn conway_block_header_hash() {
         transaction_bodies: vec![],
         transaction_witness_sets: vec![],
         auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
     };
     let h1 = block.header_hash();
     let h2 = block.header.header_hash();
