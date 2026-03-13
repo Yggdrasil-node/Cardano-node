@@ -148,20 +148,35 @@ impl PeerRegistry {
     /// that remain in the registry.
     pub fn sync_root_peers(&mut self, providers: &RootPeerProviders) -> bool {
         let desired = desired_root_sources(providers);
-        let mut changed = false;
+        self.sync_source_map(
+            [
+                PeerSource::PeerSourceLocalRoot,
+                PeerSource::PeerSourcePublicRoot,
+                PeerSource::PeerSourceBootstrap,
+            ],
+            desired,
+        )
+    }
 
-        let current_peers = self.peers.keys().copied().collect::<Vec<_>>();
-        for peer in current_peers {
-            changed |= self.remove_source(peer, PeerSource::PeerSourceLocalRoot);
-            changed |= self.remove_source(peer, PeerSource::PeerSourcePublicRoot);
-            changed |= self.remove_source(peer, PeerSource::PeerSourceBootstrap);
-        }
+    /// Reconcile ledger peers from the current dynamic ledger snapshot.
+    pub fn sync_ledger_peers(&mut self, peers: impl IntoIterator<Item = SocketAddr>) -> bool {
+        self.sync_single_source(PeerSource::PeerSourceLedger, peers)
+    }
 
-        for (peer, source) in desired {
-            changed |= self.insert_source(peer, source);
-        }
+    /// Reconcile big-ledger peers from the current dynamic ledger snapshot.
+    pub fn sync_big_ledger_peers(
+        &mut self,
+        peers: impl IntoIterator<Item = SocketAddr>,
+    ) -> bool {
+        self.sync_single_source(PeerSource::PeerSourceBigLedger, peers)
+    }
 
-        changed
+    /// Reconcile peers learned via peer sharing.
+    pub fn sync_peer_share_peers(
+        &mut self,
+        peers: impl IntoIterator<Item = SocketAddr>,
+    ) -> bool {
+        self.sync_single_source(PeerSource::PeerSourcePeerShare, peers)
     }
 
     /// Count peers by status.
@@ -176,6 +191,40 @@ impl PeerRegistry {
             }
         }
         counts
+    }
+
+    fn sync_single_source(
+        &mut self,
+        source: PeerSource,
+        peers: impl IntoIterator<Item = SocketAddr>,
+    ) -> bool {
+        let desired = peers
+            .into_iter()
+            .map(|peer| (peer, source))
+            .collect::<BTreeMap<_, _>>();
+        self.sync_source_map([source], desired)
+    }
+
+    fn sync_source_map(
+        &mut self,
+        removable_sources: impl IntoIterator<Item = PeerSource>,
+        desired: BTreeMap<SocketAddr, PeerSource>,
+    ) -> bool {
+        let removable_sources = removable_sources.into_iter().collect::<Vec<_>>();
+        let current_peers = self.peers.keys().copied().collect::<Vec<_>>();
+        let mut changed = false;
+
+        for peer in current_peers {
+            for source in &removable_sources {
+                changed |= self.remove_source(peer, *source);
+            }
+        }
+
+        for (peer, source) in desired {
+            changed |= self.insert_source(peer, source);
+        }
+
+        changed
     }
 }
 
@@ -292,6 +341,71 @@ mod tests {
         assert!(registry.sync_root_peers(&providers));
         assert!(registry.get(&peer).is_none());
         assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn sync_ledger_peers_preserves_other_sources_and_status() {
+        let peer: SocketAddr = "127.0.0.20:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(peer, PeerSource::PeerSourceLedger);
+        registry.set_status(peer, PeerStatus::PeerWarm);
+
+        assert!(registry.sync_ledger_peers([]));
+
+        let entry = registry.get(&peer).expect("bootstrap peer remains");
+        assert_eq!(entry.sources, BTreeSet::from([PeerSource::PeerSourceBootstrap]));
+        assert_eq!(entry.status, PeerStatus::PeerWarm);
+    }
+
+    #[test]
+    fn sync_ledger_peers_replaces_only_ledger_source_members() {
+        let old_peer: SocketAddr = "127.0.0.21:3001".parse().expect("addr");
+        let new_peer: SocketAddr = "127.0.0.22:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(old_peer, PeerSource::PeerSourceLedger);
+        registry.insert_source(old_peer, PeerSource::PeerSourcePeerShare);
+
+        assert!(registry.sync_ledger_peers([new_peer]));
+
+        assert_eq!(
+            registry.get(&old_peer).expect("old peer remains via peer share").sources,
+            BTreeSet::from([PeerSource::PeerSourcePeerShare])
+        );
+        assert_eq!(
+            registry.get(&new_peer).expect("new ledger peer").sources,
+            BTreeSet::from([PeerSource::PeerSourceLedger])
+        );
+    }
+
+    #[test]
+    fn sync_big_ledger_peers_reconciles_big_ledger_source() {
+        let peer: SocketAddr = "127.0.0.23:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        assert!(registry.sync_big_ledger_peers([peer]));
+        assert_eq!(
+            registry.get(&peer).expect("big ledger peer").sources,
+            BTreeSet::from([PeerSource::PeerSourceBigLedger])
+        );
+
+        assert!(registry.sync_big_ledger_peers([]));
+        assert!(registry.get(&peer).is_none());
+    }
+
+    #[test]
+    fn sync_peer_share_peers_reconciles_peer_share_source() {
+        let peer: SocketAddr = "127.0.0.24:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        assert!(registry.sync_peer_share_peers([peer]));
+        assert_eq!(
+            registry.get(&peer).expect("peer-share peer").sources,
+            BTreeSet::from([PeerSource::PeerSourcePeerShare])
+        );
+
+        assert!(registry.sync_peer_share_peers([]));
+        assert!(registry.get(&peer).is_none());
     }
 
     #[test]
