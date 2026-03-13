@@ -26,7 +26,9 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 ## Current Phase
 - Core protocol types (`SlotNo`, `BlockNo`, `EpochNo`, `HeaderHash`, `TxId`, `Point`) are landed in `types.rs`.
 - Credential and address types landed in `types.rs`: `StakeCredential` enum (`AddrKeyHash`/`ScriptHash`), `RewardAccount` (29-byte with network + credential), `Address` enum (Base/Enterprise/Pointer/Reward/Byron), `AddrKeyHash`, `ScriptHash`, `PoolKeyHash`, `GenesisHash`, `GenesisDelegateHash`, `VrfKeyHash` type aliases.
-- `Block` and `BlockHeader` use typed identifiers; `LedgerState` tracks tip via `Point` and owns a `ShelleyUtxo` with atomic per-block application.
+- `Block` and `BlockHeader` use typed identifiers; `LedgerState` tracks tip via `Point` and owns dual UTxO sets: `ShelleyUtxo` (legacy) and `MultiEraUtxo` (generalized) with atomic per-block application across all eras.
+- Multi-era UTxO landed: `MultiEraTxOut` enum (Shelley/Mary/Alonzo/Babbage variants), `MultiEraUtxo` with era-specific apply methods (`apply_shelley_tx/.../apply_conway_tx`). Validates non-empty inputs/outputs, TTL, validity interval start, coin preservation, and multi-asset preservation (including mint/burn). New error variants: `TxNotYetValid`, `MultiAssetNotPreserved`.
+- `LedgerState.apply_block()` dispatches per era: Shelley uses legacy `ShelleyUtxo`, Allegra through Conway use `MultiEraUtxo`. Byron returns `UnsupportedEra`.
 - CBOR codec (`cbor.rs`) supports all 8 major types plus signed integer helpers (`Encoder::integer`, `Decoder::integer`). Includes `skip()` for recursive item skipping and `CborEncode`/`CborDecode` traits.
 - Allegra era types landed: `AllegraTxBody` (optional TTL + validity interval start), `NativeScript` (6-variant timelock/multi-sig enum with recursive CBOR codec).
 - Mary era types landed: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (key 9 mint) with CBOR codecs; `pub(crate)` helpers shared cross-era.

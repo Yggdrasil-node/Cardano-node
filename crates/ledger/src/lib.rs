@@ -17,6 +17,8 @@ pub mod state;
 pub mod tx;
 /// Core protocol-level types shared across ledger, storage, and consensus.
 pub mod types;
+/// Multi-era UTxO set.
+pub mod utxo;
 
 // -- CBOR re-exports ----------------------------------------------------------
 /// CBOR encoding and decoding traits and primitives.
@@ -57,3 +59,6 @@ pub use types::{
 
 // -- Plutus re-exports --------------------------------------------------------
 pub use plutus::{PlutusData, Script, ScriptRef};
+
+// -- UTxO re-exports ----------------------------------------------------------
+pub use utxo::{MultiEraTxOut, MultiEraUtxo};

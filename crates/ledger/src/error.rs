@@ -45,4 +45,18 @@ pub enum LedgerError {
 
     #[error("no outputs in transaction")]
     NoOutputs,
+
+    #[error("transaction not yet valid: validity start {start} > current slot {slot}")]
+    TxNotYetValid { start: u64, slot: u64 },
+
+    #[error(
+        "multi-asset not preserved for policy {policy:02x?} / asset {asset_name:02x?}: \
+         expected {expected}, produced {produced}"
+    )]
+    MultiAssetNotPreserved {
+        policy: [u8; 28],
+        asset_name: Vec<u8>,
+        expected: u64,
+        produced: u64,
+    },
 }
