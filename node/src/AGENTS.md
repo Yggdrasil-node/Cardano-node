@@ -27,5 +27,6 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Full sync orchestration stack: `sync_step`, typed decode bridges, bounded loops, intersection finding, batch apply, managed sync service with `tokio::select!` shutdown + `ctrl_c` signal handling.
 - Multi-era block decode for all 7 era tags (Byron through Conway).
 - Consensus header verification bridge and verified multi-era sync pipeline.
+- Block body hash verification: `verify_block_body_hash` computes Blake2b-256 of body elements and compares against the hash declared in the header. Wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`.
 - Block header hash computation uses real Blake2b-256.
 - Mempool sync eviction: `extract_tx_ids` + `evict_confirmed_from_mempool`.

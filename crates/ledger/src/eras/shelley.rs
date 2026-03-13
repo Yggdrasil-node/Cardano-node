@@ -1308,7 +1308,7 @@ impl ShelleyBlock {
 pub fn compute_block_body_hash(block_bytes: &[u8]) -> Result<[u8; 32], crate::LedgerError> {
     let mut dec = crate::cbor::Decoder::new(block_bytes);
     let arr_len = dec.array()?;
-    if arr_len < 4 || arr_len > 5 {
+    if !(4..=5).contains(&arr_len) {
         return Err(crate::LedgerError::CborInvalidLength {
             expected: 4,
             actual: arr_len as usize,

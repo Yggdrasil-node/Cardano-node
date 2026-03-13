@@ -17,5 +17,5 @@ pub use sync::{
 	shelley_header_to_consensus, shelley_opcert_to_consensus, sync_batch_apply,
 	sync_batch_apply_verified, sync_step, sync_step_decoded, sync_step_multi_era,
 	sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed, typed_find_intersect,
-	verify_multi_era_block, verify_shelley_header, SHELLEY_KES_DEPTH,
+	verify_block_body_hash, verify_multi_era_block, verify_shelley_header, SHELLEY_KES_DEPTH,
 };

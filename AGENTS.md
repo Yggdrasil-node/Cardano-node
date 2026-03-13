@@ -73,6 +73,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks` (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway — all seven era tags).
   - Header hash: `ShelleyHeader::header_hash` (Blake2b-256), `compute_tx_id`.
   - Verified pipeline: `multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`.
+  - Block body hash verification: `verify_block_body_hash` (Blake2b-256 of body elements vs header-declared hash), wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`. `compute_block_body_hash` in ledger crate.
   - Mempool eviction: `extract_tx_ids`, `evict_confirmed_from_mempool`.
 - `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, TTL-aware admission (`insert_checked`, `purge_expired`), and iterator support.
 - `crates/ledger`:
@@ -101,7 +102,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - Consensus OpCert: `hot_vkey`, `sequence_number`.
   - DCert variants aligned with CDDL certificate names: `AccountRegistration`, `AccountUnregistration`, `DelegationToStakePool`, `PoolRegistration`, `PoolRetirement`, `GenesisDelegation`, plus Conway-era `AccountRegistrationDeposit` through `DrepUpdate`.
 - CBOR golden round-trip parity tests cover `ShelleyTxBody`, `ShelleyBlock`, `PlutusData`, `StakeCredential`, and `MultiEraTxOut`. Cross-subsystem integration tests verify block→ChainState→storage and rollback flows.
-- 640 workspace tests pass across all crates, 0 clippy warnings.
+- 647 workspace tests pass across all crates, 0 clippy warnings.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
 
 Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.

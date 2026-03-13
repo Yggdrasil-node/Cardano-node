@@ -91,6 +91,7 @@ fn main() -> Result<()> {
                 Some(VerificationConfig {
                     slots_per_kes_period: file_cfg.slots_per_kes_period,
                     max_kes_evolutions: file_cfg.max_kes_evolutions,
+                    verify_body_hash: true,
                 })
             };
 

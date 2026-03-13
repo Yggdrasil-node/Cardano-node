@@ -5,9 +5,10 @@ use yggdrasil_network::{
     peer_accept,
 };
 use yggdrasil_ledger::{
-    BabbageBlock, BabbageTxBody, BabbageTxOut, CborEncode, ConwayBlock, ConwayTxBody, Encoder,
-    HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody,
-    ShelleyTxIn, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
+    BabbageBlock, BabbageTxBody, BabbageTxOut, CborEncode, ConwayBlock, ConwayTxBody,
+    Encoder, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
+    ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
+    compute_block_body_hash,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_node::{
@@ -18,7 +19,8 @@ use yggdrasil_node::{
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
     shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
     sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed,
-    typed_find_intersect, verify_multi_era_block, verify_shelley_header, SHELLEY_KES_DEPTH,
+    typed_find_intersect, verify_block_body_hash, verify_multi_era_block, verify_shelley_header,
+    SHELLEY_KES_DEPTH,
 };
 use yggdrasil_storage::{InMemoryVolatile, VolatileStore};
 
@@ -1516,6 +1518,7 @@ fn verify_multi_era_block_byron_is_noop() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
+        verify_body_hash: false,
     };
     assert!(verify_multi_era_block(&me, &config).is_ok());
 }
@@ -2163,6 +2166,7 @@ fn verify_multi_era_block_babbage_passes() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
+        verify_body_hash: false,
     };
     let result = verify_multi_era_block(&me, &config);
     // Expect error since the signature is dummy bytes, confirming the
@@ -2186,9 +2190,208 @@ fn verify_multi_era_block_conway_passes() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
+        verify_body_hash: false,
     };
     let result = verify_multi_era_block(&me, &config);
     assert!(result.is_err());
+}
+
+// ===========================================================================
+// Block body hash verification tests
+// ===========================================================================
+
+/// Build a Shelley block with a correct block_body_hash in its header.
+///
+/// We first encode the block with a dummy hash, compute the real body hash,
+/// then re-encode with the corrected header.
+fn make_shelley_block_with_correct_body_hash() -> ShelleyBlock {
+    // Build the block body parts.
+    let bodies = vec![make_tx_body(999, 5000)];
+    let witnesses = vec![ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    }];
+    let metadata = std::collections::HashMap::new();
+
+    // First pass: encode with dummy hash to compute the real body hash.
+    let dummy_block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_hash: [0x00; 32],
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: bodies.clone(),
+        transaction_witness_sets: witnesses.clone(),
+        transaction_metadata_set: metadata.clone(),
+    };
+    let dummy_bytes = dummy_block.to_cbor_bytes();
+    let real_body_hash = compute_block_body_hash(&dummy_bytes).expect("compute hash");
+
+    // Second pass: the body hash only depends on elements 1..N (not the
+    // header), so the hash computed from the dummy block is already correct.
+    ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_hash: real_body_hash,
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: bodies,
+        transaction_witness_sets: witnesses,
+        transaction_metadata_set: metadata,
+    }
+}
+
+/// Build a Babbage block with a correct block_body_hash in its header.
+fn make_babbage_block_with_correct_body_hash() -> BabbageBlock {
+    let bodies = vec![make_babbage_tx_body(200)];
+    let witnesses = vec![ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    }];
+
+    let dummy_block = BabbageBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_hash: [0x00; 32],
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: bodies.clone(),
+        transaction_witness_sets: witnesses.clone(),
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    };
+    let dummy_bytes = dummy_block.to_cbor_bytes();
+    let real_body_hash = compute_block_body_hash(&dummy_bytes).expect("compute hash");
+
+    BabbageBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_hash: real_body_hash,
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: bodies,
+        transaction_witness_sets: witnesses,
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }
+}
+
+#[test]
+fn verify_block_body_hash_shelley_valid() {
+    let block = make_shelley_block_with_correct_body_hash();
+    let block_bytes = block.to_cbor_bytes();
+    let envelope = build_multi_era_envelope(2, &block_bytes);
+    verify_block_body_hash(&envelope).expect("valid shelley body hash");
+}
+
+#[test]
+fn verify_block_body_hash_babbage_valid() {
+    let block = make_babbage_block_with_correct_body_hash();
+    let block_bytes = block.to_cbor_bytes();
+    let envelope = build_multi_era_envelope(6, &block_bytes);
+    verify_block_body_hash(&envelope).expect("valid babbage body hash");
+}
+
+#[test]
+fn verify_block_body_hash_byron_skipped() {
+    let envelope = build_multi_era_envelope(0, &[0x80]);
+    verify_block_body_hash(&envelope).expect("byron blocks are skipped");
+}
+
+#[test]
+fn verify_block_body_hash_mismatch_rejected() {
+    // Build a block with a wrong body hash in the header.
+    let block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_hash: [0xFF; 32], // deliberately wrong
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![make_tx_body(100, 1000)],
+        transaction_witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        }],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    };
+    let block_bytes = block.to_cbor_bytes();
+    let envelope = build_multi_era_envelope(2, &block_bytes);
+    let result = verify_block_body_hash(&envelope);
+    assert!(result.is_err(), "should reject mismatched body hash");
+}
+
+#[test]
+fn verify_block_body_hash_babbage_mismatch_rejected() {
+    let block = BabbageBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_hash: [0xFF; 32], // deliberately wrong
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![make_babbage_tx_body(500)],
+        transaction_witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        }],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    };
+    let block_bytes = block.to_cbor_bytes();
+    let envelope = build_multi_era_envelope(6, &block_bytes);
+    let result = verify_block_body_hash(&envelope);
+    assert!(result.is_err(), "should reject mismatched babbage body hash");
+}
+
+#[test]
+fn compute_block_body_hash_shelley_round_trip() {
+    let block = make_shelley_block_with_correct_body_hash();
+    let block_bytes = block.to_cbor_bytes();
+    let computed = compute_block_body_hash(&block_bytes).expect("compute");
+    assert_eq!(computed, block.header.body.block_body_hash);
+}
+
+#[test]
+fn compute_block_body_hash_babbage_round_trip() {
+    let block = make_babbage_block_with_correct_body_hash();
+    let block_bytes = block.to_cbor_bytes();
+    let computed = compute_block_body_hash(&block_bytes).expect("compute");
+    assert_eq!(computed, block.header.body.block_body_hash);
 }
 
 // ===========================================================================

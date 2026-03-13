@@ -17,9 +17,10 @@ use yggdrasil_network::{
     ChainSyncClientError, IntersectResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
 };
 use yggdrasil_ledger::{
-    BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock, Era,
+    BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock, Decoder, Era,
     HeaderHash, LedgerError, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
     SlotNo, Tx, TxId,
+    compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_storage::{StorageError, VolatileStore};
@@ -50,6 +51,10 @@ pub enum SyncError {
     /// Consensus validation error (header verification failure).
     #[error("consensus error: {0}")]
     Consensus(#[from] ConsensusError),
+
+    /// Block body hash in the header does not match the actual block body.
+    #[error("block body hash mismatch")]
+    BlockBodyHashMismatch,
 }
 
 /// Result of a single sync step.
@@ -925,6 +930,78 @@ pub struct VerificationConfig {
     pub slots_per_kes_period: u64,
     /// Maximum number of KES evolutions (mainnet: 62).
     pub max_kes_evolutions: u64,
+    /// Whether to verify the block body hash against the header.
+    pub verify_body_hash: bool,
+}
+
+/// Verify that the block body hash declared in the header matches the actual
+/// block body content.
+///
+/// `raw_envelope` is the raw CBOR `[era_tag, inner_block]` envelope as
+/// received on the wire.  Byron blocks (era tag 0) are skipped because they
+/// use a different header format.
+///
+/// Steps:
+/// 1. Peel the 2-element envelope to extract the inner block bytes.
+/// 2. Compute the Blake2b-256 hash of the body elements (via
+///    `compute_block_body_hash`).
+/// 3. Parse the header-body to extract the declared `block_body_hash`
+///    (field 8 of the 15-element `ShelleyHeaderBody` array).
+/// 4. Compare — mismatch yields `SyncError::BlockBodyHashMismatch`.
+pub fn verify_block_body_hash(raw_envelope: &[u8]) -> Result<(), SyncError> {
+    let mut dec = Decoder::new(raw_envelope);
+    let _arr_len = dec.array()?;
+    let era_tag = dec.unsigned()?;
+    // Byron blocks use a different header layout — skip them.
+    if era_tag == 0 {
+        return Ok(());
+    }
+    let inner_start = dec.position();
+    dec.skip()?;
+    let inner_end = dec.position();
+    let inner_bytes = dec.slice(inner_start, inner_end)?;
+
+    let computed = compute_block_body_hash(inner_bytes)?;
+    let declared = extract_header_block_body_hash(inner_bytes)?;
+
+    if computed != declared {
+        return Err(SyncError::BlockBodyHashMismatch);
+    }
+    Ok(())
+}
+
+/// Extract the `block_body_hash` field from the header of a raw inner block.
+///
+/// The inner block is a CBOR array whose first element is the header,
+/// which is itself `[header_body, kes_signature]`.  `header_body` is a
+/// 15-element array; field index 8 contains the 32-byte body hash.
+fn extract_header_block_body_hash(inner_block: &[u8]) -> Result<[u8; 32], LedgerError> {
+    let mut dec = Decoder::new(inner_block);
+    let _block_len = dec.array()?;
+    // Element 0: header = [header_body, kes_sig]
+    let _hdr_len = dec.array()?;
+    // header_body: 15-element array
+    let hb_len = dec.array()?;
+    if hb_len != 15 {
+        return Err(LedgerError::CborInvalidLength {
+            expected: 15,
+            actual: hb_len as usize,
+        });
+    }
+    // Skip fields 0–7 to reach field 8 (block_body_hash).
+    for _ in 0..8 {
+        dec.skip()?;
+    }
+    let hash_bytes = dec.bytes()?;
+    let mut result = [0u8; 32];
+    if hash_bytes.len() != 32 {
+        return Err(LedgerError::CborInvalidLength {
+            expected: 32,
+            actual: hash_bytes.len(),
+        });
+    }
+    result.copy_from_slice(hash_bytes);
+    Ok(result)
 }
 
 /// Verify the header of a multi-era block.
@@ -1036,13 +1113,16 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
 
 /// Execute one batch of verified multi-era sync and apply results to storage.
 ///
-/// This combines `sync_step_multi_era` with optional header verification
-/// (via `verify_multi_era_block`) and `apply_multi_era_step_to_volatile`
-/// into a single composable batch.
+/// This combines `sync_step` with optional body-hash and header verification
+/// (via `verify_block_body_hash` and `verify_multi_era_block`) and
+/// `apply_multi_era_step_to_volatile` into a single composable batch.
 ///
-/// If `verification` is `Some`, every Shelley-family block header is
-/// verified before being applied to the store. Byron blocks pass through
-/// without verification.
+/// When `verification` is `Some`:
+/// - If `verify_body_hash` is set, each raw block envelope is checked against
+///   its declared header body hash before decoding.
+/// - Every Shelley-family block header is KES-verified after decoding.
+///
+/// Byron blocks pass through both checks without verification.
 pub async fn sync_batch_apply_verified<S: VolatileStore>(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
@@ -1056,28 +1136,58 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
     let mut rollback_count = 0usize;
 
     for _ in 0..batch_size {
-        let me_step = sync_step_multi_era(
+        let raw_step = sync_step(
             chain_sync,
             block_fetch,
             from_point.to_cbor_bytes(),
         )
         .await?;
 
-        match &me_step {
-            MultiEraSyncStep::RollForward { tip, blocks, .. } => {
+        let me_step = match raw_step {
+            SyncStep::RollForward {
+                header,
+                tip,
+                blocks: raw_blocks,
+            } => {
+                // Body-hash verification on raw bytes (before decode).
                 if let Some(config) = verification {
-                    for block in blocks {
+                    if config.verify_body_hash {
+                        for raw in &raw_blocks {
+                            verify_block_body_hash(raw)?;
+                        }
+                    }
+                }
+
+                let decoded_tip = decode_point(&tip)?;
+                let decoded_blocks = decode_multi_era_blocks(&raw_blocks)?;
+
+                // Header verification on decoded blocks.
+                if let Some(config) = verification {
+                    for block in &decoded_blocks {
                         verify_multi_era_block(block, config)?;
                     }
                 }
-                from_point = *tip;
-                fetched_blocks += blocks.len();
+
+                from_point = decoded_tip;
+                fetched_blocks += decoded_blocks.len();
+
+                MultiEraSyncStep::RollForward {
+                    raw_header: header,
+                    tip: decoded_tip,
+                    blocks: decoded_blocks,
+                }
             }
-            MultiEraSyncStep::RollBackward { point, .. } => {
-                from_point = *point;
+            SyncStep::RollBackward { point, tip } => {
+                let decoded_point = decode_point(&point)?;
+                from_point = decoded_point;
                 rollback_count += 1;
+
+                MultiEraSyncStep::RollBackward {
+                    point: decoded_point,
+                    tip: decode_point(&tip)?,
+                }
             }
-        }
+        };
 
         apply_multi_era_step_to_volatile(store, &me_step)?;
         steps.push(me_step);
