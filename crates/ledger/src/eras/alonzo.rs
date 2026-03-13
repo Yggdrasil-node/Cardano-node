@@ -1,1 +1,462 @@
+//! Alonzo-era transaction types with Plutus script support.
+//!
+//! Alonzo introduces Plutus smart contracts, adding the following to the
+//! Mary-era foundation:
+//! - `transaction_output` gains an optional `datum_hash`.
+//! - `transaction_body` gains keys 11 (`script_data_hash`), 13
+//!   (`collateral`), 14 (`required_signers`), 15 (`network_id`).
+//! - `transaction_witness_set` gains Plutus scripts (key 3), datums
+//!   (key 4), and redeemers (key 5).
+//! - The `transaction` tuple becomes 4-element with an `is_valid` flag.
+//!
+//! This module models new Alonzo-specific types. Plutus data is kept
+//! opaque (raw CBOR bytes) until a full evaluator is needed.
+//!
+//! Reference:
+//! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl>
+
+use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
+use crate::eras::shelley::ShelleyTxIn;
+use crate::error::LedgerError;
+
 pub const ALONZO_NAME: &str = "Alonzo";
+
+// ---------------------------------------------------------------------------
+// Execution units
+// ---------------------------------------------------------------------------
+
+/// Computational budget for Plutus script execution.
+///
+/// CDDL: `ex_units = [mem : uint, steps : uint]`
+///
+/// Reference: `Cardano.Ledger.Alonzo.Plutus.TxInfo` — `ExUnits`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExUnits {
+    /// Memory units consumed.
+    pub mem: u64,
+    /// CPU step units consumed.
+    pub steps: u64,
+}
+
+impl CborEncode for ExUnits {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2).unsigned(self.mem).unsigned(self.steps);
+    }
+}
+
+impl CborDecode for ExUnits {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let mem = dec.unsigned()?;
+        let steps = dec.unsigned()?;
+        Ok(Self { mem, steps })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Redeemer
+// ---------------------------------------------------------------------------
+
+/// A redeemer that supplies execution context to a Plutus script.
+///
+/// CDDL: `redeemer = [tag : redeemer_tag, index : uint,
+///          data : plutus_data, ex_units : ex_units]`
+///
+/// Plutus data is stored as opaque CBOR bytes to avoid modeling the
+/// full recursive `plutus_data` type at this stage.
+///
+/// Reference: `Cardano.Ledger.Alonzo.TxWits` — `Redeemer`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Redeemer {
+    /// Redeemer purpose tag: 0 = spend, 1 = mint, 2 = cert, 3 = reward.
+    pub tag: u8,
+    /// Index into the relevant sorted set (inputs, policies, etc.).
+    pub index: u64,
+    /// Plutus data payload as raw CBOR bytes.
+    pub data: Vec<u8>,
+    /// Execution budget for this redeemer.
+    pub ex_units: ExUnits,
+}
+
+impl CborEncode for Redeemer {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(4)
+            .unsigned(u64::from(self.tag))
+            .unsigned(self.index)
+            .raw(&self.data);
+        self.ex_units.encode_cbor(enc);
+    }
+}
+
+impl CborDecode for Redeemer {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 4 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 4,
+                actual: len as usize,
+            });
+        }
+        let tag = dec.unsigned()? as u8;
+        let index = dec.unsigned()?;
+        // Capture the plutus_data item as raw CBOR bytes.
+        let data_start = dec.position();
+        dec.skip()?;
+        let data_end = dec.position();
+        let data = dec.slice(data_start, data_end)?.to_vec();
+        let ex_units = ExUnits::decode_cbor(dec)?;
+        Ok(Self {
+            tag,
+            index,
+            data,
+            ex_units,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Alonzo transaction output
+// ---------------------------------------------------------------------------
+
+/// An Alonzo-era transaction output with optional datum hash.
+///
+/// CDDL: `transaction_output = [address, amount : value,
+///          ? datum_hash : hash32]`
+///
+/// Reference: `Cardano.Ledger.Alonzo.TxOut`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlonzoTxOut {
+    /// Raw address bytes.
+    pub address: Vec<u8>,
+    /// Output value (coin or coin + multi-asset).
+    pub amount: Value,
+    /// Optional datum hash locking the output to a Plutus script.
+    pub datum_hash: Option<[u8; 32]>,
+}
+
+impl CborEncode for AlonzoTxOut {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        let len = if self.datum_hash.is_some() { 3 } else { 2 };
+        enc.array(len).bytes(&self.address);
+        self.amount.encode_cbor(enc);
+        if let Some(hash) = &self.datum_hash {
+            enc.bytes(hash);
+        }
+    }
+}
+
+impl CborDecode for AlonzoTxOut {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 && len != 3 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let address = dec.bytes()?.to_vec();
+        let amount = Value::decode_cbor(dec)?;
+        let datum_hash = if len == 3 {
+            let raw = dec.bytes()?;
+            let hash: [u8; 32] =
+                raw.try_into()
+                    .map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 32,
+                        actual: raw.len(),
+                    })?;
+            Some(hash)
+        } else {
+            None
+        };
+        Ok(Self {
+            address,
+            amount,
+            datum_hash,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Alonzo transaction body
+// ---------------------------------------------------------------------------
+
+/// Alonzo-era transaction body.
+///
+/// Extends Mary by adding:
+/// - Key 11: `script_data_hash` — hash of redeemers, datums, and cost models.
+/// - Key 13: `collateral` — set of inputs pledged as collateral.
+/// - Key 14: `required_signers` — set of key hashes that must sign.
+/// - Key 15: `network_id` — 0 (testnet) or 1 (mainnet).
+///
+/// ```text
+/// transaction_body =
+///   { 0  : set<transaction_input>
+///   , 1  : [* transaction_output]
+///   , 2  : coin
+///   , ? 3  : slot
+///   , ? 4  : [* certificate]
+///   , ? 5  : withdrawals
+///   , ? 6  : update
+///   , ? 7  : auxiliary_data_hash
+///   , ? 8  : slot
+///   , ? 9  : mint
+///   , ? 11 : script_data_hash      ; NEW
+///   , ? 13 : set<transaction_input> ; NEW (collateral)
+///   , ? 14 : required_signers       ; NEW
+///   , ? 15 : network_id             ; NEW
+///   }
+/// ```
+///
+/// Only modeled optional keys: 3, 7, 8, 9, 11, 13, 14, 15.
+/// Certificates (4), withdrawals (5), and update (6) are future work.
+///
+/// Reference: `Cardano.Ledger.Alonzo.TxBody`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlonzoTxBody {
+    /// Set of transaction inputs (CDDL key 0).
+    pub inputs: Vec<ShelleyTxIn>,
+    /// Sequence of transaction outputs (CDDL key 1).
+    pub outputs: Vec<AlonzoTxOut>,
+    /// Transaction fee in lovelace (CDDL key 2).
+    pub fee: u64,
+    /// Optional TTL slot (CDDL key 3).
+    pub ttl: Option<u64>,
+    /// Optional auxiliary data hash (CDDL key 7).
+    pub auxiliary_data_hash: Option<[u8; 32]>,
+    /// Optional validity interval start (CDDL key 8).
+    pub validity_interval_start: Option<u64>,
+    /// Optional mint field for native tokens (CDDL key 9).
+    pub mint: Option<MintAsset>,
+    /// Optional hash of script integrity data (CDDL key 11).
+    pub script_data_hash: Option<[u8; 32]>,
+    /// Optional collateral inputs (CDDL key 13).
+    pub collateral: Option<Vec<ShelleyTxIn>>,
+    /// Optional required signer key hashes (CDDL key 14).
+    pub required_signers: Option<Vec<[u8; 28]>>,
+    /// Optional network ID: 0 = testnet, 1 = mainnet (CDDL key 15).
+    pub network_id: Option<u8>,
+}
+
+impl CborEncode for AlonzoTxBody {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        let mut field_count: u64 = 3; // keys 0, 1, 2
+        if self.ttl.is_some() {
+            field_count += 1;
+        }
+        if self.auxiliary_data_hash.is_some() {
+            field_count += 1;
+        }
+        if self.validity_interval_start.is_some() {
+            field_count += 1;
+        }
+        if self.mint.is_some() {
+            field_count += 1;
+        }
+        if self.script_data_hash.is_some() {
+            field_count += 1;
+        }
+        if self.collateral.is_some() {
+            field_count += 1;
+        }
+        if self.required_signers.is_some() {
+            field_count += 1;
+        }
+        if self.network_id.is_some() {
+            field_count += 1;
+        }
+        enc.map(field_count);
+
+        // Key 0: inputs.
+        enc.unsigned(0).array(self.inputs.len() as u64);
+        for input in &self.inputs {
+            input.encode_cbor(enc);
+        }
+
+        // Key 1: outputs.
+        enc.unsigned(1).array(self.outputs.len() as u64);
+        for output in &self.outputs {
+            output.encode_cbor(enc);
+        }
+
+        // Key 2: fee.
+        enc.unsigned(2).unsigned(self.fee);
+
+        // Key 3: ttl.
+        if let Some(ttl) = self.ttl {
+            enc.unsigned(3).unsigned(ttl);
+        }
+
+        // Key 7: auxiliary_data_hash.
+        if let Some(hash) = &self.auxiliary_data_hash {
+            enc.unsigned(7).bytes(hash);
+        }
+
+        // Key 8: validity_interval_start.
+        if let Some(start) = self.validity_interval_start {
+            enc.unsigned(8).unsigned(start);
+        }
+
+        // Key 9: mint.
+        if let Some(mint) = &self.mint {
+            enc.unsigned(9);
+            encode_mint_asset(enc, mint);
+        }
+
+        // Key 11: script_data_hash.
+        if let Some(hash) = &self.script_data_hash {
+            enc.unsigned(11).bytes(hash);
+        }
+
+        // Key 13: collateral.
+        if let Some(collateral) = &self.collateral {
+            enc.unsigned(13).array(collateral.len() as u64);
+            for input in collateral {
+                input.encode_cbor(enc);
+            }
+        }
+
+        // Key 14: required_signers.
+        if let Some(signers) = &self.required_signers {
+            enc.unsigned(14).array(signers.len() as u64);
+            for signer in signers {
+                enc.bytes(signer);
+            }
+        }
+
+        // Key 15: network_id.
+        if let Some(nid) = self.network_id {
+            enc.unsigned(15).unsigned(u64::from(nid));
+        }
+    }
+}
+
+impl CborDecode for AlonzoTxBody {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let map_len = dec.map()?;
+
+        let mut inputs: Option<Vec<ShelleyTxIn>> = None;
+        let mut outputs: Option<Vec<AlonzoTxOut>> = None;
+        let mut fee: Option<u64> = None;
+        let mut ttl: Option<u64> = None;
+        let mut auxiliary_data_hash: Option<[u8; 32]> = None;
+        let mut validity_interval_start: Option<u64> = None;
+        let mut mint: Option<MintAsset> = None;
+        let mut script_data_hash: Option<[u8; 32]> = None;
+        let mut collateral: Option<Vec<ShelleyTxIn>> = None;
+        let mut required_signers: Option<Vec<[u8; 28]>> = None;
+        let mut network_id: Option<u8> = None;
+
+        for _ in 0..map_len {
+            let key = dec.unsigned()?;
+            match key {
+                0 => {
+                    let count = dec.array()?;
+                    let mut ins = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        ins.push(ShelleyTxIn::decode_cbor(dec)?);
+                    }
+                    inputs = Some(ins);
+                }
+                1 => {
+                    let count = dec.array()?;
+                    let mut outs = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        outs.push(AlonzoTxOut::decode_cbor(dec)?);
+                    }
+                    outputs = Some(outs);
+                }
+                2 => {
+                    fee = Some(dec.unsigned()?);
+                }
+                3 => {
+                    ttl = Some(dec.unsigned()?);
+                }
+                7 => {
+                    let raw = dec.bytes()?;
+                    let hash: [u8; 32] =
+                        raw.try_into()
+                            .map_err(|_| LedgerError::CborInvalidLength {
+                                expected: 32,
+                                actual: raw.len(),
+                            })?;
+                    auxiliary_data_hash = Some(hash);
+                }
+                8 => {
+                    validity_interval_start = Some(dec.unsigned()?);
+                }
+                9 => {
+                    mint = Some(decode_mint_asset(dec)?);
+                }
+                11 => {
+                    let raw = dec.bytes()?;
+                    let hash: [u8; 32] =
+                        raw.try_into()
+                            .map_err(|_| LedgerError::CborInvalidLength {
+                                expected: 32,
+                                actual: raw.len(),
+                            })?;
+                    script_data_hash = Some(hash);
+                }
+                13 => {
+                    let count = dec.array()?;
+                    let mut cols = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        cols.push(ShelleyTxIn::decode_cbor(dec)?);
+                    }
+                    collateral = Some(cols);
+                }
+                14 => {
+                    let count = dec.array()?;
+                    let mut sigs = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        let raw = dec.bytes()?;
+                        let hash: [u8; 28] =
+                            raw.try_into()
+                                .map_err(|_| LedgerError::CborInvalidLength {
+                                    expected: 28,
+                                    actual: raw.len(),
+                                })?;
+                        sigs.push(hash);
+                    }
+                    required_signers = Some(sigs);
+                }
+                15 => {
+                    network_id = Some(dec.unsigned()? as u8);
+                }
+                _ => {
+                    dec.skip()?;
+                }
+            }
+        }
+
+        Ok(Self {
+            inputs: inputs.ok_or(LedgerError::CborInvalidLength {
+                expected: 1,
+                actual: 0,
+            })?,
+            outputs: outputs.ok_or(LedgerError::CborInvalidLength {
+                expected: 1,
+                actual: 0,
+            })?,
+            fee: fee.ok_or(LedgerError::CborInvalidLength {
+                expected: 1,
+                actual: 0,
+            })?,
+            ttl,
+            auxiliary_data_hash,
+            validity_interval_start,
+            mint,
+            script_data_hash,
+            collateral,
+            required_signers,
+            network_id,
+        })
+    }
+}

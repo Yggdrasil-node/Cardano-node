@@ -1,18 +1,23 @@
 pub mod allegra;
-mod alonzo;
+pub mod alonzo;
 mod babbage;
-mod byron;
+pub mod byron;
 mod conway;
-mod mary;
+pub mod mary;
 pub mod shelley;
 
 pub use allegra::ALLEGRA_NAME;
 pub use allegra::{AllegraTxBody, NativeScript};
 pub use alonzo::ALONZO_NAME;
+pub use alonzo::{AlonzoTxBody, AlonzoTxOut, ExUnits, Redeemer};
 pub use babbage::BABBAGE_NAME;
 pub use byron::BYRON_NAME;
+pub use byron::{ByronBlock, BYRON_SLOTS_PER_EPOCH};
 pub use conway::CONWAY_NAME;
 pub use mary::MARY_NAME;
+pub use mary::{
+    AssetName, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, PolicyId, Value,
+};
 pub use shelley::SHELLEY_NAME;
 pub use shelley::{
     ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody,

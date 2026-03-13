@@ -1,8 +1,10 @@
 use yggdrasil_ledger::{
-    AllegraTxBody, Block, BlockHeader, BlockNo, CborDecode, CborEncode, Decoder, Encoder, Era,
-    HeaderHash, LedgerError, LedgerState, NativeScript, Nonce, Point, ShelleyBlock, ShelleyHeader,
+    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo, ByronBlock, CborDecode,
+    CborEncode, Decoder, Encoder, Era, ExUnits, HeaderHash, LedgerError, LedgerState, MaryTxBody,
+    MaryTxOut, NativeScript, Nonce, Point, Redeemer, ShelleyBlock, ShelleyHeader,
     ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
+    ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId, Value,
+    BYRON_SLOTS_PER_EPOCH,
 };
 
 #[test]
@@ -1536,4 +1538,607 @@ fn cbor_integer_roundtrip() {
     let bytes = enc.into_bytes();
     let mut dec = Decoder::new(&bytes);
     assert_eq!(dec.integer().expect("zero"), 0);
+}
+
+// ===========================================================================
+// Mary era types
+// ===========================================================================
+
+#[test]
+fn value_coin_cbor_round_trip() {
+    let val = Value::Coin(5_000_000);
+    let encoded = val.to_cbor_bytes();
+    let decoded = Value::from_cbor_bytes(&encoded).expect("decode Value::Coin");
+    assert_eq!(decoded, val);
+    assert_eq!(val.coin(), 5_000_000);
+    assert!(val.multi_asset().is_none());
+}
+
+#[test]
+fn value_coin_and_assets_cbor_round_trip() {
+    use std::collections::BTreeMap;
+    let mut assets = BTreeMap::new();
+    assets.insert(vec![0x41, 0x42, 0x43], 100_u64); // asset name "ABC"
+    let mut ma = BTreeMap::new();
+    ma.insert([0xAA; 28], assets);
+    let val = Value::CoinAndAssets(2_000_000, ma);
+    let encoded = val.to_cbor_bytes();
+    let decoded = Value::from_cbor_bytes(&encoded).expect("decode Value::CoinAndAssets");
+    assert_eq!(decoded, val);
+    assert_eq!(val.coin(), 2_000_000);
+    assert!(val.multi_asset().is_some());
+    let inner = val.multi_asset().expect("multi_asset present");
+    assert_eq!(inner.len(), 1);
+    let policy_assets = inner.get(&[0xAA; 28]).expect("policy exists");
+    assert_eq!(*policy_assets.get(&vec![0x41, 0x42, 0x43]).expect("asset exists"), 100);
+}
+
+#[test]
+fn value_coin_and_assets_multiple_policies() {
+    use std::collections::BTreeMap;
+    let mut assets1 = BTreeMap::new();
+    assets1.insert(vec![], 500_u64); // empty asset name (ADA-like)
+    let mut assets2 = BTreeMap::new();
+    assets2.insert(b"TokenA".to_vec(), 1000_u64);
+    assets2.insert(b"TokenB".to_vec(), 2000_u64);
+    let mut ma = BTreeMap::new();
+    ma.insert([0x01; 28], assets1);
+    ma.insert([0x02; 28], assets2);
+    let val = Value::CoinAndAssets(10_000_000, ma);
+    let encoded = val.to_cbor_bytes();
+    let decoded = Value::from_cbor_bytes(&encoded).expect("decode multi-policy Value");
+    assert_eq!(decoded, val);
+}
+
+#[test]
+fn mary_txout_coin_only_cbor_round_trip() {
+    let txout = MaryTxOut {
+        address: vec![0x61; 29],
+        amount: Value::Coin(3_000_000),
+    };
+    let encoded = txout.to_cbor_bytes();
+    let decoded = MaryTxOut::from_cbor_bytes(&encoded).expect("decode MaryTxOut coin-only");
+    assert_eq!(decoded, txout);
+}
+
+#[test]
+fn mary_txout_with_assets_cbor_round_trip() {
+    use std::collections::BTreeMap;
+    let mut assets = BTreeMap::new();
+    assets.insert(b"NFT".to_vec(), 1_u64);
+    let mut ma = BTreeMap::new();
+    ma.insert([0xBB; 28], assets);
+    let txout = MaryTxOut {
+        address: vec![0x00; 57],
+        amount: Value::CoinAndAssets(1_500_000, ma),
+    };
+    let encoded = txout.to_cbor_bytes();
+    let decoded = MaryTxOut::from_cbor_bytes(&encoded).expect("decode MaryTxOut with assets");
+    assert_eq!(decoded, txout);
+}
+
+#[test]
+fn mary_tx_body_required_fields_only() {
+    let body = MaryTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x11; 32],
+            index: 0,
+        }],
+        outputs: vec![MaryTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(1_000_000),
+        }],
+        fee: 200_000,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = MaryTxBody::from_cbor_bytes(&encoded).expect("decode MaryTxBody required");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn mary_tx_body_all_optional_fields() {
+    use std::collections::BTreeMap;
+
+    // Mint: create 50 tokens of one asset, burn 10 of another
+    let mut mint_assets = BTreeMap::new();
+    mint_assets.insert(b"Gold".to_vec(), 50_i64);
+    mint_assets.insert(b"Silver".to_vec(), -10_i64);
+    let mut mint = BTreeMap::new();
+    mint.insert([0xCC; 28], mint_assets);
+
+    let body = MaryTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x22; 32],
+            index: 1,
+        }],
+        outputs: vec![MaryTxOut {
+            address: vec![0x00; 57],
+            amount: Value::Coin(5_000_000),
+        }],
+        fee: 180_000,
+        ttl: Some(100_000),
+        auxiliary_data_hash: Some([0xDD; 32]),
+        validity_interval_start: Some(50_000),
+        mint: Some(mint),
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = MaryTxBody::from_cbor_bytes(&encoded).expect("decode MaryTxBody all fields");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn mary_tx_body_with_multi_asset_outputs() {
+    use std::collections::BTreeMap;
+    let mut assets = BTreeMap::new();
+    assets.insert(b"HOSKY".to_vec(), 1_000_000_u64);
+    let mut ma = BTreeMap::new();
+    ma.insert([0xFF; 28], assets);
+
+    let body = MaryTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x33; 32],
+            index: 0,
+        }],
+        outputs: vec![
+            MaryTxOut {
+                address: vec![0x61; 29],
+                amount: Value::CoinAndAssets(2_000_000, ma.clone()),
+            },
+            MaryTxOut {
+                address: vec![0x61; 29],
+                amount: Value::Coin(3_000_000),
+            },
+        ],
+        fee: 170_000,
+        ttl: Some(200_000),
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = MaryTxBody::from_cbor_bytes(&encoded).expect("decode MaryTxBody multi-asset out");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn mary_tx_body_unknown_keys_skipped() {
+    // Build a valid body then inject an extra key to test forward compat.
+    let mut enc = Encoder::new();
+    enc.map(4); // 3 required + 1 unknown
+
+    // key 0: inputs (1 input)
+    enc.unsigned(0).array(1);
+    enc.array(2).bytes(&[0x44; 32]).unsigned(0);
+
+    // key 1: outputs (1 output, pure coin)
+    enc.unsigned(1).array(1);
+    enc.array(2).bytes(&[0x61; 29]).unsigned(1_000_000);
+
+    // key 2: fee
+    enc.unsigned(2).unsigned(100_000);
+
+    // key 99: unknown
+    enc.unsigned(99).unsigned(12345);
+
+    let bytes = enc.into_bytes();
+    let decoded = MaryTxBody::from_cbor_bytes(&bytes).expect("decode with unknown keys");
+    assert_eq!(decoded.fee, 100_000);
+    assert!(decoded.mint.is_none());
+}
+
+#[test]
+fn mary_tx_body_mint_signed_quantities_round_trip() {
+    use std::collections::BTreeMap;
+    // Burn scenario: all negative
+    let mut burn_assets = BTreeMap::new();
+    burn_assets.insert(b"TKN".to_vec(), -999_i64);
+    let mut mint = BTreeMap::new();
+    mint.insert([0xEE; 28], burn_assets);
+
+    let body = MaryTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x55; 32],
+            index: 0,
+        }],
+        outputs: vec![MaryTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+        }],
+        fee: 160_000,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: Some(mint),
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = MaryTxBody::from_cbor_bytes(&encoded).expect("decode burn mint");
+    assert_eq!(decoded.mint.expect("mint present").get(&[0xEE; 28]).expect("policy")
+        .get(&b"TKN".to_vec()).copied(), Some(-999));
+}
+
+// ===========================================================================
+// Alonzo era types
+// ===========================================================================
+
+#[test]
+fn ex_units_cbor_round_trip() {
+    let eu = ExUnits {
+        mem: 500_000,
+        steps: 200_000_000,
+    };
+    let encoded = eu.to_cbor_bytes();
+    let decoded = ExUnits::from_cbor_bytes(&encoded).expect("decode ExUnits");
+    assert_eq!(decoded, eu);
+}
+
+#[test]
+fn redeemer_cbor_round_trip() {
+    // Build a minimal plutus_data (just an integer 42) as raw CBOR.
+    let mut data_enc = Encoder::new();
+    data_enc.unsigned(42);
+    let plutus_data_bytes = data_enc.into_bytes();
+
+    let redeemer = Redeemer {
+        tag: 0, // spend
+        index: 0,
+        data: plutus_data_bytes,
+        ex_units: ExUnits {
+            mem: 100_000,
+            steps: 50_000_000,
+        },
+    };
+    let encoded = redeemer.to_cbor_bytes();
+    let decoded = Redeemer::from_cbor_bytes(&encoded).expect("decode Redeemer");
+    assert_eq!(decoded, redeemer);
+}
+
+#[test]
+fn redeemer_mint_tag() {
+    let mut data_enc = Encoder::new();
+    data_enc.array(0); // empty list as data
+    let data = data_enc.into_bytes();
+
+    let redeemer = Redeemer {
+        tag: 1, // mint
+        index: 2,
+        data,
+        ex_units: ExUnits {
+            mem: 0,
+            steps: 0,
+        },
+    };
+    let encoded = redeemer.to_cbor_bytes();
+    let decoded = Redeemer::from_cbor_bytes(&encoded).expect("decode mint Redeemer");
+    assert_eq!(decoded.tag, 1);
+    assert_eq!(decoded.index, 2);
+}
+
+#[test]
+fn alonzo_txout_no_datum_cbor_round_trip() {
+    let txout = AlonzoTxOut {
+        address: vec![0x61; 29],
+        amount: Value::Coin(3_000_000),
+        datum_hash: None,
+    };
+    let encoded = txout.to_cbor_bytes();
+    let decoded = AlonzoTxOut::from_cbor_bytes(&encoded).expect("decode AlonzoTxOut no datum");
+    assert_eq!(decoded, txout);
+}
+
+#[test]
+fn alonzo_txout_with_datum_hash_cbor_round_trip() {
+    use std::collections::BTreeMap;
+    let mut assets = BTreeMap::new();
+    assets.insert(b"Script".to_vec(), 1_u64);
+    let mut ma = BTreeMap::new();
+    ma.insert([0xAA; 28], assets);
+
+    let txout = AlonzoTxOut {
+        address: vec![0x71; 57],
+        amount: Value::CoinAndAssets(2_000_000, ma),
+        datum_hash: Some([0xDD; 32]),
+    };
+    let encoded = txout.to_cbor_bytes();
+    let decoded = AlonzoTxOut::from_cbor_bytes(&encoded).expect("decode AlonzoTxOut with datum");
+    assert_eq!(decoded, txout);
+    assert_eq!(decoded.datum_hash, Some([0xDD; 32]));
+}
+
+#[test]
+fn alonzo_tx_body_required_fields_only() {
+    let body = AlonzoTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x11; 32],
+            index: 0,
+        }],
+        outputs: vec![AlonzoTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(1_000_000),
+            datum_hash: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = AlonzoTxBody::from_cbor_bytes(&encoded).expect("decode AlonzoTxBody required");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn alonzo_tx_body_all_optional_fields() {
+    use std::collections::BTreeMap;
+
+    let mut mint_assets = BTreeMap::new();
+    mint_assets.insert(b"PlutusToken".to_vec(), 100_i64);
+    let mut mint = BTreeMap::new();
+    mint.insert([0xCC; 28], mint_assets);
+
+    let body = AlonzoTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x22; 32],
+            index: 1,
+        }],
+        outputs: vec![AlonzoTxOut {
+            address: vec![0x71; 57],
+            amount: Value::Coin(5_000_000),
+            datum_hash: Some([0xAA; 32]),
+        }],
+        fee: 300_000,
+        ttl: Some(500_000),
+        auxiliary_data_hash: Some([0xBB; 32]),
+        validity_interval_start: Some(100_000),
+        mint: Some(mint),
+        script_data_hash: Some([0xEE; 32]),
+        collateral: Some(vec![ShelleyTxIn {
+            transaction_id: [0x33; 32],
+            index: 0,
+        }]),
+        required_signers: Some(vec![[0x44; 28], [0x55; 28]]),
+        network_id: Some(1), // mainnet
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = AlonzoTxBody::from_cbor_bytes(&encoded).expect("decode AlonzoTxBody all fields");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn alonzo_tx_body_collateral_only() {
+    let body = AlonzoTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x66; 32],
+            index: 0,
+        }],
+        outputs: vec![AlonzoTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+            datum_hash: None,
+        }],
+        fee: 170_000,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: Some(vec![
+            ShelleyTxIn {
+                transaction_id: [0x77; 32],
+                index: 0,
+            },
+            ShelleyTxIn {
+                transaction_id: [0x88; 32],
+                index: 1,
+            },
+        ]),
+        required_signers: None,
+        network_id: None,
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = AlonzoTxBody::from_cbor_bytes(&encoded).expect("decode collateral-only");
+    assert_eq!(decoded.collateral.expect("collateral present").len(), 2);
+}
+
+#[test]
+fn alonzo_tx_body_unknown_keys_skipped() {
+    let mut enc = Encoder::new();
+    enc.map(4); // 3 required + 1 unknown
+
+    // key 0: inputs
+    enc.unsigned(0).array(1);
+    enc.array(2).bytes(&[0x99; 32]).unsigned(0);
+
+    // key 1: outputs (no datum variant)
+    enc.unsigned(1).array(1);
+    enc.array(2).bytes(&[0x61; 29]).unsigned(1_000_000);
+
+    // key 2: fee
+    enc.unsigned(2).unsigned(100_000);
+
+    // key 50: unknown
+    enc.unsigned(50).bytes(&[0xFF; 8]);
+
+    let bytes = enc.into_bytes();
+    let decoded = AlonzoTxBody::from_cbor_bytes(&bytes).expect("decode with unknown keys");
+    assert_eq!(decoded.fee, 100_000);
+    assert!(decoded.script_data_hash.is_none());
+    assert!(decoded.collateral.is_none());
+}
+
+#[test]
+fn alonzo_tx_body_network_id_testnet() {
+    let body = AlonzoTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![AlonzoTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(1_000_000),
+            datum_hash: None,
+        }],
+        fee: 150_000,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: Some(0), // testnet
+    };
+    let encoded = body.to_cbor_bytes();
+    let decoded = AlonzoTxBody::from_cbor_bytes(&encoded).expect("decode testnet network_id");
+    assert_eq!(decoded.network_id, Some(0));
+}
+
+// ===========================================================================
+// Byron block envelope
+// ===========================================================================
+
+/// Build a synthetic Byron EBB as CBOR bytes.
+///
+/// EBB structure: `[header, body, extra]`
+/// Header: `[protocol_magic, prev_hash, body_proof, consensus_data, extra_data]`
+/// Consensus data: `[epoch, chain_difficulty]`
+fn build_byron_ebb(epoch: u64, prev_hash: &[u8; 32]) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    // outer [header, body, extra]
+    enc.array(3);
+
+    // header [protocol_magic, prev_hash, body_proof, consensus_data, extra_data]
+    enc.array(5);
+    enc.unsigned(764824073); // protocol_magic (mainnet)
+    enc.bytes(prev_hash);
+    enc.bytes(&[0xAA; 32]); // body_proof (dummy)
+
+    // consensus_data [epoch, chain_difficulty]
+    enc.array(2);
+    enc.unsigned(epoch);
+    enc.array(1).unsigned(0); // chain_difficulty [0]
+
+    enc.array(0); // extra_data (empty)
+
+    // body (empty array)
+    enc.array(0);
+
+    // extra (empty array)
+    enc.array(0);
+
+    enc.into_bytes()
+}
+
+/// Build a synthetic Byron main block as CBOR bytes.
+///
+/// Main block: `[header, body, extra]`
+/// Header: `[protocol_magic, prev_hash, body_proof, consensus_data, extra_data]`
+/// Consensus data: `[slot_id, pubkey, difficulty, signature]`
+/// Slot id: `[epoch, slot_in_epoch]`
+fn build_byron_main(epoch: u64, slot_in_epoch: u64, prev_hash: &[u8; 32]) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    // outer [header, body, extra]
+    enc.array(3);
+
+    // header [protocol_magic, prev_hash, body_proof, consensus_data, extra_data]
+    enc.array(5);
+    enc.unsigned(764824073); // protocol_magic
+    enc.bytes(prev_hash);
+    enc.bytes(&[0xBB; 32]); // body_proof (dummy)
+
+    // consensus_data [slot_id, pubkey, difficulty, signature]
+    enc.array(4);
+
+    // slot_id [epoch, slot_in_epoch]
+    enc.array(2);
+    enc.unsigned(epoch);
+    enc.unsigned(slot_in_epoch);
+
+    enc.bytes(&[0xCC; 64]); // pubkey (dummy)
+    enc.array(1).unsigned(1); // difficulty [1]
+    enc.bytes(&[0xDD; 64]); // signature (dummy)
+
+    enc.array(0); // extra_data (empty)
+
+    // body (empty)
+    enc.array(0);
+
+    // extra (empty)
+    enc.array(0);
+
+    enc.into_bytes()
+}
+
+#[test]
+fn byron_ebb_decode() {
+    let prev_hash = [0x11; 32];
+    let raw = build_byron_ebb(5, &prev_hash);
+    let block = ByronBlock::decode_ebb(&raw).expect("decode EBB");
+    assert_eq!(block.epoch(), 5);
+    assert_eq!(*block.prev_hash(), prev_hash);
+    assert_eq!(block.absolute_slot(BYRON_SLOTS_PER_EPOCH), 5 * 21600);
+}
+
+#[test]
+fn byron_main_block_decode() {
+    let prev_hash = [0x22; 32];
+    let raw = build_byron_main(10, 500, &prev_hash);
+    let block = ByronBlock::decode_main(&raw).expect("decode main block");
+    assert_eq!(block.epoch(), 10);
+    assert_eq!(*block.prev_hash(), prev_hash);
+    assert_eq!(
+        block.absolute_slot(BYRON_SLOTS_PER_EPOCH),
+        10 * 21600 + 500
+    );
+}
+
+#[test]
+fn byron_ebb_epoch_zero() {
+    let raw = build_byron_ebb(0, &[0x00; 32]);
+    let block = ByronBlock::decode_ebb(&raw).expect("decode EBB epoch 0");
+    assert_eq!(block.epoch(), 0);
+    assert_eq!(block.absolute_slot(BYRON_SLOTS_PER_EPOCH), 0);
+}
+
+#[test]
+fn byron_main_block_first_slot() {
+    let raw = build_byron_main(3, 0, &[0x33; 32]);
+    let block = ByronBlock::decode_main(&raw).expect("decode first slot");
+    assert_eq!(block.absolute_slot(BYRON_SLOTS_PER_EPOCH), 3 * 21600);
+}
+
+#[test]
+fn byron_main_block_last_slot() {
+    let raw = build_byron_main(7, 21599, &[0x44; 32]);
+    let block = ByronBlock::decode_main(&raw).expect("decode last slot");
+    assert_eq!(
+        block.absolute_slot(BYRON_SLOTS_PER_EPOCH),
+        7 * 21600 + 21599
+    );
+}
+
+#[test]
+fn byron_block_variant_accessors() {
+    let ebb = ByronBlock::EpochBoundary {
+        epoch: 2,
+        prev_hash: [0x55; 32],
+    };
+    assert_eq!(ebb.epoch(), 2);
+    assert_eq!(*ebb.prev_hash(), [0x55; 32]);
+
+    let main = ByronBlock::MainBlock {
+        epoch: 3,
+        slot_in_epoch: 100,
+        prev_hash: [0x66; 32],
+    };
+    assert_eq!(main.epoch(), 3);
+    assert_eq!(*main.prev_hash(), [0x66; 32]);
 }
