@@ -6221,6 +6221,110 @@ fn ledger_state_empty_allegra_block_advances_tip() {
 }
 
 #[test]
+fn ledger_state_snapshot_exposes_tip_and_era() {
+    let mut state = LedgerState::new(Era::Babbage);
+    state.tip = Point::BlockPoint(SlotNo(77), HeaderHash([0xAB; 32]));
+
+    let snapshot = state.snapshot();
+    assert_eq!(snapshot.current_era(), Era::Babbage);
+    assert_eq!(snapshot.tip(), &Point::BlockPoint(SlotNo(77), HeaderHash([0xAB; 32])));
+}
+
+#[test]
+fn ledger_state_query_utxos_by_address_deduplicates_dual_views() {
+    let mut state = LedgerState::new(Era::Mary);
+    let address = Address::Enterprise(EnterpriseAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash([0x11; 28]),
+    });
+    let address_bytes = address.to_bytes();
+    let txin = ShelleyTxIn {
+        transaction_id: [0x22; 32],
+        index: 0,
+    };
+
+    state.utxo_mut().insert(
+        txin.clone(),
+        ShelleyTxOut {
+            address: address_bytes.clone(),
+            amount: 3_000_000,
+        },
+    );
+    state.multi_era_utxo_mut().insert_shelley(
+        txin.clone(),
+        ShelleyTxOut {
+            address: address_bytes.clone(),
+            amount: 3_000_000,
+        },
+    );
+    state.multi_era_utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x33; 32],
+            index: 1,
+        },
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: address_bytes,
+            amount: 4_000_000,
+        }),
+    );
+
+    let entries = state.query_utxos_by_address(&address);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].0, txin);
+    assert_eq!(entries[1].0.index, 1);
+}
+
+#[test]
+fn ledger_state_query_balance_aggregates_coin_and_assets() {
+    use std::collections::BTreeMap;
+
+    let mut state = LedgerState::new(Era::Mary);
+    let address = Address::Enterprise(EnterpriseAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash([0x44; 28]),
+    });
+    let address_bytes = address.to_bytes();
+
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x55; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: address_bytes.clone(),
+            amount: 2_000_000,
+        },
+    );
+
+    let policy = [0x66; 28];
+    let asset_name = b"oak".to_vec();
+    let mut assets = BTreeMap::new();
+    assets.insert(asset_name.clone(), 7u64);
+    let mut multi_asset = BTreeMap::new();
+    multi_asset.insert(policy, assets);
+
+    state.multi_era_utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x77; 32],
+            index: 1,
+        },
+        MultiEraTxOut::Mary(MaryTxOut {
+            address: address_bytes,
+            amount: Value::CoinAndAssets(5_000_000, multi_asset),
+        }),
+    );
+
+    let balance = state.query_balance(&address);
+    match balance {
+        Value::CoinAndAssets(coin, assets) => {
+            assert_eq!(coin, 7_000_000);
+            assert_eq!(assets.get(&policy).and_then(|m| m.get(&asset_name)).copied(), Some(7));
+        }
+        other => panic!("expected coin and assets, got {other:?}"),
+    }
+}
+
+#[test]
 fn ledger_state_rejects_byron_block() {
     let mut state = LedgerState::new(Era::Byron);
 

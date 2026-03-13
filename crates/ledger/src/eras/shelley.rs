@@ -860,6 +860,11 @@ impl ShelleyUtxo {
         self.entries.get(txin)
     }
 
+    /// Iterates over all UTxO entries.
+    pub fn iter(&self) -> impl Iterator<Item = (&ShelleyTxIn, &ShelleyTxOut)> {
+        self.entries.iter()
+    }
+
     /// Returns the number of entries in the UTxO set.
     pub fn len(&self) -> usize {
         self.entries.len()

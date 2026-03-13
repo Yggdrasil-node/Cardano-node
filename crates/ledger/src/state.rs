@@ -2,10 +2,91 @@ use crate::eras::allegra::AllegraTxBody;
 use crate::eras::alonzo::AlonzoTxBody;
 use crate::eras::babbage::BabbageTxBody;
 use crate::eras::conway::ConwayTxBody;
+use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
-use crate::types::Point;
-use crate::utxo::MultiEraUtxo;
+use crate::types::{Address, Point};
+use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Era, LedgerError};
+use std::collections::BTreeMap;
+
+/// Read-only snapshot of ledger-visible state.
+///
+/// This snapshot preserves the current era, tip, and both UTxO views so
+/// callers can query ledger-visible outputs without mutating `LedgerState`.
+/// The dual UTxO representation is retained because Shelley-only state is
+/// still stored separately for backward compatibility.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LedgerStateSnapshot {
+    current_era: Era,
+    tip: Point,
+    multi_era_utxo: MultiEraUtxo,
+    shelley_utxo: ShelleyUtxo,
+}
+
+impl LedgerStateSnapshot {
+    /// Returns the era active at the time this snapshot was captured.
+    pub fn current_era(&self) -> Era {
+        self.current_era
+    }
+
+    /// Returns the chain tip captured in this snapshot.
+    pub fn tip(&self) -> &Point {
+        &self.tip
+    }
+
+    /// Returns the multi-era UTxO set captured in this snapshot.
+    pub fn multi_era_utxo(&self) -> &MultiEraUtxo {
+        &self.multi_era_utxo
+    }
+
+    /// Returns the legacy Shelley-only UTxO set captured in this snapshot.
+    pub fn utxo(&self) -> &ShelleyUtxo {
+        &self.shelley_utxo
+    }
+
+    /// Returns all UTxO entries paying to `address`.
+    ///
+    /// Entries from the multi-era UTxO set take precedence when the same
+    /// `ShelleyTxIn` is visible through both backing stores.
+    pub fn query_utxos_by_address(&self, address: &Address) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
+        let address_bytes = address.to_bytes();
+        let mut matched = BTreeMap::new();
+
+        for (txin, txout) in self.shelley_utxo.iter() {
+            if txout.address == address_bytes {
+                matched.insert(txin.clone(), MultiEraTxOut::Shelley(txout.clone()));
+            }
+        }
+
+        for (txin, txout) in self.multi_era_utxo.iter() {
+            if txout.address() == address_bytes.as_slice() {
+                matched.insert(txin.clone(), txout.clone());
+            }
+        }
+
+        matched.into_iter().collect()
+    }
+
+    /// Returns the aggregate balance for `address` across visible UTxO entries.
+    pub fn query_balance(&self, address: &Address) -> Value {
+        let mut coin_total = 0u64;
+        let mut asset_total: MultiAsset = BTreeMap::new();
+
+        for (_, txout) in self.query_utxos_by_address(address) {
+            let value = txout.value();
+            coin_total = coin_total.saturating_add(value.coin());
+            if let Some(assets) = value.multi_asset() {
+                accumulate_multi_asset(&mut asset_total, assets);
+            }
+        }
+
+        if asset_total.is_empty() {
+            Value::Coin(coin_total)
+        } else {
+            Value::CoinAndAssets(coin_total, asset_total)
+        }
+    }
+}
 
 /// Ledger state tracking the current era, chain tip, and UTxO set.
 ///
@@ -63,6 +144,26 @@ impl LedgerState {
     /// Returns a mutable reference to the multi-era UTxO set.
     pub fn multi_era_utxo_mut(&mut self) -> &mut MultiEraUtxo {
         &mut self.multi_era_utxo
+    }
+
+    /// Captures a read-only snapshot of the current ledger state.
+    pub fn snapshot(&self) -> LedgerStateSnapshot {
+        LedgerStateSnapshot {
+            current_era: self.current_era,
+            tip: self.tip.clone(),
+            multi_era_utxo: self.multi_era_utxo.clone(),
+            shelley_utxo: self.shelley_utxo.clone(),
+        }
+    }
+
+    /// Returns all UTxO entries paying to `address`.
+    pub fn query_utxos_by_address(&self, address: &Address) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
+        self.snapshot().query_utxos_by_address(address)
+    }
+
+    /// Returns the aggregate balance for `address` across visible UTxO entries.
+    pub fn query_balance(&self, address: &Address) -> Value {
+        self.snapshot().query_balance(address)
     }
 
     /// Applies a block to the current state.
@@ -295,5 +396,15 @@ impl LedgerState {
         }
         self.multi_era_utxo = staged;
         Ok(())
+    }
+}
+
+fn accumulate_multi_asset(total: &mut MultiAsset, assets: &MultiAsset) {
+    for (policy, entries) in assets {
+        let policy_total = total.entry(*policy).or_default();
+        for (asset_name, quantity) in entries {
+            let entry = policy_total.entry(asset_name.clone()).or_default();
+            *entry = entry.saturating_add(*quantity);
+        }
     }
 }
