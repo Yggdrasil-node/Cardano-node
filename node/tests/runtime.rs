@@ -14,7 +14,7 @@ use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_node::{
     MempoolAddTxResult, NodeConfig, TxSubmissionServiceOutcome, add_tx_to_mempool,
     add_tx_to_shared_mempool, add_txs_to_mempool, add_txs_to_shared_mempool,
-    bootstrap, run_txsubmission_service,
+    bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
     run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
 };
 
@@ -399,10 +399,40 @@ async fn runtime_bootstrap_creates_all_drivers() {
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
 
+    assert_eq!(session.connected_peer_addr, addr);
     assert_eq!(session.version, HandshakeVersion(15));
     assert_eq!(session.version_data.network_magic, magic);
 
     // Use the ChainSync client to request_next.
+    let resp = session.chain_sync.request_next().await.expect("cs request_next");
+    assert!(matches!(
+        resp,
+        yggdrasil_network::NextResponse::RollForward { .. }
+    ));
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    session.mux.abort();
+}
+
+#[tokio::test]
+async fn runtime_bootstrap_uses_fallback_peer_when_primary_fails() {
+    let magic = 43;
+    let good_addr = spawn_responder(magic).await;
+    let bad_addr: SocketAddr = "127.0.0.1:1".parse().expect("bad addr");
+
+    let config = NodeConfig {
+        peer_addr: bad_addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+
+    let mut session = bootstrap_with_fallbacks(&config, &[good_addr])
+        .await
+        .expect("bootstrap via fallback");
+
+    assert_eq!(session.connected_peer_addr, good_addr);
+    assert_eq!(session.version, HandshakeVersion(15));
+
     let resp = session.chain_sync.request_next().await.expect("cs request_next");
     assert!(matches!(
         resp,

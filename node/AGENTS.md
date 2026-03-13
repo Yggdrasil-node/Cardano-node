@@ -28,10 +28,10 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 
 ## Current Phase
 - Keep the node crate thin and integration-focused.
-- **Configuration**: `NodeConfigFile` (JSON, serde) with peer address, network magic, protocol versions, KES parameters, and keepalive interval. `default_config()` returns mainnet defaults. `NetworkPreset` enum (`Mainnet | Preprod | Preview`) with `FromStr`/`Display` and per-network constructors (`mainnet_config()`, `preprod_config()`, `preview_config()`).
+- **Configuration**: `NodeConfigFile` (JSON, serde) with primary peer address, ordered `bootstrap_peers`, network magic, protocol versions, KES parameters, and keepalive interval. `default_config()` returns mainnet defaults. `NetworkPreset` enum (`Mainnet | Preprod | Preview`) with `FromStr`/`Display` and per-network constructors (`mainnet_config()`, `preprod_config()`, `preview_config()`).
 - **CLI**: `clap`-based binary with `run` (connect + sync) and `default-config` (emit JSON) subcommands. CLI flags (`--peer`, `--network-magic`, `--no-verify`, `--batch-size`, `--network`) override config-file values. `--network` accepts `mainnet`, `preprod`, or `preview` as a preset.
-- **Network config files**: `node/configuration/{mainnet,preprod,preview}/` each contain byron-genesis.json, shelley-genesis.json, alonzo-genesis.json, conway-genesis.json, config.json, topology.json sourced from the Cardano Operations Book.
-- Runtime bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`) with smoke coverage.
+- **Network config files**: `node/configuration/{mainnet,preprod,preview}/` each contain byron-genesis.json, shelley-genesis.json, alonzo-genesis.json, conway-genesis.json, config.json, topology.json sourced from the Cardano Operations Book. Preset bootstrap relay ordering is derived from the vendored `topology.json` files.
+- Runtime bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`, `bootstrap_with_fallbacks`) with smoke coverage.
 - Full sync orchestration stack is implemented: `sync_step`, `sync_steps`, typed decode bridges, bounded loops, intersection finding, batch apply, managed sync service with graceful shutdown via `tokio::signal::ctrl_c`.
 - Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque, Shelley/Allegra/Mary/Alonzo decoded as `ShelleyBlock`, Babbage decoded as `BabbageBlock`, and Conway decoded as `ConwayBlock` is implemented. All seven era tags (0–7) are handled.
 - Consensus header verification bridge (`verify_shelley_header`, `verify_multi_era_block`, `VerificationConfig`) is wired into the sync flow.

@@ -25,14 +25,14 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 - **Consensus**: Praos leader election, typed chain selection (VRF tiebreaker), epoch math, OpCert verification, KES period checks, block header verification with SumKES. `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain state tracker with rollback depth enforcement and stability window detection.
 - **Storage**: Trait-based `ImmutableStore`, `VolatileStore`, `LedgerStore` with in-memory and file-backed implementations.
 - **Mempool**: Fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, TTL-aware admission, block-application eviction.
-- **Node CLI**: `clap`-based binary with `run` (connect to peer and sync) and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides.
+- **Node CLI**: `clap`-based binary with `run` (connect to peer and sync) and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides and ordered bootstrap relay fallback derived from the vendored network topology references.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Graceful shutdown via Ctrl-C signal handling.
 - **Upstream parity**: CBOR golden round-trip tests, cross-subsystem integration tests, and wire-format field naming aligned with official Cardano CDDL specifications.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
 ### In Progress
 
-- End-to-end multi-peer management.
+- Peer governor and long-lived multi-peer management beyond ordered bootstrap fallback.
 - Mainnet sync endurance testing.
 
 ## Workspace Layout

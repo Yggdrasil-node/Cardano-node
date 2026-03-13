@@ -23,4 +23,4 @@ This directory contains reference configuration files and per-network presets us
 - Preview environment reference: <https://book.world.dev.cardano.org/env-preview.html>
 
 ## Current Phase
-- Yggdrasil exposes `NetworkPreset` values for `Mainnet`, `Preprod`, and `Preview` and keeps reference files here for shape and provenance rather than direct in-place editing.
+- Yggdrasil exposes `NetworkPreset` values for `Mainnet`, `Preprod`, and `Preview` and now parses the vendored `topology.json` files here as read-only reference inputs for ordered bootstrap relay selection.

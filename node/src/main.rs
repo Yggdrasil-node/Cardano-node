@@ -7,7 +7,7 @@ use eyre::Result;
 use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, default_config};
 use yggdrasil_node::{
     NodeConfig, VerificationConfig, VerifiedSyncServiceConfig, VerifiedSyncServiceOutcome,
-    bootstrap, run_verified_sync_service,
+    bootstrap_with_fallbacks, run_verified_sync_service,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
 use yggdrasil_ledger::{Nonce, Point};
@@ -79,6 +79,11 @@ fn main() -> Result<()> {
             };
 
             let peer_addr = peer.unwrap_or(file_cfg.peer_addr);
+            let bootstrap_peers = if peer.is_some() {
+                Vec::new()
+            } else {
+                file_cfg.bootstrap_peers.clone()
+            };
             let magic = network_magic.unwrap_or(file_cfg.network_magic);
             let protocol_versions: Vec<HandshakeVersion> = file_cfg
                 .protocol_versions
@@ -133,23 +138,27 @@ fn main() -> Result<()> {
             };
 
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(run_node(node_config, sync_config))
+            rt.block_on(run_node(node_config, bootstrap_peers, sync_config))
         }
     }
 }
 
 async fn run_node(
     node_config: NodeConfig,
+    bootstrap_peers: Vec<SocketAddr>,
     sync_config: VerifiedSyncServiceConfig,
 ) -> Result<()> {
     eprintln!(
-        "Yggdrasil connecting to {} (magic {})",
-        node_config.peer_addr, node_config.network_magic
+        "Yggdrasil connecting to {} bootstrap peer(s) (primary {}, magic {})",
+        1 + bootstrap_peers.len(),
+        node_config.peer_addr,
+        node_config.network_magic
     );
 
-    let mut session = bootstrap(&node_config).await?;
+    let mut session = bootstrap_with_fallbacks(&node_config, &bootstrap_peers).await?;
     eprintln!(
-        "Handshake complete: version {}",
+        "Handshake complete with {}: version {}",
+        session.connected_peer_addr,
         session.version.0
     );
 

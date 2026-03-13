@@ -398,6 +398,8 @@ pub struct NodeConfig {
 /// Owns the [`PeerConnection`]'s mux handle and exposes each data-protocol
 /// client as a named field.
 pub struct PeerSession {
+    /// Upstream peer address that completed the handshake.
+    pub connected_peer_addr: SocketAddr,
     /// ChainSync client driver.
     pub chain_sync: ChainSyncClient,
     /// BlockFetch client driver.
@@ -426,6 +428,17 @@ pub struct PeerSession {
 ///
 /// Returns `PeerError` if the TCP connection or handshake fails.
 pub async fn bootstrap(config: &NodeConfig) -> Result<PeerSession, PeerError> {
+    bootstrap_with_fallbacks(config, &[]).await
+}
+
+/// Connect to the primary upstream peer, retrying ordered fallbacks on failure.
+///
+/// The primary address in [`NodeConfig`] is always attempted first. Fallback
+/// peers are then tried in the provided order, skipping duplicates.
+pub async fn bootstrap_with_fallbacks(
+    config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+) -> Result<PeerSession, PeerError> {
     let proposals: Vec<(HandshakeVersion, NodeToNodeVersionData)> = config
         .protocol_versions
         .iter()
@@ -442,8 +455,33 @@ pub async fn bootstrap(config: &NodeConfig) -> Result<PeerSession, PeerError> {
         })
         .collect();
 
-    let mut conn: PeerConnection =
-        yggdrasil_network::peer_connect(config.peer_addr, proposals).await?;
+    let mut candidate_peer_addrs = Vec::with_capacity(1 + fallback_peer_addrs.len());
+    candidate_peer_addrs.push(config.peer_addr);
+    for peer_addr in fallback_peer_addrs {
+        if !candidate_peer_addrs.contains(peer_addr) {
+            candidate_peer_addrs.push(*peer_addr);
+        }
+    }
+
+    let mut last_error = None;
+    let mut connected_peer_addr = config.peer_addr;
+    let mut conn_opt = None;
+
+    for peer_addr in candidate_peer_addrs {
+        match yggdrasil_network::peer_connect(peer_addr, proposals.clone()).await {
+            Ok(conn) => {
+                connected_peer_addr = peer_addr;
+                conn_opt = Some(conn);
+                break;
+            }
+            Err(err) => last_error = Some(err),
+        }
+    }
+
+    let mut conn: PeerConnection = match conn_opt {
+        Some(conn) => conn,
+        None => return Err(last_error.expect("at least one peer candidate")),
+    };
 
     let cs = conn
         .protocols
@@ -471,6 +509,7 @@ pub async fn bootstrap(config: &NodeConfig) -> Result<PeerSession, PeerError> {
         })?;
 
     Ok(PeerSession {
+        connected_peer_addr,
         chain_sync: ChainSyncClient::new(cs),
         block_fetch: BlockFetchClient::new(bf),
         keep_alive: KeepAliveClient::new(ka),
