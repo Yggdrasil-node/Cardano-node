@@ -9,6 +9,8 @@ use std::net::{SocketAddr, ToSocketAddrs};
 
 use serde::{Deserialize, Serialize};
 
+use crate::root_peers::{UseLedgerPeers, resolve_root_peer_providers};
+
 /// A hostname or IP address plus port for an outbound peer candidate.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,27 +195,14 @@ pub fn ordered_peer_candidates(
     local_roots: &[LocalRootConfig],
     public_roots: &[PublicRootConfig],
 ) -> Vec<SocketAddr> {
-    let mut ordered = Vec::new();
-
-    for peer in bootstrap_peers {
-        if let Some(addr) = resolve_peer_access_point(peer) {
-            push_unique_addr(&mut ordered, addr);
-        }
-    }
-
-    for group in local_roots.iter().filter(|group| group.trustable) {
-        extend_access_points(&mut ordered, &group.access_points);
-    }
-
-    for group in local_roots.iter().filter(|group| !group.trustable) {
-        extend_access_points(&mut ordered, &group.access_points);
-    }
-
-    for group in public_roots {
-        extend_access_points(&mut ordered, &group.access_points);
-    }
-
-    ordered
+    resolve_root_peer_providers(
+        bootstrap_peers,
+        local_roots,
+        public_roots,
+        UseLedgerPeers::DontUseLedgerPeers,
+        None,
+    )
+    .ordered_candidates()
 }
 
 /// Build ordered fallback peers after a chosen primary peer.
@@ -223,23 +212,22 @@ pub fn ordered_fallback_peers(
     local_roots: &[LocalRootConfig],
     public_roots: &[PublicRootConfig],
 ) -> Vec<SocketAddr> {
-    let mut ordered = bootstrap_peers.to_vec();
+    let bootstrap_access_points = bootstrap_peers
+        .iter()
+        .map(|addr| PeerAccessPoint {
+            address: addr.ip().to_string(),
+            port: addr.port(),
+        })
+        .collect::<Vec<_>>();
 
-    for group in local_roots.iter().filter(|group| group.trustable) {
-        extend_access_points(&mut ordered, &group.access_points);
-    }
-
-    for group in local_roots.iter().filter(|group| !group.trustable) {
-        extend_access_points(&mut ordered, &group.access_points);
-    }
-
-    for group in public_roots {
-        extend_access_points(&mut ordered, &group.access_points);
-    }
-
-    ordered.retain(|addr| *addr != primary_peer);
-    ordered.dedup();
-    ordered
+    resolve_root_peer_providers(
+        &bootstrap_access_points,
+        local_roots,
+        public_roots,
+        UseLedgerPeers::DontUseLedgerPeers,
+        None,
+    )
+    .ordered_fallback_peers(primary_peer)
 }
 
 /// Build ordered bootstrap targets from a primary peer and ordered fallbacks.
@@ -256,20 +244,6 @@ pub fn peer_attempt_state(
     fallback_peers: &[SocketAddr],
 ) -> PeerAttemptState {
     PeerAttemptState::new(bootstrap_targets(primary_peer, fallback_peers))
-}
-
-fn extend_access_points(addrs: &mut Vec<SocketAddr>, access_points: &[PeerAccessPoint]) {
-    for access_point in access_points {
-        if let Some(addr) = resolve_peer_access_point(access_point) {
-            push_unique_addr(addrs, addr);
-        }
-    }
-}
-
-fn push_unique_addr(addrs: &mut Vec<SocketAddr>, addr: SocketAddr) {
-    if !addrs.contains(&addr) {
-        addrs.push(addr);
-    }
 }
 
 #[cfg(test)]

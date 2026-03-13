@@ -41,7 +41,7 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - `crates/network`: <https://github.com/IntersectMBO/ouroboros-network/> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
 - `node/`: <https://github.com/IntersectMBO/cardano-node/> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
 - Cardano developer portal: <https://github.com/cardano-foundation/developer-portal/tree/staging/docs/>
-- cardano- blueprint: <https://cardano-scaling.github.io/cardano-blueprint/>
+- cardano- blueprint: <https://github.com/cardano-scaling/cardano-blueprint/tree/main/src> or <https://cardano-scaling.github.io/cardano-blueprint/>
 
 ##  Rules *Non-Negotiable*
 - Always write typesafe Rust code.

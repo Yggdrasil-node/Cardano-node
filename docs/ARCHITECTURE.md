@@ -9,7 +9,7 @@ Yggdrasil is organized as a Rust workspace with explicit crate boundaries so pro
 - `crates/storage`: immutable storage, rollback-aware volatile storage, and snapshot facilities.
 - `crates/consensus`: chain selection, leader election, epoch math, and rollback coordination.
 - `crates/mempool`: transaction admission, prioritization, and block-application eviction.
-- `crates/network`: handshake, mini-protocol state machines, peer management, topology domain types, peer candidate ordering, and multiplexing.
+- `crates/network`: handshake, mini-protocol state machines, peer management, topology domain types, root-provider snapshots, peer candidate ordering, and multiplexing.
 - `node`: runtime wiring, CLI, sync loop, and operational entry points.
 
 ## Dependency Order
@@ -33,7 +33,7 @@ The project has a complete Cardano-era type system and a functional node binary:
 - Full era type coverage from Byron through Conway with typed CBOR codecs.
 - Multi-era UTxO validation with coin and multi-asset preservation checks.
 - Network transport + mux + handshake + peer lifecycle with all four mini-protocol state machines, wire codecs, and typed client drivers.
-- Reusable topology domain types, peer candidate ordering, bootstrap-target sequencing, reconnect attempt ordering, and preferred-peer retry state now live in `crates/network`; `node` only parses the upstream topology/config shape and feeds those helpers into runtime startup.
+- Reusable topology domain types, topology-root configuration parsing, root-provider snapshots, peer candidate ordering, bootstrap-target sequencing, reconnect attempt ordering, and preferred-peer retry state now live in `crates/network`; `node` only feeds those helpers into runtime startup.
 - Multi-era block decode (all 7 era tags) with consensus header verification (KES/OpCert).
 - Node binary with `clap` CLI (`run` + `default-config`), JSON configuration, upstream-aligned tracing config fields, local runtime trace emission, and managed sync service with graceful shutdown.
 - Mempool with TTL-aware admission, fee ordering, and block-application eviction.
@@ -47,8 +47,8 @@ The next architecture milestones are end-to-end multi-peer management, dedicated
 Topology parsing and preset-specific config resolution currently stay in `node` because they are operational concerns tied to the node binary's config format. Once peer selection grows into ledger peers, peer sharing, or long-lived governor policy, that logic should move behind a network-crate boundary rather than continuing to grow in `node`.
 
 ## Upstream-Aligned Networking Plan
-- Phase 1: topology-model parity in `crates/network` is in progress. Local and public root topology types now live in `yggdrasil-network`, with local-root support for `hotValency`, `warmValency`, `diffusionMode`, trustability, and legacy `valency` compatibility. Explicit `useBootstrapPeers` and `useLedgerPeers` semantics are still pending.
-- Phase 2: root-set providers in `crates/network`. Mirror the upstream split between local roots, public roots, bootstrap peers, and dynamic public-root or DNS providers. Preserve the upstream invariant that local roots and public roots are disjoint, and that bootstrap peers have stronger precedence than ordinary public roots.
+- Phase 1: topology-model parity in `crates/network` is in progress. Local and public root topology types now live in `yggdrasil-network`, with local-root support for `hotValency`, `warmValency`, `diffusionMode`, trustability, legacy `valency` compatibility, and upstream-style `useBootstrapPeers` and `useLedgerPeers` semantics.
+- Phase 2: root-set providers in `crates/network` is in progress. The crate now exposes a resolved startup snapshot plus mutable root-provider state for local, bootstrap, and public roots with disjointness and precedence handling. Next expand that layer toward dynamic local-root, bootstrap, public-root, and later DNS-refreshed providers.
 - Phase 3: peer registry state in `crates/network`. Introduce an explicit registry for peer source and status aligned with upstream `PeerSource` and `PeerStatus` concepts: local root, public root, ledger, bootstrap, and peer-share origins; cold, warm, and hot connection states. This is the point where `node` must stop carrying any reconnect or peer-preference state beyond reporting.
 - Phase 4: consensus-network bridge for ledger peers. Follow `ouroboros-consensus` and `cardano-node` by sourcing ledger peers from the immutable ledger state, gating them with latest-slot and ledger-state judgement signals, and honoring peer snapshot freshness relative to `useLedgerAfterSlot`.
 - Phase 5: governor-style policy. Only after the previous phases exist should Yggdrasil add promotion, demotion, peer sharing, public-root refresh backoff, churn, or Genesis-specific security behavior. The implementation should keep policy separate from mechanism, as in upstream `PeerSelectionActions`, `PeerSelectionPolicy`, and governor state modules.

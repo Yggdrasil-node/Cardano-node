@@ -20,6 +20,8 @@ pub mod mux;
 pub mod multiplexer;
 /// Peer connection lifecycle — handshake negotiation and data-protocol setup.
 pub mod peer;
+/// Topology root-peer domain types and resolved provider snapshots.
+pub mod root_peers;
 /// Peer candidate resolution and ordering helpers for runtime bootstrap.
 pub mod peer_selection;
 /// Mini-protocol state machine modules.
@@ -46,6 +48,11 @@ pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as star
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
+pub use root_peers::{
+    AfterSlot, RootPeerProviderState, RootPeerProviders, TopologyConfig,
+    UseBootstrapPeers, UseLedgerPeers, reconcile_root_peer_providers,
+    resolve_root_peer_providers,
+};
 pub use peer_selection::{
     LocalRootConfig, PeerAccessPoint, PeerAttemptState, PeerBootstrapTargets,
     PeerDiffusionMode, PublicRootConfig,

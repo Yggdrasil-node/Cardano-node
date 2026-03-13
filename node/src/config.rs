@@ -13,24 +13,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use yggdrasil_network::{
-    LocalRootConfig, PeerAccessPoint, PublicRootConfig, ordered_peer_candidates,
+    LocalRootConfig, PublicRootConfig, TopologyConfig,
     ordered_peer_fallbacks,
 };
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct TopologyConfigFile {
-    #[serde(default)]
-    bootstrap_peers: Vec<PeerAccessPoint>,
-    #[serde(default)]
-    local_roots: Vec<LocalRootConfig>,
-    #[serde(default)]
-    public_roots: Vec<PublicRootConfig>,
-    #[serde(default)]
-    use_ledger_after_slot: Option<u64>,
-    #[serde(default)]
-    peer_snapshot_file: Option<String>,
-}
 
 #[derive(Debug)]
 struct ResolvedTopologyPeers {
@@ -273,24 +258,21 @@ fn default_trace_options() -> BTreeMap<String, TraceNamespaceConfig> {
     ])
 }
 
-fn parse_topology_config(topology_json: &str) -> TopologyConfigFile {
-    serde_json::from_str::<TopologyConfigFile>(topology_json).unwrap_or_default()
+fn parse_topology_config(topology_json: &str) -> TopologyConfig {
+    serde_json::from_str::<TopologyConfig>(topology_json).unwrap_or_default()
 }
 
-fn ordered_topology_peer_candidates(topology: &TopologyConfigFile) -> Vec<SocketAddr> {
-    ordered_peer_candidates(
-        &topology.bootstrap_peers,
-        &topology.local_roots,
-        &topology.public_roots,
-    )
+fn ordered_topology_peer_candidates(topology: &TopologyConfig) -> Vec<SocketAddr> {
+    topology.resolved_root_providers().ordered_candidates()
 }
 
 #[cfg(test)]
 fn parse_topology_bootstrap_peers(topology_json: &str) -> Vec<(String, u16)> {
     parse_topology_config(topology_json)
         .bootstrap_peers
-        .into_iter()
-        .map(|peer| (peer.address, peer.port))
+        .configured_peers()
+        .iter()
+        .map(|peer| (peer.address.clone(), peer.port))
         .collect()
 }
 
@@ -310,7 +292,7 @@ fn resolve_topology_peers(
         fallback_peers: ordered.into_iter().skip(1).collect(),
         local_roots: topology.local_roots,
         public_roots: topology.public_roots,
-        use_ledger_after_slot: topology.use_ledger_after_slot,
+        use_ledger_after_slot: topology.use_ledger_peers.to_after_slot(),
         peer_snapshot_file: topology.peer_snapshot_file,
     }
 }
