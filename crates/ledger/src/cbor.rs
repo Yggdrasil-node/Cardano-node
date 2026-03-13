@@ -128,6 +128,17 @@ impl Encoder {
         self
     }
 
+    /// Encodes a signed integer using major type 0 (non-negative) or
+    /// major type 1 (negative).
+    pub fn integer(&mut self, value: i64) -> &mut Self {
+        if value >= 0 {
+            self.unsigned(value as u64)
+        } else {
+            // -(1 + n) = value  →  n = -(value + 1)
+            self.negative((-1 - value) as u64)
+        }
+    }
+
     /// Encodes a UTF-8 text string (CBOR major type 3).
     pub fn text(&mut self, s: &str) -> &mut Self {
         self.write_type_and_arg(MAJOR_TEXT, s.len() as u64);
@@ -320,6 +331,38 @@ impl<'a> Decoder<'a> {
     /// Returns the raw argument `n`; the represented value is `-(1 + n)`.
     pub fn negative(&mut self) -> Result<u64, LedgerError> {
         self.expect_major(MAJOR_NEGATIVE)
+    }
+
+    /// Decodes a signed integer (CBOR major type 0 or 1) and returns an `i64`.
+    ///
+    /// Major type 0 yields a non-negative value; major type 1 yields
+    /// `-(1 + n)` where `n` is the raw argument.
+    pub fn integer(&mut self) -> Result<i64, LedgerError> {
+        let major = self.peek_major()?;
+        match major {
+            MAJOR_UNSIGNED => {
+                let v = self.unsigned()?;
+                i64::try_from(v).map_err(|_| LedgerError::CborTypeMismatch {
+                    expected: MAJOR_UNSIGNED,
+                    actual: MAJOR_UNSIGNED,
+                })
+            }
+            MAJOR_NEGATIVE => {
+                let n = self.negative()?;
+                // -(1 + n); guard against overflow
+                let val = -1i64 - i64::try_from(n).map_err(|_| {
+                    LedgerError::CborTypeMismatch {
+                        expected: MAJOR_NEGATIVE,
+                        actual: MAJOR_NEGATIVE,
+                    }
+                })?;
+                Ok(val)
+            }
+            other => Err(LedgerError::CborTypeMismatch {
+                expected: MAJOR_UNSIGNED,
+                actual: other,
+            }),
+        }
     }
 
     /// Decodes a UTF-8 text string (CBOR major type 3) and returns a

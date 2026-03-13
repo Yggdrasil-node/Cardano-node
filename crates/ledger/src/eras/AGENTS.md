@@ -22,5 +22,7 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Formal ledger specification repository: <https://github.com/IntersectMBO/formal-ledger-specifications>
 
 ## Current Phase
-- The era modules are still naming and boundary scaffolds.
+- Shelley: full block, header, tx body, witness set, UTxO, and VRF/OpCert types with CBOR codecs.
+- Allegra: `AllegraTxBody` (optional TTL + validity interval start) and `NativeScript` (6-variant timelock enum) with CBOR codecs.
+- Mary, Alonzo, Babbage, Conway, Byron: naming scaffolds only.
 - Keep additions lightweight until generated types and real transition logic land.

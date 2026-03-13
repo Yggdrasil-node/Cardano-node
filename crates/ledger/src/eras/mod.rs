@@ -1,4 +1,4 @@
-mod allegra;
+pub mod allegra;
 mod alonzo;
 mod babbage;
 mod byron;
@@ -7,6 +7,7 @@ mod mary;
 pub mod shelley;
 
 pub use allegra::ALLEGRA_NAME;
+pub use allegra::{AllegraTxBody, NativeScript};
 pub use alonzo::ALONZO_NAME;
 pub use babbage::BABBAGE_NAME;
 pub use byron::BYRON_NAME;

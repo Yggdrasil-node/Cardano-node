@@ -24,8 +24,9 @@ pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 /// Supported Cardano eras represented in the workspace.
 pub use eras::Era;
 pub use eras::{
-    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody,
-    ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet,
+    AllegraTxBody, NativeScript, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
+    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness,
+    ShelleyVrfCert, ShelleyWitnessSet,
 };
 
 // -- Error re-exports ---------------------------------------------------------

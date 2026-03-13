@@ -20,6 +20,7 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 - Formal specs: <https://github.com/IntersectMBO/formal-ledger-specifications>
 
 ## Current Phase
-- Hand-rolled CBOR encoder/decoder supports major Cardano-required primitives.
+- Hand-rolled CBOR encoder/decoder supports major Cardano-required primitives including signed integers (`integer()`).
 - Shared typed core identifiers and point/nonce primitives are in place.
-- Era-specific Shelley structures live under `eras/`; shared layer should stay lightweight and stable.
+- `LedgerState` owns a `ShelleyUtxo` and performs atomic block application with CBOR decode + UTxO validation.
+- Era-specific structures live under `eras/`; Shelley and Allegra types are implemented. Shared layer should stay lightweight and stable.

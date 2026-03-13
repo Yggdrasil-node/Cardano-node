@@ -1,8 +1,8 @@
 use yggdrasil_ledger::{
-    Block, BlockHeader, BlockNo, CborDecode, CborEncode, Decoder, Encoder, Era, HeaderHash,
-    LedgerError, LedgerState, Nonce, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo,
-    ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
+    AllegraTxBody, Block, BlockHeader, BlockNo, CborDecode, CborEncode, Decoder, Encoder, Era,
+    HeaderHash, LedgerError, LedgerState, NativeScript, Nonce, Point, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
 };
 
 #[test]
@@ -1348,4 +1348,192 @@ fn ledger_state_chained_transactions() {
         state.tip,
         Point::BlockPoint(SlotNo(200), HeaderHash([0xA2; 32]))
     );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 41: Allegra era types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn allegra_tx_body_roundtrip_all_fields() {
+    let body = AllegraTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x60, 0x01],
+            amount: 5_000_000,
+        }],
+        fee: 200_000,
+        ttl: Some(1000),
+        auxiliary_data_hash: Some([0xBB; 32]),
+        validity_interval_start: Some(500),
+    };
+
+    let encoded = body.to_cbor_bytes();
+    let decoded = AllegraTxBody::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn allegra_tx_body_roundtrip_minimal() {
+    let body = AllegraTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x11; 32],
+            index: 3,
+        }],
+        outputs: vec![],
+        fee: 100,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+    };
+
+    let encoded = body.to_cbor_bytes();
+    let decoded = AllegraTxBody::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn allegra_tx_body_optional_ttl_only() {
+    let body = AllegraTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 50,
+        ttl: Some(999),
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+    };
+
+    let encoded = body.to_cbor_bytes();
+    let decoded = AllegraTxBody::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn allegra_tx_body_validity_interval_start_only() {
+    let body = AllegraTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 75,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: Some(42),
+    };
+
+    let encoded = body.to_cbor_bytes();
+    let decoded = AllegraTxBody::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, body);
+}
+
+#[test]
+fn native_script_pubkey_roundtrip() {
+    let script = NativeScript::ScriptPubkey([0xCC; 28]);
+    let encoded = script.to_cbor_bytes();
+    let decoded = NativeScript::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, script);
+}
+
+#[test]
+fn native_script_all_roundtrip() {
+    let script = NativeScript::ScriptAll(vec![
+        NativeScript::ScriptPubkey([0x01; 28]),
+        NativeScript::ScriptPubkey([0x02; 28]),
+    ]);
+    let encoded = script.to_cbor_bytes();
+    let decoded = NativeScript::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, script);
+}
+
+#[test]
+fn native_script_any_roundtrip() {
+    let script = NativeScript::ScriptAny(vec![
+        NativeScript::InvalidBefore(100),
+        NativeScript::InvalidHereafter(200),
+    ]);
+    let encoded = script.to_cbor_bytes();
+    let decoded = NativeScript::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, script);
+}
+
+#[test]
+fn native_script_n_of_k_roundtrip() {
+    let script = NativeScript::ScriptNOfK(
+        2,
+        vec![
+            NativeScript::ScriptPubkey([0xAA; 28]),
+            NativeScript::ScriptPubkey([0xBB; 28]),
+            NativeScript::ScriptPubkey([0xCC; 28]),
+        ],
+    );
+    let encoded = script.to_cbor_bytes();
+    let decoded = NativeScript::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, script);
+}
+
+#[test]
+fn native_script_invalid_before_roundtrip() {
+    let script = NativeScript::InvalidBefore(12345);
+    let encoded = script.to_cbor_bytes();
+    let decoded = NativeScript::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, script);
+}
+
+#[test]
+fn native_script_invalid_hereafter_roundtrip() {
+    let script = NativeScript::InvalidHereafter(99999);
+    let encoded = script.to_cbor_bytes();
+    let decoded = NativeScript::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, script);
+}
+
+#[test]
+fn native_script_nested_roundtrip() {
+    let script = NativeScript::ScriptAll(vec![
+        NativeScript::ScriptAny(vec![
+            NativeScript::ScriptPubkey([0x01; 28]),
+            NativeScript::ScriptPubkey([0x02; 28]),
+        ]),
+        NativeScript::InvalidBefore(100),
+        NativeScript::InvalidHereafter(500),
+        NativeScript::ScriptNOfK(1, vec![NativeScript::ScriptPubkey([0x03; 28])]),
+    ]);
+    let encoded = script.to_cbor_bytes();
+    let decoded = NativeScript::from_cbor_bytes(&encoded).expect("decode");
+    assert_eq!(decoded, script);
+}
+
+#[test]
+fn native_script_unknown_tag_errors() {
+    // Construct a native_script array with tag 6 (unknown)
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(6).unsigned(0);
+    let bytes = enc.into_bytes();
+    let result = NativeScript::from_cbor_bytes(&bytes);
+    assert!(result.is_err());
+}
+
+#[test]
+fn cbor_integer_roundtrip() {
+    // Positive
+    let mut enc = Encoder::new();
+    enc.integer(42);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    assert_eq!(dec.integer().expect("positive"), 42);
+
+    // Negative
+    let mut enc = Encoder::new();
+    enc.integer(-3);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    assert_eq!(dec.integer().expect("negative"), -3);
+
+    // Zero
+    let mut enc = Encoder::new();
+    enc.integer(0);
+    let bytes = enc.into_bytes();
+    let mut dec = Decoder::new(&bytes);
+    assert_eq!(dec.integer().expect("zero"), 0);
 }

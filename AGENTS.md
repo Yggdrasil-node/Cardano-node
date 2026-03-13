@@ -60,8 +60,21 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 - Workspace foundation is complete and compileable.
 - Active implementation work is in progress across `crates/crypto`, `crates/cddl-codegen`, `crates/ledger`, `crates/network`, and `node/`.
 - `crates/network` now includes handshake + mux + peer lifecycle, all four mini-protocol state machines/wire codecs, typed client drivers, and SDU segmentation/reassembly support for large protocol messages.
-- `node/` now includes connection bootstrap (`NodeConfig`, `PeerSession`, `bootstrap`), first sync orchestration (`sync_step`, `sync_steps`), a Shelley block deserialization bridge (`sync_step_decoded`, `decode_shelley_blocks`), typed ChainSync decode helpers (`sync_step_typed`, `decode_shelley_header`, `decode_point`), bounded typed looping (`sync_until_typed`), volatile storage handoff helpers (`apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`), typed intersection finding (`typed_find_intersect`), batch sync-and-apply composition (`sync_batch_apply`), KeepAlive heartbeat (`keepalive_heartbeat`), managed sync service with shutdown (`run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`), consensus header verification bridge (`shelley_opcert_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`), multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`), correct block header hash computation (`ShelleyHeader::header_hash`, real Blake2b-256 `compute_tx_id`), and verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`).
-- `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, and iterator support.
+- `node/` orchestration and sync pipeline:
+  - Bootstrap: `NodeConfig`, `PeerSession`, `bootstrap`.
+  - Raw sync: `sync_step`, `sync_steps`, `sync_step_decoded`, `decode_shelley_blocks`.
+  - Typed sync: `sync_step_typed`, `decode_shelley_header`, `decode_point`, `sync_steps_typed`, `sync_until_typed`.
+  - Storage handoff: `apply_typed_step_to_volatile`, `apply_typed_progress_to_volatile`.
+  - Intersection + batch: `typed_find_intersect`, `sync_batch_apply`.
+  - KeepAlive: `keepalive_heartbeat`.
+  - Managed service: `run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`.
+  - Consensus bridge: `shelley_opcert_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`.
+  - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`.
+  - Header hash: `ShelleyHeader::header_hash` (Blake2b-256), `compute_tx_id`.
+  - Verified pipeline: `multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`.
+  - Mempool eviction: `extract_tx_ids`, `evict_confirmed_from_mempool`.
+- `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, TTL-aware admission (`insert_checked`, `purge_expired`), and iterator support.
+- `crates/ledger` now includes `LedgerState` with `ShelleyUtxo` integration, atomic block application, Allegra era types (`AllegraTxBody`, `NativeScript`), and signed integer CBOR helpers.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
 
 Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.

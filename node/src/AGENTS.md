@@ -33,4 +33,5 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque and Shelley decoded is implemented.
 - Block header hash computation uses real Blake2b-256 via `ShelleyHeader::header_hash()`; `shelley_block_to_block` and `compute_tx_id` use proper cryptographic hashing.
 - Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`) is implemented wiring consensus verification into the multi-era sync flow.
-- Next: expand multi-era decode to Babbage/Conway, integrate mempool eviction with sync pipeline, add persistent storage backend.
+- Mempool sync eviction: `extract_tx_ids` extracts TxIds from multi-era blocks, `evict_confirmed_from_mempool` removes confirmed and TTL-expired entries from the mempool after each sync step.
+- Next: expand multi-era decode to Babbage/Conway, add persistent storage backend, add concurrency for mempool intake.

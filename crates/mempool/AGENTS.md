@@ -29,4 +29,7 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Fee-descending ordering is implemented with duplicate detection and capacity enforcement.
 - `remove_by_id`, `contains`, `len`, `is_empty`, `size_bytes`, `iter`, and `remove_confirmed` are implemented.
 - Block-application eviction via `remove_confirmed` enables post-sync snipping of confirmed transactions.
-- Next: add TTL-aware admission checks using `SlotNo`, integrate with the sync pipeline for automatic eviction on block application, and add concurrency support for multi-producer intake.
+- TTL-aware admission via `insert_checked(entry, current_slot)` rejects transactions whose TTL has expired.
+- Periodic TTL expiry purge via `purge_expired(current_slot)` removes all stale entries.
+- Node-side `evict_confirmed_from_mempool` in `node/src/sync.rs` wires mempool eviction into the sync pipeline.
+- Next: add concurrency support for multi-producer intake, and integrate with ledger validation for full admission checks.

@@ -6,17 +6,18 @@ use yggdrasil_network::{
 };
 use yggdrasil_ledger::{
     CborEncode, Encoder, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, ShelleyVrfCert, SlotNo,
+    ShelleyOpCert, ShelleyTxBody, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
 };
+use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_node::{
     DecodedSyncStep, MultiEraBlock, MultiEraSyncStep, NodeConfig, SyncServiceConfig, SyncStep,
     TypedIntersectResult, TypedSyncStep, VerificationConfig, apply_multi_era_step_to_volatile,
     apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
-    keepalive_heartbeat, multi_era_block_to_block, run_sync_service,
-    shelley_header_body_to_consensus, shelley_header_to_consensus, shelley_opcert_to_consensus,
-    sync_batch_apply, sync_step, sync_step_decoded, sync_step_multi_era, sync_step_typed,
-    sync_steps, sync_steps_typed, sync_until_typed, typed_find_intersect,
-    verify_multi_era_block, verify_shelley_header, SHELLEY_KES_DEPTH,
+    evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
+    run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
+    shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
+    sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed,
+    typed_find_intersect, verify_multi_era_block, verify_shelley_header, SHELLEY_KES_DEPTH,
 };
 use yggdrasil_storage::{InMemoryVolatile, VolatileStore};
 
@@ -1615,4 +1616,162 @@ async fn sync_step_multi_era_rollforward() {
     }
 
     session.mux.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 40: Mempool sync eviction tests
+// ---------------------------------------------------------------------------
+
+fn make_tx_body(fee: u64, ttl: u64) -> ShelleyTxBody {
+    ShelleyTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee,
+        ttl,
+        auxiliary_data_hash: None,
+    }
+}
+
+/// Compute the TxId for a given ShelleyTxBody (same as the sync module does).
+fn tx_id_for(body: &ShelleyTxBody) -> TxId {
+    let raw = body.to_cbor_bytes();
+    TxId(yggdrasil_crypto::hash_bytes_256(&raw).0)
+}
+
+#[test]
+fn extract_tx_ids_from_shelley_block() {
+    let body1 = make_tx_body(100, 1000);
+    let body2 = make_tx_body(200, 2000);
+    let id1 = tx_id_for(&body1);
+    let id2 = tx_id_for(&body2);
+
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![body1, body2],
+        witness_sets: vec![
+            ShelleyWitnessSet { vkey_witnesses: vec![], bootstrap_witnesses: vec![] },
+            ShelleyWitnessSet { vkey_witnesses: vec![], bootstrap_witnesses: vec![] },
+        ],
+        transaction_metadata: std::collections::HashMap::new(),
+    }));
+
+    let ids = extract_tx_ids(&block);
+    assert_eq!(ids, vec![id1, id2]);
+}
+
+#[test]
+fn extract_tx_ids_from_byron_block_is_empty() {
+    let block = MultiEraBlock::Byron { raw: vec![0x80] };
+    assert!(extract_tx_ids(&block).is_empty());
+}
+
+#[test]
+fn evict_confirmed_removes_matching_mempool_entries() {
+    let body = make_tx_body(500, 10_000);
+    let id = tx_id_for(&body);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    let entry = MempoolEntry {
+        tx_id: id,
+        fee: 500,
+        body: body.to_cbor_bytes(),
+        size_bytes: 100,
+        ttl: SlotNo(10_000),
+    };
+    mempool.insert(entry).expect("insert");
+    assert_eq!(mempool.len(), 1);
+
+    let step = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::BlockPoint(SlotNo(500), sample_header_hash()),
+        blocks: vec![MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+            header: ShelleyHeader {
+                body: sample_header_body(),
+                signature: vec![0xDD; 448],
+            },
+            transaction_bodies: vec![body],
+            witness_sets: vec![
+                ShelleyWitnessSet { vkey_witnesses: vec![], bootstrap_witnesses: vec![] },
+            ],
+            transaction_metadata: std::collections::HashMap::new(),
+        }))],
+    };
+
+    let evicted = evict_confirmed_from_mempool(&mut mempool, &step);
+    assert_eq!(evicted, 1);
+    assert_eq!(mempool.len(), 0);
+}
+
+#[test]
+fn evict_confirmed_also_purges_expired() {
+    let body1 = make_tx_body(100, 5); // expires at slot 5
+    let body2 = make_tx_body(200, 10_000); // valid for a long time
+    let id1 = tx_id_for(&body1);
+    let id2 = tx_id_for(&body2);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(MempoolEntry {
+        tx_id: id1,
+        fee: 100,
+        body: body1.to_cbor_bytes(),
+        size_bytes: 50,
+        ttl: SlotNo(5),
+    }).expect("insert body1");
+    mempool.insert(MempoolEntry {
+        tx_id: id2,
+        fee: 200,
+        body: body2.to_cbor_bytes(),
+        size_bytes: 50,
+        ttl: SlotNo(10_000),
+    }).expect("insert body2");
+    assert_eq!(mempool.len(), 2);
+
+    // Roll forward to slot 500 — body1 is expired (ttl 5 < 500),
+    // body2 is not in the block and not expired, so stays.
+    let step = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::BlockPoint(SlotNo(500), sample_header_hash()),
+        blocks: vec![MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+            header: ShelleyHeader {
+                body: sample_header_body(),
+                signature: vec![0xDD; 448],
+            },
+            transaction_bodies: vec![],
+            witness_sets: vec![],
+            transaction_metadata: std::collections::HashMap::new(),
+        }))],
+    };
+
+    let evicted = evict_confirmed_from_mempool(&mut mempool, &step);
+    assert_eq!(evicted, 1); // body1 expired
+    assert_eq!(mempool.len(), 1);
+    assert!(mempool.contains(&id2));
+}
+
+#[test]
+fn evict_confirmed_rollback_does_nothing() {
+    let body = make_tx_body(100, 10_000);
+    let id = tx_id_for(&body);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(MempoolEntry {
+        tx_id: id,
+        fee: 100,
+        body: body.to_cbor_bytes(),
+        size_bytes: 50,
+        ttl: SlotNo(10_000),
+    }).expect("insert");
+    assert_eq!(mempool.len(), 1);
+
+    let step = MultiEraSyncStep::RollBackward {
+        point: Point::Origin,
+        tip: Point::Origin,
+    };
+
+    let evicted = evict_confirmed_from_mempool(&mut mempool, &step);
+    assert_eq!(evicted, 0);
+    assert_eq!(mempool.len(), 1);
 }

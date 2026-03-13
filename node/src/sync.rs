@@ -20,6 +20,7 @@ use yggdrasil_ledger::{
     Block, BlockHeader, BlockNo, CborDecode, CborEncode, Era, HeaderHash, LedgerError, Point,
     ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
 };
+use yggdrasil_mempool::Mempool;
 use yggdrasil_storage::{StorageError, VolatileStore};
 
 /// Error type for sync orchestration operations.
@@ -1001,4 +1002,54 @@ pub struct MultiEraSyncProgress {
     pub fetched_blocks: usize,
     /// Number of rollback steps observed.
     pub rollback_count: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 40: Mempool sync eviction
+// ---------------------------------------------------------------------------
+
+/// Extract transaction IDs from a multi-era block.
+///
+/// For Shelley-family blocks, each transaction body is CBOR-encoded and
+/// hashed (Blake2b-256) to derive the canonical `TxId`. Byron blocks
+/// currently return an empty list since structural decode is not yet
+/// implemented.
+pub fn extract_tx_ids(block: &MultiEraBlock) -> Vec<TxId> {
+    match block {
+        MultiEraBlock::Shelley(shelley) => shelley
+            .transaction_bodies
+            .iter()
+            .map(|body| compute_tx_id(&body.to_cbor_bytes()))
+            .collect(),
+        MultiEraBlock::Byron { .. } => vec![],
+    }
+}
+
+/// Evict confirmed transactions from the mempool after a sync step.
+///
+/// For roll-forward steps, every transaction included in the new blocks is
+/// removed from the mempool via `remove_confirmed`. Expired entries are
+/// then purged using the tip slot.
+///
+/// Roll-backward steps do not modify the mempool — re-admission of
+/// rolled-back transactions is handled separately.
+///
+/// Returns the total number of entries evicted (confirmed + expired).
+pub fn evict_confirmed_from_mempool(
+    mempool: &mut Mempool,
+    step: &MultiEraSyncStep,
+) -> usize {
+    match step {
+        MultiEraSyncStep::RollForward { blocks, tip, .. } => {
+            let confirmed_ids: Vec<TxId> = blocks
+                .iter()
+                .flat_map(extract_tx_ids)
+                .collect();
+            let removed = mempool.remove_confirmed(&confirmed_ids);
+            let tip_slot = tip.slot().unwrap_or(SlotNo(0));
+            let purged = mempool.purge_expired(tip_slot);
+            removed + purged
+        }
+        MultiEraSyncStep::RollBackward { .. } => 0,
+    }
 }
