@@ -12,7 +12,7 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 ##  Rules *Non-Negotiable*
 - Keep wire framing deterministic and byte-accurate.
 - Do not leak protocol business logic from `protocols/` state machines into transport primitives.
-- Keep reusable peer candidate resolution, bootstrap-target sequencing, reconnect attempt ordering, and preferred-peer retry state here rather than in `node`, while avoiding full peer-governor state in low-level transport helpers.
+- Keep reusable topology types, peer candidate resolution, bootstrap-target sequencing, reconnect attempt ordering, and preferred-peer retry state here rather than in `node`, while avoiding full peer-governor state in low-level transport helpers.
 - Preserve strict separation between raw transport (`ProtocolHandle`) and higher-level message orchestration (`MessageChannel`, client drivers).
 - Any receive-path buffering or boundary detection changes MUST ship with regression tests for partial/incremental payload delivery.
 - Public transport and driver APIs MUST include Rustdocs when behavior is non-obvious.
@@ -29,4 +29,5 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 - Mux/demux routing is implemented with per-protocol handles.
 - Large-message SDU segmentation/reassembly is implemented via `MAX_SEGMENT_SIZE` + `MessageChannel`.
 - Typed ChainSync, BlockFetch, KeepAlive, and TxSubmission client drivers are in place. TxSubmission now uses typed ledger `TxId` values for request/advertise flows, provides typed reply helpers for both `Vec<Tx>` and `Vec<MultiEraSubmittedTx>`, and maintains an outstanding/requestable TxId FIFO so invalid acknowledgements and transaction requests are rejected before replying while preserving raw wire bodies.
-- Next: typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical), while growing peer selection from static candidate ordering toward explicit higher-level peer policy modules.
+- Topology domain model work is now in this crate: local roots carry `hotValency`, `warmValency`, `diffusionMode`, and trustability, while public roots remain a separate type.
+- Next: typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical), then add root-set providers and peer registry state before implementing any governor-style promotion or churn behavior.

@@ -7,12 +7,12 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 
 ## Scope
 - Handshake, multiplexing, mini-protocol state machines, and peer lifecycle.
-- Peer candidate resolution and bootstrap-target ordering helpers that feed runtime peer policy.
+- Peer candidate resolution, topology domain types, and bootstrap-target ordering helpers that feed runtime peer policy.
 - Node-to-node and node-to-client protocol surfaces.
 
 ##  Rules *Non-Negotiable*
 - Handshake and multiplexing interfaces MUST remain independent from peer policy logic.
-- Simple reusable peer candidate ordering and address resolution helpers belong here, but full governor-style policy should remain a separate layer from transport and handshake primitives.
+- Topology domain types and simple reusable peer candidate ordering or address resolution helpers belong here, but full governor-style policy should remain a separate layer from transport and handshake primitives.
 - Mini-protocols MUST be introduced incrementally, starting with ChainSync and BlockFetch.
 - Testable state transitions MUST be preferred over implicit runtime behavior.
 - Public protocol types, handshake surfaces, and state-machine functions MUST have Rustdocs where message flow or invariants are not self-evident.
@@ -37,9 +37,9 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Handshake protocol types, state machine, and CBOR wire codec (ProposeVersions/AcceptVersion/Refuse/QueryReply) are complete.
 - ChainSync, BlockFetch, KeepAlive, and TxSubmission2 have full message enums, validated state machines, transition tests, and CBOR wire codecs.
 - Wire tags match upstream CDDL. ChainSync and BlockFetch now expose typed point/range helpers (`request_next_typed`, `find_intersect_points`, `request_range_points`) backed by ledger `Point` CBOR. ChainSync also exposes generic decoded-header support via `request_next_decoded_header::<H>()`. BlockFetch now exposes both per-item decode helpers (`recv_block_decoded::<B>()`, `recv_block_with()`, `recv_block_raw_with()`) and batch collection helpers (`request_range_collect*`) for raw, decoded, and raw+decoded flows. TxSubmission now uses ledger `TxId` for advertised/requested identifiers, exposes typed reply helpers for both storage `Tx` wrappers and ledger `MultiEraSubmittedTx` values, and tracks the outstanding/requestable TxId FIFO so invalid `ack`, blocking-mode, and request sequences are rejected locally while transaction bodies on the wire remain raw bytes.
-- Upstream planning anchor: `cardano-node` `TopologyP2P` and `ouroboros-network` `Diffusion.Topology` model local root groups with `hotValency`, `warmValency`, `diffusionMode`, and trustability, while `PublicRootPeers` distinguishes configured public roots, bootstrap peers, ledger peers, and big ledger peers.
+- Upstream planning anchor: `cardano-node` `TopologyP2P` and `ouroboros-network` `Diffusion.Topology` model local root groups with `hotValency`, `warmValency`, `diffusionMode`, and trustability, while `PublicRootPeers` distinguishes configured public roots, bootstrap peers, ledger peers, and big ledger peers. Yggdrasil now carries those local and public root topology domain types in `peer_selection.rs`.
 - Next implementation order:
-	1. Align topology types with upstream P2P fields and semantics.
-	2. Add root-set provider layers for local roots, public roots, bootstrap peers, and later DNS-refreshed public roots.
-	3. Add a peer registry with peer source and peer status concepts aligned with upstream `PeerSource` and cold or warm or hot state.
+	1. Add root-set provider layers for local roots, public roots, bootstrap peers, and later DNS-refreshed public roots.
+	2. Add a peer registry with peer source and peer status concepts aligned with upstream `PeerSource` and cold or warm or hot state.
+	3. Add consensus-network bridge inputs for ledger peers, latest-slot gating, and peer snapshot freshness.
 	4. Only then add governor-style promotion, demotion, peer sharing, churn, and Genesis-specific policy.
