@@ -6,7 +6,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.KeepAlive.Client`.
 
-use crate::mux::{MuxError, ProtocolHandle};
+use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ pub enum KeepAliveClientError {
 /// 2. Repeat step 1 as many times as needed.
 /// 3. Call [`done`] to terminate the protocol cleanly.
 pub struct KeepAliveClient {
-    handle: ProtocolHandle,
+    channel: MessageChannel,
     state: KeepAliveState,
 }
 
@@ -63,7 +63,7 @@ impl KeepAliveClient {
     /// The protocol starts in `StClient` — client agency.
     pub fn new(handle: ProtocolHandle) -> Self {
         Self {
-            handle,
+            channel: MessageChannel::new(handle),
             state: KeepAliveState::StClient,
         }
     }
@@ -77,7 +77,7 @@ impl KeepAliveClient {
 
     async fn send_msg(&mut self, msg: &KeepAliveMessage) -> Result<(), KeepAliveClientError> {
         self.state = self.state.transition(msg)?;
-        self.handle
+        self.channel
             .send(msg.to_cbor())
             .await
             .map_err(KeepAliveClientError::Mux)
@@ -85,7 +85,7 @@ impl KeepAliveClient {
 
     async fn recv_msg(&mut self) -> Result<KeepAliveMessage, KeepAliveClientError> {
         let raw = self
-            .handle
+            .channel
             .recv()
             .await
             .ok_or(KeepAliveClientError::ConnectionClosed)?;

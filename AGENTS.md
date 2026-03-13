@@ -58,7 +58,9 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
 
 ## Current Phase
 - Workspace foundation is complete and compileable.
-- Active implementation work has started in `crates/crypto` and `crates/cddl-codegen`.
+- Active implementation work is in progress across `crates/crypto`, `crates/cddl-codegen`, `crates/ledger`, `crates/network`, and `node/`.
+- `crates/network` now includes handshake + mux + peer lifecycle, all four mini-protocol state machines/wire codecs, typed client drivers, and SDU segmentation/reassembly support for large protocol messages.
+- `node/` now includes connection bootstrap (`NodeConfig`, `PeerSession`, `bootstrap`), first sync orchestration (`sync_step`, `sync_steps`), and a Shelley block deserialization bridge (`sync_step_decoded`, `decode_shelley_blocks`).
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
 
 Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.

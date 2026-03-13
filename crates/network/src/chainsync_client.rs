@@ -7,7 +7,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.ChainSync.Client`.
 
-use crate::mux::{MuxError, ProtocolHandle};
+use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
 
 // ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ pub enum ChainSyncClientError {
 /// responses.  The driver is cancel-safe: dropping it in any state is
 /// allowed (the muxer will clean up the channel).
 pub struct ChainSyncClient {
-    handle: ProtocolHandle,
+    channel: MessageChannel,
     state: ChainSyncState,
 }
 
@@ -108,7 +108,7 @@ impl ChainSyncClient {
     /// The protocol starts in `StIdle` — client agency.
     pub fn new(handle: ProtocolHandle) -> Self {
         Self {
-            handle,
+            channel: MessageChannel::new(handle),
             state: ChainSyncState::StIdle,
         }
     }
@@ -122,7 +122,7 @@ impl ChainSyncClient {
 
     async fn send_msg(&mut self, msg: &ChainSyncMessage) -> Result<(), ChainSyncClientError> {
         self.state = self.state.transition(msg)?;
-        self.handle
+        self.channel
             .send(msg.to_cbor())
             .await
             .map_err(ChainSyncClientError::Mux)
@@ -130,7 +130,7 @@ impl ChainSyncClient {
 
     async fn recv_msg(&mut self) -> Result<ChainSyncMessage, ChainSyncClientError> {
         let raw = self
-            .handle
+            .channel
             .recv()
             .await
             .ok_or(ChainSyncClientError::ConnectionClosed)?;

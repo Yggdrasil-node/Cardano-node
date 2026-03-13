@@ -26,5 +26,11 @@ Yggdrasil is organized as a Rust workspace with explicit crate boundaries so pro
 - Let storage and network depend on stable domain interfaces rather than concrete implementations.
 - Build parity tooling alongside implementation rather than as a final afterthought.
 
-## First Milestone
-The first executable milestone is foundation only: a buildable workspace, clear documentation, crate skeletons, and CI. Functional protocol parity is deferred to later milestones.
+## Current Milestone
+The project is past pure scaffolding and now includes a working protocol/runtime foundation:
+- Network transport + mux + handshake + peer lifecycle are implemented.
+- All four current mini-protocols have state machines, wire codecs, and typed client drivers.
+- Node bootstrap and first sync orchestration helpers are implemented.
+- First typed decode bridge is implemented for Shelley blocks fetched via BlockFetch.
+
+The next architecture milestone is broad typed payload flow from network protocol messages into ledger/storage boundaries, then staged consensus integration on top.

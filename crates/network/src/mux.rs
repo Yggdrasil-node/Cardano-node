@@ -17,8 +17,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::bearer::MAX_SDU_PAYLOAD;
 use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SduHeader, SDU_HEADER_SIZE};
+
+/// Maximum payload size per outgoing SDU segment.
+///
+/// Matches upstream `network-mux/src/Network/Mux/Types.hs` — `sduSize = 12288`.
+/// The mux writer splits outgoing messages larger than this into multiple SDU
+/// frames; the [`MessageChannel`] wrapper reassembles them on the receive side.
+pub const MAX_SEGMENT_SIZE: usize = 12288;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -48,7 +54,7 @@ pub enum MuxError {
     EgressClosed,
 
     /// A payload exceeds the maximum SDU payload size.
-    #[error("payload too large: {0} bytes (max {MAX_SDU_PAYLOAD})")]
+    #[error("payload too large: {0} bytes")]
     PayloadTooLarge(usize),
 }
 
@@ -209,9 +215,6 @@ async fn demux_loop(
             .expect("SDU header decode cannot fail on 8-byte buffer");
 
         let len = header.payload_length as usize;
-        if len > MAX_SDU_PAYLOAD {
-            return Err(MuxError::PayloadTooLarge(len));
-        }
 
         // Read payload bytes.
         let mut payload = vec![0u8; len];
@@ -250,23 +253,231 @@ async fn mux_loop(
     role: MiniProtocolDir,
 ) -> Result<(), MuxError> {
     while let Some((proto, payload)) = egress.recv().await {
-        if payload.len() > MAX_SDU_PAYLOAD {
-            return Err(MuxError::PayloadTooLarge(payload.len()));
+        if payload.len() <= MAX_SEGMENT_SIZE {
+            // Common fast path: single SDU.
+            let header = SduHeader {
+                timestamp: 0,
+                protocol_num: proto,
+                direction: role,
+                payload_length: payload.len() as u16,
+            };
+            let hdr_bytes = header.encode();
+            writer.write_all(&hdr_bytes).await?;
+            writer.write_all(&payload).await?;
+        } else {
+            // Large payload: segment into MAX_SEGMENT_SIZE chunks.
+            for chunk in payload.chunks(MAX_SEGMENT_SIZE) {
+                let header = SduHeader {
+                    timestamp: 0,
+                    protocol_num: proto,
+                    direction: role,
+                    payload_length: chunk.len() as u16,
+                };
+                let hdr_bytes = header.encode();
+                writer.write_all(&hdr_bytes).await?;
+                writer.write_all(chunk).await?;
+            }
         }
-
-        let header = SduHeader {
-            timestamp: 0,
-            protocol_num: proto,
-            direction: role,
-            payload_length: payload.len() as u16,
-        };
-
-        let hdr_bytes = header.encode();
-        writer.write_all(&hdr_bytes).await?;
-        writer.write_all(&payload).await?;
         writer.flush().await?;
     }
 
     // All egress senders dropped — clean shutdown.
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// CBOR item length detection
+// ---------------------------------------------------------------------------
+
+/// Determine the byte length of one complete CBOR data item starting at
+/// the beginning of `buf`.
+///
+/// Returns `Some(n)` if bytes `0..n` form one complete, well-formed CBOR
+/// value, or `None` if the buffer does not contain enough data (or the
+/// encoding is not supported, e.g. indefinite-length containers).
+///
+/// This is used by [`MessageChannel`] to detect message boundaries when
+/// reassembling multi-SDU protocol messages, matching the upstream approach
+/// where CBOR encoding is self-delimiting.
+///
+/// Only definite-length encodings are supported because all Ouroboros
+/// mini-protocol messages use definite-length CBOR arrays.
+pub fn cbor_item_length(buf: &[u8]) -> Option<usize> {
+    let len = buf.len();
+    if len == 0 {
+        return None;
+    }
+
+    let mut pos: usize = 0;
+    // Number of CBOR data items still to consume.
+    let mut remaining: u64 = 1;
+
+    while remaining > 0 {
+        if pos >= len {
+            return None;
+        }
+        remaining -= 1;
+
+        let initial = buf[pos];
+        let major = initial >> 5;
+        let additional = initial & 0x1f;
+        pos += 1;
+
+        // Decode the argument value from the additional-info field.
+        let arg: u64 = match additional {
+            0..=23 => additional as u64,
+            24 => {
+                if pos >= len {
+                    return None;
+                }
+                let v = buf[pos] as u64;
+                pos += 1;
+                v
+            }
+            25 => {
+                if pos + 2 > len {
+                    return None;
+                }
+                let v = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as u64;
+                pos += 2;
+                v
+            }
+            26 => {
+                if pos + 4 > len {
+                    return None;
+                }
+                let v = u32::from_be_bytes(
+                    buf[pos..pos + 4]
+                        .try_into()
+                        .expect("slice is exactly 4 bytes"),
+                ) as u64;
+                pos += 4;
+                v
+            }
+            27 => {
+                if pos + 8 > len {
+                    return None;
+                }
+                let v = u64::from_be_bytes(
+                    buf[pos..pos + 8]
+                        .try_into()
+                        .expect("slice is exactly 8 bytes"),
+                );
+                pos += 8;
+                v
+            }
+            31 if major == 7 => {
+                // Break code (0xFF) — terminates indefinite-length containers.
+                continue;
+            }
+            31 => {
+                // Indefinite-length container — not supported.
+                return None;
+            }
+            // Additional-info values 28–30 are reserved.
+            _ => return None,
+        };
+
+        match major {
+            // Unsigned integer / negative integer — value is fully encoded.
+            0 | 1 => {}
+            // Byte string / text string — `arg` bytes of content follow.
+            2 | 3 => {
+                let end = pos.checked_add(arg as usize)?;
+                if end > len {
+                    return None;
+                }
+                pos = end;
+            }
+            // Array — `arg` items follow.
+            4 => {
+                remaining = remaining.checked_add(arg)?;
+            }
+            // Map — `arg` key-value pairs ⇒ 2 × arg items follow.
+            5 => {
+                remaining = remaining.checked_add(arg.checked_mul(2)?)?;
+            }
+            // Tag — one tagged data item follows.
+            6 => {
+                remaining = remaining.checked_add(1)?;
+            }
+            // Simple value / float — fully encoded by the header + arg.
+            7 => {}
+            _ => return None,
+        }
+    }
+
+    Some(pos)
+}
+
+// ---------------------------------------------------------------------------
+// MessageChannel — CBOR-aware reassembly wrapper
+// ---------------------------------------------------------------------------
+
+/// A protocol message channel that handles SDU segmentation on send and
+/// CBOR-aware message reassembly on receive.
+///
+/// Wraps a [`ProtocolHandle`] and is the recommended interface for
+/// mini-protocol client drivers.  On the send side, large messages are
+/// transparently segmented into multiple SDUs by the mux writer.  On the
+/// receive side, SDU payloads are buffered and reassembled into complete
+/// CBOR messages before being returned.
+///
+/// Reference: upstream `network-mux` uses CBOR self-delimiting encoding
+/// for message framing at the codec layer.
+pub struct MessageChannel {
+    handle: ProtocolHandle,
+    read_buf: Vec<u8>,
+}
+
+impl MessageChannel {
+    /// Create a new message channel from a raw `ProtocolHandle`.
+    pub fn new(handle: ProtocolHandle) -> Self {
+        Self {
+            handle,
+            read_buf: Vec::new(),
+        }
+    }
+
+    /// Send a complete protocol message payload to the remote peer.
+    ///
+    /// If the payload exceeds [`MAX_SEGMENT_SIZE`] the mux writer
+    /// automatically splits it into multiple SDU frames on the wire.
+    pub async fn send(&self, payload: Vec<u8>) -> Result<(), MuxError> {
+        self.handle.send(payload).await
+    }
+
+    /// Receive the next complete protocol message from the remote peer.
+    ///
+    /// SDU payloads are buffered internally.  The method inspects the
+    /// buffer after each SDU and extracts complete CBOR values, which it
+    /// returns as whole messages.
+    ///
+    /// Returns `None` when the demuxer shuts down or the connection closes.
+    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+        loop {
+            // Try to extract a complete CBOR message from the buffer.
+            if let Some(n) = cbor_item_length(&self.read_buf) {
+                let message: Vec<u8> = self.read_buf.drain(..n).collect();
+                return Some(message);
+            }
+
+            // Read the next SDU payload from the mux.
+            let chunk = self.handle.recv().await?;
+
+            // Empty SDU on an empty buffer: deliver as an empty message.
+            // This preserves backward-compatible semantics for protocols
+            // that send zero-length payloads.
+            if chunk.is_empty() && self.read_buf.is_empty() {
+                return Some(chunk);
+            }
+
+            self.read_buf.extend_from_slice(&chunk);
+        }
+    }
+
+    /// The mini-protocol number this channel is bound to.
+    pub fn protocol_num(&self) -> MiniProtocolNum {
+        self.handle.protocol_num()
+    }
 }

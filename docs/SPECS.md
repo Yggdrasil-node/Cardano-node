@@ -13,12 +13,16 @@ Yggdrasil is specification-driven. When sources disagree, use them in this order
 - Formal ledger specifications: <https://github.com/IntersectMBO/formal-ledger-specifications>
 - Ouroboros papers: <https://iohk.io/research/papers/>
 - Cardano blueprint: <https://cardano-scaling.github.io/cardano-blueprint/>
+- Ouroboros networking specification: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
+- Ouroboros network implementation: <https://github.com/IntersectMBO/ouroboros-network/>
+- Cardano node integration reference: <https://github.com/IntersectMBO/cardano-node/>
 
 ## Usage Rules
 - Pin the exact upstream revision used for generated artifacts.
 - Keep generated code reproducible from checked-in source specifications.
 - Add fixture provenance for any Haskell parity test data.
 - The current `crates/crypto` 80-byte Praos VRF fixtures are draft03-era vectors mirrored from `cardano-crypto-praos`; do not treat them as RFC 9381 final-format verification fixtures without explicit translation or replacement.
+- For networking behavior, trace message tags/flow to official Ouroboros protocol sources before introducing local terminology.
 
 ## Vendored Upstream Test Vectors
 - Vendored cryptographic vectors live under `specs/upstream-test-vectors/` with pinned upstream commit provenance.

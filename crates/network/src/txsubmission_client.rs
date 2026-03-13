@@ -8,7 +8,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.TxSubmission2.Client`.
 
-use crate::mux::{MuxError, ProtocolHandle};
+use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
@@ -77,7 +77,7 @@ pub enum TxSubmissionClientError {
 /// 4. Repeat from step 2.
 /// 5. Call [`done`] from a blocking `StTxIds` state to terminate.
 pub struct TxSubmissionClient {
-    handle: ProtocolHandle,
+    channel: MessageChannel,
     state: TxSubmissionState,
 }
 
@@ -87,7 +87,7 @@ impl TxSubmissionClient {
     /// The protocol starts in `StInit` — client agency.
     pub fn new(handle: ProtocolHandle) -> Self {
         Self {
-            handle,
+            channel: MessageChannel::new(handle),
             state: TxSubmissionState::StInit,
         }
     }
@@ -104,7 +104,7 @@ impl TxSubmissionClient {
         msg: &TxSubmissionMessage,
     ) -> Result<(), TxSubmissionClientError> {
         self.state = self.state.transition(msg)?;
-        self.handle
+        self.channel
             .send(msg.to_cbor())
             .await
             .map_err(TxSubmissionClientError::Mux)
@@ -112,7 +112,7 @@ impl TxSubmissionClient {
 
     async fn recv_msg(&mut self) -> Result<TxSubmissionMessage, TxSubmissionClientError> {
         let raw = self
-            .handle
+            .channel
             .recv()
             .await
             .ok_or(TxSubmissionClientError::ConnectionClosed)?;

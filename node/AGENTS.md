@@ -26,4 +26,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 
 ## Current Phase
 - Keep the node crate thin and integration-focused.
+- Runtime bootstrap wiring is implemented (`NodeConfig`, `PeerSession`, `bootstrap`) with smoke coverage.
+- First sync orchestration slice is implemented (`sync_step`, `sync_steps`) to coordinate ChainSync and BlockFetch without embedding ledger/consensus rules.
+- Block deserialization bridge is implemented for Shelley (`sync_step_decoded`, `decode_shelley_blocks`) as a typed handoff stage from network payloads.
 - Prefer smokeable runtime wiring over feature-rich operational behavior at this stage.

@@ -10,6 +10,7 @@
 - Keep error types explicit in library crates.
 - Do not use `unwrap`, `dbg!`, or `todo!` in committed code.
 - Add tests for new domain logic, especially in consensus, ledger, and crypto code.
+- Keep `AGENTS.md`, `README.md`, and docs in sync with implemented behavior whenever milestones shift.
 
 ## Generated Code
 - Treat generated files as outputs of `cddl-codegen`.

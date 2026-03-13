@@ -4,10 +4,10 @@ use yggdrasil_network::{
     ChainSyncState, ChainSyncClient, IntersectResponse, NextResponse,
     HandshakeMessage, HandshakeRequest, HandshakeState,
     HandshakeVersion, KeepAliveClient, KeepAliveMessage, KeepAliveState,
-    MiniProtocolDir, MiniProtocolNum, MuxChannel,
+    MessageChannel, MiniProtocolDir, MiniProtocolNum, MuxChannel,
     NodeToNodeVersionData, RefuseReason, Sdu, SduDecodeError, SduHeader,
     TcpBearer, TxIdAndSize, TxServerRequest, TxSubmissionClient, TxSubmissionMessage,
-    TxSubmissionState, SDU_HEADER_SIZE,
+    TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
 
@@ -1268,6 +1268,260 @@ async fn mux_clean_shutdown_on_handle_drop() {
     let (_handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
     client_handle.await.expect("client task");
     mux.abort();
+}
+
+// ===========================================================================
+// SDU segmentation — large message round-trip via MessageChannel
+// ===========================================================================
+
+#[tokio::test]
+async fn sdu_segmentation_large_payload_round_trip() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::BLOCK_FETCH];
+
+    // Build a CBOR byte-string payload larger than MAX_SEGMENT_SIZE.
+    // CBOR: major 2 (bstr), 2-byte length (0x59 = additional 25), then N bytes.
+    let body_len: usize = MAX_SEGMENT_SIZE * 3 + 42; // spans 4 SDU segments
+    let mut payload = Vec::with_capacity(3 + body_len);
+    payload.push(0x59); // major 2, additional 25 → 2-byte length
+    payload.extend_from_slice(&(body_len as u16).to_be_bytes());
+    for i in 0..body_len {
+        payload.push((i & 0xFF) as u8);
+    }
+
+    let send_payload = payload.clone();
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+        let ch = MessageChannel::new(handle);
+        ch.send(send_payload).await.expect("send large payload");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+    let mut ch = MessageChannel::new(handle);
+    let received = ch.recv().await.expect("recv reassembled message");
+    assert_eq!(received.len(), payload.len());
+    assert_eq!(received, payload);
+    mux.abort();
+
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// SDU segmentation — exact multiple of segment size
+// ===========================================================================
+
+#[tokio::test]
+async fn sdu_segmentation_exact_multiple() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::CHAIN_SYNC];
+
+    // Build a payload exactly 2 * MAX_SEGMENT_SIZE bytes (CBOR bstr).
+    let body_len: usize = 2 * MAX_SEGMENT_SIZE - 3; // minus CBOR header (3 bytes)
+    let mut payload = Vec::with_capacity(3 + body_len);
+    payload.push(0x59); // major 2, additional 25 → 2-byte length
+    payload.extend_from_slice(&(body_len as u16).to_be_bytes());
+    payload.resize(3 + body_len, 0xAB);
+    assert_eq!(payload.len(), 2 * MAX_SEGMENT_SIZE);
+
+    let send_payload = payload.clone();
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let handle = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+        let ch = MessageChannel::new(handle);
+        ch.send(send_payload).await.expect("send exact-multiple payload");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let handle = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+    let mut ch = MessageChannel::new(handle);
+    let received = ch.recv().await.expect("recv");
+    assert_eq!(received, payload);
+    mux.abort();
+
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// SDU segmentation — multiple large messages in sequence
+// ===========================================================================
+
+#[tokio::test]
+async fn sdu_segmentation_multiple_large_messages() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::BLOCK_FETCH];
+
+    // Create several CBOR bstr payloads of different sizes.
+    fn make_bstr(body_len: usize) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(3 + body_len);
+        payload.push(0x59);
+        payload.extend_from_slice(&(body_len as u16).to_be_bytes());
+        for i in 0..body_len {
+            payload.push((i % 251) as u8);
+        }
+        payload
+    }
+
+    let messages = vec![
+        make_bstr(MAX_SEGMENT_SIZE + 500),     // spans 2 segments
+        make_bstr(MAX_SEGMENT_SIZE * 2 + 100), // spans 3 segments
+        make_bstr(100),                        // fits in 1 segment
+        make_bstr(MAX_SEGMENT_SIZE * 4),       // spans 5 segments
+    ];
+
+    let send_messages = messages.clone();
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+        let ch = MessageChannel::new(handle);
+        for msg in &send_messages {
+            ch.send(msg.clone()).await.expect("send");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+    let mut ch = MessageChannel::new(handle);
+    for (i, expected) in messages.iter().enumerate() {
+        let received = ch.recv().await.unwrap_or_else(|| panic!("recv message {i}"));
+        assert_eq!(received.len(), expected.len(), "message {i} length mismatch");
+        assert_eq!(&received, expected, "message {i} content mismatch");
+    }
+    mux.abort();
+
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// SDU segmentation — interleaved protocols
+// ===========================================================================
+
+#[tokio::test]
+async fn sdu_segmentation_interleaved_protocols() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::CHAIN_SYNC, MiniProtocolNum::BLOCK_FETCH];
+
+    // Two large bstr payloads, one per protocol.
+    fn make_bstr(body_len: usize, fill: u8) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(3 + body_len);
+        payload.push(0x59);
+        payload.extend_from_slice(&(body_len as u16).to_be_bytes());
+        payload.resize(3 + body_len, fill);
+        payload
+    }
+
+    let cs_payload = make_bstr(MAX_SEGMENT_SIZE + 1000, 0x11);
+    let bf_payload = make_bstr(MAX_SEGMENT_SIZE + 2000, 0x22);
+
+    let cs_send = cs_payload.clone();
+    let bf_send = bf_payload.clone();
+
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+        let cs_handle = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("cs");
+        let bf_handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("bf");
+        let cs_ch = MessageChannel::new(cs_handle);
+        let bf_ch = MessageChannel::new(bf_handle);
+
+        cs_ch.send(cs_send).await.expect("send cs");
+        bf_ch.send(bf_send).await.expect("send bf");
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
+    let cs_handle = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("cs");
+    let bf_handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("bf");
+    let mut cs_ch = MessageChannel::new(cs_handle);
+    let mut bf_ch = MessageChannel::new(bf_handle);
+
+    let cs_received = cs_ch.recv().await.expect("recv cs");
+    let bf_received = bf_ch.recv().await.expect("recv bf");
+
+    assert_eq!(cs_received, cs_payload);
+    assert_eq!(bf_received, bf_payload);
+
+    mux.abort();
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
+// CBOR item length — unit tests
+// ===========================================================================
+
+#[test]
+fn cbor_item_length_unit_tests() {
+    use yggdrasil_network::mux::cbor_item_length;
+
+    // Unsigned integers.
+    assert_eq!(cbor_item_length(&[0x00]), Some(1));          // uint 0
+    assert_eq!(cbor_item_length(&[0x17]), Some(1));          // uint 23
+    assert_eq!(cbor_item_length(&[0x18, 0x18]), Some(2));    // uint 24
+    assert_eq!(cbor_item_length(&[0x19, 0x01, 0x00]), Some(3)); // uint 256
+
+    // Byte strings.
+    assert_eq!(cbor_item_length(&[0x43, 0xAA, 0xBB, 0xCC]), Some(4)); // bstr(3)
+    assert_eq!(cbor_item_length(&[0x43, 0xAA, 0xBB]), None);          // incomplete bstr
+
+    // Empty array.
+    assert_eq!(cbor_item_length(&[0x80]), Some(1));          // array(0)
+
+    // Array with elements.
+    assert_eq!(cbor_item_length(&[0x82, 0x01, 0x02]), Some(3)); // [1, 2]
+
+    // Nested arrays.
+    // [1, [2, 3]]
+    assert_eq!(cbor_item_length(&[0x82, 0x01, 0x82, 0x02, 0x03]), Some(5));
+
+    // Map.
+    assert_eq!(cbor_item_length(&[0xA1, 0x01, 0x02]), Some(3)); // {1: 2}
+
+    // Tag.
+    assert_eq!(cbor_item_length(&[0xC0, 0x01]), Some(2));       // tag(0, uint 1)
+
+    // Incomplete data.
+    assert_eq!(cbor_item_length(&[]), None);
+    assert_eq!(cbor_item_length(&[0x82, 0x01]), None); // array(2) with only 1 element
+
+    // Simple values.
+    assert_eq!(cbor_item_length(&[0xF4]), Some(1)); // false
+    assert_eq!(cbor_item_length(&[0xF5]), Some(1)); // true
+    assert_eq!(cbor_item_length(&[0xF6]), Some(1)); // null
+
+    // Extra bytes after complete value are NOT consumed.
+    assert_eq!(cbor_item_length(&[0x01, 0x99]), Some(1)); // uint 1 + trailing byte
 }
 
 // ===========================================================================

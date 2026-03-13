@@ -7,7 +7,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.BlockFetch.Client`.
 
-use crate::mux::{MuxError, ProtocolHandle};
+use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ pub enum BlockFetchClientError {
 ///    until it returns `None` (which indicates `MsgBatchDone`).
 /// 3. Repeat from step 1 for more ranges, or call [`done`] to terminate.
 pub struct BlockFetchClient {
-    handle: ProtocolHandle,
+    channel: MessageChannel,
     state: BlockFetchState,
 }
 
@@ -74,7 +74,7 @@ impl BlockFetchClient {
     /// The protocol starts in `StIdle` — client agency.
     pub fn new(handle: ProtocolHandle) -> Self {
         Self {
-            handle,
+            channel: MessageChannel::new(handle),
             state: BlockFetchState::StIdle,
         }
     }
@@ -88,7 +88,7 @@ impl BlockFetchClient {
 
     async fn send_msg(&mut self, msg: &BlockFetchMessage) -> Result<(), BlockFetchClientError> {
         self.state = self.state.transition(msg)?;
-        self.handle
+        self.channel
             .send(msg.to_cbor())
             .await
             .map_err(BlockFetchClientError::Mux)
@@ -96,7 +96,7 @@ impl BlockFetchClient {
 
     async fn recv_msg(&mut self) -> Result<BlockFetchMessage, BlockFetchClientError> {
         let raw = self
-            .handle
+            .channel
             .recv()
             .await
             .ok_or(BlockFetchClientError::ConnectionClosed)?;

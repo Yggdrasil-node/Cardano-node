@@ -40,7 +40,7 @@ pub use multiplexer::{
 };
 
 // -- Mux re-exports -----------------------------------------------------------
-pub use mux::{MuxError, MuxHandle, ProtocolHandle, start as start_mux};
+pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as start_mux, MAX_SEGMENT_SIZE};
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
