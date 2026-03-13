@@ -7,8 +7,62 @@ use std::net::SocketAddr;
 
 use yggdrasil_network::{
     BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
-    MiniProtocolNum, NodeToNodeVersionData, PeerConnection, PeerError, TxSubmissionClient,
+    MiniProtocolNum, NodeToNodeVersionData, PeerConnection, PeerError, TxIdAndSize,
+    TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
 };
+use yggdrasil_mempool::Mempool;
+
+// ---------------------------------------------------------------------------
+// TxSubmission mempool integration
+// ---------------------------------------------------------------------------
+
+/// Errors from serving TxSubmission requests out of a mempool snapshot.
+#[derive(Debug, thiserror::Error)]
+pub enum TxSubmissionServiceError {
+    /// Underlying TxSubmission protocol client error.
+    #[error("tx-submission client error: {0}")]
+    Client(#[from] TxSubmissionClientError),
+}
+
+/// Serve a single TxSubmission request using the current mempool contents.
+///
+/// Tx ids are advertised in the mempool's existing fee-descending order. For
+/// blocking requests with no available transactions, the helper terminates the
+/// mini-protocol with `MsgDone` and returns `Ok(false)`.
+pub async fn serve_txsubmission_request_from_mempool(
+    client: &mut TxSubmissionClient,
+    mempool: &Mempool,
+) -> Result<bool, TxSubmissionServiceError> {
+    match client.recv_request().await? {
+        TxServerRequest::RequestTxIds { blocking, req, .. } => {
+            let txids = mempool
+                .iter()
+                .take(req as usize)
+                .map(|entry| TxIdAndSize {
+                    txid: entry.tx_id,
+                    size: entry.size_bytes.min(u32::MAX as usize) as u32,
+                })
+                .collect::<Vec<_>>();
+
+            if txids.is_empty() && blocking {
+                client.send_done().await?;
+                Ok(false)
+            } else {
+                client.reply_tx_ids(txids).await?;
+                Ok(true)
+            }
+        }
+        TxServerRequest::RequestTxs { txids } => {
+            let txs = txids
+                .into_iter()
+                .filter_map(|txid| mempool.iter().find(|entry| entry.tx_id == txid))
+                .map(|entry| entry.raw_tx.clone())
+                .collect::<Vec<_>>();
+            client.reply_txs(txs).await?;
+            Ok(true)
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // NodeConfig

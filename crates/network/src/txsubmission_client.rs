@@ -293,8 +293,15 @@ impl TxSubmissionClient {
     /// Send `MsgDone` to terminate the protocol.
     ///
     /// The client must be in `StTxIds { blocking: true }`.
-    pub async fn done(mut self) -> Result<(), TxSubmissionClientError> {
+    pub async fn send_done(&mut self) -> Result<(), TxSubmissionClientError> {
         self.send_msg(&TxSubmissionMessage::MsgDone).await
+    }
+
+    /// Send `MsgDone` to terminate the protocol, consuming the client.
+    ///
+    /// The client must be in `StTxIds { blocking: true }`.
+    pub async fn done(mut self) -> Result<(), TxSubmissionClientError> {
+        self.send_done().await
     }
 
     fn apply_acknowledgements(&mut self, ack: u16) -> Result<(), TxSubmissionClientError> {

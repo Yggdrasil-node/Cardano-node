@@ -11,7 +11,7 @@ use yggdrasil_network::{
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
 };
-use yggdrasil_ledger::{CborDecode, CborEncode, HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId};
+use yggdrasil_ledger::{AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, CborDecode, CborEncode, HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId, Value};
 
 fn sample_vrf_cert(seed: u8) -> ShelleyVrfCert {
     ShelleyVrfCert {
@@ -92,6 +92,46 @@ fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
         },
         auxiliary_data: Some(vec![0x81, seed]),
     })
+}
+
+fn sample_alonzo_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
+    MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
+        AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [seed; 32],
+                index: 1,
+            }],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 28],
+                amount: Value::Coin(2_000_000),
+                datum_hash: None,
+            }],
+            fee: 200_000,
+            ttl: Some(9_999),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        },
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        true,
+        Some(vec![0x81, seed.wrapping_add(1)]),
+    ))
 }
 
 // ===========================================================================
@@ -3314,6 +3354,122 @@ async fn txsubmission_client_full_session() {
         }
     ));
     client.done().await.expect("done");
+
+    server.await.expect("server task");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    c_mux.abort();
+    s_mux.abort();
+}
+
+#[tokio::test]
+async fn txsubmission_client_full_session_alonzo_multi_era() {
+    let (c_handle, s_handle, c_mux, s_mux) = txsubmission_mux_pair().await;
+    let mut client = TxSubmissionClient::new(c_handle);
+    let submitted = sample_alonzo_submitted_tx(0x52);
+    let submitted_bytes = submitted.raw_cbor();
+    let submitted_size = submitted_bytes.len() as u32;
+    let submitted_txid = submitted.tx_id();
+
+    let server = tokio::spawn(async move {
+        let mut sh = s_handle;
+
+        let _raw = sh.recv().await.expect("recv init");
+
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send request txids");
+
+        let raw = sh.recv().await.expect("recv reply_txids");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        let txids = match msg {
+            TxSubmissionMessage::MsgReplyTxIds { txids } => txids,
+            _ => panic!("expected MsgReplyTxIds"),
+        };
+        assert_eq!(txids.len(), 1);
+        assert_eq!(txids[0].txid, submitted_txid);
+
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxs {
+                txids: vec![submitted_txid],
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send request_txs");
+
+        let raw = sh.recv().await.expect("recv reply_txs");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        match msg {
+            TxSubmissionMessage::MsgReplyTxs { txs } => {
+                assert_eq!(txs, vec![submitted_bytes]);
+            }
+            _ => panic!("expected MsgReplyTxs"),
+        }
+
+        sh.send(
+            TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 1,
+                req: 1,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send blocking request");
+
+        let raw = sh.recv().await.expect("recv done");
+        let msg = TxSubmissionMessage::from_cbor(&raw).expect("decode");
+        assert_eq!(msg, TxSubmissionMessage::MsgDone);
+    });
+
+    client.init().await.expect("init");
+
+    let req = client.recv_request().await.expect("recv txid request");
+    assert_eq!(
+        req,
+        TxServerRequest::RequestTxIds {
+            blocking: true,
+            ack: 0,
+            req: 1,
+        }
+    );
+    client
+        .reply_tx_ids(vec![TxIdAndSize {
+            txid: submitted_txid,
+            size: submitted_size,
+        }])
+        .await
+        .expect("reply_tx_ids");
+
+    let req = client.recv_request().await.expect("recv tx request");
+    assert_eq!(
+        req,
+        TxServerRequest::RequestTxs {
+            txids: vec![submitted_txid],
+        }
+    );
+    client
+        .reply_txs_multi_era(vec![submitted])
+        .await
+        .expect("reply_txs");
+
+    let req = client.recv_request().await.expect("recv blocking request");
+    assert!(matches!(
+        req,
+        TxServerRequest::RequestTxIds {
+            blocking: true,
+            ack: 1,
+            req: 1,
+        }
+    ));
+    client.send_done().await.expect("done");
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;

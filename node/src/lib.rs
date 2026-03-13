@@ -5,7 +5,10 @@ pub mod config;
 pub mod runtime;
 pub mod sync;
 
-pub use runtime::{NodeConfig, PeerSession, bootstrap};
+pub use runtime::{
+	NodeConfig, PeerSession, TxSubmissionServiceError, bootstrap,
+	serve_txsubmission_request_from_mempool,
+};
 pub use sync::{
 	DecodedSyncStep, MultiEraBlock, MultiEraSyncProgress, MultiEraSyncStep, SyncError,
 	SyncProgress, SyncServiceConfig, SyncServiceOutcome, SyncStep, TypedIntersectResult,

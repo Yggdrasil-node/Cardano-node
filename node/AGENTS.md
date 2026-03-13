@@ -36,7 +36,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Consensus header verification bridge (`verify_shelley_header`, `verify_multi_era_block`, `VerificationConfig`) is wired into the sync flow.
 - Block body hash verification (`verify_block_body_hash`, `VerificationConfig.verify_body_hash`) computes Blake2b-256 of block body elements and compares against the header-declared hash. Wired into `sync_batch_apply_verified`.
 - Block header hash computation uses real Blake2b-256.
-- Mempool sync eviction (`extract_tx_ids`, `evict_confirmed_from_mempool`) is implemented.
+- Mempool sync eviction (`extract_tx_ids`, `evict_confirmed_from_mempool`) is implemented. TxSubmission runtime integration now includes `serve_txsubmission_request_from_mempool`, which serves one inbound TxSubmission request directly from fee-ordered mempool state using stored submitted-transaction bytes and sends `MsgDone` on blocking requests when the mempool is empty.
 - Verified sync service (`run_verified_sync_service`, `VerifiedSyncServiceConfig`, `VerifiedSyncServiceOutcome`) uses the multi-era verified pipeline with per-block nonce evolution tracking and optional ChainState tracking. Returns final `NonceEvolutionState` and `ChainState` on shutdown. CLI `run` command now uses this pipeline by default.
 - ChainState integration: `multi_era_block_to_chain_entry`, `track_chain_state`, `promote_stable_blocks` wire consensus `ChainState` into the sync flow. `VerifiedSyncServiceConfig.security_param` enables chain tracking with stability window enforcement.
 - Genesis parameters in `NodeConfigFile`: `epoch_length` (432000), `security_param_k` (2160), `active_slot_coeff` (0.05). Stability window computed as `3k/f`.
