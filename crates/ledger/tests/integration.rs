@@ -6,11 +6,12 @@ use yggdrasil_ledger::{
     ExUnits, GovAction, GovActionId, HeaderHash, LedgerError, LedgerState, MaryTxBody,
     MaryTxOut, MultiEraSubmittedTx, MultiEraTxOut, MultiEraUtxo, NativeScript, Nonce,
     PlutusData, Point, PointerAddress, PoolMetadata, PoolParams, PraosHeader, PraosHeaderBody,
-    ProposalProcedure, Redeemer, Relay, RewardAccount, Script, ScriptRef, ShelleyBlock,
-    ShelleyCompatibleSubmittedTx, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
-    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness,
-    ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value, Vote,
-    Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH, compute_tx_id,
+    ProposalProcedure, Redeemer, Relay, RewardAccount, RewardAccountState, Script, ScriptRef,
+    ShelleyBlock, ShelleyCompatibleSubmittedTx, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
+    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo,
+    ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId,
+    UnitInterval, Value, Vote, Voter, VotingProcedure, VotingProcedures,
+    BYRON_SLOTS_PER_EPOCH, compute_tx_id,
 };
 
 #[test]
@@ -6228,6 +6229,65 @@ fn ledger_state_snapshot_exposes_tip_and_era() {
     let snapshot = state.snapshot();
     assert_eq!(snapshot.current_era(), Era::Babbage);
     assert_eq!(snapshot.tip(), &Point::BlockPoint(SlotNo(77), HeaderHash([0xAB; 32])));
+}
+
+#[test]
+fn ledger_state_snapshot_exposes_pool_and_reward_state() {
+    let mut state = LedgerState::new(Era::Conway);
+    let params = sample_pool_params();
+    let operator = params.operator;
+    let reward_account = sample_reward_account();
+
+    state.pool_state_mut().register(params.clone());
+    state.reward_accounts_mut().insert(
+        reward_account,
+        RewardAccountState::new(9_000_000, Some(operator)),
+    );
+
+    let snapshot = state.snapshot();
+    let pool = snapshot
+        .registered_pool(&operator)
+        .expect("registered pool in snapshot");
+    let account = snapshot
+        .reward_account_state(&reward_account)
+        .expect("reward account in snapshot");
+
+    assert_eq!(pool.params(), &params);
+    assert_eq!(pool.retiring_epoch(), None);
+    assert_eq!(account.balance(), 9_000_000);
+    assert_eq!(account.delegated_pool(), Some(operator));
+}
+
+#[test]
+fn ledger_state_pool_state_tracks_registration_and_retirement() {
+    let mut state = LedgerState::new(Era::Shelley);
+    let params = sample_pool_params();
+    let operator = params.operator;
+
+    state.pool_state_mut().register(params.clone());
+    assert!(state.pool_state().is_registered(&operator));
+    assert!(state.pool_state_mut().retire(operator, EpochNo(240)));
+
+    let pool = state
+        .registered_pool(&operator)
+        .expect("registered pool after retirement");
+    assert_eq!(pool.params(), &params);
+    assert_eq!(pool.retiring_epoch(), Some(EpochNo(240)));
+}
+
+#[test]
+fn ledger_state_query_reward_balance_reads_reward_accounts() {
+    let mut state = LedgerState::new(Era::Allegra);
+    let reward_account = sample_reward_account();
+
+    assert_eq!(state.query_reward_balance(&reward_account), 0);
+
+    state.reward_accounts_mut().insert(
+        reward_account,
+        RewardAccountState::new(4_200_000, Some(sample_pool_params().operator)),
+    );
+
+    assert_eq!(state.query_reward_balance(&reward_account), 4_200_000);
 }
 
 #[test]

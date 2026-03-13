@@ -4,21 +4,189 @@ use crate::eras::babbage::BabbageTxBody;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
-use crate::types::{Address, Point};
+use crate::types::{Address, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount};
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Era, LedgerError};
 use std::collections::BTreeMap;
 
+/// Registered stake-pool state carried by the ledger.
+///
+/// This is a narrow container for pool registration data plus an optional
+/// retirement epoch. Certificate application will populate and update this
+/// structure in a later slice.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegisteredPool {
+    params: PoolParams,
+    retiring_epoch: Option<EpochNo>,
+}
+
+impl RegisteredPool {
+    /// Returns the registered pool parameters.
+    pub fn params(&self) -> &PoolParams {
+        &self.params
+    }
+
+    /// Returns the scheduled retirement epoch, if any.
+    pub fn retiring_epoch(&self) -> Option<EpochNo> {
+        self.retiring_epoch
+    }
+}
+
+/// Stake-pool registry state visible from the ledger.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PoolState {
+    entries: BTreeMap<PoolKeyHash, RegisteredPool>,
+}
+
+impl PoolState {
+    /// Creates an empty pool-state container.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the registered state for `operator`, if present.
+    pub fn get(&self, operator: &PoolKeyHash) -> Option<&RegisteredPool> {
+        self.entries.get(operator)
+    }
+
+    /// Returns mutable registered state for `operator`, if present.
+    pub fn get_mut(&mut self, operator: &PoolKeyHash) -> Option<&mut RegisteredPool> {
+        self.entries.get_mut(operator)
+    }
+
+    /// Returns true when `operator` is registered.
+    pub fn is_registered(&self, operator: &PoolKeyHash) -> bool {
+        self.entries.contains_key(operator)
+    }
+
+    /// Iterates over registered pools in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&PoolKeyHash, &RegisteredPool)> {
+        self.entries.iter()
+    }
+
+    /// Inserts or replaces the registration for a pool operator.
+    pub fn register(&mut self, params: PoolParams) {
+        let operator = params.operator;
+        self.entries.insert(
+            operator,
+            RegisteredPool {
+                params,
+                retiring_epoch: None,
+            },
+        );
+    }
+
+    /// Marks a registered pool as retiring at `epoch`.
+    ///
+    /// Returns `true` when the pool existed and was updated.
+    pub fn retire(&mut self, operator: PoolKeyHash, epoch: EpochNo) -> bool {
+        let Some(entry) = self.entries.get_mut(&operator) else {
+            return false;
+        };
+
+        entry.retiring_epoch = Some(epoch);
+        true
+    }
+}
+
+/// Reward-account state visible from the ledger.
+///
+/// This container tracks the current reward balance and the delegated pool, if
+/// one has been recorded for the account.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RewardAccountState {
+    balance: u64,
+    delegated_pool: Option<PoolKeyHash>,
+}
+
+impl RewardAccountState {
+    /// Creates reward-account state with the given balance and delegation.
+    pub fn new(balance: u64, delegated_pool: Option<PoolKeyHash>) -> Self {
+        Self {
+            balance,
+            delegated_pool,
+        }
+    }
+
+    /// Returns the current reward balance.
+    pub fn balance(&self) -> u64 {
+        self.balance
+    }
+
+    /// Returns the delegated pool, if any.
+    pub fn delegated_pool(&self) -> Option<PoolKeyHash> {
+        self.delegated_pool
+    }
+
+    /// Replaces the reward balance.
+    pub fn set_balance(&mut self, balance: u64) {
+        self.balance = balance;
+    }
+
+    /// Replaces the delegated pool reference.
+    pub fn set_delegated_pool(&mut self, delegated_pool: Option<PoolKeyHash>) {
+        self.delegated_pool = delegated_pool;
+    }
+}
+
+/// Reward-account map visible from the ledger.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RewardAccounts {
+    entries: BTreeMap<RewardAccount, RewardAccountState>,
+}
+
+impl RewardAccounts {
+    /// Creates an empty reward-account container.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the state for `account`, if present.
+    pub fn get(&self, account: &RewardAccount) -> Option<&RewardAccountState> {
+        self.entries.get(account)
+    }
+
+    /// Returns mutable state for `account`, if present.
+    pub fn get_mut(&mut self, account: &RewardAccount) -> Option<&mut RewardAccountState> {
+        self.entries.get_mut(account)
+    }
+
+    /// Iterates over reward-account entries in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&RewardAccount, &RewardAccountState)> {
+        self.entries.iter()
+    }
+
+    /// Inserts or replaces reward-account state.
+    pub fn insert(
+        &mut self,
+        account: RewardAccount,
+        state: RewardAccountState,
+    ) -> Option<RewardAccountState> {
+        self.entries.insert(account, state)
+    }
+
+    /// Returns the reward balance for `account`, defaulting to zero.
+    pub fn balance(&self, account: &RewardAccount) -> u64 {
+        self.entries
+            .get(account)
+            .map(RewardAccountState::balance)
+            .unwrap_or(0)
+    }
+}
+
 /// Read-only snapshot of ledger-visible state.
 ///
-/// This snapshot preserves the current era, tip, and both UTxO views so
-/// callers can query ledger-visible outputs without mutating `LedgerState`.
-/// The dual UTxO representation is retained because Shelley-only state is
-/// still stored separately for backward compatibility.
+/// This snapshot preserves the current era, tip, stake-pool state,
+/// reward-account state, and both UTxO views so callers can query
+/// ledger-visible data without mutating `LedgerState`. The dual UTxO
+/// representation is retained because Shelley-only state is still stored
+/// separately for backward compatibility.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LedgerStateSnapshot {
     current_era: Era,
     tip: Point,
+    pool_state: PoolState,
+    reward_accounts: RewardAccounts,
     multi_era_utxo: MultiEraUtxo,
     shelley_utxo: ShelleyUtxo,
 }
@@ -32,6 +200,31 @@ impl LedgerStateSnapshot {
     /// Returns the chain tip captured in this snapshot.
     pub fn tip(&self) -> &Point {
         &self.tip
+    }
+
+    /// Returns the registered stake-pool state captured in this snapshot.
+    pub fn pool_state(&self) -> &PoolState {
+        &self.pool_state
+    }
+
+    /// Returns the reward-account state captured in this snapshot.
+    pub fn reward_accounts(&self) -> &RewardAccounts {
+        &self.reward_accounts
+    }
+
+    /// Returns the registered state for `operator`, if present.
+    pub fn registered_pool(&self, operator: &PoolKeyHash) -> Option<&RegisteredPool> {
+        self.pool_state.get(operator)
+    }
+
+    /// Returns the reward-account state for `account`, if present.
+    pub fn reward_account_state(&self, account: &RewardAccount) -> Option<&RewardAccountState> {
+        self.reward_accounts.get(account)
+    }
+
+    /// Returns the visible reward balance for `account`.
+    pub fn query_reward_balance(&self, account: &RewardAccount) -> u64 {
+        self.reward_accounts.balance(account)
     }
 
     /// Returns the multi-era UTxO set captured in this snapshot.
@@ -92,8 +285,10 @@ impl LedgerStateSnapshot {
 ///
 /// `apply_block` decodes each transaction body according to the block's
 /// era and applies the UTxO transition rules via `MultiEraUtxo`.
-/// A legacy `ShelleyUtxo` accessor is retained for backward compatibility
-/// with existing tests that seed and inspect Shelley-only entries.
+/// The state also carries stake-pool and reward-account containers for
+/// upcoming certificate and withdrawal work. A legacy `ShelleyUtxo`
+/// accessor is retained for backward compatibility with existing tests
+/// that seed and inspect Shelley-only entries.
 ///
 /// Reference: `Ouroboros.Consensus.Ledger.Abstract` — `LedgerState`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,6 +297,10 @@ pub struct LedgerState {
     pub current_era: Era,
     /// Chain tip as a point (slot + header hash).
     pub tip: Point,
+    /// Registered stake-pool state.
+    pool_state: PoolState,
+    /// Reward-account balances and delegation pointers.
+    reward_accounts: RewardAccounts,
     /// Multi-era UTxO set.
     multi_era_utxo: MultiEraUtxo,
     /// Legacy Shelley-only UTxO set kept in sync for backward compatibility.
@@ -115,9 +314,46 @@ impl LedgerState {
         Self {
             current_era,
             tip: Point::Origin,
+            pool_state: PoolState::new(),
+            reward_accounts: RewardAccounts::new(),
             multi_era_utxo: MultiEraUtxo::new(),
             shelley_utxo: ShelleyUtxo::new(),
         }
+    }
+
+    /// Returns a reference to registered stake-pool state.
+    pub fn pool_state(&self) -> &PoolState {
+        &self.pool_state
+    }
+
+    /// Returns a mutable reference to registered stake-pool state.
+    pub fn pool_state_mut(&mut self) -> &mut PoolState {
+        &mut self.pool_state
+    }
+
+    /// Returns a reference to reward-account state.
+    pub fn reward_accounts(&self) -> &RewardAccounts {
+        &self.reward_accounts
+    }
+
+    /// Returns a mutable reference to reward-account state.
+    pub fn reward_accounts_mut(&mut self) -> &mut RewardAccounts {
+        &mut self.reward_accounts
+    }
+
+    /// Returns the registered state for `operator`, if present.
+    pub fn registered_pool(&self, operator: &PoolKeyHash) -> Option<&RegisteredPool> {
+        self.pool_state.get(operator)
+    }
+
+    /// Returns the reward-account state for `account`, if present.
+    pub fn reward_account_state(&self, account: &RewardAccount) -> Option<&RewardAccountState> {
+        self.reward_accounts.get(account)
+    }
+
+    /// Returns the visible reward balance for `account`.
+    pub fn query_reward_balance(&self, account: &RewardAccount) -> u64 {
+        self.reward_accounts.balance(account)
     }
 
     /// Returns a reference to the legacy Shelley UTxO set.
@@ -151,6 +387,8 @@ impl LedgerState {
         LedgerStateSnapshot {
             current_era: self.current_era,
             tip: self.tip.clone(),
+            pool_state: self.pool_state.clone(),
+            reward_accounts: self.reward_accounts.clone(),
             multi_era_utxo: self.multi_era_utxo.clone(),
             shelley_utxo: self.shelley_utxo.clone(),
         }

@@ -43,7 +43,10 @@ pub use error::LedgerError;
 
 // -- State re-exports ---------------------------------------------------------
 /// Top-level ledger state wrapper.
-pub use state::{LedgerState, LedgerStateSnapshot};
+pub use state::{
+    LedgerState, LedgerStateSnapshot, PoolState, RegisteredPool, RewardAccountState,
+    RewardAccounts,
+};
 
 // -- Tx/Block re-exports ------------------------------------------------------
 /// Transaction and block wrapper types.
