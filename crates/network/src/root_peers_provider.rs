@@ -8,6 +8,7 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 
+use crate::peer_registry::PeerRegistry;
 use crate::root_peers::{
     ResolvedLocalRootGroup, ResolvedPublicRootPeers, RootPeerProviderState,
     TopologyConfig,
@@ -78,6 +79,30 @@ where
     }
 }
 
+/// Poll a provider once, reconcile the result into root-provider state, and
+/// sync the peer registry from the resulting root snapshot.
+///
+/// This keeps provider-side refresh handling and consumer-side root-peer
+/// registry reconciliation on one crate-owned path so `node` does not need to
+/// carry any root-peer bookkeeping state.
+pub fn refresh_root_peer_state_and_registry<P>(
+    state: &mut RootPeerProviderState,
+    registry: &mut PeerRegistry,
+    provider: &mut P,
+) -> Result<bool, RootPeerProviderError>
+where
+    P: RootPeerProvider,
+{
+    match provider.refresh()? {
+        Some(refresh) => {
+            let state_changed = state.apply_refresh(refresh);
+            let registry_changed = registry.sync_root_peers(state.providers());
+            Ok(state_changed || registry_changed)
+        }
+        None => Ok(false),
+    }
+}
+
 /// In-memory scripted provider useful for tests and early integration.
 #[derive(Clone, Debug)]
 pub struct ScriptedRootPeerProvider {
@@ -111,6 +136,7 @@ impl RootPeerProvider for ScriptedRootPeerProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::peer_registry::{PeerSource, PeerStatus};
     use crate::peer_selection::{LocalRootConfig, PeerAccessPoint, PeerDiffusionMode};
     use crate::root_peers::{RootPeerProviders, UseBootstrapPeers, UseLedgerPeers};
 
@@ -184,5 +210,84 @@ mod tests {
             refresh_root_peer_state(&mut state, &mut provider).expect_err("error"),
             RootPeerProviderError::RefreshFailed("dns timeout".to_owned())
         );
+    }
+
+    #[test]
+    fn refresh_root_peer_state_and_registry_syncs_root_entries() {
+        let local_peer: SocketAddr = "127.0.0.11:3001".parse().expect("addr");
+        let old_bootstrap: SocketAddr = "127.0.0.12:3001".parse().expect("addr");
+        let new_bootstrap: SocketAddr = "127.0.0.13:3001".parse().expect("addr");
+        let topology = TopologyConfig {
+            bootstrap_peers: UseBootstrapPeers::UseBootstrapPeers(vec![PeerAccessPoint {
+                address: "127.0.0.12".to_owned(),
+                port: 3001,
+            }]),
+            local_roots: vec![LocalRootConfig {
+                access_points: vec![PeerAccessPoint {
+                    address: "127.0.0.11".to_owned(),
+                    port: 3001,
+                }],
+                advertise: false,
+                trustable: true,
+                hot_valency: 1,
+                warm_valency: None,
+                diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+            }],
+            public_roots: vec![],
+            use_ledger_peers: UseLedgerPeers::DontUseLedgerPeers,
+            peer_snapshot_file: None,
+        };
+        let mut state = RootPeerProviderState::from_topology(&topology);
+        let mut registry = PeerRegistry::default();
+        assert!(registry.sync_root_peers(state.providers()));
+        assert!(registry.set_status(local_peer, PeerStatus::PeerWarm));
+        registry.insert_source(local_peer, PeerSource::PeerSourcePeerShare);
+
+        let mut provider = ScriptedRootPeerProvider::new(
+            RootPeerProviderKind::BootstrapPeers,
+            [Ok(Some(RootPeerProviderRefresh::BootstrapPeers(vec![new_bootstrap])))],
+        );
+
+        assert!(refresh_root_peer_state_and_registry(&mut state, &mut registry, &mut provider)
+            .expect("refresh"));
+        assert_eq!(state.providers().public_roots.bootstrap_peers, vec![new_bootstrap]);
+
+        let local_entry = registry.get(&local_peer).expect("local peer");
+        assert_eq!(local_entry.status, PeerStatus::PeerWarm);
+        assert_eq!(
+            local_entry.sources,
+            [
+                PeerSource::PeerSourceLocalRoot,
+                PeerSource::PeerSourcePeerShare,
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(registry.get(&old_bootstrap).is_none());
+        assert_eq!(
+            registry.get(&new_bootstrap).expect("new bootstrap").sources,
+            [PeerSource::PeerSourceBootstrap].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn refresh_root_peer_state_and_registry_ignores_empty_provider_poll() {
+        let mut state = RootPeerProviderState::from_providers(RootPeerProviders {
+            local_roots: vec![],
+            public_roots: ResolvedPublicRootPeers::default(),
+            use_ledger_peers: UseLedgerPeers::DontUseLedgerPeers,
+            peer_snapshot_file: None,
+        });
+        let mut registry = PeerRegistry::default();
+        let mut provider =
+            ScriptedRootPeerProvider::new(RootPeerProviderKind::PublicRoots, [Ok(None)]);
+
+        assert!(registry.is_empty());
+        assert!(state.providers().public_roots.all_peers().is_empty());
+        assert!(
+            !refresh_root_peer_state_and_registry(&mut state, &mut registry, &mut provider)
+                .expect("refresh")
+        );
+        assert!(registry.is_empty());
     }
 }
