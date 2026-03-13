@@ -26,7 +26,7 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 ## Current Phase
 - Epoch math (`slot_to_epoch`, `epoch_first_slot`, `is_new_epoch`) operates on typed `SlotNo`/`EpochNo`/`EpochSize` from `yggdrasil-ledger`.
 - Chain selection uses typed `BlockNo`/`SlotNo` with optional VRF tiebreaker (lower wins).
-- Praos leader election pipeline is implemented: `vrf_input` → `check_is_leader` → `verify_leader_proof`, backed by the crypto crate's VRF batchcompat prove/verify.
+- Praos leader election pipeline is implemented: `vrf_input` → `check_is_leader` → `verify_leader_proof`, backed by the crypto crate's standard VRF (80-byte proofs per CDDL `vrf_cert = [bytes, bytes .size 80]` and upstream `VRF StandardCrypto = PraosVRF`).
 - `Nonce` type (neutral + hash, XOR combination) lives in `yggdrasil-ledger::types`.
 - Leadership threshold uses f64 arithmetic for now; deterministic fixed-point math is a future hardening target.
 - Operational certificate (`OpCert`) type and verification implemented in `opcert.rs`: cold-key signature over (hot_vkey ‖ sequence_number ‖ kes_period), KES period window checks, `kes_period_of_slot` helper.

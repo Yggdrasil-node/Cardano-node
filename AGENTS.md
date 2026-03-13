@@ -70,7 +70,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - KeepAlive: `keepalive_heartbeat`.
   - Managed service: `run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`.
   - Consensus bridge: `shelley_opcert_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`, `praos_header_to_consensus`, `verify_praos_header`.
-  - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks` (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway — all seven era tags).
+  - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks` (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway — all seven era tags). Alonzo (tag 5) uses dedicated `AlonzoBlock` (5-element format with `invalid_transactions` and TPraos header), distinct from the 4-element `ShelleyBlock` used for Shelley/Allegra/Mary (tags 2–4).
   - Header hash: `ShelleyHeader::header_hash`, `PraosHeader::header_hash` (Blake2b-256), `compute_tx_id`.
   - Verified pipeline: `multi_era_block_to_block`, `verify_multi_era_block` (dispatches Shelley verifier for pre-Babbage, Praos verifier for Babbage/Conway), `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`.
   - Block body hash verification: `verify_block_body_hash` (Blake2b-256 of body elements vs header-declared hash), `extract_header_block_body_hash` (handles both 14-element Praos and 15-element Shelley header bodies), wired into `sync_batch_apply_verified` via `VerificationConfig.verify_body_hash`. `compute_block_body_hash` in ledger crate.
@@ -82,7 +82,7 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - `MultiEraTxOut` enum (Shelley/Mary/Alonzo/Babbage variants) with `coin()`/`value()`/`address()` accessors.
   - Allegra era types (`AllegraTxBody`, `NativeScript`).
   - Mary era types (`Value`, `MultiAsset`, `MaryTxBody`).
-  - Alonzo era types (`ExUnits`, `Redeemer`, `AlonzoTxOut`, `AlonzoTxBody`).
+  - Alonzo era types (`ExUnits`, `Redeemer`, `AlonzoTxOut`, `AlonzoTxBody`, `AlonzoBlock`).
   - Byron envelope (`ByronBlock`).
   - Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`, `BabbageBlock` with `PraosHeader`).
   - Conway era types (`Vote`, `Voter`, `GovActionId`, `Constitution`, `GovAction` (7-variant typed enum: ParameterChange/HardForkInitiation/TreasuryWithdrawals/NoConfidence/UpdateCommittee/NewConstitution/InfoAction), `VotingProcedure`, `ProposalProcedure` (typed `GovAction`), `VotingProcedures`, `ConwayTxBody`, `ConwayBlock` with `PraosHeader`).
