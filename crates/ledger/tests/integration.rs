@@ -1,11 +1,12 @@
 use yggdrasil_ledger::{
-    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, BabbageBlock, BabbageTxBody, BabbageTxOut,
-    Block, BlockHeader, BlockNo, ByronBlock, CborDecode, CborEncode, ConwayBlock, ConwayTxBody,
-    DatumOption, Decoder, Encoder, Era, ExUnits, GovActionId, HeaderHash, LedgerError, LedgerState,
-    MaryTxBody, MaryTxOut, NativeScript, Nonce, Point, ProposalProcedure, Redeemer, ShelleyBlock,
-    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn,
-    ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
-    Value, Vote, Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
+    Address, AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, BabbageBlock, BabbageTxBody,
+    BabbageTxOut, BaseAddress, Block, BlockHeader, BlockNo, ByronBlock, CborDecode, CborEncode,
+    ConwayBlock, ConwayTxBody, DatumOption, Decoder, Encoder, EnterpriseAddress, Era, ExUnits,
+    GovActionId, HeaderHash, LedgerError, LedgerState, MaryTxBody, MaryTxOut, NativeScript, Nonce,
+    Point, PointerAddress, ProposalProcedure, Redeemer, RewardAccount, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential,
+    TxId, Value, Vote, Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
 };
 
 #[test]
@@ -2827,4 +2828,376 @@ fn conway_block_header_hash() {
     let h1 = block.header_hash();
     let h2 = block.header.header_hash();
     assert_eq!(h1, h2);
+}
+
+// ===========================================================================
+// Phase 48: StakeCredential, RewardAccount, Address
+// ===========================================================================
+
+fn sample_hash28() -> [u8; 28] {
+    let mut h = [0u8; 28];
+    for (i, b) in h.iter_mut().enumerate() {
+        *b = (i as u8) + 1;
+    }
+    h
+}
+
+fn sample_hash28_alt() -> [u8; 28] {
+    let mut h = [0u8; 28];
+    for (i, b) in h.iter_mut().enumerate() {
+        *b = (i as u8) + 0xa0;
+    }
+    h
+}
+
+// -- StakeCredential tests --
+
+#[test]
+fn stake_credential_key_hash_accessors() {
+    let h = sample_hash28();
+    let cred = StakeCredential::AddrKeyHash(h);
+    assert!(cred.is_key_hash());
+    assert!(!cred.is_script_hash());
+    assert_eq!(cred.hash(), &h);
+}
+
+#[test]
+fn stake_credential_script_hash_accessors() {
+    let h = sample_hash28();
+    let cred = StakeCredential::ScriptHash(h);
+    assert!(!cred.is_key_hash());
+    assert!(cred.is_script_hash());
+    assert_eq!(cred.hash(), &h);
+}
+
+#[test]
+fn stake_credential_key_hash_cbor_round_trip() {
+    let cred = StakeCredential::AddrKeyHash(sample_hash28());
+    let bytes = cred.to_cbor_bytes();
+    let decoded = StakeCredential::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cred, decoded);
+}
+
+#[test]
+fn stake_credential_script_hash_cbor_round_trip() {
+    let cred = StakeCredential::ScriptHash(sample_hash28());
+    let bytes = cred.to_cbor_bytes();
+    let decoded = StakeCredential::from_cbor_bytes(&bytes).expect("decode");
+    assert_eq!(cred, decoded);
+}
+
+#[test]
+fn stake_credential_cbor_encoding_structure() {
+    let h = sample_hash28();
+    let cred = StakeCredential::AddrKeyHash(h);
+    let bytes = cred.to_cbor_bytes();
+    // Should start with array(2), then unsigned(0), then bytes(28)
+    let mut dec = Decoder::new(&bytes);
+    let len = dec.array().expect("array");
+    assert_eq!(len, 2);
+    let tag = dec.unsigned().expect("tag");
+    assert_eq!(tag, 0);
+    let raw = dec.bytes().expect("hash");
+    assert_eq!(raw, &h[..]);
+
+    // Script hash should have tag 1
+    let cred2 = StakeCredential::ScriptHash(h);
+    let bytes2 = cred2.to_cbor_bytes();
+    let mut dec2 = Decoder::new(&bytes2);
+    let _ = dec2.array().expect("array");
+    let tag2 = dec2.unsigned().expect("tag");
+    assert_eq!(tag2, 1);
+}
+
+#[test]
+fn stake_credential_decode_invalid_tag() {
+    // Construct CBOR: [2, hash28] — invalid tag
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(2).bytes(&sample_hash28());
+    let result = StakeCredential::from_cbor_bytes(&enc.into_bytes());
+    assert!(result.is_err());
+}
+
+#[test]
+fn stake_credential_decode_wrong_hash_length() {
+    // Construct CBOR: [0, hash16] — wrong length
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(0).bytes(&[0u8; 16]);
+    let result = StakeCredential::from_cbor_bytes(&enc.into_bytes());
+    assert!(result.is_err());
+}
+
+#[test]
+fn stake_credential_ordering() {
+    let a = StakeCredential::AddrKeyHash([0u8; 28]);
+    let b = StakeCredential::AddrKeyHash([1u8; 28]);
+    let c = StakeCredential::ScriptHash([0u8; 28]);
+    assert!(a < b);
+    assert!(a < c); // AddrKeyHash < ScriptHash in enum order
+}
+
+// -- RewardAccount tests --
+
+#[test]
+fn reward_account_key_hash_round_trip() {
+    let ra = RewardAccount {
+        network: 1,
+        credential: StakeCredential::AddrKeyHash(sample_hash28()),
+    };
+    let bytes = ra.to_bytes();
+    assert_eq!(bytes.len(), 29);
+    assert_eq!(bytes[0], 0xe1); // 0xe0 | 1
+    let decoded = RewardAccount::from_bytes(&bytes).expect("decode");
+    assert_eq!(ra, decoded);
+}
+
+#[test]
+fn reward_account_script_hash_round_trip() {
+    let ra = RewardAccount {
+        network: 0,
+        credential: StakeCredential::ScriptHash(sample_hash28()),
+    };
+    let bytes = ra.to_bytes();
+    assert_eq!(bytes.len(), 29);
+    assert_eq!(bytes[0], 0xf0); // 0xf0 | 0
+    let decoded = RewardAccount::from_bytes(&bytes).expect("decode");
+    assert_eq!(ra, decoded);
+}
+
+#[test]
+fn reward_account_from_bytes_invalid_length() {
+    assert!(RewardAccount::from_bytes(&[0xe1; 28]).is_none());
+    assert!(RewardAccount::from_bytes(&[0xe1; 30]).is_none());
+    assert!(RewardAccount::from_bytes(&[]).is_none());
+}
+
+#[test]
+fn reward_account_from_bytes_invalid_type() {
+    // Header byte 0x01 — type nibble 0x0, not 0xe or 0xf
+    let mut bytes = [0u8; 29];
+    bytes[0] = 0x01;
+    assert!(RewardAccount::from_bytes(&bytes).is_none());
+}
+
+#[test]
+fn reward_account_cbor_round_trip() {
+    let ra = RewardAccount {
+        network: 1,
+        credential: StakeCredential::AddrKeyHash(sample_hash28()),
+    };
+    let cbor = ra.to_cbor_bytes();
+    let decoded = RewardAccount::from_cbor_bytes(&cbor).expect("decode");
+    assert_eq!(ra, decoded);
+}
+
+#[test]
+fn reward_account_cbor_script_round_trip() {
+    let ra = RewardAccount {
+        network: 0,
+        credential: StakeCredential::ScriptHash(sample_hash28()),
+    };
+    let cbor = ra.to_cbor_bytes();
+    let decoded = RewardAccount::from_cbor_bytes(&cbor).expect("decode");
+    assert_eq!(ra, decoded);
+}
+
+// -- Address tests --
+
+#[test]
+fn base_address_key_key_round_trip() {
+    let addr = Address::Base(BaseAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+        staking: StakeCredential::AddrKeyHash(sample_hash28_alt()),
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes.len(), 57);
+    assert_eq!(bytes[0] >> 4, 0x0); // key/key
+    assert_eq!(bytes[0] & 0x0f, 1); // network
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn base_address_script_key_round_trip() {
+    let addr = Address::Base(BaseAddress {
+        network: 0,
+        payment: StakeCredential::ScriptHash(sample_hash28()),
+        staking: StakeCredential::AddrKeyHash(sample_hash28_alt()),
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes[0] >> 4, 0x1); // script/key
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn base_address_key_script_round_trip() {
+    let addr = Address::Base(BaseAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+        staking: StakeCredential::ScriptHash(sample_hash28_alt()),
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes[0] >> 4, 0x2); // key/script
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn base_address_script_script_round_trip() {
+    let addr = Address::Base(BaseAddress {
+        network: 0,
+        payment: StakeCredential::ScriptHash(sample_hash28()),
+        staking: StakeCredential::ScriptHash(sample_hash28_alt()),
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes[0] >> 4, 0x3); // script/script
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn enterprise_address_key_round_trip() {
+    let addr = Address::Enterprise(EnterpriseAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes.len(), 29);
+    assert_eq!(bytes[0] >> 4, 0x6);
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn enterprise_address_script_round_trip() {
+    let addr = Address::Enterprise(EnterpriseAddress {
+        network: 0,
+        payment: StakeCredential::ScriptHash(sample_hash28()),
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes[0] >> 4, 0x7);
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn pointer_address_round_trip() {
+    let addr = Address::Pointer(PointerAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+        slot: 100,
+        tx_index: 2,
+        cert_index: 0,
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes[0] >> 4, 0x4);
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn pointer_address_script_large_values() {
+    let addr = Address::Pointer(PointerAddress {
+        network: 0,
+        payment: StakeCredential::ScriptHash(sample_hash28()),
+        slot: 1_000_000,
+        tx_index: 127,
+        cert_index: 255,
+    });
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes[0] >> 4, 0x5);
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn reward_address_via_address_round_trip() {
+    let ra = RewardAccount {
+        network: 1,
+        credential: StakeCredential::AddrKeyHash(sample_hash28()),
+    };
+    let addr = Address::Reward(ra);
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes.len(), 29);
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
+}
+
+#[test]
+fn byron_address_passthrough() {
+    // Byron addresses start with type nibble 0x8
+    let mut raw = vec![0x82]; // 0x8 << 4 | 0x2 = 0x82
+    raw.extend_from_slice(&[0xaa; 56]);
+    let addr = Address::from_bytes(&raw).expect("decode");
+    match &addr {
+        Address::Byron(b) => assert_eq!(b, &raw),
+        other => panic!("expected Byron, got {other:?}"),
+    }
+    assert_eq!(addr.to_bytes(), raw);
+}
+
+#[test]
+fn address_from_empty_bytes_returns_none() {
+    assert!(Address::from_bytes(&[]).is_none());
+}
+
+#[test]
+fn address_from_invalid_type_nibble_returns_none() {
+    // Type nibble 0x9 is not assigned
+    let mut bytes = [0u8; 29];
+    bytes[0] = 0x91;
+    assert!(Address::from_bytes(&bytes).is_none());
+}
+
+#[test]
+fn address_network_accessor() {
+    let base = Address::Base(BaseAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+        staking: StakeCredential::AddrKeyHash(sample_hash28_alt()),
+    });
+    assert_eq!(base.network(), Some(1));
+
+    let enterprise = Address::Enterprise(EnterpriseAddress {
+        network: 0,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+    });
+    assert_eq!(enterprise.network(), Some(0));
+
+    let byron = Address::Byron(vec![0x82, 0x00]);
+    assert_eq!(byron.network(), None);
+}
+
+#[test]
+fn base_address_wrong_length_returns_none() {
+    // Type nibble 0x0 (base) but only 29 bytes — needs 57
+    let mut bytes = [0u8; 29];
+    bytes[0] = 0x01;
+    assert!(Address::from_bytes(&bytes).is_none());
+}
+
+#[test]
+fn enterprise_address_wrong_length_returns_none() {
+    // Type nibble 0x6 but 57 bytes — needs 29
+    let mut bytes = [0u8; 57];
+    bytes[0] = 0x61;
+    assert!(Address::from_bytes(&bytes).is_none());
+}
+
+#[test]
+fn pointer_address_zero_values() {
+    let addr = Address::Pointer(PointerAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+        slot: 0,
+        tx_index: 0,
+        cert_index: 0,
+    });
+    let bytes = addr.to_bytes();
+    // header(1) + hash(28) + 3 zero-encoded varints(3) = 32 bytes
+    assert_eq!(bytes.len(), 32);
+    let decoded = Address::from_bytes(&bytes).expect("decode");
+    assert_eq!(addr, decoded);
 }

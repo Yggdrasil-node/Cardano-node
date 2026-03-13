@@ -46,4 +46,8 @@ pub use state::LedgerState;
 pub use tx::{Block, BlockHeader, Tx};
 
 // -- Type re-exports ----------------------------------------------------------
-pub use types::{BlockNo, EpochNo, HeaderHash, Nonce, Point, SlotNo, TxId};
+pub use types::{
+    AddrKeyHash, Address, BaseAddress, BlockNo, EnterpriseAddress, EpochNo, GenesisDelegateHash,
+    GenesisHash, HeaderHash, Nonce, Point, PointerAddress, PoolKeyHash, RewardAccount, ScriptHash,
+    SlotNo, StakeCredential, TxId, VrfKeyHash,
+};

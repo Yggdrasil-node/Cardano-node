@@ -22,5 +22,6 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 ## Current Phase
 - Hand-rolled CBOR encoder/decoder supports major Cardano-required primitives including signed integers (`integer()`).
 - Shared typed core identifiers and point/nonce primitives are in place.
+- Credential and address types landed: `StakeCredential` (key-hash/script-hash), `RewardAccount` (29-byte structured), `Address` (Base/Enterprise/Pointer/Reward/Byron variants), with CBOR codecs and variable-length natural encoding for pointer addresses.
 - `LedgerState` owns a `ShelleyUtxo` and performs atomic block application with CBOR decode + UTxO validation.
 - Era-specific structures live under `eras/`; Shelley and Allegra types are implemented. Shared layer should stay lightweight and stable.

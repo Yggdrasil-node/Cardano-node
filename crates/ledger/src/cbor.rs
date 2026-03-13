@@ -490,7 +490,9 @@ pub trait CborDecode: Sized {
 // Implementations for core types
 // ───────────────────────────────────────────────────────────────────────────
 
-use crate::types::{BlockNo, EpochNo, HeaderHash, Nonce, Point, SlotNo, TxId};
+use crate::types::{
+    BlockNo, EpochNo, HeaderHash, Nonce, Point, RewardAccount, SlotNo, StakeCredential, TxId,
+};
 
 // -- SlotNo ----------------------------------------------------------------
 
@@ -644,5 +646,75 @@ impl CborDecode for Nonce {
                 actual: len as usize,
             }),
         }
+    }
+}
+
+// -- StakeCredential -------------------------------------------------------
+//
+// CDDL: credential = [0, addr_keyhash] / [1, scripthash]
+//
+// Encoded as a 2-element CBOR array: [tag, hash28].
+
+impl CborEncode for StakeCredential {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        match self {
+            Self::AddrKeyHash(h) => {
+                enc.unsigned(0);
+                enc.bytes(h);
+            }
+            Self::ScriptHash(h) => {
+                enc.unsigned(1);
+                enc.bytes(h);
+            }
+        }
+    }
+}
+
+impl CborDecode for StakeCredential {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let tag = dec.unsigned()?;
+        let raw = dec.bytes()?;
+        let hash: [u8; 28] = raw
+            .try_into()
+            .map_err(|_| LedgerError::CborInvalidLength {
+                expected: 28,
+                actual: raw.len(),
+            })?;
+        match tag {
+            0 => Ok(Self::AddrKeyHash(hash)),
+            1 => Ok(Self::ScriptHash(hash)),
+            _ => Err(LedgerError::CborInvalidAdditionalInfo(tag as u8)),
+        }
+    }
+}
+
+// -- RewardAccount ---------------------------------------------------------
+//
+// CDDL: reward_account = bytes .size 29
+//
+// Encoded as a CBOR byte string of exactly 29 bytes. The first byte
+// encodes the network and credential type.
+
+impl CborEncode for RewardAccount {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.bytes(&self.to_bytes());
+    }
+}
+
+impl CborDecode for RewardAccount {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let raw = dec.bytes()?;
+        RewardAccount::from_bytes(raw).ok_or(LedgerError::CborInvalidLength {
+            expected: 29,
+            actual: raw.len(),
+        })
     }
 }

@@ -25,6 +25,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 
 ## Current Phase
 - Core protocol types (`SlotNo`, `BlockNo`, `EpochNo`, `HeaderHash`, `TxId`, `Point`) are landed in `types.rs`.
+- Credential and address types landed in `types.rs`: `StakeCredential` enum (`AddrKeyHash`/`ScriptHash`), `RewardAccount` (29-byte with network + credential), `Address` enum (Base/Enterprise/Pointer/Reward/Byron), `AddrKeyHash`, `ScriptHash`, `PoolKeyHash`, `GenesisHash`, `GenesisDelegateHash`, `VrfKeyHash` type aliases.
 - `Block` and `BlockHeader` use typed identifiers; `LedgerState` tracks tip via `Point` and owns a `ShelleyUtxo` with atomic per-block application.
 - CBOR codec (`cbor.rs`) supports all 8 major types plus signed integer helpers (`Encoder::integer`, `Decoder::integer`). Includes `skip()` for recursive item skipping and `CborEncode`/`CborDecode` traits.
 - Allegra era types landed: `AllegraTxBody` (optional TTL + validity interval start), `NativeScript` (6-variant timelock/multi-sig enum with recursive CBOR codec).
