@@ -21,7 +21,7 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 - Cargo workspace with stable crate boundaries for crypto, cddl-codegen, ledger, storage, consensus, mempool, network, and node integration.
 - **Crypto**: Blake2b-256/512, Ed25519, VRF (standard + batchcompat), SimpleKES, SumKES (depth 0–6+), with upstream vector-backed coverage and zeroize hardening.
 - **Ledger**: Full era type coverage Byron through Conway. Hand-rolled CBOR codec. Multi-era UTxO (`MultiEraUtxo`, `MultiEraTxOut`) with era-aware `apply_block()` dispatch, coin/multi-asset preservation, TTL/validity-interval checks. PlutusData AST with full CBOR support. Certificate hierarchy (19 variants). Credential, address, and governance types.
-- **Network**: SDU framing, async bearer transport, mux/demux, handshake, peer lifecycle, reusable peer candidate ordering, upstream-aligned topology domain types for local and public roots, a root-provider layer that resolves, tracks, and refreshes local, bootstrap, and public roots with upstream-style precedence, a DNS-backed provider for local roots, bootstrap peers, and configured public roots with optional time-gated refresh policy (exponential backoff, upstream-aligned 60 s / 900 s clamps), and a minimal peer registry that tracks peer source and cold/cooling/warm/hot status in the crate instead of `node`, including crate-owned reconciliation helpers for root, ledger, big-ledger, and peer-share source sets. All four mini-protocol state machines + CBOR wire codecs + typed client drivers (ChainSync, BlockFetch, KeepAlive, TxSubmission2). SDU segmentation/reassembly for large protocol messages.
+- **Network**: SDU framing, async bearer transport, mux/demux, handshake, peer lifecycle, reusable peer candidate ordering, upstream-aligned topology domain types for local and public roots, a root-provider layer that resolves, tracks, and refreshes local, bootstrap, and public roots with upstream-style precedence, a DNS-backed provider for local roots, bootstrap peers, and configured public roots with optional time-gated refresh policy (exponential backoff, upstream-aligned 60 s / 900 s clamps), a minimal peer registry that tracks peer source and cold/cooling/warm/hot status in the crate instead of `node`, including crate-owned reconciliation helpers for root, ledger, big-ledger, and peer-share source sets, and a ledger peer provider layer with `LedgerPeerProvider` trait, `LedgerPeerSnapshot` normalization (deduplicates and enforces disjoint ledger/big-ledger sets), `LedgerPeerProviderRefresh` (combined/per-kind), `apply_ledger_peer_refresh()` helper, `refresh_ledger_peer_registry()` orchestration, and `ScriptedLedgerPeerProvider` for testing. All four mini-protocol state machines + CBOR wire codecs + typed client drivers (ChainSync, BlockFetch, KeepAlive, TxSubmission2). SDU segmentation/reassembly for large protocol messages.
 - **Consensus**: Praos leader election, typed chain selection (VRF tiebreaker), epoch math, OpCert verification, KES period checks, block header verification with SumKES. `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain state tracker with rollback depth enforcement and stability window detection.
 - **Storage**: Trait-based `ImmutableStore`, `VolatileStore`, `LedgerStore` with in-memory and file-backed implementations.
 - **Mempool**: Fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, TTL-aware admission, block-application eviction.
@@ -32,7 +32,8 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 
 ### In Progress
 
-- Richer dynamic root providers beyond the initial DNS-backed path, richer peer-registry feeds beyond root snapshots, and long-lived multi-peer management beyond ordered reconnect and startup root snapshots.
+- Consensus-network bridge for ledger peers: sourcing ledger peers from immutable ledger state, gating with latest-slot and ledger-state judgement signals, honoring peer snapshot freshness relative to `useLedgerAfterSlot`.
+- Governor-style peer policy: promotion, demotion, peer sharing, public-root refresh backoff, churn, and Genesis-specific security behavior.
 - Dedicated cardano-tracer transport and metrics endpoints beyond local stdout trace emission.
 - Mainnet sync endurance testing.
 
@@ -138,7 +139,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 ## Next Development Phases
 
-1. Implement on-disk storage backends (immutable append-only, volatile with rollback) behind existing storage traits.
-2. Harden consensus: chain selection refinement, rollback handling, fixed-point leadership arithmetic.
+1. Implement consensus-network bridge for ledger peers to source peers from immutable ledger state.
+2. Add governor-style peer policy with promotion, demotion, and churn behavior.
 3. Expand upstream parity testing with vendored ledger and consensus test vectors.
-4. Documentation refresh to reflect full era coverage and CLI capabilities.
+4. Documentation refresh to reflect current network provider and registry capabilities.

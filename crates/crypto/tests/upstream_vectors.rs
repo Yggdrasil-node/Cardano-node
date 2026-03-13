@@ -21,6 +21,12 @@ fn upstream_praos_vrf_vector_files_are_present_and_well_formed() {
     let mut files: Vec<PathBuf> = fs::read_dir(&dir)
         .expect("vendored Praos vector directory should exist")
         .map(|entry| entry.expect("directory entry should be readable").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.starts_with("vrf_"))
+                .unwrap_or(false)
+        })
         .collect();
     files.sort();
 

@@ -40,8 +40,10 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Upstream planning anchor: `cardano-node` `TopologyP2P` and `ouroboros-network` `Diffusion.Topology` model local root groups with `hotValency`, `warmValency`, `diffusionMode`, and trustability, while `PublicRootPeers` distinguishes configured public roots, bootstrap peers, ledger peers, and big ledger peers. Yggdrasil now carries those local and public root topology domain types in `peer_selection.rs`.
 - Yggdrasil also now carries network-owned topology root configuration and an initial resolved root-provider snapshot, including upstream-style `UseBootstrapPeers` and `UseLedgerPeers` semantics plus precedence and disjointness handling between local, bootstrap, and public roots.
 - A minimal peer registry now also lives in this crate. It tracks per-peer `PeerSource` tags and `PeerStatus` state, and it can reconcile the canonical root-provider snapshot into root-peer registry entries without involving `node`.
+- Root-set provider layer is now expanded: DNS-backed root-peer provider re-resolves configured local-root, bootstrap, and public-root access points with optional `DnsRefreshPolicy` (TTL clamping 60s/900s, exponential backoff). Provider refreshes reconcile the `PeerRegistry` on crate-owned paths.
+- Peer registry is now extended with ledger, big-ledger, and peer-share source reconciliation helpers that preserve unrelated sources and peer status.
+- Ledger peer provider layer is now complete: `LedgerPeerProvider` trait, `LedgerPeerSnapshot` normalization (deduplicates and enforces disjoint ledger/big-ledger sets), `LedgerPeerProviderRefresh` (combined/per-kind), `apply_ledger_peer_refresh()` helper, `refresh_ledger_peer_registry()` orchestration, and `ScriptedLedgerPeerProvider` for testing. Provider refreshes reconcile the `PeerRegistry` on crate-owned paths without node involvement.
 - Next implementation order:
-	1. Expand the root-set provider layer from scripted refreshes toward dynamic local-root, bootstrap, and public-root providers, including DNS refresh boundaries where appropriate.
-	2. Extend the peer registry with ledger and peer-share updates, then use it as the single source of peer status truth.
-	3. Add consensus-network bridge inputs for ledger peers, latest-slot gating, and peer snapshot freshness.
-	4. Only then add governor-style promotion, demotion, peer sharing, churn, and Genesis-specific policy.
+	1. Add consensus-network bridge inputs for ledger peers, latest-slot gating, and peer snapshot freshness.
+	2. Implement governor-style promotion, demotion, peer sharing, churn, and Genesis-specific policy.
+	3. Expand typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical).
