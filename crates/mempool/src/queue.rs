@@ -1,4 +1,4 @@
-use yggdrasil_ledger::TxId;
+use yggdrasil_ledger::{SlotNo, TxId};
 
 /// A mempool entry carrying a transaction identifier and its fee for ordering.
 ///
@@ -16,6 +16,9 @@ pub struct MempoolEntry {
     pub body: Vec<u8>,
     /// Size of the transaction in bytes (for capacity tracking).
     pub size_bytes: usize,
+    /// Time-to-live slot — the transaction is invalid after this slot.
+    /// Matches the Shelley `ttl` field semantics: valid while `current_slot <= ttl`.
+    pub ttl: SlotNo,
 }
 
 /// Error type for mempool operations.
@@ -33,6 +36,14 @@ pub enum MempoolError {
         incoming: usize,
         /// Maximum capacity in bytes.
         limit: usize,
+    },
+    /// The transaction has already expired at the given slot.
+    #[error("transaction TTL expired: ttl {ttl:?} < current slot {current_slot:?}")]
+    TtlExpired {
+        /// The transaction's TTL slot.
+        ttl: SlotNo,
+        /// The current slot at admission time.
+        current_slot: SlotNo,
     },
 }
 
@@ -138,6 +149,45 @@ impl Mempool {
         let before = self.entries.len();
         self.entries.retain(|e| {
             if confirmed_tx_ids.contains(&e.tx_id) {
+                self.current_bytes -= e.size_bytes;
+                false
+            } else {
+                true
+            }
+        });
+        before - self.entries.len()
+    }
+
+    /// Insert an entry with TTL validation against the current slot.
+    ///
+    /// The transaction is rejected if its TTL has already passed
+    /// (`current_slot > entry.ttl`). Otherwise it proceeds through the
+    /// normal `insert` checks (duplicate detection, capacity).
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — TTL check.
+    pub fn insert_checked(
+        &mut self,
+        entry: MempoolEntry,
+        current_slot: SlotNo,
+    ) -> Result<(), MempoolError> {
+        if current_slot > entry.ttl {
+            return Err(MempoolError::TtlExpired {
+                ttl: entry.ttl,
+                current_slot,
+            });
+        }
+        self.insert(entry)
+    }
+
+    /// Remove all transactions whose TTL has passed at the given slot.
+    ///
+    /// Returns the number of entries removed.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — re-validation.
+    pub fn purge_expired(&mut self, current_slot: SlotNo) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|e| {
+            if current_slot > e.ttl {
                 self.current_bytes -= e.size_bytes;
                 false
             } else {
