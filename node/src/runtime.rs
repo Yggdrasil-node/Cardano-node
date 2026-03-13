@@ -3,20 +3,30 @@
 //!
 //! Reference: `cardano-node/src/Cardano/Node/Run.hs`.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::SocketAddr;
 
+use crate::sync::{
+    SyncError, VerifiedSyncServiceConfig, apply_nonce_evolution,
+    sync_batch_apply_verified, track_chain_state,
+};
+use crate::tracer::{NodeTracer, trace_fields};
+use serde_json::json;
+use yggdrasil_consensus::{ChainState, NonceEvolutionState};
 use yggdrasil_network::{
     BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
     MiniProtocolNum, NodeToNodeVersionData, PeerConnection, PeerError, TxIdAndSize,
     TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
+    bootstrap_targets,
 };
-use yggdrasil_ledger::{LedgerError, LedgerState, MultiEraSubmittedTx, SlotNo, TxId};
+use yggdrasil_ledger::{LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
 use yggdrasil_mempool::{
     Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
     SharedMempool, MEMPOOL_ZERO_IDX, SharedTxSubmissionMempoolReader,
     TxSubmissionMempoolReader,
 };
+use yggdrasil_storage::VolatileStore;
 
 // ---------------------------------------------------------------------------
 // TxSubmission mempool integration
@@ -416,6 +426,29 @@ pub struct PeerSession {
     pub version_data: NodeToNodeVersionData,
 }
 
+/// Outcome returned when the reconnecting verified sync runner stops.
+#[derive(Clone, Debug)]
+pub struct ReconnectingSyncServiceOutcome {
+    /// Final chain point when the service stopped.
+    pub final_point: Point,
+    /// Total blocks fetched across all batches.
+    pub total_blocks: usize,
+    /// Total rollback events across all batches.
+    pub total_rollbacks: usize,
+    /// Number of batch iterations completed.
+    pub batches_completed: usize,
+    /// Final nonce evolution state (present when nonce tracking was enabled).
+    pub nonce_state: Option<NonceEvolutionState>,
+    /// Final chain state (present when chain tracking was enabled).
+    pub chain_state: Option<ChainState>,
+    /// Total number of blocks that crossed the stability window during the run.
+    pub stable_block_count: usize,
+    /// Number of reconnects performed after the initial successful session.
+    pub reconnect_count: usize,
+    /// The most recent peer that successfully completed bootstrap.
+    pub last_connected_peer_addr: Option<SocketAddr>,
+}
+
 // ---------------------------------------------------------------------------
 // bootstrap
 // ---------------------------------------------------------------------------
@@ -439,6 +472,15 @@ pub async fn bootstrap_with_fallbacks(
     config: &NodeConfig,
     fallback_peer_addrs: &[SocketAddr],
 ) -> Result<PeerSession, PeerError> {
+    let tracer = NodeTracer::disabled();
+    bootstrap_with_fallbacks_inner(config, fallback_peer_addrs, &tracer).await
+}
+
+async fn bootstrap_with_fallbacks_inner(
+    config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    tracer: &NodeTracer,
+) -> Result<PeerSession, PeerError> {
     let proposals: Vec<(HandshakeVersion, NodeToNodeVersionData)> = config
         .protocol_versions
         .iter()
@@ -455,26 +497,53 @@ pub async fn bootstrap_with_fallbacks(
         })
         .collect();
 
-    let mut candidate_peer_addrs = Vec::with_capacity(1 + fallback_peer_addrs.len());
-    candidate_peer_addrs.push(config.peer_addr);
-    for peer_addr in fallback_peer_addrs {
-        if !candidate_peer_addrs.contains(peer_addr) {
-            candidate_peer_addrs.push(*peer_addr);
-        }
-    }
+    let candidate_peer_addrs =
+        bootstrap_targets(config.peer_addr, fallback_peer_addrs).candidate_peer_addrs();
 
     let mut last_error = None;
     let mut connected_peer_addr = config.peer_addr;
     let mut conn_opt = None;
 
-    for peer_addr in candidate_peer_addrs {
+    for (attempt_index, peer_addr) in candidate_peer_addrs.into_iter().enumerate() {
+        tracer.trace_runtime(
+            "Net.PeerSelection",
+            "Info",
+            "attempting bootstrap peer",
+            trace_fields([
+                ("attempt", json!(attempt_index + 1)),
+                ("peer", json!(peer_addr.to_string())),
+                ("networkMagic", json!(config.network_magic)),
+            ]),
+        );
+
         match yggdrasil_network::peer_connect(peer_addr, proposals.clone()).await {
             Ok(conn) => {
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Info",
+                    "bootstrap peer connected",
+                    trace_fields([
+                        ("attempt", json!(attempt_index + 1)),
+                        ("peer", json!(peer_addr.to_string())),
+                    ]),
+                );
                 connected_peer_addr = peer_addr;
                 conn_opt = Some(conn);
                 break;
             }
-            Err(err) => last_error = Some(err),
+            Err(err) => {
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "bootstrap peer failed",
+                    trace_fields([
+                        ("attempt", json!(attempt_index + 1)),
+                        ("peer", json!(peer_addr.to_string())),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+                last_error = Some(err);
+            }
         }
     }
 
@@ -518,4 +587,245 @@ pub async fn bootstrap_with_fallbacks(
         version: conn.version,
         version_data: conn.version_data,
     })
+}
+
+/// Run the verified sync loop, reconnecting through ordered bootstrap peers
+/// when protocol connectivity is lost.
+///
+/// The runner preserves the current chain point, nonce evolution state, and
+/// optional chain state across reconnects. Only bootstrap, ChainSync, and
+/// BlockFetch failures trigger reconnection; decode, verification, and storage
+/// failures still return immediately.
+pub async fn run_reconnecting_verified_sync_service<S, F>(
+    node_config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    store: &mut S,
+    from_point: Point,
+    config: &VerifiedSyncServiceConfig,
+    nonce_state: Option<NonceEvolutionState>,
+    shutdown: F,
+) -> Result<ReconnectingSyncServiceOutcome, SyncError>
+where
+    S: VolatileStore,
+    F: Future<Output = ()>,
+{
+    let tracer = NodeTracer::disabled();
+    run_reconnecting_verified_sync_service_with_tracer(
+        node_config,
+        fallback_peer_addrs,
+        store,
+        from_point,
+        config,
+        nonce_state,
+        &tracer,
+        shutdown,
+    )
+    .await
+}
+
+/// Run the reconnecting verified sync loop while emitting runtime trace events.
+///
+/// Trace emission is driven by the node config-derived [`NodeTracer`] and stays
+/// within the node integration layer: bootstrap attempts, successful session
+/// establishment, connectivity-triggered reconnects, batch completion, and
+/// graceful shutdown are traced, while decode, verification, and storage
+/// failures still return immediately.
+pub async fn run_reconnecting_verified_sync_service_with_tracer<S, F>(
+    node_config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    store: &mut S,
+    mut from_point: Point,
+    config: &VerifiedSyncServiceConfig,
+    mut nonce_state: Option<NonceEvolutionState>,
+    tracer: &NodeTracer,
+    shutdown: F,
+) -> Result<ReconnectingSyncServiceOutcome, SyncError>
+where
+    S: VolatileStore,
+    F: Future<Output = ()>,
+{
+    tokio::pin!(shutdown);
+
+    let mut total_blocks = 0usize;
+    let mut total_rollbacks = 0usize;
+    let mut batches_completed = 0usize;
+    let mut total_stable = 0usize;
+    let mut reconnect_count = 0usize;
+    let mut last_connected_peer_addr = None;
+    let mut chain_state = config.security_param.map(ChainState::new);
+    let mut had_session = false;
+
+    loop {
+        let mut session = tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                tracer.trace_runtime(
+                    "Node.Shutdown",
+                    "Notice",
+                    "shutdown requested before bootstrap completed",
+                    BTreeMap::new(),
+                );
+                return Ok(ReconnectingSyncServiceOutcome {
+                    final_point: from_point,
+                    total_blocks,
+                    total_rollbacks,
+                    batches_completed,
+                    nonce_state,
+                    chain_state,
+                    stable_block_count: total_stable,
+                    reconnect_count,
+                    last_connected_peer_addr,
+                });
+            }
+
+            result = bootstrap_with_fallbacks_inner(node_config, fallback_peer_addrs, tracer) => result?,
+        };
+
+        if had_session {
+            reconnect_count += 1;
+        } else {
+            had_session = true;
+        }
+        last_connected_peer_addr = Some(session.connected_peer_addr);
+
+        tracer.trace_runtime(
+            "Net.ConnectionManager.Remote",
+            "Notice",
+            if reconnect_count == 0 {
+                "verified sync session established"
+            } else {
+                "verified sync session re-established"
+            },
+            trace_fields([
+                ("peer", json!(session.connected_peer_addr.to_string())),
+                ("reconnectCount", json!(reconnect_count)),
+                ("fromPoint", json!(format!("{:?}", from_point))),
+            ]),
+        );
+
+        loop {
+            let batch_fut = sync_batch_apply_verified(
+                &mut session.chain_sync,
+                &mut session.block_fetch,
+                store,
+                from_point,
+                config.batch_size,
+                Some(&config.verification),
+            );
+
+            tokio::select! {
+                biased;
+
+                () = &mut shutdown => {
+                    tracer.trace_runtime(
+                        "Node.Shutdown",
+                        "Notice",
+                        "shutdown requested during sync session",
+                        trace_fields([
+                            ("peer", json!(session.connected_peer_addr.to_string())),
+                            ("currentPoint", json!(format!("{:?}", from_point))),
+                        ]),
+                    );
+                    session.mux.abort();
+                    return Ok(ReconnectingSyncServiceOutcome {
+                        final_point: from_point,
+                        total_blocks,
+                        total_rollbacks,
+                        batches_completed,
+                        nonce_state,
+                        chain_state,
+                        stable_block_count: total_stable,
+                        reconnect_count,
+                        last_connected_peer_addr,
+                    });
+                }
+
+                result = batch_fut => {
+                    match result {
+                        Ok(progress) => {
+                            from_point = progress.current_point;
+                            total_blocks += progress.fetched_blocks;
+                            total_rollbacks += progress.rollback_count;
+                            batches_completed += 1;
+
+                            if let Some(ref mut cs) = chain_state {
+                                for step in &progress.steps {
+                                    total_stable += track_chain_state(cs, step)?;
+                                }
+                            }
+
+                            if let Some((ref mut state, nonce_cfg)) =
+                                nonce_state.as_mut().zip(config.nonce_config.as_ref())
+                            {
+                                for step in &progress.steps {
+                                    if let crate::sync::MultiEraSyncStep::RollForward { blocks, .. } = step {
+                                        for block in blocks {
+                                            apply_nonce_evolution(state, block, nonce_cfg);
+                                        }
+                                    }
+                                }
+                            }
+
+                            tracer.trace_runtime(
+                                "ChainSync.Client",
+                                "Info",
+                                "verified sync batch applied",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                    ("batchFetchedBlocks", json!(progress.fetched_blocks)),
+                                    ("batchRollbacks", json!(progress.rollback_count)),
+                                    ("totalBlocks", json!(total_blocks)),
+                                    ("batchesCompleted", json!(batches_completed)),
+                                ]),
+                            );
+                        }
+                        Err(SyncError::ChainSync(err)) => {
+                            tracer.trace_runtime(
+                                "ChainSync.Client",
+                                "Warning",
+                                "chainsync connectivity lost; reconnecting",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("error", json!(err.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                ]),
+                            );
+                            session.mux.abort();
+                            break;
+                        }
+                        Err(SyncError::BlockFetch(err)) => {
+                            tracer.trace_runtime(
+                                "BlockFetch.Client.CompletedBlockFetch",
+                                "Warning",
+                                "blockfetch connectivity lost; reconnecting",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("error", json!(err.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                ]),
+                            );
+                            session.mux.abort();
+                            break;
+                        }
+                        Err(err) => {
+                            tracer.trace_runtime(
+                                "Node.Sync",
+                                "Error",
+                                "verified sync service failed",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("error", json!(err.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                ]),
+                            );
+                            session.mux.abort();
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

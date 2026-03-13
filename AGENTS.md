@@ -40,6 +40,7 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - `crates/mempool`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/> and <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
 - `crates/network`: <https://github.com/IntersectMBO/ouroboros-network/> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
 - `node/`: <https://github.com/IntersectMBO/cardano-node/> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
+- Cardano developer portal: <https://github.com/cardano-foundation/developer-portal/tree/staging/docs/>
 
 ##  Rules *Non-Negotiable*
 - Always write typesafe Rust code.
@@ -55,6 +56,8 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - Type and function naming MUST stay as close to upstream terminology as practical so parity work and fixture comparison remain tractable.
 - Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
 - When you do not know how to proceed after researching the official node and upstream repositories, you may review <https://github.com/pragma-org/amaru/> and <https://github.com/txpipe/dolos/> for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
+- Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.
+
 
 ## Verification Expectations
 - `cargo check-all`
@@ -117,5 +120,3 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - CBOR golden round-trip parity tests cover `ShelleyTxBody`, `ShelleyBlock`, `PlutusData`, `StakeCredential`, and `MultiEraTxOut`. Cross-subsystem integration tests verify block→ChainState→storage and rollback flows.
 - 680 workspace tests pass across all crates, 0 clippy warnings.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
-
-Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.

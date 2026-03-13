@@ -20,6 +20,8 @@ pub mod mux;
 pub mod multiplexer;
 /// Peer connection lifecycle — handshake negotiation and data-protocol setup.
 pub mod peer;
+/// Peer candidate resolution and ordering helpers for runtime bootstrap.
+pub mod peer_selection;
 /// Mini-protocol state machine modules.
 pub mod protocols;
 /// TxSubmission2 client driver — typed, state-machine-correct protocol loop.
@@ -44,6 +46,11 @@ pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as star
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
+pub use peer_selection::{
+    PeerAccessPoint, PeerBootstrapTargets, PeerRootGroup,
+    bootstrap_targets, ordered_fallback_peers as ordered_peer_fallbacks,
+    ordered_peer_candidates, resolve_peer_access_point,
+};
 
 // -- Protocol re-exports ------------------------------------------------------
 pub use protocols::{

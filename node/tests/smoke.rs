@@ -29,4 +29,6 @@ fn node_binary_default_config() {
         .expect("node binary should emit valid UTF-8 output");
     assert!(stdout.contains("network_magic"));
     assert!(stdout.contains("764824073"));
+    assert!(stdout.contains("TurnOnLogging"));
+    assert!(stdout.contains("TraceOptions"));
 }

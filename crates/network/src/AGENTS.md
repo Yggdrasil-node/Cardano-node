@@ -7,11 +7,13 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 
 ## Scope
 - `bearer.rs`, `multiplexer.rs`, `mux.rs`, `peer.rs`, and typed client drivers.
+- `bearer.rs`, `multiplexer.rs`, `mux.rs`, `peer.rs`, `peer_selection.rs`, and typed client drivers.
 - CBOR message boundary handling, segmentation/reassembly, and protocol-handle composition.
 
 ##  Rules *Non-Negotiable*
 - Keep wire framing deterministic and byte-accurate.
 - Do not leak protocol business logic from `protocols/` state machines into transport primitives.
+- Keep reusable peer candidate resolution and ordering logic here rather than in `node`, while avoiding full peer-governor state in low-level transport helpers.
 - Preserve strict separation between raw transport (`ProtocolHandle`) and higher-level message orchestration (`MessageChannel`, client drivers).
 - Any receive-path buffering or boundary detection changes MUST ship with regression tests for partial/incremental payload delivery.
 - Public transport and driver APIs MUST include Rustdocs when behavior is non-obvious.
@@ -28,4 +30,4 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 - Mux/demux routing is implemented with per-protocol handles.
 - Large-message SDU segmentation/reassembly is implemented via `MAX_SEGMENT_SIZE` + `MessageChannel`.
 - Typed ChainSync, BlockFetch, KeepAlive, and TxSubmission client drivers are in place. TxSubmission now uses typed ledger `TxId` values for request/advertise flows, provides typed reply helpers for both `Vec<Tx>` and `Vec<MultiEraSubmittedTx>`, and maintains an outstanding/requestable TxId FIFO so invalid acknowledgements and transaction requests are rejected before replying while preserving raw wire bodies.
-- Next: typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical).
+- Next: typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical), while growing peer selection from static candidate ordering toward explicit higher-level peer policy modules.

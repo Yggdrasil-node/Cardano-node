@@ -3,11 +3,13 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use serde_json::json;
 
 use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, default_config};
+use yggdrasil_node::tracer::{NodeTracer, trace_fields};
 use yggdrasil_node::{
-    NodeConfig, VerificationConfig, VerifiedSyncServiceConfig, VerifiedSyncServiceOutcome,
-    bootstrap_with_fallbacks, run_verified_sync_service,
+    NodeConfig, ReconnectingSyncServiceOutcome, VerificationConfig, VerifiedSyncServiceConfig,
+    run_reconnecting_verified_sync_service_with_tracer,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
 use yggdrasil_ledger::{Nonce, Point};
@@ -82,7 +84,7 @@ fn main() -> Result<()> {
             let bootstrap_peers = if peer.is_some() {
                 Vec::new()
             } else {
-                file_cfg.bootstrap_peers.clone()
+                file_cfg.ordered_fallback_peers()
             };
             let magic = network_magic.unwrap_or(file_cfg.network_magic);
             let protocol_versions: Vec<HandshakeVersion> = file_cfg
@@ -138,7 +140,8 @@ fn main() -> Result<()> {
             };
 
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(run_node(node_config, bootstrap_peers, sync_config))
+            let tracer = NodeTracer::from_config(&file_cfg);
+            rt.block_on(run_node(node_config, bootstrap_peers, sync_config, tracer))
         }
     }
 }
@@ -147,19 +150,18 @@ async fn run_node(
     node_config: NodeConfig,
     bootstrap_peers: Vec<SocketAddr>,
     sync_config: VerifiedSyncServiceConfig,
+    tracer: NodeTracer,
 ) -> Result<()> {
-    eprintln!(
-        "Yggdrasil connecting to {} bootstrap peer(s) (primary {}, magic {})",
-        1 + bootstrap_peers.len(),
-        node_config.peer_addr,
-        node_config.network_magic
-    );
-
-    let mut session = bootstrap_with_fallbacks(&node_config, &bootstrap_peers).await?;
-    eprintln!(
-        "Handshake complete with {}: version {}",
-        session.connected_peer_addr,
-        session.version.0
+    tracer.trace_runtime(
+        "Startup.DiffusionInit",
+        "Notice",
+        "starting node runtime",
+        trace_fields([
+            ("primaryPeer", json!(node_config.peer_addr.to_string())),
+            ("bootstrapPeerCount", json!(1 + bootstrap_peers.len())),
+            ("networkMagic", json!(node_config.network_magic)),
+            ("protocolVersions", json!(node_config.protocol_versions.iter().map(|v| v.0).collect::<Vec<_>>())),
+        ]),
     );
 
     let mut store = InMemoryVolatile::default();
@@ -173,48 +175,82 @@ async fn run_node(
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     // Spawn signal handler for graceful shutdown.
+    let signal_tracer = tracer.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
-        eprintln!("\nShutdown signal received");
+        signal_tracer.trace_runtime(
+            "Node.Shutdown",
+            "Notice",
+            "shutdown signal received",
+            std::collections::BTreeMap::new(),
+        );
         let _ = shutdown_tx.send(());
     });
 
-    let outcome: VerifiedSyncServiceOutcome = run_verified_sync_service(
-        &mut session.chain_sync,
-        &mut session.block_fetch,
+    let outcome: ReconnectingSyncServiceOutcome = match run_reconnecting_verified_sync_service_with_tracer(
+        &node_config,
+        &bootstrap_peers,
         &mut store,
         from_point,
         &sync_config,
         nonce_state,
+        &tracer,
         async { let _ = shutdown_rx.await; },
     )
-    .await?;
+    .await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            tracer.trace_runtime(
+                "Node.Sync",
+                "Error",
+                "node run failed",
+                trace_fields([
+                    ("error", json!(err.to_string())),
+                    ("primaryPeer", json!(node_config.peer_addr.to_string())),
+                ]),
+            );
+            return Err(err.into());
+        }
+    };
 
-    eprintln!(
-        "Sync complete: {} blocks, {} rollbacks, {} batches, {} stable, tip {:?}",
-        outcome.total_blocks,
-        outcome.total_rollbacks,
-        outcome.batches_completed,
-        outcome.stable_block_count,
-        outcome.final_point,
+    tracer.trace_runtime(
+        "Node.Sync",
+        "Notice",
+        "sync complete",
+        trace_fields([
+            ("totalBlocks", json!(outcome.total_blocks)),
+            ("totalRollbacks", json!(outcome.total_rollbacks)),
+            ("batchesCompleted", json!(outcome.batches_completed)),
+            ("stableBlockCount", json!(outcome.stable_block_count)),
+            ("reconnectCount", json!(outcome.reconnect_count)),
+            ("lastConnectedPeer", json!(outcome.last_connected_peer_addr.map(|addr| addr.to_string()))),
+            ("finalPoint", json!(format!("{:?}", outcome.final_point))),
+        ]),
     );
 
     if let Some(ref nonce) = outcome.nonce_state {
-        eprintln!(
-            "Epoch nonce: {:?} (epoch {})",
-            nonce.epoch_nonce,
-            nonce.current_epoch.0,
+        tracer.trace_runtime(
+            "Node.Sync",
+            "Info",
+            "epoch nonce state updated",
+            trace_fields([
+                ("epoch", json!(nonce.current_epoch.0)),
+                ("epochNonce", json!(format!("{:?}", nonce.epoch_nonce))),
+            ]),
         );
     }
 
     if let Some(ref cs) = outcome.chain_state {
-        eprintln!(
-            "Chain state: {} volatile entries, tip {:?}",
-            cs.volatile_len(),
-            cs.tip(),
+        tracer.trace_runtime(
+            "Node.Sync",
+            "Info",
+            "chain state tracked",
+            trace_fields([
+                ("volatileEntries", json!(cs.volatile_len())),
+                ("tip", json!(format!("{:?}", cs.tip()))),
+            ]),
         );
     }
 
-    session.mux.abort();
     Ok(())
 }

@@ -7,22 +7,93 @@
 //!
 //! Reference: `cardano-node/configuration/` in the IntersectMBO repository.
 
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use yggdrasil_network::{PeerAccessPoint, PeerRootGroup, ordered_peer_candidates, ordered_peer_fallbacks};
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct TopologyConfigFile {
     #[serde(default)]
-    bootstrap_peers: Vec<TopologyBootstrapPeer>,
+    bootstrap_peers: Vec<TopologyAccessPoint>,
+    #[serde(default)]
+    local_roots: Vec<TopologyRootGroup>,
+    #[serde(default)]
+    public_roots: Vec<TopologyRootGroup>,
+    #[serde(default)]
+    use_ledger_after_slot: Option<u64>,
+    #[serde(default)]
+    peer_snapshot_file: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct TopologyBootstrapPeer {
-    address: String,
-    port: u16,
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TopologyRootGroup {
+    /// Ordered access points within a local-root or public-root group.
+    #[serde(default)]
+    pub access_points: Vec<TopologyAccessPoint>,
+    /// Whether addresses in this group should be advertised to peers.
+    #[serde(default)]
+    pub advertise: bool,
+    /// Whether the group is trusted for bootstrap and Genesis-style sync.
+    #[serde(default)]
+    pub trustable: bool,
+    /// Requested connection valency for the group, when specified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valency: Option<u16>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TopologyAccessPoint {
+    /// DNS name or IP address for a topology access point.
+    pub address: String,
+    /// TCP port for a topology access point.
+    pub port: u16,
+}
+
+#[derive(Debug)]
+struct ResolvedTopologyPeers {
+    primary_peer: SocketAddr,
+    fallback_peers: Vec<SocketAddr>,
+    local_roots: Vec<TopologyRootGroup>,
+    public_roots: Vec<TopologyRootGroup>,
+    use_ledger_after_slot: Option<u64>,
+    peer_snapshot_file: Option<String>,
+}
+
+/// Trace dispatcher options for a single tracing namespace.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TraceNamespaceConfig {
+    /// Optional severity override for the namespace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    /// Optional detail level override for the namespace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Backend list such as `Stdout HumanFormatColoured` or `Forwarder`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backends: Vec<String>,
+    /// Optional namespace-level rate limit.
+    #[serde(default, rename = "maxFrequency", skip_serializing_if = "Option::is_none")]
+    pub max_frequency: Option<f64>,
+}
+
+/// Forwarder queue sizing aligned with the upstream node tracing config.
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub struct TraceOptionForwarder {
+    /// Maximum buffered connection events.
+    #[serde(default = "default_trace_forwarder_conn_queue_size", rename = "connQueueSize")]
+    pub conn_queue_size: u64,
+    /// Maximum buffered disconnection events.
+    #[serde(default = "default_trace_forwarder_disconn_queue_size", rename = "disconnQueueSize")]
+    pub disconn_queue_size: u64,
+    /// Maximum reconnect delay in seconds.
+    #[serde(default = "default_trace_forwarder_max_reconnect_delay", rename = "maxReconnectDelay")]
+    pub max_reconnect_delay: u64,
 }
 
 /// On-disk node configuration parsed from a JSON file.
@@ -35,6 +106,18 @@ pub struct NodeConfigFile {
     /// Ordered fallback bootstrap relay addresses tried after `peer_addr`.
     #[serde(default)]
     pub bootstrap_peers: Vec<SocketAddr>,
+    /// Ordered local root groups parsed from the topology file.
+    #[serde(default)]
+    pub local_roots: Vec<TopologyRootGroup>,
+    /// Ordered public root groups parsed from the topology file.
+    #[serde(default)]
+    pub public_roots: Vec<TopologyRootGroup>,
+    /// Slot after which ledger peers should be preferred when available.
+    #[serde(default)]
+    pub use_ledger_after_slot: Option<u64>,
+    /// Peer snapshot file name used by upstream topology handling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_snapshot_file: Option<String>,
     /// The network magic for handshake (mainnet = 764824073).
     pub network_magic: u32,
     /// Protocol version numbers to propose during handshake.
@@ -57,6 +140,54 @@ pub struct NodeConfigFile {
     /// KeepAlive heartbeat interval in seconds. `null` disables heartbeats.
     #[serde(default)]
     pub keepalive_interval_secs: Option<u64>,
+    /// Whether local logging output is enabled.
+    #[serde(rename = "TurnOnLogging", default = "default_turn_on_logging")]
+    pub turn_on_logging: bool,
+    /// Whether namespace-based trace dispatch is enabled.
+    #[serde(rename = "UseTraceDispatcher", default = "default_use_trace_dispatcher")]
+    pub use_trace_dispatcher: bool,
+    /// Whether metrics production is enabled for tracing backends.
+    #[serde(rename = "TurnOnLogMetrics", default = "default_turn_on_log_metrics")]
+    pub turn_on_log_metrics: bool,
+    /// Optional node name carried in trace objects and metrics labels.
+    #[serde(rename = "TraceOptionNodeName", default, skip_serializing_if = "Option::is_none")]
+    pub trace_option_node_name: Option<String>,
+    /// Optional metrics name prefix used by upstream-compatible tracing output.
+    #[serde(
+        rename = "TraceOptionMetricsPrefix",
+        default = "default_trace_option_metrics_prefix"
+    )]
+    pub trace_option_metrics_prefix: String,
+    /// Resource sampling interval in milliseconds.
+    #[serde(
+        rename = "TraceOptionResourceFrequency",
+        default = "default_trace_option_resource_frequency"
+    )]
+    pub trace_option_resource_frequency: u64,
+    /// Forwarder reconnect and queue sizing.
+    #[serde(
+        rename = "TraceOptionForwarder",
+        default = "default_trace_option_forwarder"
+    )]
+    pub trace_option_forwarder: TraceOptionForwarder,
+    /// Namespace trace options following the official node config shape.
+    #[serde(rename = "TraceOptions", default = "default_trace_options")]
+    pub trace_options: BTreeMap<String, TraceNamespaceConfig>,
+}
+
+impl NodeConfigFile {
+    /// Returns ordered fallback peers derived from bootstrap peers and richer
+    /// topology groups. Ordering follows the upstream topology split: explicit
+    /// bootstrap peers first, then trustable local roots, then other local
+    /// roots, and finally public roots.
+    pub fn ordered_fallback_peers(&self) -> Vec<SocketAddr> {
+        ordered_peer_fallbacks(
+            self.peer_addr,
+            &self.bootstrap_peers,
+            &to_network_root_groups(&self.local_roots),
+            &to_network_root_groups(&self.public_roots),
+        )
+    }
 }
 
 fn default_slots_per_kes_period() -> u64 {
@@ -79,53 +210,156 @@ fn default_active_slot_coeff() -> f64 {
     0.05
 }
 
-fn resolve_bootstrap_peer(host: &str, port: u16) -> Option<SocketAddr> {
-    format!("{host}:{port}")
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut addrs| addrs.next())
+fn default_turn_on_logging() -> bool {
+    true
 }
 
-fn resolve_bootstrap_peers(
-    entries: &[(&str, u16)],
-    fallback_primary: SocketAddr,
-) -> (SocketAddr, Vec<SocketAddr>) {
-    let mut resolved = Vec::new();
-    for (host, port) in entries {
-        if let Some(addr) = resolve_bootstrap_peer(host, *port) {
-            if !resolved.contains(&addr) {
-                resolved.push(addr);
-            }
-        }
-    }
-
-    if resolved.is_empty() {
-        resolved.push(fallback_primary);
-    }
-
-    let primary = resolved[0];
-    let fallbacks = resolved.into_iter().skip(1).collect();
-    (primary, fallbacks)
+fn default_use_trace_dispatcher() -> bool {
+    true
 }
 
+fn default_turn_on_log_metrics() -> bool {
+    true
+}
+
+fn default_trace_option_metrics_prefix() -> String {
+    "cardano.node.metrics.".to_owned()
+}
+
+fn default_trace_option_resource_frequency() -> u64 {
+    1000
+}
+
+fn default_trace_forwarder_conn_queue_size() -> u64 {
+    64
+}
+
+fn default_trace_forwarder_disconn_queue_size() -> u64 {
+    128
+}
+
+fn default_trace_forwarder_max_reconnect_delay() -> u64 {
+    30
+}
+
+fn default_trace_option_forwarder() -> TraceOptionForwarder {
+    TraceOptionForwarder {
+        conn_queue_size: default_trace_forwarder_conn_queue_size(),
+        disconn_queue_size: default_trace_forwarder_disconn_queue_size(),
+        max_reconnect_delay: default_trace_forwarder_max_reconnect_delay(),
+    }
+}
+
+fn default_trace_options() -> BTreeMap<String, TraceNamespaceConfig> {
+    BTreeMap::from([
+        (
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: Some("DNormal".to_owned()),
+                backends: vec![
+                    "EKGBackend".to_owned(),
+                    "Forwarder".to_owned(),
+                    "PrometheusSimple suffix 127.0.0.1 12798".to_owned(),
+                    "Stdout HumanFormatColoured".to_owned(),
+                ],
+                max_frequency: None,
+            },
+        ),
+        (
+            "ChainSync.Client".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Warning".to_owned()),
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: None,
+            },
+        ),
+        (
+            "Net.PeerSelection".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Info".to_owned()),
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: None,
+            },
+        ),
+        (
+            "Startup.DiffusionInit".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Info".to_owned()),
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: None,
+            },
+        ),
+    ])
+}
+
+fn to_network_access_point(access_point: &TopologyAccessPoint) -> PeerAccessPoint {
+    PeerAccessPoint {
+        address: access_point.address.clone(),
+        port: access_point.port,
+    }
+}
+
+fn to_network_root_group(group: &TopologyRootGroup) -> PeerRootGroup {
+    PeerRootGroup {
+        access_points: group.access_points.iter().map(to_network_access_point).collect(),
+        advertise: group.advertise,
+        trustable: group.trustable,
+        valency: group.valency,
+    }
+}
+
+fn to_network_root_groups(groups: &[TopologyRootGroup]) -> Vec<PeerRootGroup> {
+    groups.iter().map(to_network_root_group).collect()
+}
+
+fn parse_topology_config(topology_json: &str) -> TopologyConfigFile {
+    serde_json::from_str::<TopologyConfigFile>(topology_json).unwrap_or_default()
+}
+
+fn ordered_topology_peer_candidates(topology: &TopologyConfigFile) -> Vec<SocketAddr> {
+    ordered_peer_candidates(
+        &topology
+            .bootstrap_peers
+            .iter()
+            .map(to_network_access_point)
+            .collect::<Vec<_>>(),
+        &to_network_root_groups(&topology.local_roots),
+        &to_network_root_groups(&topology.public_roots),
+    )
+}
+
+#[cfg(test)]
 fn parse_topology_bootstrap_peers(topology_json: &str) -> Vec<(String, u16)> {
-    serde_json::from_str::<TopologyConfigFile>(topology_json)
-        .map(|cfg| {
-            cfg.bootstrap_peers
-                .into_iter()
-                .map(|peer| (peer.address, peer.port))
-                .collect()
-        })
-        .unwrap_or_default()
+    parse_topology_config(topology_json)
+        .bootstrap_peers
+        .into_iter()
+        .map(|peer| (peer.address, peer.port))
+        .collect()
 }
 
-fn resolve_bootstrap_peers_from_topology(
+fn resolve_topology_peers(
     topology_json: &str,
     fallback_primary: SocketAddr,
-) -> (SocketAddr, Vec<SocketAddr>) {
-    let entries = parse_topology_bootstrap_peers(topology_json);
-    let entry_refs: Vec<(&str, u16)> = entries.iter().map(|(host, port)| (host.as_str(), *port)).collect();
-    resolve_bootstrap_peers(&entry_refs, fallback_primary)
+) -> ResolvedTopologyPeers {
+    let topology = parse_topology_config(topology_json);
+    let mut ordered = ordered_topology_peer_candidates(&topology);
+
+    if ordered.is_empty() {
+        ordered.push(fallback_primary);
+    }
+
+    ResolvedTopologyPeers {
+        primary_peer: ordered[0],
+        fallback_peers: ordered.into_iter().skip(1).collect(),
+        local_roots: topology.local_roots,
+        public_roots: topology.public_roots,
+        use_ledger_after_slot: topology.use_ledger_after_slot,
+        peer_snapshot_file: topology.peer_snapshot_file,
+    }
 }
 
 /// Well-known Cardano network presets.
@@ -195,14 +429,18 @@ pub fn default_config() -> NodeConfigFile {
 /// <https://book.world.dev.cardano.org/environments/mainnet/>.
 pub fn mainnet_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("valid default addr");
-    let (peer_addr, bootstrap_peers) = resolve_bootstrap_peers_from_topology(
+    let topology = resolve_topology_peers(
         include_str!("../configuration/mainnet/topology.json"),
         fallback_primary,
     );
 
     NodeConfigFile {
-        peer_addr,
-        bootstrap_peers,
+        peer_addr: topology.primary_peer,
+        bootstrap_peers: topology.fallback_peers,
+        local_roots: topology.local_roots,
+        public_roots: topology.public_roots,
+        use_ledger_after_slot: topology.use_ledger_after_slot,
+        peer_snapshot_file: topology.peer_snapshot_file,
         network_magic: 764_824_073,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -211,6 +449,14 @@ pub fn mainnet_config() -> NodeConfigFile {
         security_param_k: 2160,
         active_slot_coeff: 0.05,
         keepalive_interval_secs: Some(60),
+        turn_on_logging: default_turn_on_logging(),
+        use_trace_dispatcher: default_use_trace_dispatcher(),
+        turn_on_log_metrics: default_turn_on_log_metrics(),
+        trace_option_node_name: Some("yggdrasil-mainnet".to_owned()),
+        trace_option_metrics_prefix: default_trace_option_metrics_prefix(),
+        trace_option_resource_frequency: default_trace_option_resource_frequency(),
+        trace_option_forwarder: default_trace_option_forwarder(),
+        trace_options: default_trace_options(),
     }
 }
 
@@ -220,14 +466,18 @@ pub fn mainnet_config() -> NodeConfigFile {
 /// <https://book.world.dev.cardano.org/environments/preprod/>.
 pub fn preprod_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("fallback addr");
-    let (peer_addr, bootstrap_peers) = resolve_bootstrap_peers_from_topology(
+    let topology = resolve_topology_peers(
         include_str!("../configuration/preprod/topology.json"),
         fallback_primary,
     );
 
     NodeConfigFile {
-        peer_addr,
-        bootstrap_peers,
+        peer_addr: topology.primary_peer,
+        bootstrap_peers: topology.fallback_peers,
+        local_roots: topology.local_roots,
+        public_roots: topology.public_roots,
+        use_ledger_after_slot: topology.use_ledger_after_slot,
+        peer_snapshot_file: topology.peer_snapshot_file,
         network_magic: 1,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -236,6 +486,14 @@ pub fn preprod_config() -> NodeConfigFile {
         security_param_k: 2160,
         active_slot_coeff: 0.05,
         keepalive_interval_secs: Some(60),
+        turn_on_logging: default_turn_on_logging(),
+        use_trace_dispatcher: default_use_trace_dispatcher(),
+        turn_on_log_metrics: default_turn_on_log_metrics(),
+        trace_option_node_name: Some("yggdrasil-preprod".to_owned()),
+        trace_option_metrics_prefix: default_trace_option_metrics_prefix(),
+        trace_option_resource_frequency: default_trace_option_resource_frequency(),
+        trace_option_forwarder: default_trace_option_forwarder(),
+        trace_options: default_trace_options(),
     }
 }
 
@@ -245,14 +503,18 @@ pub fn preprod_config() -> NodeConfigFile {
 /// <https://book.world.dev.cardano.org/environments/preview/>.
 pub fn preview_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("fallback addr");
-    let (peer_addr, bootstrap_peers) = resolve_bootstrap_peers_from_topology(
+    let topology = resolve_topology_peers(
         include_str!("../configuration/preview/topology.json"),
         fallback_primary,
     );
 
     NodeConfigFile {
-        peer_addr,
-        bootstrap_peers,
+        peer_addr: topology.primary_peer,
+        bootstrap_peers: topology.fallback_peers,
+        local_roots: topology.local_roots,
+        public_roots: topology.public_roots,
+        use_ledger_after_slot: topology.use_ledger_after_slot,
+        peer_snapshot_file: topology.peer_snapshot_file,
         network_magic: 2,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -261,6 +523,14 @@ pub fn preview_config() -> NodeConfigFile {
         security_param_k: 432,
         active_slot_coeff: 0.05,
         keepalive_interval_secs: Some(60),
+        turn_on_logging: default_turn_on_logging(),
+        use_trace_dispatcher: default_use_trace_dispatcher(),
+        turn_on_log_metrics: default_turn_on_log_metrics(),
+        trace_option_node_name: Some("yggdrasil-preview".to_owned()),
+        trace_option_metrics_prefix: default_trace_option_metrics_prefix(),
+        trace_option_resource_frequency: default_trace_option_resource_frequency(),
+        trace_option_forwarder: default_trace_option_forwarder(),
+        trace_options: default_trace_options(),
     }
 }
 
@@ -276,6 +546,14 @@ mod tests {
         assert_eq!(parsed.network_magic, cfg.network_magic);
         assert_eq!(parsed.peer_addr, cfg.peer_addr);
         assert_eq!(parsed.bootstrap_peers, cfg.bootstrap_peers);
+        assert_eq!(parsed.local_roots, cfg.local_roots);
+        assert_eq!(parsed.public_roots, cfg.public_roots);
+        assert_eq!(parsed.use_ledger_after_slot, cfg.use_ledger_after_slot);
+        assert_eq!(parsed.peer_snapshot_file, cfg.peer_snapshot_file);
+        assert_eq!(parsed.turn_on_logging, cfg.turn_on_logging);
+        assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
+        assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);
+        assert_eq!(parsed.trace_options, cfg.trace_options);
     }
 
     #[test]
@@ -287,12 +565,66 @@ mod tests {
         }"#;
         let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
         assert!(cfg.bootstrap_peers.is_empty());
+        assert!(cfg.local_roots.is_empty());
+        assert!(cfg.public_roots.is_empty());
+        assert!(cfg.use_ledger_after_slot.is_none());
+        assert!(cfg.peer_snapshot_file.is_none());
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.epoch_length, 432_000);
         assert_eq!(cfg.security_param_k, 2160);
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
         assert!(cfg.keepalive_interval_secs.is_none());
+        assert!(cfg.turn_on_logging);
+        assert!(cfg.use_trace_dispatcher);
+        assert!(cfg.turn_on_log_metrics);
+        assert!(cfg.trace_option_node_name.is_none());
+        assert!(cfg.trace_options.contains_key(""));
+    }
+
+    #[test]
+    fn tracing_config_parses_with_upstream_field_names() {
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "TurnOnLogging": true,
+            "UseTraceDispatcher": true,
+            "TurnOnLogMetrics": false,
+            "TraceOptionNodeName": "yggdrasil-local",
+            "TraceOptionMetricsPrefix": "cardano.node.metrics.",
+            "TraceOptionResourceFrequency": 500,
+            "TraceOptionForwarder": {
+                "connQueueSize": 16,
+                "disconnQueueSize": 32,
+                "maxReconnectDelay": 5
+            },
+            "TraceOptions": {
+                "": {
+                    "severity": "Notice",
+                    "detail": "DNormal",
+                    "backends": ["Stdout MachineFormat"]
+                },
+                "Net.PeerSelection": {
+                    "severity": "Info"
+                }
+            }
+        }"#;
+
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert!(cfg.turn_on_logging);
+        assert!(cfg.use_trace_dispatcher);
+        assert!(!cfg.turn_on_log_metrics);
+        assert_eq!(cfg.trace_option_node_name.as_deref(), Some("yggdrasil-local"));
+        assert_eq!(cfg.trace_option_resource_frequency, 500);
+        assert_eq!(cfg.trace_option_forwarder.conn_queue_size, 16);
+        assert_eq!(
+            cfg.trace_options
+                .get("")
+                .expect("root trace options")
+                .backends,
+            vec!["Stdout MachineFormat".to_owned()]
+        );
     }
 
     #[test]
@@ -315,6 +647,8 @@ mod tests {
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
+        assert_eq!(cfg.use_ledger_after_slot, Some(177_724_800));
+        assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
         assert!(!candidates.is_empty());
         assert!(candidates.len() <= 3);
     }
@@ -328,6 +662,8 @@ mod tests {
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
+        assert_eq!(cfg.use_ledger_after_slot, Some(112_406_400));
+        assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
         assert!(cfg.bootstrap_peers.is_empty());
     }
 
@@ -340,6 +676,8 @@ mod tests {
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
+        assert_eq!(cfg.use_ledger_after_slot, Some(102_729_600));
+        assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
         // stability_window = 3*432/0.05 = 25920
         let stability_window =
             (3.0 * cfg.security_param_k as f64 / cfg.active_slot_coeff) as u64;
@@ -373,10 +711,109 @@ mod tests {
     #[test]
     fn topology_resolution_falls_back_when_json_has_no_bootstrap_peers() {
         let fallback: SocketAddr = "127.0.0.1:3001".parse().expect("fallback");
-        let (peer_addr, bootstrap_peers) =
-            resolve_bootstrap_peers_from_topology("{\"bootstrapPeers\":[]}", fallback);
-        assert_eq!(peer_addr, fallback);
-        assert!(bootstrap_peers.is_empty());
+        let topology = resolve_topology_peers("{\"bootstrapPeers\":[]}", fallback);
+        assert_eq!(topology.primary_peer, fallback);
+        assert!(topology.fallback_peers.is_empty());
+    }
+
+    #[test]
+    fn topology_resolution_prefers_bootstrap_then_trustable_local_then_public_roots() {
+        let fallback: SocketAddr = "127.0.0.99:3001".parse().expect("fallback");
+        let topology = resolve_topology_peers(
+            r#"{
+                "bootstrapPeers": [
+                    { "address": "127.0.0.10", "port": 3001 },
+                    { "address": "127.0.0.11", "port": 3001 }
+                ],
+                "localRoots": [
+                    {
+                        "accessPoints": [
+                            { "address": "127.0.0.12", "port": 3001 }
+                        ],
+                        "advertise": false,
+                        "trustable": false,
+                        "valency": 1
+                    },
+                    {
+                        "accessPoints": [
+                            { "address": "127.0.0.13", "port": 3001 }
+                        ],
+                        "advertise": false,
+                        "trustable": true,
+                        "valency": 1
+                    }
+                ],
+                "publicRoots": [
+                    {
+                        "accessPoints": [
+                            { "address": "127.0.0.14", "port": 3001 }
+                        ],
+                        "advertise": false
+                    }
+                ]
+            }"#,
+            fallback,
+        );
+
+        assert_eq!(topology.primary_peer, "127.0.0.10:3001".parse().expect("addr"));
+        assert_eq!(
+            topology.fallback_peers,
+            vec![
+                "127.0.0.11:3001".parse().expect("addr"),
+                "127.0.0.13:3001".parse().expect("addr"),
+                "127.0.0.12:3001".parse().expect("addr"),
+                "127.0.0.14:3001".parse().expect("addr"),
+            ]
+        );
+    }
+
+    #[test]
+    fn ordered_fallback_peers_include_resolved_topology_groups() {
+        let cfg: NodeConfigFile = serde_json::from_str(
+            r#"{
+                "peer_addr": "127.0.0.10:3001",
+                "bootstrap_peers": ["127.0.0.11:3001"],
+                "local_roots": [
+                    {
+                        "accessPoints": [
+                            { "address": "127.0.0.13", "port": 3001 }
+                        ],
+                        "advertise": false,
+                        "trustable": true,
+                        "valency": 1
+                    },
+                    {
+                        "accessPoints": [
+                            { "address": "127.0.0.12", "port": 3001 }
+                        ],
+                        "advertise": false,
+                        "trustable": false,
+                        "valency": 1
+                    }
+                ],
+                "public_roots": [
+                    {
+                        "accessPoints": [
+                            { "address": "127.0.0.14", "port": 3001 }
+                        ],
+                        "advertise": false
+                    }
+                ],
+                "network_magic": 42,
+                "protocol_versions": [13]
+            }"#,
+        )
+        .expect("parse with topology groups");
+
+        assert_eq!(
+            cfg.ordered_fallback_peers(),
+            vec![
+                "127.0.0.11:3001".parse().expect("addr"),
+                "127.0.0.13:3001".parse().expect("addr"),
+                "127.0.0.12:3001".parse().expect("addr"),
+                "127.0.0.14:3001".parse().expect("addr"),
+            ]
+        );
     }
 
     #[test]

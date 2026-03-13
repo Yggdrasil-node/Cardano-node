@@ -15,7 +15,7 @@ use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_network::{
     BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient,
     ChainSyncClientError, DecodedHeaderNextResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
-    TypedIntersectResponse, TypedNextResponse,
+    PeerError, TypedIntersectResponse, TypedNextResponse,
 };
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
@@ -31,6 +31,10 @@ use yggdrasil_storage::{ImmutableStore, StorageError, VolatileStore};
 /// Error type for sync orchestration operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
+    /// Peer bootstrap or handshake error before protocol sync begins.
+    #[error("peer error: {0}")]
+    Peer(#[from] PeerError),
+
     /// ChainSync protocol error while requesting next chain update.
     #[error("chainsync error: {0}")]
     ChainSync(#[from] ChainSyncClientError),

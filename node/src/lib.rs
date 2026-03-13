@@ -4,12 +4,16 @@
 pub mod config;
 pub mod runtime;
 pub mod sync;
+pub mod tracer;
 
 pub use runtime::{
 	MempoolAddTxError, MempoolAddTxResult, NodeConfig, PeerSession,
+	ReconnectingSyncServiceOutcome,
 	TxSubmissionServiceError, TxSubmissionServiceOutcome, add_tx_to_mempool,
 	add_tx_to_shared_mempool, add_txs_to_mempool, add_txs_to_shared_mempool,
 	bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
+	run_reconnecting_verified_sync_service,
+	run_reconnecting_verified_sync_service_with_tracer,
 	run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
 	serve_txsubmission_request_from_reader,
 };
@@ -33,3 +37,4 @@ pub use sync::{
 	verify_multi_era_block,
 	verify_praos_header, verify_shelley_header, SHELLEY_KES_DEPTH,
 };
+pub use tracer::{NodeTracer, trace_fields};
