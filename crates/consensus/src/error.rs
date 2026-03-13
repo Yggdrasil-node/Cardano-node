@@ -1,3 +1,5 @@
+use yggdrasil_ledger::HeaderHash;
+
 use thiserror::Error;
 
 /// Errors returned by consensus-facing helpers.
@@ -37,4 +39,28 @@ pub enum ConsensusError {
     /// `slots_per_kes_period` was set to zero.
     #[error("invalid slots per KES period (zero)")]
     InvalidSlotsPerKesPeriod,
+    /// A rollback was requested that exceeds the security parameter `k`.
+    #[error("rollback too deep: requested {requested} blocks, max is {max}")]
+    RollbackTooDeep {
+        /// The number of blocks requested for rollback.
+        requested: u64,
+        /// The security parameter `k` (maximum allowed rollback depth).
+        max: u64,
+    },
+    /// The rollback target point was not found in the volatile chain.
+    #[error("rollback point not found: slot {slot}, hash {hash:?}")]
+    RollbackPointNotFound {
+        /// Slot of the requested rollback target.
+        slot: u64,
+        /// Header hash of the requested rollback target.
+        hash: HeaderHash,
+    },
+    /// A `roll_forward` block number does not follow the current tip.
+    #[error("non-contiguous block: expected {expected}, got {got}")]
+    NonContiguousBlock {
+        /// The block number that was expected.
+        expected: u64,
+        /// The block number that was received.
+        got: u64,
+    },
 }

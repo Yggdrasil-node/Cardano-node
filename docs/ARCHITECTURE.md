@@ -34,5 +34,7 @@ The project has a complete Cardano-era type system and a functional node binary:
 - Multi-era block decode (all 7 era tags) with consensus header verification (KES/OpCert).
 - Node binary with `clap` CLI (`run` + `default-config`), JSON configuration, and managed sync service with graceful shutdown.
 - Mempool with TTL-aware admission, fee ordering, and block-application eviction.
+- File-backed storage implementations behind `ImmutableStore`, `VolatileStore`, and `LedgerStore` traits.
+- Consensus hardening with `SecurityParam`, `ChainState` volatile chain tracker, rollback depth enforcement, and stability window detection.
 
-The next architecture milestone is on-disk storage backends, consensus hardening (rollback, chain selection), and upstream parity testing.
+The next architecture milestone is upstream parity testing and documentation refresh.

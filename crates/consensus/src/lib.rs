@@ -2,6 +2,8 @@
 
 /// Chain selection helpers.
 pub mod chain_selection;
+/// Volatile chain state tracking with rollback depth enforcement.
+pub mod chain_state;
 /// Epoch and slot modeling helpers.
 pub mod epoch;
 mod error;
@@ -14,6 +16,8 @@ pub mod praos;
 
 /// Chain candidate type and selection helper.
 pub use chain_selection::{ChainCandidate, select_preferred};
+/// Chain state tracking with rollback depth enforcement.
+pub use chain_state::{ChainEntry, ChainState, SecurityParam};
 /// Epoch size and slot-to-epoch helpers.
 pub use epoch::{EpochSize, epoch_first_slot, is_new_epoch, slot_to_epoch};
 /// Consensus-facing error type.

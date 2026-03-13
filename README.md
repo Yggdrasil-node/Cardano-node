@@ -22,8 +22,8 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 - **Crypto**: Blake2b-256/512, Ed25519, VRF (standard + batchcompat), SimpleKES, SumKES (depth 0–6+), with upstream vector-backed coverage and zeroize hardening.
 - **Ledger**: Full era type coverage Byron through Conway. Hand-rolled CBOR codec. Multi-era UTxO (`MultiEraUtxo`, `MultiEraTxOut`) with era-aware `apply_block()` dispatch, coin/multi-asset preservation, TTL/validity-interval checks. PlutusData AST with full CBOR support. Certificate hierarchy (19 variants). Credential, address, and governance types.
 - **Network**: SDU framing, async bearer transport, mux/demux, handshake, peer lifecycle. All four mini-protocol state machines + CBOR wire codecs + typed client drivers (ChainSync, BlockFetch, KeepAlive, TxSubmission2). SDU segmentation/reassembly for large protocol messages.
-- **Consensus**: Praos leader election, typed chain selection (VRF tiebreaker), epoch math, OpCert verification, KES period checks, block header verification with SumKES.
-- **Storage**: Trait-based `ImmutableStore`, `VolatileStore`, `LedgerStore` with in-memory implementations.
+- **Consensus**: Praos leader election, typed chain selection (VRF tiebreaker), epoch math, OpCert verification, KES period checks, block header verification with SumKES. `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain state tracker with rollback depth enforcement and stability window detection.
+- **Storage**: Trait-based `ImmutableStore`, `VolatileStore`, `LedgerStore` with in-memory and file-backed implementations.
 - **Mempool**: Fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, TTL-aware admission, block-application eviction.
 - **Node CLI**: `clap`-based binary with `run` (connect to peer and sync) and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Graceful shutdown via Ctrl-C signal handling.
@@ -31,8 +31,6 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 
 ### In Progress
 
-- On-disk storage backends behind existing storage traits.
-- Consensus hardening (chain selection refinement, rollback handling).
 - Upstream parity testing against official node traces and fixtures.
 - End-to-end multi-peer management.
 

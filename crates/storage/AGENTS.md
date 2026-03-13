@@ -25,7 +25,8 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 ## Current Phase
 - Traits `ImmutableStore`, `VolatileStore`, and `LedgerStore` are landed and exported.
 - In-memory implementations (`InMemoryImmutable`, `InMemoryVolatile`, `InMemoryLedgerStore`) back each trait.
+- File-backed implementations (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) provide JSON-based on-disk persistence with directory scanning on open, rollback-aware file deletion, and re-open persistence.
 - Storage operates on typed `Block`, `HeaderHash`, `SlotNo`, and `Point` from `yggdrasil-ledger`.
-- Keep implementations in-memory friendly while interfaces stabilize.
-- Delay irreversible file-format decisions until consensus and ledger expectations are clearer.
+- 19 integration tests cover all trait methods for both in-memory and file-backed implementations.
+- File-backed stores use `serde_json` serialization; this is a pragmatic initial format, not a long-term commitment.
 

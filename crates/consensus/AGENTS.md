@@ -31,4 +31,5 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Leadership threshold uses f64 arithmetic for now; deterministic fixed-point math is a future hardening target.
 - Operational certificate (`OpCert`) type and verification implemented in `opcert.rs`: cold-key signature over (hot_vk ‖ counter ‖ kes_period), KES period window checks, `kes_period_of_slot` helper.
 - Block header types (`HeaderBody`, `Header`) and full verification pipeline in `header.rs`: verify OpCert → check KES period → verify KES signature over header body. SumKES signing/verification at configurable depth (0–6+).
+- `SecurityParam` type (Ouroboros `k` parameter) and `ChainState` volatile chain tracker in `chain_state.rs`: roll-forward/roll-backward with max rollback depth enforcement, stability window detection (`stable_count`, `drain_stable`), non-contiguous block rejection.
 - Do not add Cardano-specific protocol detail until ledger and crypto inputs are stable enough to support it.

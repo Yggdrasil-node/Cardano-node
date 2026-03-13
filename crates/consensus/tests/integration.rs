@@ -1,15 +1,15 @@
 use yggdrasil_consensus::{
-    ActiveSlotCoeff, ChainCandidate, ConsensusError, EpochSize, Header, HeaderBody, OpCert,
-    check_is_leader, check_kes_period, check_leader_value, epoch_first_slot, is_new_epoch,
-    kes_period_of_slot, leadership_threshold, select_preferred, slot_to_epoch, verify_header,
-    verify_leader_proof, verify_opcert_only, vrf_input,
+    ActiveSlotCoeff, ChainCandidate, ChainEntry, ChainState, ConsensusError, EpochSize, Header,
+    HeaderBody, OpCert, SecurityParam, check_is_leader, check_kes_period, check_leader_value,
+    epoch_first_slot, is_new_epoch, kes_period_of_slot, leadership_threshold, select_preferred,
+    slot_to_epoch, verify_header, verify_leader_proof, verify_opcert_only, vrf_input,
 };
 use yggdrasil_crypto::ed25519::SigningKey;
 use yggdrasil_crypto::sum_kes::{
     derive_sum_kes_vk, gen_sum_kes_signing_key, sign_sum_kes, update_sum_kes,
 };
 use yggdrasil_crypto::vrf::{VrfOutput, VrfSecretKey, VRF_SEED_SIZE};
-use yggdrasil_ledger::{BlockNo, EpochNo, HeaderHash, Nonce, SlotNo};
+use yggdrasil_ledger::{BlockNo, EpochNo, HeaderHash, Nonce, Point, SlotNo};
 
 // ---------------------------------------------------------------------------
 // Chain selection
@@ -671,4 +671,182 @@ fn header_body_signable_bytes_genesis_prev() {
     // Same as above but prev_hash is None: tag byte only (1 byte instead of 33).
     // 8 + 8 + 1 + 32 + 32 + 4 + 32 + 48 + 64 + 16 = 245
     assert_eq!(bytes.len(), 245);
+}
+
+// ---------------------------------------------------------------------------
+// Chain state tracking
+// ---------------------------------------------------------------------------
+
+fn entry(fill: u8, slot: u64, block_no: u64) -> ChainEntry {
+    ChainEntry {
+        hash: HeaderHash([fill; 32]),
+        slot: SlotNo(slot),
+        block_no: BlockNo(block_no),
+    }
+}
+
+#[test]
+fn chain_state_starts_at_origin() {
+    let cs = ChainState::new(SecurityParam(3));
+    assert_eq!(cs.tip(), Point::Origin);
+    assert!(cs.is_empty());
+    assert_eq!(cs.volatile_len(), 0);
+    assert_eq!(cs.stable_count(), 0);
+}
+
+#[test]
+fn chain_state_roll_forward_and_tip() {
+    let mut cs = ChainState::new(SecurityParam(3));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("append 0");
+    cs.roll_forward(entry(0x02, 20, 1)).expect("append 1");
+
+    assert_eq!(
+        cs.tip(),
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    );
+    assert_eq!(cs.tip_block_no(), Some(BlockNo(1)));
+    assert_eq!(cs.volatile_len(), 2);
+}
+
+#[test]
+fn chain_state_rejects_non_contiguous_block() {
+    let mut cs = ChainState::new(SecurityParam(3));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("first");
+    let err = cs.roll_forward(entry(0x02, 20, 5)).expect_err("gap");
+    assert_eq!(
+        err,
+        ConsensusError::NonContiguousBlock {
+            expected: 1,
+            got: 5,
+        }
+    );
+}
+
+#[test]
+fn chain_state_rollback_to_point() {
+    let mut cs = ChainState::new(SecurityParam(5));
+    for i in 0u64..4 {
+        cs.roll_forward(entry(i as u8, (i + 1) * 10, i))
+            .expect("forward");
+    }
+
+    // Roll back to entry 1 (block 1, slot 20).
+    cs.roll_backward(&Point::BlockPoint(SlotNo(20), HeaderHash([0x01; 32])))
+        .expect("rollback");
+
+    assert_eq!(
+        cs.tip(),
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x01; 32]))
+    );
+    assert_eq!(cs.volatile_len(), 2);
+}
+
+#[test]
+fn chain_state_rollback_to_origin() {
+    let mut cs = ChainState::new(SecurityParam(5));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("forward");
+    cs.roll_forward(entry(0x02, 20, 1)).expect("forward");
+
+    cs.roll_backward(&Point::Origin).expect("rollback to origin");
+    assert_eq!(cs.tip(), Point::Origin);
+    assert!(cs.is_empty());
+}
+
+#[test]
+fn chain_state_rollback_too_deep() {
+    let mut cs = ChainState::new(SecurityParam(2));
+    for i in 0u64..5 {
+        cs.roll_forward(entry(i as u8, (i + 1) * 10, i))
+            .expect("forward");
+    }
+
+    // Rollback to origin requires removing 5 blocks, but k=2.
+    let err = cs
+        .roll_backward(&Point::Origin)
+        .expect_err("too deep");
+    assert_eq!(
+        err,
+        ConsensusError::RollbackTooDeep {
+            requested: 5,
+            max: 2,
+        }
+    );
+}
+
+#[test]
+fn chain_state_rollback_point_not_found() {
+    let mut cs = ChainState::new(SecurityParam(5));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("forward");
+
+    let err = cs
+        .roll_backward(&Point::BlockPoint(SlotNo(99), HeaderHash([0xFF; 32])))
+        .expect_err("not found");
+    assert_eq!(
+        err,
+        ConsensusError::RollbackPointNotFound {
+            slot: 99,
+            hash: HeaderHash([0xFF; 32]),
+        }
+    );
+}
+
+#[test]
+fn chain_state_stable_entries_drain() {
+    let k = 3;
+    let mut cs = ChainState::new(SecurityParam(k));
+
+    // Add 5 blocks — with k=3, the first 2 should be stable.
+    for i in 0u64..5 {
+        cs.roll_forward(entry(i as u8, (i + 1) * 10, i))
+            .expect("forward");
+    }
+
+    assert_eq!(cs.stable_count(), 2);
+    assert_eq!(cs.volatile_len(), 5);
+
+    let drained = cs.drain_stable();
+    assert_eq!(drained.len(), 2);
+    assert_eq!(drained[0].hash, HeaderHash([0x00; 32]));
+    assert_eq!(drained[1].hash, HeaderHash([0x01; 32]));
+
+    // After draining, volatile should have exactly k entries.
+    assert_eq!(cs.volatile_len(), 3);
+    assert_eq!(cs.stable_count(), 0);
+}
+
+#[test]
+fn chain_state_drain_stable_empty_when_below_k() {
+    let mut cs = ChainState::new(SecurityParam(10));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("forward");
+    cs.roll_forward(entry(0x02, 20, 1)).expect("forward");
+
+    assert_eq!(cs.stable_count(), 0);
+    let drained = cs.drain_stable();
+    assert!(drained.is_empty());
+}
+
+#[test]
+fn chain_state_roll_forward_after_rollback() {
+    let mut cs = ChainState::new(SecurityParam(5));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("forward 0");
+    cs.roll_forward(entry(0x02, 20, 1)).expect("forward 1");
+    cs.roll_forward(entry(0x03, 30, 2)).expect("forward 2");
+
+    // Roll back to block 1.
+    cs.roll_backward(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
+        .expect("rollback");
+
+    // Fork from block 1 with a different block 2.
+    cs.roll_forward(entry(0xAA, 25, 2)).expect("fork forward");
+    assert_eq!(
+        cs.tip(),
+        Point::BlockPoint(SlotNo(25), HeaderHash([0xAA; 32]))
+    );
+    assert_eq!(cs.volatile_len(), 3);
+}
+
+#[test]
+fn chain_state_security_param_accessor() {
+    let cs = ChainState::new(SecurityParam(42));
+    assert_eq!(cs.security_param(), SecurityParam(42));
 }
