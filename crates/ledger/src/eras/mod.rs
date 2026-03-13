@@ -2,7 +2,7 @@ pub mod allegra;
 pub mod alonzo;
 pub mod babbage;
 pub mod byron;
-mod conway;
+pub mod conway;
 pub mod mary;
 pub mod shelley;
 
@@ -15,6 +15,10 @@ pub use babbage::{BabbageTxBody, BabbageTxOut, DatumOption};
 pub use byron::BYRON_NAME;
 pub use byron::{ByronBlock, BYRON_SLOTS_PER_EPOCH};
 pub use conway::CONWAY_NAME;
+pub use conway::{
+    Anchor, ConwayTxBody, GovActionId, ProposalProcedure, Vote, Voter, VotingProcedure,
+    VotingProcedures,
+};
 pub use mary::MARY_NAME;
 pub use mary::{
     AssetName, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, PolicyId, Value,
