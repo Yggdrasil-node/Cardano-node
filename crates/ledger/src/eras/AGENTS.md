@@ -27,7 +27,7 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Mary: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (key 9 mint) with CBOR codecs.
 - Alonzo: `ExUnits`, `Redeemer` (opaque PlutusData), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 11/13/14/15) with CBOR codecs.
 - Byron: `ByronBlock` enum (EBB/MainBlock) with lightweight envelope decoding for slot tracking.
-- Babbage: `DatumOption` (hash/inline), `BabbageTxOut` (dual-format array+map with script_ref), `BabbageTxBody` (keys 16/17/18) with CBOR codecs.
-- Conway: `Vote`, `Voter` (5-variant), `GovActionId`, `Anchor`, `VotingProcedure`, `ProposalProcedure` (opaque gov_action), `VotingProcedures` (nested BTreeMap), `ConwayTxBody` (keys 19/20/21/22) with CBOR codecs.
+- Babbage: `DatumOption` (hash/inline), `BabbageTxOut` (dual-format array+map with script_ref), `BabbageTxBody` (keys 16/17/18), `BabbageBlock` (Shelley block envelope with BabbageTxBody entries) with CBOR codecs.
+- Conway: `Vote`, `Voter` (5-variant), `GovActionId`, `Anchor`, `VotingProcedure`, `ProposalProcedure` (opaque gov_action), `VotingProcedures` (nested BTreeMap), `ConwayTxBody` (keys 19/20/21/22), `ConwayBlock` (Shelley block envelope with ConwayTxBody entries) with CBOR codecs.
 - Full era type coverage: Byron → Conway.
 - Keep additions lightweight until generated types and real transition logic land.

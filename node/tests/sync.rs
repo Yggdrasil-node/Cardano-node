@@ -5,8 +5,9 @@ use yggdrasil_network::{
     peer_accept,
 };
 use yggdrasil_ledger::{
-    CborEncode, Encoder, HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, ShelleyTxBody, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
+    BabbageBlock, BabbageTxBody, BabbageTxOut, CborEncode, ConwayBlock, ConwayTxBody, Encoder,
+    HeaderHash, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody,
+    ShelleyTxIn, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_node::{
@@ -1449,7 +1450,7 @@ fn decode_multi_era_block_shelley() {
 
 #[test]
 fn decode_multi_era_block_unsupported_tag() {
-    let envelope = build_multi_era_envelope(6, &[0x80]); // Babbage not yet supported
+    let envelope = build_multi_era_envelope(99, &[0x80]); // unknown tag
     let result = decode_multi_era_block(&envelope);
     assert!(result.is_err());
 }
@@ -1774,4 +1775,362 @@ fn evict_confirmed_rollback_does_nothing() {
     let evicted = evict_confirmed_from_mempool(&mut mempool, &step);
     assert_eq!(evicted, 0);
     assert_eq!(mempool.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 47: Multi-era block decode expansion
+// ---------------------------------------------------------------------------
+
+/// Build a sample Babbage block (no transactions) and return its CBOR bytes.
+fn sample_babbage_block_bytes() -> Vec<u8> {
+    let block = BabbageBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    block.to_cbor_bytes()
+}
+
+/// Build a sample Conway block (no transactions) and return its CBOR bytes.
+fn sample_conway_block_bytes() -> Vec<u8> {
+    let block = ConwayBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    block.to_cbor_bytes()
+}
+
+#[test]
+fn decode_multi_era_block_babbage() {
+    let block_body = sample_babbage_block_bytes();
+    let envelope = build_multi_era_envelope(6, &block_body);
+    let result = decode_multi_era_block(&envelope).expect("decode babbage");
+    match result {
+        MultiEraBlock::Babbage(block) => {
+            assert_eq!(block.header.body.slot, 500);
+            assert_eq!(block.header.body.block_number, 1);
+        }
+        other => panic!("expected Babbage, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_multi_era_block_conway() {
+    let block_body = sample_conway_block_bytes();
+    let envelope = build_multi_era_envelope(7, &block_body);
+    let result = decode_multi_era_block(&envelope).expect("decode conway");
+    match result {
+        MultiEraBlock::Conway(block) => {
+            assert_eq!(block.header.body.slot, 500);
+            assert_eq!(block.header.body.block_number, 1);
+        }
+        other => panic!("expected Conway, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_multi_era_blocks_all_eras() {
+    let shelley = build_multi_era_envelope(2, &sample_block_bytes());
+    let byron = build_multi_era_envelope(0, &[0x80]);
+    let babbage = build_multi_era_envelope(6, &sample_babbage_block_bytes());
+    let conway = build_multi_era_envelope(7, &sample_conway_block_bytes());
+    let blocks = decode_multi_era_blocks(&[shelley, byron, babbage, conway])
+        .expect("decode all eras");
+    assert_eq!(blocks.len(), 4);
+    assert!(matches!(blocks[0], MultiEraBlock::Shelley(_)));
+    assert!(matches!(blocks[1], MultiEraBlock::Byron { .. }));
+    assert!(matches!(blocks[2], MultiEraBlock::Babbage(_)));
+    assert!(matches!(blocks[3], MultiEraBlock::Conway(_)));
+}
+
+#[test]
+fn multi_era_block_to_block_babbage() {
+    let block = BabbageBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Babbage(Box::new(block));
+    let generic = multi_era_block_to_block(&me);
+    assert_eq!(generic.era, yggdrasil_ledger::Era::Babbage);
+    assert_eq!(generic.header.slot_no, SlotNo(500));
+    assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
+    assert_eq!(generic.header.hash, sample_header_hash());
+}
+
+#[test]
+fn multi_era_block_to_block_conway() {
+    let block = ConwayBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Conway(Box::new(block));
+    let generic = multi_era_block_to_block(&me);
+    assert_eq!(generic.era, yggdrasil_ledger::Era::Conway);
+    assert_eq!(generic.header.slot_no, SlotNo(500));
+    assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
+    assert_eq!(generic.header.hash, sample_header_hash());
+}
+
+fn make_babbage_tx_body(fee: u64) -> BabbageTxBody {
+    BabbageTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x01; 29],
+            amount: yggdrasil_ledger::Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    }
+}
+
+fn make_conway_tx_body(fee: u64) -> ConwayTxBody {
+    ConwayTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xBB; 32],
+            index: 0,
+        }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x01; 29],
+            amount: yggdrasil_ledger::Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee,
+        ttl: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    }
+}
+
+#[test]
+fn extract_tx_ids_babbage() {
+    let body = make_babbage_tx_body(200);
+    let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
+
+    let block = BabbageBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![body],
+        witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            bootstrap_witnesses: vec![],
+        }],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Babbage(Box::new(block));
+    let ids = extract_tx_ids(&me);
+    assert_eq!(ids.len(), 1);
+    assert_eq!(ids[0], expected_id);
+}
+
+#[test]
+fn extract_tx_ids_conway() {
+    let body = make_conway_tx_body(300);
+    let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
+
+    let block = ConwayBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![body],
+        witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            bootstrap_witnesses: vec![],
+        }],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Conway(Box::new(block));
+    let ids = extract_tx_ids(&me);
+    assert_eq!(ids.len(), 1);
+    assert_eq!(ids[0], expected_id);
+}
+
+#[test]
+fn babbage_block_round_trip_decode() {
+    let body = make_babbage_tx_body(500);
+    let block = BabbageBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![body],
+        witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            bootstrap_witnesses: vec![],
+        }],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let block_bytes = block.to_cbor_bytes();
+    let envelope = build_multi_era_envelope(6, &block_bytes);
+    let decoded = decode_multi_era_block(&envelope).expect("round-trip decode");
+    match decoded {
+        MultiEraBlock::Babbage(b) => {
+            assert_eq!(b.transaction_bodies.len(), 1);
+            assert_eq!(b.transaction_bodies[0].fee, 500);
+        }
+        other => panic!("expected Babbage, got {other:?}"),
+    }
+}
+
+#[test]
+fn conway_block_round_trip_decode() {
+    let body = make_conway_tx_body(700);
+    let block = ConwayBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![body],
+        witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            bootstrap_witnesses: vec![],
+        }],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let block_bytes = block.to_cbor_bytes();
+    let envelope = build_multi_era_envelope(7, &block_bytes);
+    let decoded = decode_multi_era_block(&envelope).expect("round-trip decode");
+    match decoded {
+        MultiEraBlock::Conway(b) => {
+            assert_eq!(b.transaction_bodies.len(), 1);
+            assert_eq!(b.transaction_bodies[0].fee, 700);
+        }
+        other => panic!("expected Conway, got {other:?}"),
+    }
+}
+
+#[test]
+fn multi_era_block_to_block_babbage_with_txs() {
+    let body = make_babbage_tx_body(250);
+    let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
+    let block = BabbageBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![body],
+        witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            bootstrap_witnesses: vec![],
+        }],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Babbage(Box::new(block));
+    let generic = multi_era_block_to_block(&me);
+    assert_eq!(generic.transactions.len(), 1);
+    assert_eq!(generic.transactions[0].id, expected_id);
+}
+
+#[test]
+fn multi_era_block_to_block_conway_with_txs() {
+    let body = make_conway_tx_body(350);
+    let expected_id = TxId(yggdrasil_crypto::hash_bytes_256(&body.to_cbor_bytes()).0);
+    let block = ConwayBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![body],
+        witness_sets: vec![ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            bootstrap_witnesses: vec![],
+        }],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Conway(Box::new(block));
+    let generic = multi_era_block_to_block(&me);
+    assert_eq!(generic.transactions.len(), 1);
+    assert_eq!(generic.transactions[0].id, expected_id);
+}
+
+#[test]
+fn verify_multi_era_block_babbage_passes() {
+    let block = BabbageBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Babbage(Box::new(block));
+    // Verification will fail on signature, but the match arm itself is exercised.
+    let config = VerificationConfig {
+        slots_per_kes_period: 129600,
+        max_kes_evolutions: 62,
+    };
+    let result = verify_multi_era_block(&me, &config);
+    // Expect error since the signature is dummy bytes, confirming the
+    // Babbage arm delegates to verify_shelley_header.
+    assert!(result.is_err());
+}
+
+#[test]
+fn verify_multi_era_block_conway_passes() {
+    let block = ConwayBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        witness_sets: vec![],
+        transaction_metadata: std::collections::HashMap::new(),
+    };
+    let me = MultiEraBlock::Conway(Box::new(block));
+    let config = VerificationConfig {
+        slots_per_kes_period: 129600,
+        max_kes_evolutions: 62,
+    };
+    let result = verify_multi_era_block(&me, &config);
+    assert!(result.is_err());
 }

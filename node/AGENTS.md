@@ -35,7 +35,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Typed intersection finding (`typed_find_intersect`), batch sync-and-apply (`sync_batch_apply`), and KeepAlive heartbeat (`keepalive_heartbeat`) are implemented.
 - Managed sync service with graceful shutdown (`run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`) is implemented.
 - Consensus header verification bridge (`shelley_opcert_to_consensus`, `shelley_header_body_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`) is implemented.
-- Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque and Shelley decoded is implemented.
-- Block header hash computation (`ShelleyHeader::header_hash`, `ShelleyBlock::header_hash`) with proper Blake2b-256 of CBOR-encoded headers is implemented; `shelley_block_to_block` and `compute_tx_id` use real Blake2b-256.
-- Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `MultiEraSyncStep`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`, `MultiEraSyncProgress`) is implemented.
+- Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque, Shelley/Allegra/Mary/Alonzo decoded as `ShelleyBlock`, Babbage decoded as `BabbageBlock`, and Conway decoded as `ConwayBlock` is implemented. All seven era tags (0–7) are handled.
+- Block header hash computation (`ShelleyHeader::header_hash`, `ShelleyBlock::header_hash`, `BabbageBlock::header_hash`, `ConwayBlock::header_hash`) with proper Blake2b-256 of CBOR-encoded headers is implemented; `shelley_block_to_block`, `babbage_block_to_block`, `conway_block_to_block`, and `compute_tx_id` use real Blake2b-256.
+- Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `MultiEraSyncStep`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`, `MultiEraSyncProgress`) is implemented for all eras.
 - Prefer smokeable runtime wiring over feature-rich operational behavior at this stage.

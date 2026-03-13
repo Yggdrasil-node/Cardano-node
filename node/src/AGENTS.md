@@ -30,8 +30,8 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Typed intersection finding (`typed_find_intersect`), batch sync-and-apply (`sync_batch_apply`), and KeepAlive heartbeat (`keepalive_heartbeat`) are implemented.
 - Managed sync service (`run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`) with `tokio::select!` shutdown control is implemented.
 - Consensus header verification bridge (`shelley_opcert_to_consensus`, `shelley_header_body_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`) is implemented.
-- Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque and Shelley decoded is implemented.
-- Block header hash computation uses real Blake2b-256 via `ShelleyHeader::header_hash()`; `shelley_block_to_block` and `compute_tx_id` use proper cryptographic hashing.
-- Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`) is implemented wiring consensus verification into the multi-era sync flow.
-- Mempool sync eviction: `extract_tx_ids` extracts TxIds from multi-era blocks, `evict_confirmed_from_mempool` removes confirmed and TTL-expired entries from the mempool after each sync step.
-- Next: expand multi-era decode to Babbage/Conway, add persistent storage backend, add concurrency for mempool intake.
+- Multi-era block decode (`MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`) with Byron opaque, Shelley/Allegra/Mary/Alonzo decoded as `ShelleyBlock`, Babbage decoded as `BabbageBlock`, and Conway decoded as `ConwayBlock` is implemented.
+- Block conversion (`multi_era_block_to_block`, `babbage_block_to_block`, `conway_block_to_block`) produces generic `Block` values for all eras with proper `Era` tags, header fields, and transaction ID computation.
+- Block header hash computation uses real Blake2b-256 via `ShelleyHeader::header_hash()`; `shelley_block_to_block`, `babbage_block_to_block`, `conway_block_to_block`, and `compute_tx_id` use proper cryptographic hashing.
+- Verified multi-era sync pipeline (`multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `apply_multi_era_step_to_volatile`, `sync_batch_apply_verified`, `VerificationConfig`) is implemented wiring consensus verification into the multi-era sync flow for all eras.
+- Mempool sync eviction: `extract_tx_ids` extracts TxIds from all multi-era blocks (Shelley/Babbage/Conway), `evict_confirmed_from_mempool` removes confirmed and TTL-expired entries from the mempool after each sync step.

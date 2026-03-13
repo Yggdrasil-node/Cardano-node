@@ -18,13 +18,14 @@
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway>
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
-use crate::eras::shelley::ShelleyTxIn;
+use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
+use crate::types::HeaderHash;
 
 pub const CONWAY_NAME: &str = "Conway";
 
@@ -818,6 +819,113 @@ impl CborDecode for ConwayTxBody {
             proposal_procedures,
             current_treasury_value,
             treasury_donation,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Block envelope
+// ---------------------------------------------------------------------------
+
+/// A complete Conway-era block as it appears on the wire.
+///
+/// Shares the Shelley block envelope structure but carries `ConwayTxBody`
+/// transaction bodies with governance extensions.
+///
+/// CDDL:
+/// ```text
+/// block = [
+///   header,
+///   transaction_bodies       : [* transaction_body],
+///   transaction_witness_sets : [* transaction_witness_set],
+///   transaction_metadata_set : {* uint => metadata}
+/// ]
+/// ```
+///
+/// Reference: `Cardano.Ledger.Conway.TxBody` and
+/// `Ouroboros.Consensus.Shelley.Ledger.Block`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConwayBlock {
+    /// The signed block header (same format as Shelley).
+    pub header: ShelleyHeader,
+    /// Transaction bodies decoded with Conway-era key-map CBOR.
+    pub transaction_bodies: Vec<ConwayTxBody>,
+    /// Witness sets (parallel to transaction_bodies).
+    pub witness_sets: Vec<ShelleyWitnessSet>,
+    /// Metadata map: transaction index → raw CBOR metadata bytes.
+    pub transaction_metadata: HashMap<u64, Vec<u8>>,
+}
+
+impl ConwayBlock {
+    /// Compute the Blake2b-256 header hash for this block.
+    pub fn header_hash(&self) -> HeaderHash {
+        self.header.header_hash()
+    }
+}
+
+impl CborEncode for ConwayBlock {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(4);
+        self.header.encode_cbor(enc);
+
+        enc.array(self.transaction_bodies.len() as u64);
+        for body in &self.transaction_bodies {
+            body.encode_cbor(enc);
+        }
+
+        enc.array(self.witness_sets.len() as u64);
+        for ws in &self.witness_sets {
+            ws.encode_cbor(enc);
+        }
+
+        enc.map(self.transaction_metadata.len() as u64);
+        for (&idx, meta) in &self.transaction_metadata {
+            enc.unsigned(idx);
+            enc.raw(meta);
+        }
+    }
+}
+
+impl CborDecode for ConwayBlock {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 4 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 4,
+                actual: len as usize,
+            });
+        }
+
+        let header = ShelleyHeader::decode_cbor(dec)?;
+
+        let tb_count = dec.array()?;
+        let mut transaction_bodies = Vec::with_capacity(tb_count as usize);
+        for _ in 0..tb_count {
+            transaction_bodies.push(ConwayTxBody::decode_cbor(dec)?);
+        }
+
+        let ws_count = dec.array()?;
+        let mut witness_sets = Vec::with_capacity(ws_count as usize);
+        for _ in 0..ws_count {
+            witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
+        }
+
+        let meta_count = dec.map()?;
+        let mut transaction_metadata = HashMap::with_capacity(meta_count as usize);
+        for _ in 0..meta_count {
+            let idx = dec.unsigned()?;
+            let start = dec.position();
+            dec.skip()?;
+            let end = dec.position();
+            let raw = dec.slice(start, end)?.to_vec();
+            transaction_metadata.insert(idx, raw);
+        }
+
+        Ok(Self {
+            header,
+            transaction_bodies,
+            witness_sets,
+            transaction_metadata,
         })
     }
 }

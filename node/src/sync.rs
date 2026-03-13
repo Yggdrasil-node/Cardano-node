@@ -17,8 +17,9 @@ use yggdrasil_network::{
     ChainSyncClientError, IntersectResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
 };
 use yggdrasil_ledger::{
-    Block, BlockHeader, BlockNo, CborDecode, CborEncode, Era, HeaderHash, LedgerError, Point,
-    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
+    BabbageBlock, Block, BlockHeader, BlockNo, CborDecode, CborEncode, ConwayBlock, Era,
+    HeaderHash, LedgerError, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
+    SlotNo, Tx, TxId,
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_storage::{StorageError, VolatileStore};
@@ -713,8 +714,9 @@ pub fn verify_shelley_header(
 
 /// A decoded block from any supported era.
 ///
-/// As era support expands, new variants are added here. Currently only
-/// Shelley is fully decoded; Byron blocks pass through as opaque bytes.
+/// Each Shelley-family era has its own variant carrying a typed block with
+/// era-appropriate transaction body types. Byron blocks pass through as
+/// opaque bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MultiEraBlock {
     /// An opaque Byron-era block. Full structural decode is not yet
@@ -723,9 +725,13 @@ pub enum MultiEraBlock {
         /// Raw CBOR bytes of the Byron block.
         raw: Vec<u8>,
     },
-    /// A fully decoded Shelley-era block (also covers Allegra/Mary/Alonzo
-    /// which share the Shelley block envelope in the wire format).
+    /// A fully decoded Shelley-era block (also covers Allegra/Mary
+    /// which share the Shelley block envelope and tx body format).
     Shelley(Box<ShelleyBlock>),
+    /// A fully decoded Babbage-era block with `BabbageTxBody` entries.
+    Babbage(Box<BabbageBlock>),
+    /// A fully decoded Conway-era block with `ConwayTxBody` entries.
+    Conway(Box<ConwayBlock>),
 }
 
 /// Cardano mainnet era tags used in the multi-era block envelope.
@@ -751,10 +757,8 @@ mod era_tag {
 /// The block is expected to be CBOR-encoded in the Cardano multi-era
 /// envelope format: `[era_tag, block_body]`. Byron blocks (tags 0–1) are
 /// kept as opaque bytes. Shelley-family blocks (tags 2–5) are decoded
-/// using the Shelley block codec.
-///
-/// Tags 6 (Babbage) and 7 (Conway) are not yet supported and return a
-/// decode error.
+/// using the Shelley block codec. Babbage (tag 6) and Conway (tag 7) use
+/// their own block codecs with era-appropriate transaction body types.
 pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
     // Peek at the structure: expect a 2-element array [tag, body].
     use yggdrasil_ledger::cbor::Decoder;
@@ -782,6 +786,22 @@ pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
                 .map_err(SyncError::LedgerDecode)?;
             Ok(MultiEraBlock::Shelley(Box::new(block)))
         }
+        era_tag::BABBAGE => {
+            let body_start = dec.position();
+            dec.skip().map_err(SyncError::LedgerDecode)?;
+            let body_bytes = &raw[body_start..dec.position()];
+            let block = BabbageBlock::from_cbor_bytes(body_bytes)
+                .map_err(SyncError::LedgerDecode)?;
+            Ok(MultiEraBlock::Babbage(Box::new(block)))
+        }
+        era_tag::CONWAY => {
+            let body_start = dec.position();
+            dec.skip().map_err(SyncError::LedgerDecode)?;
+            let body_bytes = &raw[body_start..dec.position()];
+            let block = ConwayBlock::from_cbor_bytes(body_bytes)
+                .map_err(SyncError::LedgerDecode)?;
+            Ok(MultiEraBlock::Conway(Box::new(block)))
+        }
         unsupported => {
             Err(SyncError::LedgerDecode(LedgerError::CborTypeMismatch {
                 expected: 2, // Shelley era tag
@@ -807,13 +827,16 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 
 /// Convert a `MultiEraBlock` into the generic ledger `Block` wrapper.
 ///
-/// Shelley-family blocks are fully decoded via `shelley_block_to_block`.
-/// Byron blocks produce a minimal `Block` whose header hash is the
-/// Blake2b-256 of the raw CBOR envelope; other header fields are zeroed
-/// because Byron structural decode is not yet implemented.
+/// All Shelley-family eras (Shelley/Allegra/Mary/Alonzo, Babbage, Conway)
+/// are fully decoded using the common block envelope. Byron blocks produce
+/// a minimal `Block` whose header hash is the Blake2b-256 of the raw CBOR
+/// envelope; other header fields are zeroed because Byron structural
+/// decode is not yet implemented.
 pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
     match block {
         MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley),
+        MultiEraBlock::Babbage(babbage) => babbage_block_to_block(babbage),
+        MultiEraBlock::Conway(conway) => conway_block_to_block(conway),
         MultiEraBlock::Byron { raw } => Block {
             era: Era::Byron,
             header: BlockHeader {
@@ -825,6 +848,68 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
             },
             transactions: vec![],
         },
+    }
+}
+
+/// Convert a typed Babbage block into the generic ledger `Block` wrapper.
+fn babbage_block_to_block(block: &BabbageBlock) -> Block {
+    let body = &block.header.body;
+    let hash = block.header_hash();
+    let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+
+    let transactions: Vec<Tx> = block
+        .transaction_bodies
+        .iter()
+        .map(|tx_body| {
+            let raw = tx_body.to_cbor_bytes();
+            Tx {
+                id: compute_tx_id(&raw),
+                body: raw,
+            }
+        })
+        .collect();
+
+    Block {
+        era: Era::Babbage,
+        header: BlockHeader {
+            hash,
+            prev_hash,
+            slot_no: SlotNo(body.slot),
+            block_no: BlockNo(body.block_number),
+            issuer_vkey: body.issuer_vkey,
+        },
+        transactions,
+    }
+}
+
+/// Convert a typed Conway block into the generic ledger `Block` wrapper.
+fn conway_block_to_block(block: &ConwayBlock) -> Block {
+    let body = &block.header.body;
+    let hash = block.header_hash();
+    let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+
+    let transactions: Vec<Tx> = block
+        .transaction_bodies
+        .iter()
+        .map(|tx_body| {
+            let raw = tx_body.to_cbor_bytes();
+            Tx {
+                id: compute_tx_id(&raw),
+                body: raw,
+            }
+        })
+        .collect();
+
+    Block {
+        era: Era::Conway,
+        header: BlockHeader {
+            hash,
+            prev_hash,
+            slot_no: SlotNo(body.slot),
+            block_no: BlockNo(body.block_number),
+            issuer_vkey: body.issuer_vkey,
+        },
+        transactions,
     }
 }
 
@@ -844,8 +929,9 @@ pub struct VerificationConfig {
 
 /// Verify the header of a multi-era block.
 ///
-/// Shelley-family blocks are verified using `verify_shelley_header`.
-/// Byron blocks pass through without verification (no KES in Byron).
+/// All Shelley-family blocks (Shelley, Babbage, Conway) are verified
+/// using `verify_shelley_header` since they share the KES-signed header
+/// format. Byron blocks pass through without verification.
 pub fn verify_multi_era_block(
     block: &MultiEraBlock,
     config: &VerificationConfig,
@@ -854,6 +940,20 @@ pub fn verify_multi_era_block(
         MultiEraBlock::Shelley(shelley) => {
             verify_shelley_header(
                 &shelley.header,
+                config.slots_per_kes_period,
+                config.max_kes_evolutions,
+            )
+        }
+        MultiEraBlock::Babbage(babbage) => {
+            verify_shelley_header(
+                &babbage.header,
+                config.slots_per_kes_period,
+                config.max_kes_evolutions,
+            )
+        }
+        MultiEraBlock::Conway(conway) => {
+            verify_shelley_header(
+                &conway.header,
                 config.slots_per_kes_period,
                 config.max_kes_evolutions,
             )
@@ -1010,13 +1110,22 @@ pub struct MultiEraSyncProgress {
 
 /// Extract transaction IDs from a multi-era block.
 ///
-/// For Shelley-family blocks, each transaction body is CBOR-encoded and
+/// For all Shelley-family eras, each transaction body is CBOR-encoded and
 /// hashed (Blake2b-256) to derive the canonical `TxId`. Byron blocks
-/// currently return an empty list since structural decode is not yet
-/// implemented.
+/// return an empty list since structural decode is not yet implemented.
 pub fn extract_tx_ids(block: &MultiEraBlock) -> Vec<TxId> {
     match block {
         MultiEraBlock::Shelley(shelley) => shelley
+            .transaction_bodies
+            .iter()
+            .map(|body| compute_tx_id(&body.to_cbor_bytes()))
+            .collect(),
+        MultiEraBlock::Babbage(babbage) => babbage
+            .transaction_bodies
+            .iter()
+            .map(|body| compute_tx_id(&body.to_cbor_bytes()))
+            .collect(),
+        MultiEraBlock::Conway(conway) => conway
             .transaction_bodies
             .iter()
             .map(|body| compute_tx_id(&body.to_cbor_bytes()))

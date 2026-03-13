@@ -24,12 +24,13 @@ pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 /// Supported Cardano eras represented in the workspace.
 pub use eras::Era;
 pub use eras::{
-    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, AssetName, BabbageTxBody, BabbageTxOut,
-    ByronBlock, ConwayTxBody, DatumOption, ExUnits, GovActionId, MaryTxBody, MaryTxOut, MintAsset,
-    MultiAsset, NativeScript, PolicyId, ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, Value, Vote, Voter,
-    VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH,
+    AllegraTxBody, AlonzoTxBody, AlonzoTxOut, Anchor, AssetName, BabbageBlock, BabbageTxBody,
+    BabbageTxOut, ByronBlock, ConwayBlock, ConwayTxBody, DatumOption, ExUnits, GovActionId,
+    MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId, ProposalProcedure,
+    Redeemer, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
+    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert,
+    ShelleyWitnessSet, Value, Vote, Voter, VotingProcedure, VotingProcedures,
+    BYRON_SLOTS_PER_EPOCH,
 };
 
 // -- Error re-exports ---------------------------------------------------------

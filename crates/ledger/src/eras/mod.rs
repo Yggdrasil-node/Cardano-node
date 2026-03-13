@@ -11,13 +11,13 @@ pub use allegra::{AllegraTxBody, NativeScript};
 pub use alonzo::ALONZO_NAME;
 pub use alonzo::{AlonzoTxBody, AlonzoTxOut, ExUnits, Redeemer};
 pub use babbage::BABBAGE_NAME;
-pub use babbage::{BabbageTxBody, BabbageTxOut, DatumOption};
+pub use babbage::{BabbageBlock, BabbageTxBody, BabbageTxOut, DatumOption};
 pub use byron::BYRON_NAME;
 pub use byron::{ByronBlock, BYRON_SLOTS_PER_EPOCH};
 pub use conway::CONWAY_NAME;
 pub use conway::{
-    Anchor, ConwayTxBody, GovActionId, ProposalProcedure, Vote, Voter, VotingProcedure,
-    VotingProcedures,
+    Anchor, ConwayBlock, ConwayTxBody, GovActionId, ProposalProcedure, Vote, Voter,
+    VotingProcedure, VotingProcedures,
 };
 pub use mary::MARY_NAME;
 pub use mary::{

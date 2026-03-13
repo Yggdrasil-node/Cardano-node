@@ -69,12 +69,12 @@ You are implementing a pure Rust Cardano node with no FFI dependencies.
   - KeepAlive: `keepalive_heartbeat`.
   - Managed service: `run_sync_service`, `SyncServiceConfig`, `SyncServiceOutcome`.
   - Consensus bridge: `shelley_opcert_to_consensus`, `shelley_header_to_consensus`, `verify_shelley_header`.
-  - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks`.
+  - Multi-era decode: `MultiEraBlock`, `decode_multi_era_block`, `decode_multi_era_blocks` (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway — all seven era tags).
   - Header hash: `ShelleyHeader::header_hash` (Blake2b-256), `compute_tx_id`.
   - Verified pipeline: `multi_era_block_to_block`, `verify_multi_era_block`, `sync_step_multi_era`, `sync_batch_apply_verified`, `VerificationConfig`.
   - Mempool eviction: `extract_tx_ids`, `evict_confirmed_from_mempool`.
 - `crates/mempool` now includes fee-ordered queue with `TxId`-based entries, duplicate detection, capacity enforcement, `remove_by_id`, `remove_confirmed` for block-application eviction, TTL-aware admission (`insert_checked`, `purge_expired`), and iterator support.
-- `crates/ledger` now includes `LedgerState` with `ShelleyUtxo` integration, atomic block application, Allegra era types (`AllegraTxBody`, `NativeScript`), Mary era types (`Value`, `MultiAsset`, `MaryTxBody`), Alonzo era types (`ExUnits`, `Redeemer`, `AlonzoTxOut`, `AlonzoTxBody`), Byron envelope (`ByronBlock`), Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`), Conway era types (`Vote`, `Voter`, `GovActionId`, `Anchor`, `VotingProcedure`, `ProposalProcedure`, `VotingProcedures`, `ConwayTxBody`), and signed integer CBOR helpers. Full era type coverage from Byron through Conway is complete.
+- `crates/ledger` now includes `LedgerState` with `ShelleyUtxo` integration, atomic block application, Allegra era types (`AllegraTxBody`, `NativeScript`), Mary era types (`Value`, `MultiAsset`, `MaryTxBody`), Alonzo era types (`ExUnits`, `Redeemer`, `AlonzoTxOut`, `AlonzoTxBody`), Byron envelope (`ByronBlock`), Babbage era types (`DatumOption`, `BabbageTxOut`, `BabbageTxBody`, `BabbageBlock`), Conway era types (`Vote`, `Voter`, `GovActionId`, `Anchor`, `VotingProcedure`, `ProposalProcedure`, `VotingProcedures`, `ConwayTxBody`, `ConwayBlock`), and signed integer CBOR helpers. Full era type and block coverage from Byron through Conway is complete.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.
 
 Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.
