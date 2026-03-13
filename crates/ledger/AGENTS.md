@@ -28,5 +28,8 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - `Block` and `BlockHeader` use typed identifiers; `LedgerState` tracks tip via `Point` and owns a `ShelleyUtxo` with atomic per-block application.
 - CBOR codec (`cbor.rs`) supports all 8 major types plus signed integer helpers (`Encoder::integer`, `Decoder::integer`). Includes `skip()` for recursive item skipping and `CborEncode`/`CborDecode` traits.
 - Allegra era types landed: `AllegraTxBody` (optional TTL + validity interval start), `NativeScript` (6-variant timelock/multi-sig enum with recursive CBOR codec).
+- Mary era types landed: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (key 9 mint) with CBOR codecs; `pub(crate)` helpers shared cross-era.
+- Alonzo era types landed: `ExUnits`, `Redeemer` (opaque PlutusData as raw CBOR), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 11/13/14/15).
+- Byron envelope landed: `ByronBlock` enum (EBB/MainBlock) with lightweight decode for slot tracking, `BYRON_SLOTS_PER_EPOCH`.
 - Keep the full era roadmap visible, but land only narrow reusable slices.
 - Prefer types and harnesses that will survive later era expansion.

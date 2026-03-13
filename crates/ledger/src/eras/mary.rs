@@ -5,7 +5,7 @@
 //! - `value` becomes multi-asset: `coin / [coin, multiasset<uint>]`.
 //! - `multiasset<a>` is a nested map: `{* policy_id => {+ asset_name => a}}`.
 //! - `transaction_body` key 9 (`mint`) carries a `multiasset<int64>` for
-//!    minting and burning native tokens.
+//!   minting and burning native tokens.
 //! - `transaction_output` carries a `Value` instead of a bare `coin`.
 //!
 //! Reference:

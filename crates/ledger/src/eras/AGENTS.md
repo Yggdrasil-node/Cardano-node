@@ -24,5 +24,8 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 ## Current Phase
 - Shelley: full block, header, tx body, witness set, UTxO, and VRF/OpCert types with CBOR codecs.
 - Allegra: `AllegraTxBody` (optional TTL + validity interval start) and `NativeScript` (6-variant timelock enum) with CBOR codecs.
-- Mary, Alonzo, Babbage, Conway, Byron: naming scaffolds only.
+- Mary: `Value` (coin/multi-asset), `MultiAsset`, `MintAsset`, `MaryTxOut`, `MaryTxBody` (key 9 mint) with CBOR codecs.
+- Alonzo: `ExUnits`, `Redeemer` (opaque PlutusData), `AlonzoTxOut` (optional datum hash), `AlonzoTxBody` (keys 11/13/14/15) with CBOR codecs.
+- Byron: `ByronBlock` enum (EBB/MainBlock) with lightweight envelope decoding for slot tracking.
+- Babbage, Conway: naming scaffolds only.
 - Keep additions lightweight until generated types and real transition logic land.
