@@ -92,6 +92,14 @@ where
         self.save_ledger_snapshot(slot, checkpoint.to_cbor_bytes())
     }
 
+    /// Retains only the newest `max_snapshots` typed ledger checkpoints.
+    pub fn retain_latest_ledger_checkpoints(
+        &mut self,
+        max_snapshots: usize,
+    ) -> Result<(), StorageError> {
+        self.ledger.retain_latest(max_snapshots)
+    }
+
     /// Loads the latest typed ledger-state checkpoint, if present.
     pub fn latest_ledger_checkpoint(
         &self,

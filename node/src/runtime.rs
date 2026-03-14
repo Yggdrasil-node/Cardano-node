@@ -15,6 +15,7 @@ use crate::sync::{
 };
 use crate::tracer::{NodeTracer, trace_fields};
 use serde_json::json;
+use serde_json::Value;
 use yggdrasil_consensus::{ChainState, NonceEvolutionState};
 use yggdrasil_network::{
     BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
@@ -22,7 +23,7 @@ use yggdrasil_network::{
     TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
     PeerAttemptState, peer_attempt_state,
 };
-use yggdrasil_ledger::{LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
+use yggdrasil_ledger::{Era, LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
 use yggdrasil_mempool::{
     Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
     SharedMempool, MEMPOOL_ZERO_IDX, SharedTxSubmissionMempoolReader,
@@ -465,13 +466,100 @@ pub struct ResumedSyncServiceOutcome {
 struct CheckpointTracking {
     base_ledger_state: LedgerState,
     ledger_state: LedgerState,
+    last_persisted_point: Point,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CheckpointPersistenceOutcome {
+    ClearedDisabled,
+    ClearedOrigin,
+    Persisted {
+        slot: SlotNo,
+        retained_snapshots: usize,
+        pruned_snapshots: usize,
+        rollback_count: usize,
+    },
+    Skipped {
+        slot: SlotNo,
+        rollback_count: usize,
+        since_last_slot_delta: u64,
+    },
+}
+
+fn checkpoint_trace_fields(
+    outcome: &CheckpointPersistenceOutcome,
+    policy: &crate::sync::LedgerCheckpointPolicy,
+) -> BTreeMap<String, Value> {
+    match outcome {
+        CheckpointPersistenceOutcome::ClearedDisabled => trace_fields([
+            ("action", json!("cleared-disabled")),
+            ("checkpointIntervalSlots", json!(policy.min_slot_delta)),
+            ("maxLedgerSnapshots", json!(policy.max_snapshots)),
+        ]),
+        CheckpointPersistenceOutcome::ClearedOrigin => trace_fields([
+            ("action", json!("cleared-origin")),
+            ("checkpointIntervalSlots", json!(policy.min_slot_delta)),
+            ("maxLedgerSnapshots", json!(policy.max_snapshots)),
+        ]),
+        CheckpointPersistenceOutcome::Persisted {
+            slot,
+            retained_snapshots,
+            pruned_snapshots,
+            rollback_count,
+        } => trace_fields([
+            ("action", json!("persisted")),
+            ("slot", json!(slot.0)),
+            ("retainedSnapshots", json!(retained_snapshots)),
+            ("prunedSnapshots", json!(pruned_snapshots)),
+            ("rollbackCount", json!(rollback_count)),
+            ("checkpointIntervalSlots", json!(policy.min_slot_delta)),
+            ("maxLedgerSnapshots", json!(policy.max_snapshots)),
+        ]),
+        CheckpointPersistenceOutcome::Skipped {
+            slot,
+            rollback_count,
+            since_last_slot_delta,
+        } => trace_fields([
+            ("action", json!("skipped")),
+            ("slot", json!(slot.0)),
+            ("rollbackCount", json!(rollback_count)),
+            ("sinceLastSlotDelta", json!(since_last_slot_delta)),
+            ("checkpointIntervalSlots", json!(policy.min_slot_delta)),
+            ("maxLedgerSnapshots", json!(policy.max_snapshots)),
+        ]),
+    }
+}
+
+fn trace_checkpoint_outcome(
+    tracer: &NodeTracer,
+    outcome: &CheckpointPersistenceOutcome,
+    policy: &crate::sync::LedgerCheckpointPolicy,
+) {
+    let (severity, message) = match outcome {
+        CheckpointPersistenceOutcome::Persisted { .. } => ("Info", "ledger checkpoint persisted"),
+        CheckpointPersistenceOutcome::Skipped { .. } => ("Info", "ledger checkpoint skipped"),
+        CheckpointPersistenceOutcome::ClearedDisabled => {
+            ("Notice", "ledger checkpoints cleared because persistence is disabled")
+        }
+        CheckpointPersistenceOutcome::ClearedOrigin => {
+            ("Notice", "ledger checkpoints cleared at origin")
+        }
+    };
+
+    tracer.trace_runtime(
+        "Node.Recovery.Checkpoint",
+        severity,
+        message,
+        checkpoint_trace_fields(outcome, policy),
+    );
 }
 
 fn persist_ledger_checkpoint_after_progress<I, V, L>(
     chain_db: &mut ChainDb<I, V, L>,
     tracking: &mut CheckpointTracking,
     progress: &MultiEraSyncProgress,
-) -> Result<(), SyncError>
+    policy: &LedgerCheckpointPolicy,
+) -> Result<CheckpointPersistenceOutcome, SyncError>
 where
     I: ImmutableStore,
     V: VolatileStore,
@@ -500,14 +588,67 @@ where
         }
     }
 
-    match tracking.ledger_state.tip {
-        Point::Origin => chain_db.ledger_mut().truncate_after(None)?,
-        Point::BlockPoint(slot, _) => {
-            chain_db.save_ledger_checkpoint(slot, &tracking.ledger_state.checkpoint())?
-        }
+    if policy.max_snapshots == 0 {
+        chain_db.ledger_mut().truncate_after(None)?;
+        tracking.last_persisted_point = Point::Origin;
+        return Ok(CheckpointPersistenceOutcome::ClearedDisabled);
     }
 
-    Ok(())
+    let current_point = tracking.ledger_state.tip;
+    match current_point {
+        Point::Origin => {
+            chain_db.ledger_mut().truncate_after(None)?;
+            tracking.last_persisted_point = Point::Origin;
+            Ok(CheckpointPersistenceOutcome::ClearedOrigin)
+        }
+        Point::BlockPoint(slot, _) => {
+            if policy.should_persist(
+                &tracking.last_persisted_point,
+                &current_point,
+                progress.rollback_count > 0,
+            ) {
+                let before_save = chain_db.ledger().count();
+                chain_db.save_ledger_checkpoint(slot, &tracking.ledger_state.checkpoint())?;
+                let after_save = chain_db.ledger().count();
+                chain_db.retain_latest_ledger_checkpoints(policy.max_snapshots)?;
+                let after_retain = chain_db.ledger().count();
+                let pruned_snapshots = after_save.saturating_sub(after_retain);
+                tracking.last_persisted_point = current_point;
+                Ok(CheckpointPersistenceOutcome::Persisted {
+                    slot,
+                    retained_snapshots: after_retain,
+                    pruned_snapshots,
+                    rollback_count: progress.rollback_count,
+                })
+            } else {
+                let since_last_slot_delta = match tracking.last_persisted_point {
+                    Point::BlockPoint(previous_slot, _) => slot.0.saturating_sub(previous_slot.0),
+                    Point::Origin => slot.0,
+                };
+                Ok(CheckpointPersistenceOutcome::Skipped {
+                    slot,
+                    rollback_count: progress.rollback_count,
+                    since_last_slot_delta,
+                })
+            }
+        }
+    }
+}
+
+fn default_checkpoint_tracking<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+) -> Result<CheckpointTracking, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let recovery = recover_ledger_state_chaindb(chain_db, LedgerState::new(Era::Byron))?;
+    Ok(CheckpointTracking {
+        base_ledger_state: recovery.ledger_state.clone(),
+        ledger_state: recovery.ledger_state,
+        last_persisted_point: recovery.point,
+    })
 }
 
 async fn run_reconnecting_verified_sync_service_chaindb_inner<I, V, L, F>(
@@ -656,7 +797,17 @@ where
                             }
 
                             if let Some(ref mut tracking) = checkpoint_tracking {
-                                persist_ledger_checkpoint_after_progress(chain_db, tracking, &progress)?;
+                                let checkpoint_outcome = persist_ledger_checkpoint_after_progress(
+                                    chain_db,
+                                    tracking,
+                                    &progress,
+                                    &config.checkpoint_policy,
+                                )?;
+                                trace_checkpoint_outcome(
+                                    tracer,
+                                    &checkpoint_outcome,
+                                    &config.checkpoint_policy,
+                                );
                             }
 
                             tracer.trace_runtime(
@@ -721,6 +872,62 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CheckpointPersistenceOutcome, checkpoint_trace_fields,
+    };
+    use crate::sync::LedgerCheckpointPolicy;
+    use serde_json::json;
+    use yggdrasil_ledger::SlotNo;
+
+    #[test]
+    fn checkpoint_trace_fields_include_persisted_prune_counts() {
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 2160,
+            max_snapshots: 8,
+        };
+        let fields = checkpoint_trace_fields(
+            &CheckpointPersistenceOutcome::Persisted {
+                slot: SlotNo(4320),
+                retained_snapshots: 8,
+                pruned_snapshots: 2,
+                rollback_count: 1,
+            },
+            &policy,
+        );
+
+        assert_eq!(fields.get("action"), Some(&json!("persisted")));
+        assert_eq!(fields.get("slot"), Some(&json!(4320)));
+        assert_eq!(fields.get("retainedSnapshots"), Some(&json!(8)));
+        assert_eq!(fields.get("prunedSnapshots"), Some(&json!(2)));
+        assert_eq!(fields.get("rollbackCount"), Some(&json!(1)));
+        assert_eq!(fields.get("checkpointIntervalSlots"), Some(&json!(2160)));
+        assert_eq!(fields.get("maxLedgerSnapshots"), Some(&json!(8)));
+    }
+
+    #[test]
+    fn checkpoint_trace_fields_include_skip_delta() {
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 2160,
+            max_snapshots: 8,
+        };
+        let fields = checkpoint_trace_fields(
+            &CheckpointPersistenceOutcome::Skipped {
+                slot: SlotNo(1200),
+                rollback_count: 0,
+                since_last_slot_delta: 1200,
+            },
+            &policy,
+        );
+
+        assert_eq!(fields.get("action"), Some(&json!("skipped")));
+        assert_eq!(fields.get("slot"), Some(&json!(1200)));
+        assert_eq!(fields.get("sinceLastSlotDelta"), Some(&json!(1200)));
+        assert_eq!(fields.get("rollbackCount"), Some(&json!(0)));
     }
 }
 
@@ -1202,6 +1409,7 @@ where
     let checkpoint_tracking = CheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
+        last_persisted_point: recovery.point,
     };
 
     let sync = run_reconnecting_verified_sync_service_chaindb_inner(
@@ -1238,6 +1446,8 @@ where
     L: LedgerStore,
     F: Future<Output = ()>,
 {
+    let checkpoint_tracking = Some(default_checkpoint_tracking(chain_db)?);
+
     run_reconnecting_verified_sync_service_chaindb_inner(
         node_config,
         fallback_peer_addrs,
@@ -1247,7 +1457,7 @@ where
         nonce_state,
         tracer,
         shutdown,
-        None,
+        checkpoint_tracking,
     )
     .await
 }

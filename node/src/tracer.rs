@@ -7,6 +7,7 @@
 //! dedicated tracer transport remains a future milestone.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -39,6 +40,7 @@ pub struct NodeTracer {
     use_trace_dispatcher: bool,
     trace_option_node_name: Option<String>,
     trace_options: BTreeMap<String, TraceNamespaceConfig>,
+    last_emit_ms: Arc<Mutex<BTreeMap<String, u128>>>,
 }
 
 impl NodeTracer {
@@ -49,6 +51,7 @@ impl NodeTracer {
             use_trace_dispatcher: config.use_trace_dispatcher,
             trace_option_node_name: config.trace_option_node_name.clone(),
             trace_options: config.trace_options.clone(),
+            last_emit_ms: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -59,6 +62,7 @@ impl NodeTracer {
             use_trace_dispatcher: false,
             trace_option_node_name: None,
             trace_options: BTreeMap::new(),
+            last_emit_ms: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -74,6 +78,11 @@ impl NodeTracer {
         let Some(severity) = self.resolve_severity(namespace, default_severity) else {
             return;
         };
+
+        let now_ms = current_unix_millis();
+        if !self.should_emit(namespace, now_ms) {
+            return;
+        }
 
         for backend in self.backends_for(namespace) {
             match backend {
@@ -134,6 +143,42 @@ impl NodeTracer {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn should_emit(&self, namespace: &str, now_ms: u128) -> bool {
+        let Some(min_interval_ms) = self.min_emit_interval_ms(namespace) else {
+            return true;
+        };
+
+        let mut last_emit_ms = self
+            .last_emit_ms
+            .lock()
+            .expect("trace limiter mutex should not be poisoned");
+        let should_emit = last_emit_ms
+            .get(namespace)
+            .is_none_or(|last_ms| now_ms.saturating_sub(*last_ms) >= min_interval_ms);
+
+        if should_emit {
+            last_emit_ms.insert(namespace.to_owned(), now_ms);
+        }
+
+        should_emit
+    }
+
+    fn min_emit_interval_ms(&self, namespace: &str) -> Option<u128> {
+        let frequency = self
+            .trace_options
+            .get(namespace)
+            .and_then(|cfg| cfg.max_frequency)
+            .or_else(|| self.trace_options.get("").and_then(|cfg| cfg.max_frequency));
+
+        frequency.and_then(|hz| {
+            if hz.is_finite() && hz > 0.0 {
+                Some((1000.0 / hz).ceil() as u128)
+            } else {
+                None
+            }
+        })
     }
 
     fn format_human_line(
@@ -280,5 +325,34 @@ mod tests {
         assert!(line.contains("bootstrap peer connected"));
         assert!(line.contains("peer=127.0.0.1:3001"));
         assert!(line.contains("attempt=1"));
+    }
+
+    #[test]
+    fn default_config_exposes_checkpoint_namespace_override() {
+        let tracer = NodeTracer::from_config(&default_config());
+
+        assert_eq!(
+            tracer.resolve_severity("Node.Recovery.Checkpoint", "Notice"),
+            Some("Info")
+        );
+    }
+
+    #[test]
+    fn namespace_frequency_override_maps_to_interval() {
+        let tracer = NodeTracer::from_config(&default_config());
+
+        assert_eq!(
+            tracer.min_emit_interval_ms("Node.Recovery.Checkpoint"),
+            Some(1000)
+        );
+    }
+
+    #[test]
+    fn rate_limiter_blocks_repeated_namespace_events_inside_interval() {
+        let tracer = NodeTracer::from_config(&default_config());
+
+        assert!(tracer.should_emit("Node.Recovery.Checkpoint", 1_000));
+        assert!(!tracer.should_emit("Node.Recovery.Checkpoint", 1_500));
+        assert!(tracer.should_emit("Node.Recovery.Checkpoint", 2_000));
     }
 }

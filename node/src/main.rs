@@ -8,7 +8,8 @@ use serde_json::json;
 use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, default_config};
 use yggdrasil_node::tracer::{NodeTracer, trace_fields};
 use yggdrasil_node::{
-    NodeConfig, ResumedSyncServiceOutcome, VerificationConfig, VerifiedSyncServiceConfig,
+    LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome, VerificationConfig,
+    VerifiedSyncServiceConfig,
     resume_reconnecting_verified_sync_service_chaindb,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
@@ -125,6 +126,10 @@ fn main() -> Result<()> {
                     verification,
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),
+                    checkpoint_policy: LedgerCheckpointPolicy {
+                        min_slot_delta: file_cfg.checkpoint_interval_slots,
+                        max_snapshots: file_cfg.max_ledger_snapshots,
+                    },
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -136,6 +141,10 @@ fn main() -> Result<()> {
                     },
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),
+                    checkpoint_policy: LedgerCheckpointPolicy {
+                        min_slot_delta: file_cfg.checkpoint_interval_slots,
+                        max_snapshots: file_cfg.max_ledger_snapshots,
+                    },
                 }
             };
 

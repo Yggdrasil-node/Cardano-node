@@ -58,7 +58,16 @@ impl LedgerStore for FileLedgerStore {
     fn save_snapshot(&mut self, slot: SlotNo, data: Vec<u8>) -> Result<(), StorageError> {
         let path = self.snapshot_path(slot);
         fs::write(&path, &data)?;
-        self.snapshots.push((slot, data));
+        if let Some((_, existing)) = self
+            .snapshots
+            .iter_mut()
+            .find(|(snapshot_slot, _)| *snapshot_slot == slot)
+        {
+            *existing = data;
+        } else {
+            self.snapshots.push((slot, data));
+            self.snapshots.sort_by_key(|(snapshot_slot, _)| *snapshot_slot);
+        }
         Ok(())
     }
 
@@ -92,6 +101,34 @@ impl LedgerStore for FileLedgerStore {
         }
 
         self.snapshots = if slot.is_some() { retained } else { Vec::new() };
+        Ok(())
+    }
+
+    fn retain_latest(&mut self, max_snapshots: usize) -> Result<(), StorageError> {
+        if max_snapshots == 0 {
+            return self.truncate_after(None);
+        }
+
+        if self.snapshots.len() <= max_snapshots {
+            return Ok(());
+        }
+
+        let remove_count = self.snapshots.len() - max_snapshots;
+        let removed: Vec<SlotNo> = self
+            .snapshots
+            .iter()
+            .take(remove_count)
+            .map(|(slot, _)| *slot)
+            .collect();
+
+        for slot in &removed {
+            let path = self.snapshot_path(*slot);
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
+
+        self.snapshots.drain(..remove_count);
         Ok(())
     }
 

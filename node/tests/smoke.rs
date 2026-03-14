@@ -30,6 +30,10 @@ fn node_binary_default_config() {
     assert!(stdout.contains("network_magic"));
     assert!(stdout.contains("764824073"));
     assert!(stdout.contains("storage_dir"));
+    assert!(stdout.contains("checkpoint_interval_slots"));
+    assert!(stdout.contains("max_ledger_snapshots"));
     assert!(stdout.contains("TurnOnLogging"));
     assert!(stdout.contains("TraceOptions"));
+    assert!(stdout.contains("Node.Recovery.Checkpoint"));
+    assert!(stdout.contains("maxFrequency"));
 }

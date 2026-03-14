@@ -24,7 +24,7 @@ pub use runtime::{
 pub use sync::{
 	DecodedSyncStep, MultiEraBlock, MultiEraSyncProgress, MultiEraSyncStep, SyncError,
 	SyncProgress, SyncServiceConfig, SyncServiceOutcome, SyncStep, TypedIntersectResult,
-	LedgerRecoveryOutcome,
+	LedgerCheckpointPolicy, LedgerRecoveryOutcome,
 	TypedSyncProgress, TypedSyncStep, VerificationConfig, VerifiedSyncServiceConfig,
 	VerifiedSyncServiceOutcome, VrfVerificationParams,
 	apply_multi_era_step_to_volatile, apply_nonce_evolution,

@@ -84,6 +84,12 @@ pub struct NodeConfigFile {
     /// Root directory for immutable, volatile, and ledger snapshot storage.
     #[serde(default = "default_storage_dir")]
     pub storage_dir: PathBuf,
+    /// Minimum slot delta between persisted ledger checkpoints.
+    #[serde(default = "default_checkpoint_interval_slots")]
+    pub checkpoint_interval_slots: u64,
+    /// Maximum number of persisted typed ledger checkpoints to retain.
+    #[serde(default = "default_max_ledger_snapshots")]
+    pub max_ledger_snapshots: usize,
     /// The network magic for handshake (mainnet = 764824073).
     pub network_magic: u32,
     /// Protocol version numbers to propose during handshake.
@@ -143,6 +149,14 @@ pub struct NodeConfigFile {
 
 fn default_storage_dir() -> PathBuf {
     PathBuf::from("data")
+}
+
+fn default_checkpoint_interval_slots() -> u64 {
+    2160
+}
+
+fn default_max_ledger_snapshots() -> usize {
+    8
 }
 
 impl NodeConfigFile {
@@ -261,6 +275,15 @@ fn default_trace_options() -> BTreeMap<String, TraceNamespaceConfig> {
                 detail: None,
                 backends: Vec::new(),
                 max_frequency: None,
+            },
+        ),
+        (
+            "Node.Recovery.Checkpoint".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Info".to_owned()),
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: Some(1.0),
             },
         ),
     ])
@@ -385,6 +408,8 @@ pub fn mainnet_config() -> NodeConfigFile {
         use_ledger_after_slot: topology.use_ledger_after_slot,
         peer_snapshot_file: topology.peer_snapshot_file,
         storage_dir: PathBuf::from("data/mainnet"),
+        checkpoint_interval_slots: default_checkpoint_interval_slots(),
+        max_ledger_snapshots: default_max_ledger_snapshots(),
         network_magic: 764_824_073,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -423,6 +448,8 @@ pub fn preprod_config() -> NodeConfigFile {
         use_ledger_after_slot: topology.use_ledger_after_slot,
         peer_snapshot_file: topology.peer_snapshot_file,
         storage_dir: PathBuf::from("data/preprod"),
+        checkpoint_interval_slots: default_checkpoint_interval_slots(),
+        max_ledger_snapshots: default_max_ledger_snapshots(),
         network_magic: 1,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -461,6 +488,8 @@ pub fn preview_config() -> NodeConfigFile {
         use_ledger_after_slot: topology.use_ledger_after_slot,
         peer_snapshot_file: topology.peer_snapshot_file,
         storage_dir: PathBuf::from("data/preview"),
+        checkpoint_interval_slots: default_checkpoint_interval_slots(),
+        max_ledger_snapshots: default_max_ledger_snapshots(),
         network_magic: 2,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -497,6 +526,8 @@ mod tests {
         assert_eq!(parsed.use_ledger_after_slot, cfg.use_ledger_after_slot);
         assert_eq!(parsed.peer_snapshot_file, cfg.peer_snapshot_file);
         assert_eq!(parsed.storage_dir, cfg.storage_dir);
+        assert_eq!(parsed.checkpoint_interval_slots, cfg.checkpoint_interval_slots);
+        assert_eq!(parsed.max_ledger_snapshots, cfg.max_ledger_snapshots);
         assert_eq!(parsed.turn_on_logging, cfg.turn_on_logging);
         assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
         assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);
@@ -517,6 +548,8 @@ mod tests {
         assert!(cfg.use_ledger_after_slot.is_none());
         assert!(cfg.peer_snapshot_file.is_none());
         assert_eq!(cfg.storage_dir, PathBuf::from("data"));
+        assert_eq!(cfg.checkpoint_interval_slots, 2160);
+        assert_eq!(cfg.max_ledger_snapshots, 8);
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.epoch_length, 432_000);
@@ -528,6 +561,14 @@ mod tests {
         assert!(cfg.turn_on_log_metrics);
         assert!(cfg.trace_option_node_name.is_none());
         assert!(cfg.trace_options.contains_key(""));
+        assert!(cfg.trace_options.contains_key("Node.Recovery.Checkpoint"));
+        assert_eq!(
+            cfg.trace_options
+                .get("Node.Recovery.Checkpoint")
+                .expect("checkpoint trace options")
+                .max_frequency,
+            Some(1.0)
+        );
     }
 
     #[test]
@@ -573,6 +614,14 @@ mod tests {
                 .backends,
             vec!["Stdout MachineFormat".to_owned()]
         );
+        assert_eq!(
+            cfg.trace_options
+                .get("Net.PeerSelection")
+                .expect("peer selection trace options")
+                .severity
+                .as_deref(),
+            Some("Info")
+        );
     }
 
     #[test]
@@ -598,6 +647,8 @@ mod tests {
         assert_eq!(cfg.use_ledger_after_slot, Some(177_724_800));
         assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
         assert_eq!(cfg.storage_dir, PathBuf::from("data/mainnet"));
+        assert_eq!(cfg.checkpoint_interval_slots, 2160);
+        assert_eq!(cfg.max_ledger_snapshots, 8);
         assert!(!candidates.is_empty());
         assert!(candidates.len() <= 3);
     }
@@ -614,6 +665,8 @@ mod tests {
         assert_eq!(cfg.use_ledger_after_slot, Some(112_406_400));
         assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
         assert_eq!(cfg.storage_dir, PathBuf::from("data/preprod"));
+        assert_eq!(cfg.checkpoint_interval_slots, 2160);
+        assert_eq!(cfg.max_ledger_snapshots, 8);
         assert!(cfg.bootstrap_peers.is_empty());
     }
 

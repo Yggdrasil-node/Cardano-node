@@ -693,6 +693,51 @@ where
 ///
 /// Extends the basic `SyncServiceConfig` with header/body verification and
 /// optional epoch nonce tracking.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LedgerCheckpointPolicy {
+    /// Minimum slot delta between automatic checkpoint writes.
+    ///
+    /// `0` preserves the previous behavior and writes after every successful
+    /// batch. Rollback batches always force a refreshed checkpoint when
+    /// checkpointing is enabled.
+    pub min_slot_delta: u64,
+    /// Maximum number of typed ledger checkpoints to retain.
+    ///
+    /// `0` disables persisted ledger checkpoints and clears any retained
+    /// snapshots during live sync.
+    pub max_snapshots: usize,
+}
+
+impl Default for LedgerCheckpointPolicy {
+    fn default() -> Self {
+        Self {
+            min_slot_delta: 2160,
+            max_snapshots: 8,
+        }
+    }
+}
+
+impl LedgerCheckpointPolicy {
+    fn should_persist(&self, previous_point: &Point, current_point: &Point, forced: bool) -> bool {
+        if self.max_snapshots == 0 {
+            return false;
+        }
+
+        if forced {
+            return *current_point != Point::Origin;
+        }
+
+        match (previous_point, current_point) {
+            (Point::Origin, Point::BlockPoint(_, _)) => true,
+            (Point::BlockPoint(previous_slot, previous_hash), Point::BlockPoint(current_slot, current_hash)) => {
+                (*current_slot == *previous_slot && *current_hash != *previous_hash)
+                    || current_slot.0.saturating_sub(previous_slot.0) >= self.min_slot_delta
+            }
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct VerifiedSyncServiceConfig {
     /// Number of multi-era sync steps per batch iteration.
@@ -706,6 +751,9 @@ pub struct VerifiedSyncServiceConfig {
     /// a [`ChainState`] that tracks chain topology and enforces rollback
     /// depth limits.  `None` disables chain state tracking.
     pub security_param: Option<SecurityParam>,
+    /// Ledger checkpoint write cadence and retention policy for coordinated
+    /// storage runs.
+    pub checkpoint_policy: LedgerCheckpointPolicy,
 }
 
 /// Outcome returned when the verified sync service finishes.
@@ -746,6 +794,13 @@ pub struct LedgerRecoveryOutcome {
     pub replayed_volatile_blocks: usize,
 }
 
+#[derive(Clone, Debug)]
+struct SyncCheckpointTracking {
+    base_ledger_state: LedgerState,
+    ledger_state: LedgerState,
+    last_persisted_point: Point,
+}
+
 fn volatile_replay_blocks<V: VolatileStore>(
     volatile: &V,
     replay_from_exclusive: &Point,
@@ -772,6 +827,82 @@ fn volatile_replay_blocks<V: VolatileStore>(
 
 fn point_for_block(block: &Block) -> Point {
     Point::BlockPoint(block.header.slot_no, block.header.hash)
+}
+
+fn persist_ledger_checkpoint_after_progress<I, V, L>(
+    chain_db: &mut ChainDb<I, V, L>,
+    tracking: &mut SyncCheckpointTracking,
+    progress: &MultiEraSyncProgress,
+    policy: &LedgerCheckpointPolicy,
+) -> Result<(), SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    if progress.rollback_count > 0 {
+        match progress.current_point {
+            Point::Origin => chain_db.ledger_mut().truncate_after(None)?,
+            Point::BlockPoint(slot, _) => chain_db.ledger_mut().truncate_after(Some(slot))?,
+        }
+
+        tracking.ledger_state = recover_ledger_state_chaindb(
+            chain_db,
+            tracking.base_ledger_state.clone(),
+        )?
+        .ledger_state;
+    } else {
+        for step in &progress.steps {
+            if let MultiEraSyncStep::RollForward { blocks, .. } = step {
+                for block in blocks {
+                    tracking.ledger_state.apply_block(&multi_era_block_to_block(block))?;
+                }
+            }
+        }
+    }
+
+    if policy.max_snapshots == 0 {
+        chain_db.ledger_mut().truncate_after(None)?;
+        tracking.last_persisted_point = Point::Origin;
+        return Ok(());
+    }
+
+    let current_point = tracking.ledger_state.tip;
+    match current_point {
+        Point::Origin => {
+            chain_db.ledger_mut().truncate_after(None)?;
+            tracking.last_persisted_point = Point::Origin;
+        }
+        Point::BlockPoint(slot, _) => {
+            if policy.should_persist(
+                &tracking.last_persisted_point,
+                &current_point,
+                progress.rollback_count > 0,
+            ) {
+                chain_db.save_ledger_checkpoint(slot, &tracking.ledger_state.checkpoint())?;
+                chain_db.retain_latest_ledger_checkpoints(policy.max_snapshots)?;
+                tracking.last_persisted_point = current_point;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn default_sync_checkpoint_tracking<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+) -> Result<SyncCheckpointTracking, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let recovery = recover_ledger_state_chaindb(chain_db, LedgerState::new(Era::Byron))?;
+    Ok(SyncCheckpointTracking {
+        base_ledger_state: recovery.ledger_state.clone(),
+        ledger_state: recovery.ledger_state,
+        last_persisted_point: recovery.point,
+    })
 }
 
 /// Restore a ledger state from the latest typed ChainDb checkpoint and replay
@@ -878,6 +1009,7 @@ where
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
+    let mut checkpoint_tracking = default_sync_checkpoint_tracking(chain_db)?;
 
     loop {
         let batch_fut = sync_batch_apply_verified(
@@ -930,6 +1062,8 @@ where
                         }
                     }
                 }
+
+                persist_ledger_checkpoint_after_progress(chain_db, &mut checkpoint_tracking, &progress)?;
             }
         }
     }
@@ -963,6 +1097,7 @@ where
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
+    let mut checkpoint_tracking = default_sync_checkpoint_tracking(chain_db)?;
 
     loop {
         let batch_fut = sync_batch_apply_verified(
@@ -1017,6 +1152,13 @@ where
                         }
                     }
                 }
+
+                persist_ledger_checkpoint_after_progress(
+                    chain_db,
+                    &mut checkpoint_tracking,
+                    &progress,
+                    &config.checkpoint_policy,
+                )?;
             }
         }
     }

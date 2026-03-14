@@ -14,10 +14,11 @@ use yggdrasil_ledger::{
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_node::{
-    MempoolAddTxResult, NodeConfig, TxSubmissionServiceOutcome, add_tx_to_mempool,
-    add_tx_to_shared_mempool, add_txs_to_mempool, add_txs_to_shared_mempool,
-    bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
-    ReconnectingSyncServiceOutcome, ResumedSyncServiceOutcome, VerificationConfig, VerifiedSyncServiceConfig,
+    LedgerCheckpointPolicy, MempoolAddTxResult, NodeConfig, TxSubmissionServiceOutcome,
+    add_tx_to_mempool, add_tx_to_shared_mempool, add_txs_to_mempool,
+    add_txs_to_shared_mempool, bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
+    ReconnectingSyncServiceOutcome, ResumedSyncServiceOutcome, VerificationConfig,
+    VerifiedSyncServiceConfig,
     resume_reconnecting_verified_sync_service_chaindb,
     run_reconnecting_verified_sync_service_chaindb,
     run_reconnecting_verified_sync_service,
@@ -656,6 +657,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         },
         nonce_config: None,
         security_param: None,
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
     };
     let mut store = InMemoryVolatile::default();
 
@@ -728,6 +730,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -760,6 +763,13 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     assert_eq!(outcome.stable_block_count, 1);
     assert_eq!(chain_db.immutable().len(), 1);
     assert_eq!(chain_db.volatile().tip(), tip_two);
+
+    let (checkpoint_slot, checkpoint) = chain_db
+        .latest_ledger_checkpoint()
+        .expect("decode checkpoint")
+        .expect("checkpoint persisted after chaindb sync");
+    assert_eq!(checkpoint_slot, SlotNo(0));
+    assert_eq!(checkpoint.restore().tip, tip_two);
 }
 
 #[tokio::test]
@@ -798,6 +808,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),

@@ -179,6 +179,38 @@ fn ledger_store_can_lookup_and_truncate_snapshots() {
     assert_eq!(latest_data, &[0x14]);
 }
 
+#[test]
+fn ledger_store_replaces_same_slot_and_retains_latest_snapshots() {
+    let mut store = InMemoryLedgerStore::default();
+    store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
+    store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
+    store.save_snapshot(SlotNo(20), vec![0x2A]).expect("replace 20");
+    store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+
+    assert_eq!(store.count(), 3);
+
+    let (slot, data) = store.latest_snapshot().expect("latest snapshot");
+    assert_eq!(slot, SlotNo(30));
+    assert_eq!(
+        store
+            .latest_snapshot_before_or_at(SlotNo(20))
+            .expect("snapshot at 20")
+            .1,
+        &[0x2A]
+    );
+
+    store.retain_latest(2).expect("retain latest");
+    assert_eq!(store.count(), 2);
+    assert_eq!(slot, SlotNo(30));
+    let (retained_slot, retained_data) = store
+        .latest_snapshot_before_or_at(SlotNo(20))
+        .expect("retained snapshot at 20");
+    assert_eq!(retained_slot, SlotNo(20));
+    assert_eq!(retained_data, &[0x2A]);
+    assert!(store.latest_snapshot_before_or_at(SlotNo(10)).is_none());
+    assert_eq!(data, &[0x1E]);
+}
+
 // ---------------------------------------------------------------------------
 // Cross-store integration
 // ---------------------------------------------------------------------------
@@ -450,6 +482,35 @@ fn file_ledger_store_can_lookup_and_truncate_snapshots() {
     assert_eq!(slot, SlotNo(20));
     assert_eq!(data, &[0x14]);
     assert!(store.latest_snapshot_before_or_at(SlotNo(30)).is_some());
+}
+
+#[test]
+fn file_ledger_store_replaces_same_slot_and_retains_latest_snapshots() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("ledger");
+
+    {
+        let mut store = FileLedgerStore::open(&path).expect("open");
+        store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
+        store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
+        store.save_snapshot(SlotNo(20), vec![0x2A]).expect("replace 20");
+        store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+        store.retain_latest(2).expect("retain latest");
+    }
+
+    let store = FileLedgerStore::open(&path).expect("reopen");
+    assert_eq!(store.count(), 2);
+    assert!(store.latest_snapshot_before_or_at(SlotNo(10)).is_none());
+
+    let (slot, data) = store
+        .latest_snapshot_before_or_at(SlotNo(20))
+        .expect("snapshot at 20");
+    assert_eq!(slot, SlotNo(20));
+    assert_eq!(data, &[0x2A]);
+
+    let (latest_slot, latest_data) = store.latest_snapshot().expect("latest snapshot");
+    assert_eq!(latest_slot, SlotNo(30));
+    assert_eq!(latest_data, &[0x1E]);
 }
 
 // ---------------------------------------------------------------------------

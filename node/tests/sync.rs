@@ -15,14 +15,16 @@ use yggdrasil_ledger::{
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_node::{
-    DecodedSyncStep, MultiEraBlock, MultiEraSyncStep, NodeConfig, SyncServiceConfig, SyncStep,
-    TypedIntersectResult, TypedSyncStep, VerificationConfig, apply_multi_era_step_to_volatile,
+    DecodedSyncStep, LedgerCheckpointPolicy, MultiEraBlock, MultiEraSyncStep, NodeConfig,
+    SyncServiceConfig, SyncStep, TypedIntersectResult, TypedSyncStep, VerificationConfig,
+    VerifiedSyncServiceConfig,
+    apply_multi_era_step_to_volatile,
     apply_nonce_evolution,
     apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
     evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
     multi_era_block_to_chain_entry, promote_stable_blocks, promote_stable_blocks_chaindb,
     recover_ledger_state_chaindb,
-    track_chain_state, track_chain_state_entries,
+    run_verified_sync_service_chaindb, track_chain_state, track_chain_state_entries,
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
     shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
     sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed,
@@ -240,6 +242,70 @@ async fn spawn_two_step_responder(magic: u32) -> SocketAddr {
     addr
 }
 
+async fn spawn_verified_batch_responder(
+    magic: u32,
+    tip: Point,
+    block_bytes: Vec<u8>,
+) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut conn = peer_accept(stream, magic, &[HandshakeVersion(15)])
+            .await
+            .expect("accept handshake");
+
+        let mut cs = conn
+            .protocols
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("chainsync handle");
+        let mut bf = conn
+            .protocols
+            .remove(&MiniProtocolNum::BLOCK_FETCH)
+            .expect("blockfetch handle");
+
+        let cs_req = cs.recv().await.expect("cs recv");
+        let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
+        assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
+
+        cs.send(
+            ChainSyncMessage::MsgRollForward {
+                header: b"byron-hdr".to_vec(),
+                tip: tip.to_cbor_bytes(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send rollforward");
+
+        let bf_req = bf.recv().await.expect("bf recv");
+        let _bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
+
+        bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("start batch");
+        bf.send(
+            BlockFetchMessage::MsgBlock {
+                block: block_bytes,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send block");
+        bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("batch done");
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        conn.mux.abort();
+    });
+
+    addr
+}
+
 #[tokio::test]
 async fn sync_step_rollforward_fetches_blocks() {
     let magic = 42;
@@ -269,6 +335,71 @@ async fn sync_step_rollforward_fetches_blocks() {
             blocks: vec![b"block-1".to_vec(), b"block-2".to_vec()],
         }
     );
+
+    session.mux.abort();
+}
+
+#[tokio::test]
+async fn run_verified_sync_service_chaindb_persists_checkpoint() {
+    let magic = 81;
+    let block_body = build_byron_ebb_body(0, 1, &[0; 32]);
+    let block_bytes = build_multi_era_envelope(1, &block_body);
+    let tip = Point::BlockPoint(
+        SlotNo(0),
+        ByronBlock::decode_ebb(&block_bytes[2..]).expect("decode ebb").header_hash(),
+    );
+    let addr = spawn_verified_batch_responder(magic, tip, block_bytes).await;
+
+    let config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+    let service_config = VerifiedSyncServiceConfig {
+        batch_size: 1,
+        verification: VerificationConfig {
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            verify_body_hash: true,
+        },
+        nonce_config: None,
+        security_param: Some(SecurityParam(1)),
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
+    };
+    let mut session = bootstrap(&config).await.expect("bootstrap");
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _ = shutdown_tx.send(());
+    });
+
+    let outcome = run_verified_sync_service_chaindb(
+        &mut session.chain_sync,
+        &mut session.block_fetch,
+        &mut chain_db,
+        Point::Origin,
+        &service_config,
+        None,
+        async { let _ = shutdown_rx.await; },
+    )
+    .await
+    .expect("verified sync service via chaindb");
+
+    assert_eq!(outcome.total_blocks, 1);
+    assert_eq!(outcome.final_point, tip);
+
+    let (checkpoint_slot, checkpoint) = chain_db
+        .latest_ledger_checkpoint()
+        .expect("decode checkpoint")
+        .expect("checkpoint persisted after verified sync");
+    assert_eq!(checkpoint_slot, SlotNo(0));
+    assert_eq!(checkpoint.restore().tip, tip);
 
     session.mux.abort();
 }
