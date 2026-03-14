@@ -17,6 +17,19 @@ pub trait VolatileStore {
     /// Retrieves a block by its header hash.
     fn get_block(&self, hash: &HeaderHash) -> Option<&Block>;
 
+    /// Returns clones of all blocks from the volatile prefix up to and
+    /// including `point`.
+    ///
+    /// Returns an error if `point` is not present in the current volatile
+    /// chain.
+    fn prefix_up_to(&self, point: &Point) -> Result<Vec<Block>, StorageError>;
+
+    /// Prunes all volatile blocks up to and including `point`.
+    ///
+    /// Passing [`Point::Origin`] is a no-op. Returns an error if `point` is
+    /// not present in the current volatile chain.
+    fn prune_up_to(&mut self, point: &Point) -> Result<(), StorageError>;
+
     /// Rolls the volatile suffix back so that the given point becomes the new
     /// tip. All blocks after that point are discarded. Passing
     /// [`Point::Origin`] clears the store entirely.
@@ -43,6 +56,36 @@ impl VolatileStore for InMemoryVolatile {
 
     fn get_block(&self, hash: &HeaderHash) -> Option<&Block> {
         self.blocks.iter().find(|b| b.header.hash == *hash)
+    }
+
+    fn prefix_up_to(&self, point: &Point) -> Result<Vec<Block>, StorageError> {
+        match point {
+            Point::Origin => Ok(Vec::new()),
+            Point::BlockPoint(_, hash) => {
+                let pos = self
+                    .blocks
+                    .iter()
+                    .position(|b| b.header.hash == *hash)
+                    .ok_or(StorageError::PointNotFound)?;
+                Ok(self.blocks[..=pos].to_vec())
+            }
+        }
+    }
+
+    fn prune_up_to(&mut self, point: &Point) -> Result<(), StorageError> {
+        match point {
+            Point::Origin => Ok(()),
+            Point::BlockPoint(_, hash) => {
+                let prune_count = self
+                    .blocks
+                    .iter()
+                    .position(|b| b.header.hash == *hash)
+                    .map(|pos| pos + 1)
+                    .ok_or(StorageError::PointNotFound)?;
+                self.blocks.drain(..prune_count);
+                Ok(())
+            }
+        }
     }
 
     fn rollback_to(&mut self, point: &Point) {

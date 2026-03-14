@@ -92,6 +92,44 @@ impl ImmutableStore for FileImmutable {
         self.index.get(hash)
     }
 
+    fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError> {
+        match point {
+            Point::Origin => Ok(self
+                .chain
+                .iter()
+                .filter_map(|hash| self.index.get(hash).cloned())
+                .collect()),
+            Point::BlockPoint(slot, hash) => {
+                if self.chain.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                let first_slot = self.index[&self.chain[0]].header.slot_no;
+                if *slot < first_slot {
+                    return Ok(self
+                        .chain
+                        .iter()
+                        .filter_map(|block_hash| self.index.get(block_hash).cloned())
+                        .collect());
+                }
+
+                if let Some(pos) = self.chain.iter().position(|block_hash| *block_hash == *hash) {
+                    return Ok(self.chain[pos + 1..]
+                        .iter()
+                        .filter_map(|block_hash| self.index.get(block_hash).cloned())
+                        .collect());
+                }
+
+                let last_slot = self.index[&self.chain[self.chain.len() - 1]].header.slot_no;
+                if *slot > last_slot {
+                    return Ok(Vec::new());
+                }
+
+                Err(StorageError::PointNotFound)
+            }
+        }
+    }
+
     fn len(&self) -> usize {
         self.chain.len()
     }

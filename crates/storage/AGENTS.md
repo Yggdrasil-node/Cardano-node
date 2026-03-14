@@ -20,6 +20,7 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research referances and add or update links as needed*
+- Cardano dbsync storage reference: <https://github.com/IntersectMBO/cardano-db-sync>
 - Consensus core package, including ChainDB and storage concerns: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
 - Consensus repository docs and reports: <https://github.com/IntersectMBO/ouroboros-consensus/>
 - Node integration reference for operational storage concerns: <https://github.com/IntersectMBO/cardano-node/>
@@ -28,7 +29,11 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Traits `ImmutableStore`, `VolatileStore`, and `LedgerStore` are landed and exported.
 - In-memory implementations (`InMemoryImmutable`, `InMemoryVolatile`, `InMemoryLedgerStore`) back each trait.
 - File-backed implementations (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) provide JSON-based on-disk persistence with directory scanning on open, rollback-aware file deletion, and re-open persistence.
+- A minimal `ChainDb` coordinator now lives in the crate to coordinate immutable, volatile, and ledger snapshot stores without pulling sync or consensus policy into `node`. It exposes best-known tip recovery, volatile-prefix promotion into immutable storage, and ledger-snapshot truncation on rollback.
+- `VolatileStore` now exposes ordered prefix access and pruning helpers so stable volatile blocks can be immutalized through a crate-owned boundary instead of ad hoc node-side coordination.
+- `LedgerStore` now supports latest-snapshot lookup at or before a slot plus snapshot truncation after rollback, so restart and rollback flows can reuse the storage layer directly.
+- `ChainDb` now exposes typed `LedgerStateCheckpoint` save/load helpers over the existing raw-byte `LedgerStore` seam, giving recovery code a crate-owned typed path without hard-coding a permanent on-disk format into the trait.
 - Storage operates on typed `Block`, `HeaderHash`, `SlotNo`, and `Point` from `yggdrasil-ledger`.
-- 19 integration tests cover all trait methods for both in-memory and file-backed implementations.
+- Integration coverage now includes trait behavior plus ChainDb coordination for promotion, rollback, and snapshot lookup/truncation across in-memory and file-backed paths.
 - File-backed stores use `serde_json` serialization; this is a pragmatic initial format, not a long-term commitment.
 

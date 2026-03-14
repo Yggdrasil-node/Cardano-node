@@ -4,7 +4,7 @@ use yggdrasil_ledger::{
 	BootstrapWitness, ByronBlock, CborDecode, CborEncode, CommitteeAuthorization,
 	Constitution, ConwayBlock, ConwayTxBody, DCert, DRep, DatumOption, Decoder, Encoder,
 	EnterpriseAddress, Era, EpochNo, ExUnits, GovAction, GovActionId, HeaderHash, LedgerError,
-	LedgerState, MaryTxBody, MaryTxOut, MultiEraSubmittedTx, MultiEraTxOut, MultiEraUtxo,
+	LedgerState, LedgerStateCheckpoint, MaryTxBody, MaryTxOut, MultiEraSubmittedTx, MultiEraTxOut, MultiEraUtxo,
 	NativeScript, Nonce, PlutusData, Point, PointerAddress, PoolMetadata, PoolParams,
 	PraosHeader, PraosHeaderBody, ProposalProcedure, Redeemer, RegisteredDrep, Relay,
 	RewardAccount, RewardAccountState, Script, ScriptRef, ShelleyBlock,

@@ -5,8 +5,9 @@ use yggdrasil_network::{
     peer_accept,
 };
 use yggdrasil_ledger::{
-    BabbageBlock, BabbageTxBody, BabbageTxOut, BlockNo, ByronBlock, CborEncode, ConwayBlock,
-    ConwayTxBody, Encoder, HeaderHash, Nonce, Point, PraosHeader, PraosHeaderBody, ShelleyBlock,
+    BabbageBlock, BabbageTxBody, BabbageTxOut, Block, BlockHeader, BlockNo, ByronBlock,
+    CborEncode, ConwayBlock, ConwayTxBody, Encoder, HeaderHash, LedgerState, Nonce, Point,
+    PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
     ShelleyWitnessSet, SlotNo, TxId,
     Era,
@@ -19,7 +20,9 @@ use yggdrasil_node::{
     apply_nonce_evolution,
     apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
     evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
-    multi_era_block_to_chain_entry, promote_stable_blocks, track_chain_state,
+    multi_era_block_to_chain_entry, promote_stable_blocks, promote_stable_blocks_chaindb,
+    recover_ledger_state_chaindb,
+    track_chain_state, track_chain_state_entries,
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
     shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
     sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed,
@@ -27,7 +30,21 @@ use yggdrasil_node::{
     SHELLEY_KES_DEPTH,
 };
 use yggdrasil_consensus::{ChainState, SecurityParam};
-use yggdrasil_storage::{InMemoryImmutable, InMemoryVolatile, ImmutableStore, VolatileStore};
+use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile, ImmutableStore, VolatileStore};
+
+fn test_store_block(hash_byte: u8, slot: u64) -> Block {
+    Block {
+        era: Era::Shelley,
+        header: BlockHeader {
+            hash: HeaderHash([hash_byte; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(slot),
+            block_no: BlockNo(slot),
+            issuer_vkey: [0; 32],
+        },
+        transactions: Vec::new(),
+    }
+}
 
 async fn spawn_rollforward_responder(magic: u32) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -2920,6 +2937,25 @@ fn track_chain_state_roll_forward() {
 }
 
 #[test]
+fn track_chain_state_entries_returns_stable_prefix() {
+    let mut cs = ChainState::new(SecurityParam(3));
+    let blocks: Vec<MultiEraBlock> = (1..=5)
+        .map(|i| MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(i, i * 10))))
+        .collect();
+
+    let step = MultiEraSyncStep::RollForward {
+        raw_header: vec![],
+        tip: Point::Origin,
+        blocks,
+    };
+    let stable_entries = track_chain_state_entries(&mut cs, &step).expect("roll forward entries");
+    assert_eq!(stable_entries.len(), 2);
+    assert_eq!(stable_entries[0].block_no, BlockNo(1));
+    assert_eq!(stable_entries[1].block_no, BlockNo(2));
+    assert_eq!(cs.volatile_len(), 3);
+}
+
+#[test]
 fn track_chain_state_roll_backward() {
     let mut cs = ChainState::new(SecurityParam(10));
     // Insert blocks 1..=4
@@ -2979,6 +3015,114 @@ fn promote_stable_blocks_moves_to_immutable() {
     // The promoted blocks are accessible in the immutable store.
     assert!(immutable.get_block(&blocks[0].header.hash).is_some());
     assert!(immutable.get_block(&blocks[1].header.hash).is_some());
+}
+
+#[test]
+fn promote_stable_blocks_chaindb_moves_to_immutable_and_prunes_volatile() {
+    let blocks: Vec<_> = (1..=5)
+        .map(|i| {
+            let sb = make_shelley_block_with_number(i, i * 10);
+            multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(sb)))
+        })
+        .collect();
+
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    for block in &blocks {
+        chain_db
+            .add_volatile_block(block.clone())
+            .expect("add block to volatile");
+    }
+
+    let stable_entries: Vec<_> = blocks[..2]
+        .iter()
+        .map(|b| yggdrasil_consensus::ChainEntry {
+            hash: b.header.hash,
+            slot: b.header.slot_no,
+            block_no: b.header.block_no,
+        })
+        .collect();
+
+    let promoted =
+        promote_stable_blocks_chaindb(&stable_entries, &mut chain_db).expect("promote via chaindb");
+    assert_eq!(promoted, 2);
+    assert_eq!(chain_db.immutable().len(), 2);
+    assert!(chain_db.immutable().get_block(&blocks[0].header.hash).is_some());
+    assert!(chain_db.immutable().get_block(&blocks[1].header.hash).is_some());
+    assert!(chain_db.volatile().get_block(&blocks[0].header.hash).is_none());
+    assert!(chain_db.volatile().get_block(&blocks[1].header.hash).is_none());
+    assert!(chain_db.volatile().get_block(&blocks[2].header.hash).is_some());
+}
+
+#[test]
+fn recover_ledger_state_chaindb_restores_checkpoint_and_replays_volatile_suffix() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let mut checkpoint_state = LedgerState::new(Era::Shelley);
+    checkpoint_state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0x0A; 32]));
+
+    chain_db
+        .save_ledger_checkpoint(SlotNo(10), &checkpoint_state.checkpoint())
+        .expect("save checkpoint");
+    chain_db
+        .add_volatile_block(test_store_block(0x14, 20))
+        .expect("add volatile 20");
+    chain_db
+        .add_volatile_block(test_store_block(0x1E, 30))
+        .expect("add volatile 30");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Shelley))
+        .expect("recover ledger state from chaindb");
+
+    assert_eq!(recovered.checkpoint_slot, Some(SlotNo(10)));
+    assert_eq!(recovered.replayed_volatile_blocks, 2);
+    assert_eq!(
+        recovered.point,
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
+    );
+    assert_eq!(
+        recovered.ledger_state.tip,
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
+    );
+}
+
+#[test]
+fn recover_ledger_state_chaindb_replays_immutable_blocks_after_checkpoint() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let mut checkpoint_state = LedgerState::new(Era::Shelley);
+    checkpoint_state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0x0A; 32]));
+
+    chain_db
+        .save_ledger_checkpoint(SlotNo(10), &checkpoint_state.checkpoint())
+        .expect("save checkpoint");
+    chain_db
+        .immutable_mut()
+        .append_block(test_store_block(0x14, 20))
+        .expect("append immutable 20");
+    chain_db
+        .immutable_mut()
+        .append_block(test_store_block(0x1E, 30))
+        .expect("append immutable 30");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Shelley))
+        .expect("recover ledger state across immutable replay");
+
+    assert_eq!(recovered.checkpoint_slot, Some(SlotNo(10)));
+    assert_eq!(recovered.replayed_volatile_blocks, 0);
+    assert_eq!(
+        recovered.point,
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
+    );
 }
 
 #[test]

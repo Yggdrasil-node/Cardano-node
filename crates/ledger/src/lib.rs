@@ -45,7 +45,7 @@ pub use error::LedgerError;
 /// Top-level ledger state wrapper.
 pub use state::{
     CommitteeAuthorization, CommitteeMemberState, CommitteeState, DrepState, LedgerState,
-    LedgerStateSnapshot, PoolState, RegisteredDrep, RegisteredPool, RewardAccountState,
+    LedgerStateCheckpoint, LedgerStateSnapshot, PoolState, RegisteredDrep, RegisteredPool, RewardAccountState,
     RewardAccounts, StakeCredentialState, StakeCredentials,
 };
 

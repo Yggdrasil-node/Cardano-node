@@ -85,6 +85,50 @@ impl VolatileStore for FileVolatile {
         self.index.get(hash)
     }
 
+    fn prefix_up_to(&self, point: &Point) -> Result<Vec<Block>, StorageError> {
+        match point {
+            Point::Origin => Ok(Vec::new()),
+            Point::BlockPoint(_, hash) => {
+                let pos = self
+                    .chain
+                    .iter()
+                    .position(|h| h == hash)
+                    .ok_or(StorageError::PointNotFound)?;
+                self.chain[..=pos]
+                    .iter()
+                    .map(|prefix_hash| {
+                        self.index
+                            .get(prefix_hash)
+                            .cloned()
+                            .ok_or(StorageError::PointNotFound)
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn prune_up_to(&mut self, point: &Point) -> Result<(), StorageError> {
+        match point {
+            Point::Origin => Ok(()),
+            Point::BlockPoint(_, hash) => {
+                let prune_count = self
+                    .chain
+                    .iter()
+                    .position(|h| h == hash)
+                    .map(|pos| pos + 1)
+                    .ok_or(StorageError::PointNotFound)?;
+
+                let removed: Vec<HeaderHash> = self.chain.drain(..prune_count).collect();
+                for removed_hash in removed {
+                    let path = self.block_path(&removed_hash);
+                    let _ = fs::remove_file(path);
+                    self.index.remove(&removed_hash);
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn rollback_to(&mut self, point: &Point) {
         match point {
             Point::Origin => {

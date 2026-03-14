@@ -490,10 +490,43 @@ pub trait CborDecode: Sized {
 // Implementations for core types
 // ───────────────────────────────────────────────────────────────────────────
 
+use crate::eras::Era;
 use crate::types::{
     Anchor, BlockNo, DCert, DRep, EpochNo, HeaderHash, Nonce, Point, PoolMetadata, PoolParams,
     Relay, RewardAccount, SlotNo, StakeCredential, TxId, UnitInterval,
 };
+
+// -- Era -------------------------------------------------------------------
+
+impl CborEncode for Era {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        let tag = match self {
+            Self::Byron => 0,
+            Self::Shelley => 1,
+            Self::Allegra => 2,
+            Self::Mary => 3,
+            Self::Alonzo => 4,
+            Self::Babbage => 5,
+            Self::Conway => 6,
+        };
+        enc.unsigned(tag);
+    }
+}
+
+impl CborDecode for Era {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        match dec.unsigned()? {
+            0 => Ok(Self::Byron),
+            1 => Ok(Self::Shelley),
+            2 => Ok(Self::Allegra),
+            3 => Ok(Self::Mary),
+            4 => Ok(Self::Alonzo),
+            5 => Ok(Self::Babbage),
+            6 => Ok(Self::Conway),
+            tag => Err(LedgerError::CborInvalidAdditionalInfo(tag as u8)),
+        }
+    }
+}
 
 // -- SlotNo ----------------------------------------------------------------
 
@@ -1040,6 +1073,26 @@ impl PoolParams {
             relays,
             pool_metadata,
         })
+    }
+}
+
+impl CborEncode for PoolParams {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(9);
+        self.encode_inline(enc);
+    }
+}
+
+impl CborDecode for PoolParams {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 9 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 9,
+                actual: len as usize,
+            });
+        }
+        Self::decode_inline(dec)
     }
 }
 

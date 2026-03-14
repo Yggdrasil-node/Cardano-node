@@ -263,6 +263,56 @@ fn ledger_state_empty_block_advances_tip() {
 }
 
 #[test]
+fn ledger_state_checkpoint_restores_utxo_and_tip() {
+    let mut state = LedgerState::new(Era::Shelley);
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xAB; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_000,
+        },
+    );
+
+    let checkpoint = state.checkpoint();
+
+    let tx_body = ShelleyTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAB; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x02],
+            amount: 900,
+        }],
+        fee: 100,
+        ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    let block = make_shelley_block_with_txs(50, 1, 0xBC, vec![tx_body]);
+    state.apply_block(&block).expect("apply block after checkpoint");
+    assert_eq!(state.tip, Point::BlockPoint(SlotNo(50), HeaderHash([0xBC; 32])));
+    assert_eq!(state.utxo().len(), 1);
+
+    state.rollback_to_checkpoint(&checkpoint);
+    assert_eq!(state.tip, Point::Origin);
+    assert_eq!(state.utxo().len(), 1);
+    assert!(state
+        .utxo()
+        .get(&ShelleyTxIn {
+            transaction_id: [0xAB; 32],
+            index: 0,
+        })
+        .is_some());
+}
+
+#[test]
 fn ledger_state_chained_transactions() {
     let mut state = LedgerState::new(Era::Shelley);
 

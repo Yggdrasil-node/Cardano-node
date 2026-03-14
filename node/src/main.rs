@@ -8,13 +8,13 @@ use serde_json::json;
 use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, default_config};
 use yggdrasil_node::tracer::{NodeTracer, trace_fields};
 use yggdrasil_node::{
-    NodeConfig, ReconnectingSyncServiceOutcome, VerificationConfig, VerifiedSyncServiceConfig,
-    run_reconnecting_verified_sync_service_with_tracer,
+    NodeConfig, ResumedSyncServiceOutcome, VerificationConfig, VerifiedSyncServiceConfig,
+    resume_reconnecting_verified_sync_service_chaindb,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
-use yggdrasil_ledger::{Nonce, Point};
+use yggdrasil_ledger::{Era, LedgerState, Nonce};
 use yggdrasil_network::HandshakeVersion;
-use yggdrasil_storage::InMemoryVolatile;
+use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
 
 /// Yggdrasil — a pure Rust Cardano node.
 #[derive(Parser)]
@@ -68,15 +68,15 @@ fn main() -> Result<()> {
             no_verify,
             batch_size,
         } => {
-            let file_cfg = match config {
+            let (file_cfg, config_base_dir) = match config {
                 Some(path) => {
                     let contents = std::fs::read_to_string(&path)?;
                     let parsed: NodeConfigFile = serde_json::from_str(&contents)?;
-                    parsed
+                    (parsed, path.parent().map(PathBuf::from))
                 }
                 None => match network {
-                    Some(preset) => preset.to_config(),
-                    None => default_config(),
+                    Some(preset) => (preset.to_config(), None),
+                    None => (default_config(), None),
                 },
             };
 
@@ -141,8 +141,19 @@ fn main() -> Result<()> {
 
             let rt = tokio::runtime::Runtime::new()?;
             let tracer = NodeTracer::from_config(&file_cfg);
-            rt.block_on(run_node(node_config, bootstrap_peers, sync_config, tracer))
+            let storage_dir = resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
+            rt.block_on(run_node(node_config, bootstrap_peers, sync_config, tracer, storage_dir))
         }
+    }
+}
+
+fn resolve_storage_dir(storage_dir: &std::path::Path, config_base_dir: Option<&std::path::Path>) -> PathBuf {
+    if storage_dir.is_absolute() {
+        storage_dir.to_path_buf()
+    } else if let Some(base_dir) = config_base_dir {
+        base_dir.join(storage_dir)
+    } else {
+        storage_dir.to_path_buf()
     }
 }
 
@@ -151,6 +162,7 @@ async fn run_node(
     bootstrap_peers: Vec<SocketAddr>,
     sync_config: VerifiedSyncServiceConfig,
     tracer: NodeTracer,
+    storage_dir: PathBuf,
 ) -> Result<()> {
     tracer.trace_runtime(
         "Startup.DiffusionInit",
@@ -160,12 +172,16 @@ async fn run_node(
             ("primaryPeer", json!(node_config.peer_addr.to_string())),
             ("bootstrapPeerCount", json!(1 + bootstrap_peers.len())),
             ("networkMagic", json!(node_config.network_magic)),
+            ("storageDir", json!(storage_dir.display().to_string())),
             ("protocolVersions", json!(node_config.protocol_versions.iter().map(|v| v.0).collect::<Vec<_>>())),
         ]),
     );
 
-    let mut store = InMemoryVolatile::default();
-    let from_point = Point::Origin;
+    let mut chain_db = ChainDb::new(
+        FileImmutable::open(storage_dir.join("immutable"))?,
+        FileVolatile::open(storage_dir.join("volatile"))?,
+        FileLedgerStore::open(storage_dir.join("ledger"))?,
+    );
 
     let nonce_state = sync_config
         .nonce_config
@@ -187,14 +203,13 @@ async fn run_node(
         let _ = shutdown_tx.send(());
     });
 
-    let outcome: ReconnectingSyncServiceOutcome = match run_reconnecting_verified_sync_service_with_tracer(
+    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_chaindb(
         &node_config,
         &bootstrap_peers,
-        &mut store,
-        from_point,
+        &mut chain_db,
+        LedgerState::new(Era::Byron),
         &sync_config,
         nonce_state,
-        &tracer,
         async { let _ = shutdown_rx.await; },
     )
     .await {
@@ -218,17 +233,20 @@ async fn run_node(
         "Notice",
         "sync complete",
         trace_fields([
-            ("totalBlocks", json!(outcome.total_blocks)),
-            ("totalRollbacks", json!(outcome.total_rollbacks)),
-            ("batchesCompleted", json!(outcome.batches_completed)),
-            ("stableBlockCount", json!(outcome.stable_block_count)),
-            ("reconnectCount", json!(outcome.reconnect_count)),
-            ("lastConnectedPeer", json!(outcome.last_connected_peer_addr.map(|addr| addr.to_string()))),
-            ("finalPoint", json!(format!("{:?}", outcome.final_point))),
+            ("checkpointSlot", json!(outcome.recovery.checkpoint_slot.map(|slot| slot.0))),
+            ("replayedVolatileBlocks", json!(outcome.recovery.replayed_volatile_blocks)),
+            ("recoveredPoint", json!(format!("{:?}", outcome.recovery.point))),
+            ("totalBlocks", json!(outcome.sync.total_blocks)),
+            ("totalRollbacks", json!(outcome.sync.total_rollbacks)),
+            ("batchesCompleted", json!(outcome.sync.batches_completed)),
+            ("stableBlockCount", json!(outcome.sync.stable_block_count)),
+            ("reconnectCount", json!(outcome.sync.reconnect_count)),
+            ("lastConnectedPeer", json!(outcome.sync.last_connected_peer_addr.map(|addr| addr.to_string()))),
+            ("finalPoint", json!(format!("{:?}", outcome.sync.final_point))),
         ]),
     );
 
-    if let Some(ref nonce) = outcome.nonce_state {
+    if let Some(ref nonce) = outcome.sync.nonce_state {
         tracer.trace_runtime(
             "Node.Sync",
             "Info",
@@ -240,7 +258,7 @@ async fn run_node(
         );
     }
 
-    if let Some(ref cs) = outcome.chain_state {
+    if let Some(ref cs) = outcome.sync.chain_state {
         tracer.trace_runtime(
             "Node.Sync",
             "Info",

@@ -17,6 +17,14 @@ pub trait LedgerStore {
     /// if no snapshot has been taken.
     fn latest_snapshot(&self) -> Option<(SlotNo, &[u8])>;
 
+    /// Returns the most recent snapshot at or before `slot`.
+    fn latest_snapshot_before_or_at(&self, slot: SlotNo) -> Option<(SlotNo, &[u8])>;
+
+    /// Deletes snapshots newer than `slot`.
+    ///
+    /// Passing `None` clears all snapshots.
+    fn truncate_after(&mut self, slot: Option<SlotNo>) -> Result<(), StorageError>;
+
     /// Returns the total number of stored snapshots.
     fn count(&self) -> usize;
 }
@@ -35,6 +43,22 @@ impl LedgerStore for InMemoryLedgerStore {
 
     fn latest_snapshot(&self) -> Option<(SlotNo, &[u8])> {
         self.snapshots.last().map(|(s, d)| (*s, d.as_slice()))
+    }
+
+    fn latest_snapshot_before_or_at(&self, slot: SlotNo) -> Option<(SlotNo, &[u8])> {
+        self.snapshots
+            .iter()
+            .rev()
+            .find(|(snapshot_slot, _)| *snapshot_slot <= slot)
+            .map(|(snapshot_slot, data)| (*snapshot_slot, data.as_slice()))
+    }
+
+    fn truncate_after(&mut self, slot: Option<SlotNo>) -> Result<(), StorageError> {
+        match slot {
+            Some(slot) => self.snapshots.retain(|(snapshot_slot, _)| *snapshot_slot <= slot),
+            None => self.snapshots.clear(),
+        }
+        Ok(())
     }
 
     fn count(&self) -> usize {

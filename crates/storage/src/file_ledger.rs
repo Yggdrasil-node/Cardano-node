@@ -66,6 +66,35 @@ impl LedgerStore for FileLedgerStore {
         self.snapshots.last().map(|(s, d)| (*s, d.as_slice()))
     }
 
+    fn latest_snapshot_before_or_at(&self, slot: SlotNo) -> Option<(SlotNo, &[u8])> {
+        self.snapshots
+            .iter()
+            .rev()
+            .find(|(snapshot_slot, _)| *snapshot_slot <= slot)
+            .map(|(snapshot_slot, data)| (*snapshot_slot, data.as_slice()))
+    }
+
+    fn truncate_after(&mut self, slot: Option<SlotNo>) -> Result<(), StorageError> {
+        let retained: Vec<(SlotNo, Vec<u8>)> = self
+            .snapshots
+            .iter()
+            .filter(|(snapshot_slot, _)| slot.is_some_and(|limit| *snapshot_slot <= limit))
+            .cloned()
+            .collect();
+
+        for (snapshot_slot, _) in &self.snapshots {
+            if slot.is_none_or(|limit| *snapshot_slot > limit) {
+                let path = self.snapshot_path(*snapshot_slot);
+                if path.exists() {
+                    fs::remove_file(path)?;
+                }
+            }
+        }
+
+        self.snapshots = if slot.is_some() { retained } else { Vec::new() };
+        Ok(())
+    }
+
     fn count(&self) -> usize {
         self.snapshots.len()
     }

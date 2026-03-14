@@ -19,6 +19,14 @@ pub trait ImmutableStore {
     /// Retrieves a block by its header hash.
     fn get_block(&self, hash: &HeaderHash) -> Option<&Block>;
 
+    /// Returns clones of all immutable blocks strictly after `point`.
+    ///
+    /// Passing [`Point::Origin`] returns the full immutable chain. If `point`
+    /// precedes the first immutable block, the full chain is also returned.
+    /// Returns an error when `point` falls within the covered immutable range
+    /// but does not correspond to a known immutable block.
+    fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError>;
+
     /// Returns the number of stored blocks.
     fn len(&self) -> usize;
 
@@ -51,6 +59,31 @@ impl ImmutableStore for InMemoryImmutable {
 
     fn get_block(&self, hash: &HeaderHash) -> Option<&Block> {
         self.blocks.iter().find(|b| b.header.hash == *hash)
+    }
+
+    fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError> {
+        match point {
+            Point::Origin => Ok(self.blocks.clone()),
+            Point::BlockPoint(slot, hash) => {
+                if self.blocks.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                if *slot < self.blocks[0].header.slot_no {
+                    return Ok(self.blocks.clone());
+                }
+
+                if let Some(pos) = self.blocks.iter().position(|block| block.header.hash == *hash) {
+                    return Ok(self.blocks[pos + 1..].to_vec());
+                }
+
+                if *slot > self.blocks[self.blocks.len() - 1].header.slot_no {
+                    return Ok(Vec::new());
+                }
+
+                Err(StorageError::PointNotFound)
+            }
+        }
     }
 
     fn len(&self) -> usize {

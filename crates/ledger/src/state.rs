@@ -9,8 +9,91 @@ use crate::types::{
     StakeCredential,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
-use crate::{CborDecode, CborEncode, Era, LedgerError};
+use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
 use std::collections::BTreeMap;
+
+fn encode_optional_epoch_no(value: Option<EpochNo>, enc: &mut Encoder) {
+    match value {
+        Some(epoch) => epoch.encode_cbor(enc),
+        None => {
+            enc.null();
+        }
+    }
+}
+
+fn decode_optional_epoch_no(dec: &mut Decoder<'_>) -> Result<Option<EpochNo>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        Ok(Some(EpochNo::decode_cbor(dec)?))
+    }
+}
+
+fn encode_optional_pool_key_hash(value: Option<PoolKeyHash>, enc: &mut Encoder) {
+    match value {
+        Some(hash) => {
+            enc.bytes(&hash);
+        }
+        None => {
+            enc.null();
+        }
+    }
+}
+
+fn decode_optional_pool_key_hash(
+    dec: &mut Decoder<'_>,
+) -> Result<Option<PoolKeyHash>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        return Ok(None);
+    }
+
+    let raw = dec.bytes()?;
+    let hash: [u8; 28] = raw
+        .try_into()
+        .map_err(|_| LedgerError::CborInvalidLength {
+            expected: 28,
+            actual: raw.len(),
+        })?;
+    Ok(Some(hash))
+}
+
+fn encode_optional_anchor(value: Option<&Anchor>, enc: &mut Encoder) {
+    match value {
+        Some(anchor) => anchor.encode_cbor(enc),
+        None => {
+            enc.null();
+        }
+    }
+}
+
+fn decode_optional_anchor(dec: &mut Decoder<'_>) -> Result<Option<Anchor>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        Ok(Some(Anchor::decode_cbor(dec)?))
+    }
+}
+
+fn encode_optional_drep(value: Option<&DRep>, enc: &mut Encoder) {
+    match value {
+        Some(drep) => drep.encode_cbor(enc),
+        None => {
+            enc.null();
+        }
+    }
+}
+
+fn decode_optional_drep(dec: &mut Decoder<'_>) -> Result<Option<DRep>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        Ok(Some(DRep::decode_cbor(dec)?))
+    }
+}
 
 /// Registered stake-pool state carried by the ledger.
 ///
@@ -20,6 +103,31 @@ use std::collections::BTreeMap;
 pub struct RegisteredPool {
     params: PoolParams,
     retiring_epoch: Option<EpochNo>,
+}
+
+impl CborEncode for RegisteredPool {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        self.params.encode_cbor(enc);
+        encode_optional_epoch_no(self.retiring_epoch, enc);
+    }
+}
+
+impl CborDecode for RegisteredPool {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+
+        Ok(Self {
+            params: PoolParams::decode_cbor(dec)?,
+            retiring_epoch: decode_optional_epoch_no(dec)?,
+        })
+    }
 }
 
 impl RegisteredPool {
@@ -38,6 +146,27 @@ impl RegisteredPool {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PoolState {
     entries: BTreeMap<PoolKeyHash, RegisteredPool>,
+}
+
+impl CborEncode for PoolState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(self.entries.len() as u64);
+        for pool in self.entries.values() {
+            pool.encode_cbor(enc);
+        }
+    }
+}
+
+impl CborDecode for PoolState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..len {
+            let pool = RegisteredPool::decode_cbor(dec)?;
+            entries.insert(pool.params.operator, pool);
+        }
+        Ok(Self { entries })
+    }
 }
 
 impl PoolState {
@@ -101,6 +230,30 @@ pub struct RewardAccountState {
     delegated_pool: Option<PoolKeyHash>,
 }
 
+impl CborEncode for RewardAccountState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2).unsigned(self.balance);
+        encode_optional_pool_key_hash(self.delegated_pool, enc);
+    }
+}
+
+impl CborDecode for RewardAccountState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+
+        Ok(Self {
+            balance: dec.unsigned()?,
+            delegated_pool: decode_optional_pool_key_hash(dec)?,
+        })
+    }
+}
+
 impl RewardAccountState {
     /// Creates reward-account state with the given balance and delegation.
     pub fn new(balance: u64, delegated_pool: Option<PoolKeyHash>) -> Self {
@@ -135,6 +288,38 @@ impl RewardAccountState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RewardAccounts {
     entries: BTreeMap<RewardAccount, RewardAccountState>,
+}
+
+impl CborEncode for RewardAccounts {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(self.entries.len() as u64);
+        for (account, state) in &self.entries {
+            enc.array(2);
+            account.encode_cbor(enc);
+            state.encode_cbor(enc);
+        }
+    }
+}
+
+impl CborDecode for RewardAccounts {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..len {
+            let pair_len = dec.array()?;
+            if pair_len != 2 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 2,
+                    actual: pair_len as usize,
+                });
+            }
+
+            let account = RewardAccount::decode_cbor(dec)?;
+            let state = RewardAccountState::decode_cbor(dec)?;
+            entries.insert(account, state);
+        }
+        Ok(Self { entries })
+    }
 }
 
 impl RewardAccounts {
@@ -183,6 +368,31 @@ pub struct StakeCredentialState {
     delegated_drep: Option<DRep>,
 }
 
+impl CborEncode for StakeCredentialState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        encode_optional_pool_key_hash(self.delegated_pool, enc);
+        encode_optional_drep(self.delegated_drep.as_ref(), enc);
+    }
+}
+
+impl CborDecode for StakeCredentialState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+
+        Ok(Self {
+            delegated_pool: decode_optional_pool_key_hash(dec)?,
+            delegated_drep: decode_optional_drep(dec)?,
+        })
+    }
+}
+
 impl StakeCredentialState {
     /// Creates stake-credential state with the given delegation targets.
     pub fn new(delegated_pool: Option<PoolKeyHash>, delegated_drep: Option<DRep>) -> Self {
@@ -217,6 +427,38 @@ impl StakeCredentialState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StakeCredentials {
     entries: BTreeMap<StakeCredential, StakeCredentialState>,
+}
+
+impl CborEncode for StakeCredentials {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(self.entries.len() as u64);
+        for (credential, state) in &self.entries {
+            enc.array(2);
+            credential.encode_cbor(enc);
+            state.encode_cbor(enc);
+        }
+    }
+}
+
+impl CborDecode for StakeCredentials {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..len {
+            let pair_len = dec.array()?;
+            if pair_len != 2 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 2,
+                    actual: pair_len as usize,
+                });
+            }
+
+            let credential = StakeCredential::decode_cbor(dec)?;
+            let state = StakeCredentialState::decode_cbor(dec)?;
+            entries.insert(credential, state);
+        }
+        Ok(Self { entries })
+    }
 }
 
 impl StakeCredentials {
@@ -265,6 +507,31 @@ pub struct RegisteredDrep {
     deposit: u64,
 }
 
+impl CborEncode for RegisteredDrep {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        encode_optional_anchor(self.anchor.as_ref(), enc);
+        enc.unsigned(self.deposit);
+    }
+}
+
+impl CborDecode for RegisteredDrep {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+
+        Ok(Self {
+            anchor: decode_optional_anchor(dec)?,
+            deposit: dec.unsigned()?,
+        })
+    }
+}
+
 impl RegisteredDrep {
     /// Creates registered DRep state.
     pub fn new(deposit: u64, anchor: Option<Anchor>) -> Self {
@@ -291,6 +558,38 @@ impl RegisteredDrep {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DrepState {
     entries: BTreeMap<DRep, RegisteredDrep>,
+}
+
+impl CborEncode for DrepState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(self.entries.len() as u64);
+        for (drep, state) in &self.entries {
+            enc.array(2);
+            drep.encode_cbor(enc);
+            state.encode_cbor(enc);
+        }
+    }
+}
+
+impl CborDecode for DrepState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..len {
+            let pair_len = dec.array()?;
+            if pair_len != 2 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 2,
+                    actual: pair_len as usize,
+                });
+            }
+
+            let drep = DRep::decode_cbor(dec)?;
+            let state = RegisteredDrep::decode_cbor(dec)?;
+            entries.insert(drep, state);
+        }
+        Ok(Self { entries })
+    }
 }
 
 impl DrepState {
@@ -342,10 +641,67 @@ pub enum CommitteeAuthorization {
     CommitteeMemberResigned(Option<Anchor>),
 }
 
+impl CborEncode for CommitteeAuthorization {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self {
+            Self::CommitteeHotCredential(credential) => {
+                enc.array(2).unsigned(0);
+                credential.encode_cbor(enc);
+            }
+            Self::CommitteeMemberResigned(anchor) => {
+                enc.array(2).unsigned(1);
+                encode_optional_anchor(anchor.as_ref(), enc);
+            }
+        }
+    }
+}
+
+impl CborDecode for CommitteeAuthorization {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+
+        match dec.unsigned()? {
+            0 => Ok(Self::CommitteeHotCredential(StakeCredential::decode_cbor(dec)?)),
+            1 => Ok(Self::CommitteeMemberResigned(decode_optional_anchor(dec)?)),
+            tag => Err(LedgerError::CborInvalidAdditionalInfo(tag as u8)),
+        }
+    }
+}
+
 /// State for a known constitutional-committee cold credential.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CommitteeMemberState {
     authorization: Option<CommitteeAuthorization>,
+}
+
+impl CborEncode for CommitteeMemberState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self.authorization.as_ref() {
+            Some(authorization) => authorization.encode_cbor(enc),
+            None => {
+                enc.null();
+            }
+        }
+    }
+}
+
+impl CborDecode for CommitteeMemberState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let authorization = if dec.peek_major()? == 7 {
+            dec.null()?;
+            None
+        } else {
+            Some(CommitteeAuthorization::decode_cbor(dec)?)
+        };
+
+        Ok(Self { authorization })
+    }
 }
 
 impl CommitteeMemberState {
@@ -396,6 +752,38 @@ impl CommitteeMemberState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CommitteeState {
     entries: BTreeMap<StakeCredential, CommitteeMemberState>,
+}
+
+impl CborEncode for CommitteeState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(self.entries.len() as u64);
+        for (credential, state) in &self.entries {
+            enc.array(2);
+            credential.encode_cbor(enc);
+            state.encode_cbor(enc);
+        }
+    }
+}
+
+impl CborDecode for CommitteeState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..len {
+            let pair_len = dec.array()?;
+            if pair_len != 2 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 2,
+                    actual: pair_len as usize,
+                });
+            }
+
+            let credential = StakeCredential::decode_cbor(dec)?;
+            let state = CommitteeMemberState::decode_cbor(dec)?;
+            entries.insert(credential, state);
+        }
+        Ok(Self { entries })
+    }
 }
 
 impl CommitteeState {
@@ -615,6 +1003,96 @@ pub struct LedgerState {
     shelley_utxo: ShelleyUtxo,
 }
 
+/// Restorable checkpoint of full ledger state.
+///
+/// This checkpoint is intended as a rollback and recovery seam for higher
+/// layers such as storage and node orchestration. Unlike
+/// [`LedgerStateSnapshot`], it preserves a restorable copy of the entire
+/// mutable ledger state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LedgerStateCheckpoint {
+    state: LedgerState,
+}
+
+impl CborEncode for LedgerState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(9);
+        self.current_era.encode_cbor(enc);
+        self.tip.encode_cbor(enc);
+        self.pool_state.encode_cbor(enc);
+        self.stake_credentials.encode_cbor(enc);
+        self.committee_state.encode_cbor(enc);
+        self.drep_state.encode_cbor(enc);
+        self.reward_accounts.encode_cbor(enc);
+        self.multi_era_utxo.encode_cbor(enc);
+        self.shelley_utxo.encode_cbor(enc);
+    }
+}
+
+impl CborDecode for LedgerState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 9 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 9,
+                actual: len as usize,
+            });
+        }
+
+        Ok(Self {
+            current_era: Era::decode_cbor(dec)?,
+            tip: Point::decode_cbor(dec)?,
+            pool_state: PoolState::decode_cbor(dec)?,
+            stake_credentials: StakeCredentials::decode_cbor(dec)?,
+            committee_state: CommitteeState::decode_cbor(dec)?,
+            drep_state: DrepState::decode_cbor(dec)?,
+            reward_accounts: RewardAccounts::decode_cbor(dec)?,
+            multi_era_utxo: MultiEraUtxo::decode_cbor(dec)?,
+            shelley_utxo: ShelleyUtxo::decode_cbor(dec)?,
+        })
+    }
+}
+
+impl CborEncode for LedgerStateCheckpoint {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(1);
+        self.state.encode_cbor(enc);
+    }
+}
+
+impl CborDecode for LedgerStateCheckpoint {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 1 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 1,
+                actual: len as usize,
+            });
+        }
+
+        Ok(Self {
+            state: LedgerState::decode_cbor(dec)?,
+        })
+    }
+}
+
+impl LedgerStateCheckpoint {
+    /// Returns the era captured by the checkpoint.
+    pub fn current_era(&self) -> Era {
+        self.state.current_era
+    }
+
+    /// Returns the tip captured by the checkpoint.
+    pub fn tip(&self) -> &Point {
+        &self.state.tip
+    }
+
+    /// Restores the captured ledger state by cloning it out of the checkpoint.
+    pub fn restore(&self) -> LedgerState {
+        self.state.clone()
+    }
+}
+
 impl LedgerState {
     /// Creates a new ledger state rooted at the given era with an `Origin`
     /// tip and an empty UTxO set.
@@ -757,6 +1235,21 @@ impl LedgerState {
             multi_era_utxo: self.multi_era_utxo.clone(),
             shelley_utxo: self.shelley_utxo.clone(),
         }
+    }
+
+    /// Captures a restorable checkpoint of the current ledger state.
+    ///
+    /// This is a full-state clone intended for rollback-safe higher-layer
+    /// coordination until more granular undo or replay machinery exists.
+    pub fn checkpoint(&self) -> LedgerStateCheckpoint {
+        LedgerStateCheckpoint {
+            state: self.clone(),
+        }
+    }
+
+    /// Restores the ledger state from a previously captured checkpoint.
+    pub fn rollback_to_checkpoint(&mut self, checkpoint: &LedgerStateCheckpoint) {
+        *self = checkpoint.restore();
     }
 
     /// Returns all UTxO entries paying to `address`.

@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -80,6 +81,9 @@ pub struct NodeConfigFile {
     /// Peer snapshot file name used by upstream topology handling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_snapshot_file: Option<String>,
+    /// Root directory for immutable, volatile, and ledger snapshot storage.
+    #[serde(default = "default_storage_dir")]
+    pub storage_dir: PathBuf,
     /// The network magic for handshake (mainnet = 764824073).
     pub network_magic: u32,
     /// Protocol version numbers to propose during handshake.
@@ -135,6 +139,10 @@ pub struct NodeConfigFile {
     /// Namespace trace options following the official node config shape.
     #[serde(rename = "TraceOptions", default = "default_trace_options")]
     pub trace_options: BTreeMap<String, TraceNamespaceConfig>,
+}
+
+fn default_storage_dir() -> PathBuf {
+    PathBuf::from("data")
 }
 
 impl NodeConfigFile {
@@ -376,6 +384,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         public_roots: topology.public_roots,
         use_ledger_after_slot: topology.use_ledger_after_slot,
         peer_snapshot_file: topology.peer_snapshot_file,
+        storage_dir: PathBuf::from("data/mainnet"),
         network_magic: 764_824_073,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -413,6 +422,7 @@ pub fn preprod_config() -> NodeConfigFile {
         public_roots: topology.public_roots,
         use_ledger_after_slot: topology.use_ledger_after_slot,
         peer_snapshot_file: topology.peer_snapshot_file,
+        storage_dir: PathBuf::from("data/preprod"),
         network_magic: 1,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -450,6 +460,7 @@ pub fn preview_config() -> NodeConfigFile {
         public_roots: topology.public_roots,
         use_ledger_after_slot: topology.use_ledger_after_slot,
         peer_snapshot_file: topology.peer_snapshot_file,
+        storage_dir: PathBuf::from("data/preview"),
         network_magic: 2,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -485,6 +496,7 @@ mod tests {
         assert_eq!(parsed.public_roots, cfg.public_roots);
         assert_eq!(parsed.use_ledger_after_slot, cfg.use_ledger_after_slot);
         assert_eq!(parsed.peer_snapshot_file, cfg.peer_snapshot_file);
+        assert_eq!(parsed.storage_dir, cfg.storage_dir);
         assert_eq!(parsed.turn_on_logging, cfg.turn_on_logging);
         assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
         assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);
@@ -504,6 +516,7 @@ mod tests {
         assert!(cfg.public_roots.is_empty());
         assert!(cfg.use_ledger_after_slot.is_none());
         assert!(cfg.peer_snapshot_file.is_none());
+        assert_eq!(cfg.storage_dir, PathBuf::from("data"));
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.epoch_length, 432_000);
@@ -584,6 +597,7 @@ mod tests {
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.use_ledger_after_slot, Some(177_724_800));
         assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(cfg.storage_dir, PathBuf::from("data/mainnet"));
         assert!(!candidates.is_empty());
         assert!(candidates.len() <= 3);
     }
@@ -599,6 +613,7 @@ mod tests {
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.use_ledger_after_slot, Some(112_406_400));
         assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(cfg.storage_dir, PathBuf::from("data/preprod"));
         assert!(cfg.bootstrap_peers.is_empty());
     }
 
@@ -613,6 +628,7 @@ mod tests {
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.use_ledger_after_slot, Some(102_729_600));
         assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(cfg.storage_dir, PathBuf::from("data/preview"));
         // stability_window = 3*432/0.05 = 25920
         let stability_window =
             (3.0 * cfg.security_param_k as f64 / cfg.active_slot_coeff) as u64;

@@ -31,6 +31,94 @@ fn ledger_state_snapshot_exposes_pool_and_reward_state() {
 }
 
 #[test]
+fn ledger_state_checkpoint_restores_stake_pool_and_rewards_state() {
+    let mut state = LedgerState::new(Era::Conway);
+    let params = sample_pool_params();
+    let operator = params.operator;
+    let reward_account = sample_reward_account();
+
+    state.pool_state_mut().register(params.clone());
+    state.reward_accounts_mut().insert(
+        reward_account,
+        RewardAccountState::new(9_000_000, Some(operator)),
+    );
+
+    let checkpoint = state.checkpoint();
+
+    state.pool_state_mut().retire(operator, EpochNo(99));
+    state.reward_accounts_mut().insert(
+        reward_account,
+        RewardAccountState::new(1_000_000, None),
+    );
+
+    state.rollback_to_checkpoint(&checkpoint);
+
+    let restored_pool = state
+        .registered_pool(&operator)
+        .expect("restored pool after rollback");
+    let restored_account = state
+        .reward_account_state(&reward_account)
+        .expect("restored reward account after rollback");
+
+    assert_eq!(restored_pool.params(), &params);
+    assert_eq!(restored_pool.retiring_epoch(), None);
+    assert_eq!(restored_account.balance(), 9_000_000);
+    assert_eq!(restored_account.delegated_pool(), Some(operator));
+}
+
+#[test]
+fn ledger_state_checkpoint_cbor_round_trip_preserves_state() {
+    let mut state = LedgerState::new(Era::Conway);
+    let params = sample_pool_params();
+    let operator = params.operator;
+    let reward_account = sample_reward_account();
+    let credential = reward_account.credential;
+    let drep = DRep::KeyHash([0x77; 28]);
+
+    state.current_era = Era::Conway;
+    state.tip = Point::BlockPoint(SlotNo(44), HeaderHash([0x44; 32]));
+    state.pool_state_mut().register(params.clone());
+    state.stake_credentials_mut().register(credential);
+    state.reward_accounts_mut().insert(
+        reward_account,
+        RewardAccountState::new(9_000_000, Some(operator)),
+    );
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new(2_000_000, Some(Anchor {
+            url: "https://example.com/drep".to_owned(),
+            data_hash: [0x55; 32],
+        })));
+    state.multi_era_utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        },
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: vec![0x01, 0x02],
+            amount: 123,
+        }),
+    );
+    state.utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0xBB; 32],
+            index: 1,
+        },
+        ShelleyTxOut {
+            address: vec![0x03, 0x04],
+            amount: 456,
+        },
+    );
+
+    let checkpoint = state.checkpoint();
+    let encoded = checkpoint.to_cbor_bytes();
+    let decoded = LedgerStateCheckpoint::from_cbor_bytes(&encoded).expect("decode checkpoint");
+
+    assert_eq!(decoded, checkpoint);
+    assert_eq!(decoded.restore(), state);
+}
+
+#[test]
 fn ledger_state_registers_stake_credential_via_certificate() {
     let mut state = LedgerState::new(Era::Shelley);
     let credential = StakeCredential::AddrKeyHash(sample_hash28());

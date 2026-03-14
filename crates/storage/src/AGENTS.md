@@ -20,4 +20,6 @@ This directory owns storage interfaces and implementations, including rollback-a
 - Node storage integration reference: <https://github.com/IntersectMBO/cardano-node/>
 
 ## Current Phase
-- Storage source modules currently provide in-memory and file-backed implementations behind stable traits while leaving room for future format and recovery upgrades.
+- Storage source modules now provide in-memory and file-backed implementations behind stable traits, plus a minimal `ChainDb` coordination layer that owns best-known tip recovery, volatile-prefix promotion, and rollback-time ledger snapshot truncation while leaving room for future format and recovery upgrades.
+- `ChainDb` now also exposes typed ledger-checkpoint save/load helpers built on the ledger crate's deterministic CBOR codec, while the underlying `LedgerStore` trait remains raw-byte oriented for format flexibility.
+- `ImmutableStore` now exposes ordered suffix replay after a chain point so node-side recovery can rebuild ledger state from checkpoints through immutable storage before replaying the volatile window.

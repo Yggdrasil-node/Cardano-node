@@ -20,13 +20,13 @@ use yggdrasil_network::{
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
     CborDecode, CborEncode, ConwayBlock,
-    Decoder, Era, HeaderHash, LedgerError, Nonce, Point, PraosHeader, PraosHeaderBody,
+    Decoder, Era, HeaderHash, LedgerError, LedgerState, Nonce, Point, PraosHeader, PraosHeaderBody,
     ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
     compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
-use yggdrasil_storage::{ImmutableStore, StorageError, VolatileStore};
+use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
 
 /// Error type for sync orchestration operations.
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +58,11 @@ pub enum SyncError {
     /// Consensus validation error (header verification failure).
     #[error("consensus error: {0}")]
     Consensus(#[from] ConsensusError),
+
+    /// Recovery failed because the available storage state could not be
+    /// reconstructed into a usable ledger tip.
+    #[error("recovery error: {0}")]
+    Recovery(String),
 
     /// Block body hash in the header does not match the actual block body.
     #[error("block body hash mismatch")]
@@ -727,6 +732,109 @@ pub struct VerifiedSyncServiceOutcome {
     pub stable_block_count: usize,
 }
 
+
+/// Result of rebuilding ledger state from coordinated storage recovery data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LedgerRecoveryOutcome {
+    /// Restored ledger state after replaying any recoverable volatile suffix.
+    pub ledger_state: LedgerState,
+    /// Point that the restored ledger state has reached.
+    pub point: Point,
+    /// Slot of the checkpoint used for recovery, if one was available.
+    pub checkpoint_slot: Option<SlotNo>,
+    /// Number of volatile blocks replayed after the checkpoint.
+    pub replayed_volatile_blocks: usize,
+}
+
+fn volatile_replay_blocks<V: VolatileStore>(
+    volatile: &V,
+    replay_from_exclusive: &Point,
+) -> Result<Vec<Block>, SyncError> {
+    let volatile_tip = volatile.tip();
+    if volatile_tip == Point::Origin {
+        return Ok(Vec::new());
+    }
+
+    let mut blocks = volatile.prefix_up_to(&volatile_tip)?;
+
+    if *replay_from_exclusive == Point::Origin {
+        return Ok(blocks);
+    }
+
+    if let Some(pos) = blocks.iter().position(|block| {
+        Point::BlockPoint(block.header.slot_no, block.header.hash) == *replay_from_exclusive
+    }) {
+        Ok(blocks.split_off(pos + 1))
+    } else {
+        Ok(blocks)
+    }
+}
+
+fn point_for_block(block: &Block) -> Point {
+    Point::BlockPoint(block.header.slot_no, block.header.hash)
+}
+
+/// Restore a ledger state from the latest typed ChainDb checkpoint and replay
+/// any remaining volatile suffix.
+///
+/// This helper restores from the latest available typed checkpoint, then
+/// replays immutable blocks after that checkpoint followed by the remaining
+/// volatile suffix.
+pub fn recover_ledger_state_chaindb<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    base_state: LedgerState,
+) -> Result<LedgerRecoveryOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let best_tip = chain_db.tip();
+    let checkpoint = match best_tip {
+        Point::Origin => chain_db.latest_ledger_checkpoint()?,
+        Point::BlockPoint(slot, _) => chain_db.latest_ledger_checkpoint_before_or_at(slot)?,
+    };
+
+    let (mut ledger_state, checkpoint_slot, replay_from_exclusive) = match checkpoint {
+        Some((slot, checkpoint)) => {
+            let state = checkpoint.restore();
+            let point = state.tip;
+            (state, Some(slot), point)
+        }
+        None => {
+            let point = base_state.tip;
+            (base_state, None, point)
+        }
+    };
+
+    let immutable_replay_blocks = chain_db.immutable().suffix_after(&replay_from_exclusive)?;
+    for block in &immutable_replay_blocks {
+        ledger_state.apply_block(block)?;
+    }
+
+    let replay_anchor = immutable_replay_blocks
+        .last()
+        .map(point_for_block)
+        .unwrap_or(replay_from_exclusive);
+    let replay_blocks = volatile_replay_blocks(chain_db.volatile(), &replay_anchor)?;
+    for block in &replay_blocks {
+        ledger_state.apply_block(block)?;
+    }
+
+    let point = ledger_state.tip;
+    if point != best_tip {
+        return Err(SyncError::Recovery(format!(
+            "recovered ledger tip {point:?} does not match coordinated storage tip {best_tip:?}"
+        )));
+    }
+
+    Ok(LedgerRecoveryOutcome {
+        ledger_state,
+        point,
+        checkpoint_slot,
+        replayed_volatile_blocks: replay_blocks.len(),
+    })
+}
 /// Run a continuous verified sync loop with multi-era block decoding,
 /// header/body verification, and optional epoch nonce tracking.
 ///
@@ -811,6 +919,93 @@ where
                 }
 
                 // Apply nonce evolution to all roll-forward blocks.
+                if let Some((ref mut state, nonce_cfg)) =
+                    nonce_state.as_mut().zip(config.nonce_config.as_ref())
+                {
+                    for step in &progress.steps {
+                        if let MultiEraSyncStep::RollForward { blocks, .. } = step {
+                            for block in blocks {
+                                apply_nonce_evolution(state, block, nonce_cfg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Run a continuous verified sync loop while coordinating storage through
+/// [`ChainDb`].
+///
+/// This variant mirrors [`run_verified_sync_service`] but promotes stable
+/// volatile prefixes into immutable storage as soon as the tracked
+/// [`ChainState`] drains them.
+pub async fn run_verified_sync_service_chaindb<I, V, L, F>(
+    chain_sync: &mut ChainSyncClient,
+    block_fetch: &mut BlockFetchClient,
+    chain_db: &mut ChainDb<I, V, L>,
+    mut from_point: Point,
+    config: &VerifiedSyncServiceConfig,
+    mut nonce_state: Option<NonceEvolutionState>,
+    shutdown: F,
+) -> Result<VerifiedSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: std::future::Future<Output = ()>,
+{
+    tokio::pin!(shutdown);
+
+    let mut total_blocks = 0usize;
+    let mut total_rollbacks = 0usize;
+    let mut batches_completed = 0usize;
+    let mut total_stable = 0usize;
+    let mut chain_state = config.security_param.map(ChainState::new);
+
+    loop {
+        let batch_fut = sync_batch_apply_verified(
+            chain_sync,
+            block_fetch,
+            chain_db.volatile_mut(),
+            from_point,
+            config.batch_size,
+            Some(&config.verification),
+        );
+
+        tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                return Ok(VerifiedSyncServiceOutcome {
+                    final_point: from_point,
+                    total_blocks,
+                    total_rollbacks,
+                    batches_completed,
+                    nonce_state,
+                    chain_state,
+                    stable_block_count: total_stable,
+                });
+            }
+
+            result = batch_fut => {
+                let progress = result?;
+                from_point = progress.current_point;
+                total_blocks += progress.fetched_blocks;
+                total_rollbacks += progress.rollback_count;
+                batches_completed += 1;
+
+                if let Some(ref mut cs) = chain_state {
+                    for step in &progress.steps {
+                        let stable_entries = track_chain_state_entries(cs, step)?;
+                        total_stable += stable_entries.len();
+                        if !stable_entries.is_empty() {
+                            promote_stable_blocks_chaindb(&stable_entries, chain_db)?;
+                        }
+                    }
+                }
+
                 if let Some((ref mut state, nonce_cfg)) =
                     nonce_state.as_mut().zip(config.nonce_config.as_ref())
                 {
@@ -1587,11 +1782,11 @@ pub fn multi_era_block_to_chain_entry(block: &MultiEraBlock) -> Option<ChainEntr
 ///
 /// # Returns
 ///
-/// The number of newly stable entries drained from the chain state.
-pub fn track_chain_state(
+/// The newly stable entries drained from the chain state.
+pub fn track_chain_state_entries(
     chain_state: &mut ChainState,
     step: &MultiEraSyncStep,
-) -> Result<usize, SyncError> {
+) -> Result<Vec<ChainEntry>, SyncError> {
     match step {
         MultiEraSyncStep::RollForward { blocks, .. } => {
             for block in blocks {
@@ -1604,8 +1799,16 @@ pub fn track_chain_state(
             chain_state.roll_backward(point)?;
         }
     }
-    let stable = chain_state.drain_stable();
-    Ok(stable.len())
+    Ok(chain_state.drain_stable())
+}
+
+/// Apply one multi-era sync step to a [`ChainState`] and return the number of
+/// newly stable entries drained from the chain state.
+pub fn track_chain_state(
+    chain_state: &mut ChainState,
+    step: &MultiEraSyncStep,
+) -> Result<usize, SyncError> {
+    Ok(track_chain_state_entries(chain_state, step)?.len())
 }
 
 /// Promote blocks that have crossed the stability window from volatile
@@ -1632,6 +1835,29 @@ pub fn promote_stable_blocks<V: VolatileStore, I: ImmutableStore>(
         }
     }
     Ok(promoted)
+}
+
+/// Promote stable blocks through the coordinated storage boundary.
+///
+/// This uses [`ChainDb`] to append the stable volatile prefix into immutable
+/// storage and prune the promoted prefix from volatile storage in one crate-
+/// owned operation. The stable entries are expected to be the ordered prefix
+/// returned by [`track_chain_state`].
+pub fn promote_stable_blocks_chaindb<I, V, L>(
+    stable_entries: &[ChainEntry],
+    chain_db: &mut ChainDb<I, V, L>,
+) -> Result<usize, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let Some(last_stable) = stable_entries.last() else {
+        return Ok(0);
+    };
+
+    let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
+    chain_db.promote_volatile_prefix(&point).map_err(SyncError::Storage)
 }
 
 /// Apply one multi-era sync step into a volatile store.

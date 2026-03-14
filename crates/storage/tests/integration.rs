@@ -1,7 +1,10 @@
-use yggdrasil_ledger::{Block, BlockHeader, BlockNo, Era, HeaderHash, Point, SlotNo, Tx, TxId};
+use yggdrasil_ledger::{
+    Block, BlockHeader, BlockNo, CborEncode, Era, HeaderHash, LedgerState, MultiEraTxOut,
+    Point, ShelleyTxIn, ShelleyTxOut, SlotNo, Tx, TxId,
+};
 use yggdrasil_storage::{
-    FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, InMemoryImmutable,
-    InMemoryLedgerStore, InMemoryVolatile, LedgerStore, VolatileStore,
+    ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore,
+    InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile, LedgerStore, VolatileStore,
 };
 
 /// Helper: build a minimal block with the given hash byte and slot.
@@ -56,6 +59,28 @@ fn immutable_get_block() {
 
     let missing = HeaderHash([0xFF; 32]);
     assert!(store.get_block(&missing).is_none());
+}
+
+#[test]
+fn immutable_suffix_after_returns_expected_range() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 10)).expect("append 10");
+    store.append_block(test_block(0x02, 20)).expect("append 20");
+    store.append_block(test_block(0x03, 30)).expect("append 30");
+
+    let all = store.suffix_after(&Point::Origin).expect("suffix from origin");
+    assert_eq!(all.len(), 3);
+
+    let after_first = store
+        .suffix_after(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])))
+        .expect("suffix after first");
+    assert_eq!(after_first.len(), 2);
+    assert_eq!(after_first[0].header.slot_no, SlotNo(20));
+
+    let before_first = store
+        .suffix_after(&Point::BlockPoint(SlotNo(5), HeaderHash([0xFF; 32])))
+        .expect("suffix before first immutable block");
+    assert_eq!(before_first.len(), 3);
 }
 
 #[test]
@@ -131,6 +156,29 @@ fn ledger_store_snapshot_round_trip() {
     assert_eq!(data, &[1, 2, 3]);
 }
 
+#[test]
+fn ledger_store_can_lookup_and_truncate_snapshots() {
+    let mut store = InMemoryLedgerStore::default();
+    store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
+    store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
+    store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+
+    let (slot, data) = store
+        .latest_snapshot_before_or_at(SlotNo(25))
+        .expect("snapshot before or at slot");
+    assert_eq!(slot, SlotNo(20));
+    assert_eq!(data, &[0x14]);
+
+    store.truncate_after(Some(SlotNo(20))).expect("truncate");
+    assert_eq!(store.count(), 2);
+    assert!(store.latest_snapshot_before_or_at(SlotNo(25)).is_some());
+    assert!(store.latest_snapshot_before_or_at(SlotNo(30)).is_some());
+
+    let (latest_slot, latest_data) = store.latest_snapshot().expect("latest snapshot");
+    assert_eq!(latest_slot, SlotNo(20));
+    assert_eq!(latest_data, &[0x14]);
+}
+
 // ---------------------------------------------------------------------------
 // Cross-store integration
 // ---------------------------------------------------------------------------
@@ -192,6 +240,22 @@ fn file_immutable_append_and_tip() {
         store.get_tip(),
         Point::BlockPoint(SlotNo(1), HeaderHash([0xAA; 32]))
     );
+}
+
+#[test]
+fn file_immutable_suffix_after_returns_expected_range() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let mut store = FileImmutable::open(dir.path().join("imm")).expect("open");
+    store.append_block(test_block(0x01, 10)).expect("append 10");
+    store.append_block(test_block(0x02, 20)).expect("append 20");
+    store.append_block(test_block(0x03, 30)).expect("append 30");
+
+    let suffix = store
+        .suffix_after(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])))
+        .expect("suffix after first");
+    assert_eq!(suffix.len(), 2);
+    assert_eq!(suffix[0].header.slot_no, SlotNo(20));
+    assert_eq!(suffix[1].header.slot_no, SlotNo(30));
 }
 
 #[test]
@@ -299,6 +363,29 @@ fn file_volatile_persists_and_rollback_removes_files() {
     assert!(store.get_block(&HeaderHash([0x03; 32])).is_none());
 }
 
+#[test]
+fn volatile_prefix_helpers_promote_prefixes() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 10)).expect("add 1");
+    store.add_block(test_block(0x02, 11)).expect("add 2");
+    store.add_block(test_block(0x03, 12)).expect("add 3");
+
+    let prefix = store
+        .prefix_up_to(&Point::BlockPoint(SlotNo(11), HeaderHash([0x02; 32])))
+        .expect("prefix up to block 2");
+    assert_eq!(prefix.len(), 2);
+    assert_eq!(prefix[0].header.hash, HeaderHash([0x01; 32]));
+    assert_eq!(prefix[1].header.hash, HeaderHash([0x02; 32]));
+
+    store
+        .prune_up_to(&Point::BlockPoint(SlotNo(11), HeaderHash([0x02; 32])))
+        .expect("prune through block 2");
+    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(12), HeaderHash([0x03; 32])));
+    assert!(store.get_block(&HeaderHash([0x01; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x03; 32])).is_some());
+}
+
 // ===========================================================================
 // File-backed ledger snapshot store
 // ===========================================================================
@@ -342,6 +429,73 @@ fn file_ledger_store_persists_across_reopens() {
     assert_eq!(data, &[0xBB, 0xCC]);
 }
 
+#[test]
+fn file_ledger_store_can_lookup_and_truncate_snapshots() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("ledger");
+
+    {
+        let mut store = FileLedgerStore::open(&path).expect("open");
+        store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
+        store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
+        store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+        store.truncate_after(Some(SlotNo(20))).expect("truncate");
+    }
+
+    let store = FileLedgerStore::open(&path).expect("reopen");
+    assert_eq!(store.count(), 2);
+    let (slot, data) = store
+        .latest_snapshot_before_or_at(SlotNo(25))
+        .expect("snapshot before or at slot");
+    assert_eq!(slot, SlotNo(20));
+    assert_eq!(data, &[0x14]);
+    assert!(store.latest_snapshot_before_or_at(SlotNo(30)).is_some());
+}
+
+// ---------------------------------------------------------------------------
+// ChainDb coordination
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chaindb_promotes_volatile_prefix_and_prunes_snapshots_on_rollback() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    chain_db
+        .add_volatile_block(test_block(0x01, 10))
+        .expect("add 1");
+    chain_db
+        .add_volatile_block(test_block(0x02, 20))
+        .expect("add 2");
+    chain_db
+        .add_volatile_block(test_block(0x03, 30))
+        .expect("add 3");
+    chain_db
+        .save_ledger_snapshot(SlotNo(10), vec![0x0A])
+        .expect("save 10");
+    chain_db
+        .save_ledger_snapshot(SlotNo(30), vec![0x1E])
+        .expect("save 30");
+
+    let promoted = chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
+        .expect("promote prefix");
+    assert_eq!(promoted, 2);
+    assert_eq!(chain_db.immutable().len(), 2);
+    assert_eq!(chain_db.volatile().tip(), Point::BlockPoint(SlotNo(30), HeaderHash([0x03; 32])));
+    assert_eq!(chain_db.tip(), Point::BlockPoint(SlotNo(30), HeaderHash([0x03; 32])));
+
+    chain_db
+        .rollback_to(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
+        .expect("rollback to promoted point");
+
+    let recovery = chain_db.recovery();
+    assert_eq!(recovery.tip, Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])));
+    assert_eq!(recovery.ledger_snapshot_slot, Some(SlotNo(10)));
+}
+
 // ===========================================================================
 // Cross-store file-backed integration
 // ===========================================================================
@@ -372,4 +526,39 @@ fn file_cross_store_block_flow() {
     immutable.append_block(block).expect("immutable append");
 
     assert_eq!(immutable.get_tip(), volatile.tip());
+}
+
+#[test]
+fn chaindb_typed_ledger_checkpoint_round_trip() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let mut state = LedgerState::new(Era::Shelley);
+    state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0xAB; 32]));
+    state.multi_era_utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: vec![0x01],
+            amount: 99,
+        }),
+    );
+
+    let checkpoint = state.checkpoint();
+    chain_db
+        .save_ledger_checkpoint(SlotNo(10), &checkpoint)
+        .expect("save typed checkpoint");
+
+    let (slot, restored) = chain_db
+        .latest_ledger_checkpoint_before_or_at(SlotNo(10))
+        .expect("decode typed checkpoint")
+        .expect("checkpoint present");
+
+    assert_eq!(slot, SlotNo(10));
+    assert_eq!(restored, checkpoint);
+    assert_eq!(restored.to_cbor_bytes(), checkpoint.to_cbor_bytes());
 }

@@ -844,6 +844,43 @@ pub struct ShelleyUtxo {
     entries: HashMap<ShelleyTxIn, ShelleyTxOut>,
 }
 
+impl CborEncode for ShelleyUtxo {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        let mut entries: Vec<_> = self.entries.iter().collect();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        enc.array(entries.len() as u64);
+        for (txin, txout) in entries {
+            enc.array(2);
+            txin.encode_cbor(enc);
+            txout.encode_cbor(enc);
+        }
+    }
+}
+
+impl CborDecode for ShelleyUtxo {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        let mut entries = HashMap::with_capacity(len as usize);
+
+        for _ in 0..len {
+            let pair_len = dec.array()?;
+            if pair_len != 2 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 2,
+                    actual: pair_len as usize,
+                });
+            }
+
+            let txin = ShelleyTxIn::decode_cbor(dec)?;
+            let txout = ShelleyTxOut::decode_cbor(dec)?;
+            entries.insert(txin, txout);
+        }
+
+        Ok(Self { entries })
+    }
+}
+
 impl ShelleyUtxo {
     /// Creates an empty UTxO set.
     pub fn new() -> Self {

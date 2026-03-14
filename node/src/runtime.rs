@@ -8,8 +8,10 @@ use std::future::Future;
 use std::net::SocketAddr;
 
 use crate::sync::{
-    SyncError, VerifiedSyncServiceConfig, apply_nonce_evolution,
-    sync_batch_apply_verified, track_chain_state,
+    LedgerRecoveryOutcome, SyncError, VerifiedSyncServiceConfig, apply_nonce_evolution,
+    MultiEraSyncProgress, MultiEraSyncStep, multi_era_block_to_block, promote_stable_blocks_chaindb,
+    recover_ledger_state_chaindb, sync_batch_apply_verified, track_chain_state,
+    track_chain_state_entries,
 };
 use crate::tracer::{NodeTracer, trace_fields};
 use serde_json::json;
@@ -26,7 +28,7 @@ use yggdrasil_mempool::{
     SharedMempool, MEMPOOL_ZERO_IDX, SharedTxSubmissionMempoolReader,
     TxSubmissionMempoolReader,
 };
-use yggdrasil_storage::VolatileStore;
+use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
 // ---------------------------------------------------------------------------
 // TxSubmission mempool integration
@@ -449,6 +451,279 @@ pub struct ReconnectingSyncServiceOutcome {
     pub last_connected_peer_addr: Option<SocketAddr>,
 }
 
+/// Outcome returned when a coordinated-storage sync run first restores ledger
+/// state from `ChainDb` recovery data and then starts reconnecting sync.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResumedSyncServiceOutcome {
+    /// Ledger recovery state rebuilt before live syncing begins.
+    pub recovery: LedgerRecoveryOutcome,
+    /// Outcome from the reconnecting live sync loop started at the recovered point.
+    pub sync: ReconnectingSyncServiceOutcome,
+}
+
+#[derive(Clone, Debug)]
+struct CheckpointTracking {
+    base_ledger_state: LedgerState,
+    ledger_state: LedgerState,
+}
+
+fn persist_ledger_checkpoint_after_progress<I, V, L>(
+    chain_db: &mut ChainDb<I, V, L>,
+    tracking: &mut CheckpointTracking,
+    progress: &MultiEraSyncProgress,
+) -> Result<(), SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    if progress.rollback_count > 0 {
+        match progress.current_point {
+            Point::Origin => chain_db.ledger_mut().truncate_after(None)?,
+            Point::BlockPoint(slot, _) => chain_db.ledger_mut().truncate_after(Some(slot))?,
+        }
+
+        tracking.ledger_state = recover_ledger_state_chaindb(
+            chain_db,
+            tracking.base_ledger_state.clone(),
+        )?
+        .ledger_state;
+    } else {
+        for step in &progress.steps {
+            if let MultiEraSyncStep::RollForward { blocks, .. } = step {
+                for block in blocks {
+                    tracking
+                        .ledger_state
+                        .apply_block(&multi_era_block_to_block(block))?;
+                }
+            }
+        }
+    }
+
+    match tracking.ledger_state.tip {
+        Point::Origin => chain_db.ledger_mut().truncate_after(None)?,
+        Point::BlockPoint(slot, _) => {
+            chain_db.save_ledger_checkpoint(slot, &tracking.ledger_state.checkpoint())?
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_reconnecting_verified_sync_service_chaindb_inner<I, V, L, F>(
+    node_config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    chain_db: &mut ChainDb<I, V, L>,
+    mut from_point: Point,
+    config: &VerifiedSyncServiceConfig,
+    mut nonce_state: Option<NonceEvolutionState>,
+    tracer: &NodeTracer,
+    shutdown: F,
+    mut checkpoint_tracking: Option<CheckpointTracking>,
+) -> Result<ReconnectingSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    tokio::pin!(shutdown);
+
+    let mut total_blocks = 0usize;
+    let mut total_rollbacks = 0usize;
+    let mut batches_completed = 0usize;
+    let mut total_stable = 0usize;
+    let mut reconnect_count = 0usize;
+    let mut last_connected_peer_addr = None;
+    let mut chain_state = config.security_param.map(ChainState::new);
+    let mut had_session = false;
+    let mut attempt_state = peer_attempt_state(node_config.peer_addr, fallback_peer_addrs);
+
+    loop {
+        let mut session = tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                tracer.trace_runtime(
+                    "Node.Shutdown",
+                    "Notice",
+                    "shutdown requested before bootstrap completed",
+                    BTreeMap::new(),
+                );
+                return Ok(ReconnectingSyncServiceOutcome {
+                    final_point: from_point,
+                    total_blocks,
+                    total_rollbacks,
+                    batches_completed,
+                    nonce_state,
+                    chain_state,
+                    stable_block_count: total_stable,
+                    reconnect_count,
+                    last_connected_peer_addr,
+                });
+            }
+
+            result = bootstrap_with_attempt_state(node_config, &mut attempt_state, tracer) => result?,
+        };
+
+        if had_session {
+            reconnect_count += 1;
+        } else {
+            had_session = true;
+        }
+        last_connected_peer_addr = Some(session.connected_peer_addr);
+
+        tracer.trace_runtime(
+            "Net.ConnectionManager.Remote",
+            "Notice",
+            if reconnect_count == 0 {
+                "verified sync session established"
+            } else {
+                "verified sync session re-established"
+            },
+            trace_fields([
+                ("peer", json!(session.connected_peer_addr.to_string())),
+                ("reconnectCount", json!(reconnect_count)),
+                ("fromPoint", json!(format!("{:?}", from_point))),
+            ]),
+        );
+
+        loop {
+            let batch_fut = sync_batch_apply_verified(
+                &mut session.chain_sync,
+                &mut session.block_fetch,
+                chain_db.volatile_mut(),
+                from_point,
+                config.batch_size,
+                Some(&config.verification),
+            );
+
+            tokio::select! {
+                biased;
+
+                () = &mut shutdown => {
+                    tracer.trace_runtime(
+                        "Node.Shutdown",
+                        "Notice",
+                        "shutdown requested during sync session",
+                        trace_fields([
+                            ("peer", json!(session.connected_peer_addr.to_string())),
+                            ("currentPoint", json!(format!("{:?}", from_point))),
+                        ]),
+                    );
+                    session.mux.abort();
+                    return Ok(ReconnectingSyncServiceOutcome {
+                        final_point: from_point,
+                        total_blocks,
+                        total_rollbacks,
+                        batches_completed,
+                        nonce_state,
+                        chain_state,
+                        stable_block_count: total_stable,
+                        reconnect_count,
+                        last_connected_peer_addr,
+                    });
+                }
+
+                result = batch_fut => {
+                    match result {
+                        Ok(progress) => {
+                            from_point = progress.current_point;
+                            total_blocks += progress.fetched_blocks;
+                            total_rollbacks += progress.rollback_count;
+                            batches_completed += 1;
+
+                            if let Some(ref mut cs) = chain_state {
+                                for step in &progress.steps {
+                                    let stable_entries = track_chain_state_entries(cs, step)?;
+                                    total_stable += stable_entries.len();
+                                    if !stable_entries.is_empty() {
+                                        promote_stable_blocks_chaindb(&stable_entries, chain_db)?;
+                                    }
+                                }
+                            }
+
+                            if let Some((ref mut state, nonce_cfg)) =
+                                nonce_state.as_mut().zip(config.nonce_config.as_ref())
+                            {
+                                for step in &progress.steps {
+                                    if let crate::sync::MultiEraSyncStep::RollForward { blocks, .. } = step {
+                                        for block in blocks {
+                                            apply_nonce_evolution(state, block, nonce_cfg);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Some(ref mut tracking) = checkpoint_tracking {
+                                persist_ledger_checkpoint_after_progress(chain_db, tracking, &progress)?;
+                            }
+
+                            tracer.trace_runtime(
+                                "ChainSync.Client",
+                                "Info",
+                                "verified sync batch applied",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                    ("batchFetchedBlocks", json!(progress.fetched_blocks)),
+                                    ("batchRollbacks", json!(progress.rollback_count)),
+                                    ("totalBlocks", json!(total_blocks)),
+                                    ("batchesCompleted", json!(batches_completed)),
+                                    ("stableBlocks", json!(total_stable)),
+                                    ("checkpointTracked", json!(checkpoint_tracking.is_some())),
+                                ]),
+                            );
+                        }
+                        Err(SyncError::ChainSync(err)) => {
+                            tracer.trace_runtime(
+                                "ChainSync.Client",
+                                "Warning",
+                                "chainsync connectivity lost; reconnecting",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("error", json!(err.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                ]),
+                            );
+                            session.mux.abort();
+                            break;
+                        }
+                        Err(SyncError::BlockFetch(err)) => {
+                            tracer.trace_runtime(
+                                "BlockFetch.Client.CompletedBlockFetch",
+                                "Warning",
+                                "blockfetch connectivity lost; reconnecting",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("error", json!(err.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                ]),
+                            );
+                            session.mux.abort();
+                            break;
+                        }
+                        Err(err) => {
+                            tracer.trace_runtime(
+                                "Node.Sync",
+                                "Error",
+                                "verified sync service failed",
+                                trace_fields([
+                                    ("peer", json!(session.connected_peer_addr.to_string())),
+                                    ("error", json!(err.to_string())),
+                                    ("currentPoint", json!(format!("{:?}", from_point))),
+                                ]),
+                            );
+                            session.mux.abort();
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // bootstrap
 // ---------------------------------------------------------------------------
@@ -616,6 +891,68 @@ where
         fallback_peer_addrs,
         store,
         from_point,
+        config,
+        nonce_state,
+        &tracer,
+        shutdown,
+    )
+    .await
+}
+
+/// Run the verified sync loop, reconnecting through ordered bootstrap peers
+/// while coordinating storage through [`ChainDb`].
+pub async fn run_reconnecting_verified_sync_service_chaindb<I, V, L, F>(
+    node_config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    chain_db: &mut ChainDb<I, V, L>,
+    from_point: Point,
+    config: &VerifiedSyncServiceConfig,
+    nonce_state: Option<NonceEvolutionState>,
+    shutdown: F,
+) -> Result<ReconnectingSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let tracer = NodeTracer::disabled();
+    run_reconnecting_verified_sync_service_chaindb_with_tracer(
+        node_config,
+        fallback_peer_addrs,
+        chain_db,
+        from_point,
+        config,
+        nonce_state,
+        &tracer,
+        shutdown,
+    )
+    .await
+}
+
+/// Recover ledger state from coordinated storage and then run reconnecting
+/// verified sync from the recovered point.
+pub async fn resume_reconnecting_verified_sync_service_chaindb<I, V, L, F>(
+    node_config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    chain_db: &mut ChainDb<I, V, L>,
+    base_ledger_state: LedgerState,
+    config: &VerifiedSyncServiceConfig,
+    nonce_state: Option<NonceEvolutionState>,
+    shutdown: F,
+) -> Result<ResumedSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let tracer = NodeTracer::disabled();
+    resume_reconnecting_verified_sync_service_chaindb_with_tracer(
+        node_config,
+        fallback_peer_addrs,
+        chain_db,
+        base_ledger_state,
         config,
         nonce_state,
         &tracer,
@@ -830,4 +1167,87 @@ where
             }
         }
     }
+}
+
+/// Recover ledger state from coordinated storage and then run reconnecting
+/// verified sync while emitting runtime trace events.
+pub async fn resume_reconnecting_verified_sync_service_chaindb_with_tracer<I, V, L, F>(
+    node_config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    chain_db: &mut ChainDb<I, V, L>,
+    base_ledger_state: LedgerState,
+    config: &VerifiedSyncServiceConfig,
+    nonce_state: Option<NonceEvolutionState>,
+    tracer: &NodeTracer,
+    shutdown: F,
+) -> Result<ResumedSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
+    tracer.trace_runtime(
+        "Node.Recovery",
+        "Notice",
+        "recovered ledger state from coordinated storage",
+        trace_fields([
+            ("point", json!(format!("{:?}", recovery.point))),
+            ("checkpointSlot", json!(recovery.checkpoint_slot.map(|slot| slot.0))),
+            ("replayedVolatileBlocks", json!(recovery.replayed_volatile_blocks)),
+        ]),
+    );
+
+    let checkpoint_tracking = CheckpointTracking {
+        base_ledger_state: recovery.ledger_state.clone(),
+        ledger_state: recovery.ledger_state.clone(),
+    };
+
+    let sync = run_reconnecting_verified_sync_service_chaindb_inner(
+        node_config,
+        fallback_peer_addrs,
+        chain_db,
+        recovery.point,
+        config,
+        nonce_state,
+        tracer,
+        shutdown,
+        Some(checkpoint_tracking),
+    )
+    .await?;
+
+    Ok(ResumedSyncServiceOutcome { recovery, sync })
+}
+
+/// Run the reconnecting verified sync loop over coordinated storage while
+/// emitting runtime trace events.
+pub async fn run_reconnecting_verified_sync_service_chaindb_with_tracer<I, V, L, F>(
+    node_config: &NodeConfig,
+    fallback_peer_addrs: &[SocketAddr],
+    chain_db: &mut ChainDb<I, V, L>,
+    mut from_point: Point,
+    config: &VerifiedSyncServiceConfig,
+    mut nonce_state: Option<NonceEvolutionState>,
+    tracer: &NodeTracer,
+    shutdown: F,
+) -> Result<ReconnectingSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    run_reconnecting_verified_sync_service_chaindb_inner(
+        node_config,
+        fallback_peer_addrs,
+        chain_db,
+        from_point,
+        config,
+        nonce_state,
+        tracer,
+        shutdown,
+        None,
+    )
+    .await
 }

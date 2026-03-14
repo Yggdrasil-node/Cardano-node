@@ -6,7 +6,7 @@ Yggdrasil is organized as a Rust workspace with explicit crate boundaries so pro
 - `crates/crypto`: hashing, signatures, VRF, KES, and cryptographic encoding boundaries.
 - `crates/cddl-codegen`: parsing pinned Cardano specifications and generating Rust types and CBOR helpers.
 - `crates/ledger`: transaction and block state transitions plus era-aware domain modeling.
-- `crates/storage`: immutable storage, rollback-aware volatile storage, and snapshot facilities.
+- `crates/storage`: immutable storage, rollback-aware volatile storage, ledger snapshot facilities, and a minimal ChainDB-style coordination layer.
 - `crates/consensus`: chain selection, leader election, epoch math, and rollback coordination.
 - `crates/mempool`: transaction admission, prioritization, and block-application eviction.
 - `crates/network`: handshake, mini-protocol state machines, peer management, topology domain types, root-provider snapshots, peer registry state, peer candidate ordering, and multiplexing.
@@ -38,6 +38,7 @@ The project has a complete Cardano-era type system and a functional node binary:
 - Node binary with `clap` CLI (`run` + `default-config`), JSON configuration, upstream-aligned tracing config fields, local runtime trace emission, and managed sync service with graceful shutdown.
 - Mempool with TTL-aware admission, fee ordering, and block-application eviction.
 - File-backed storage implementations behind `ImmutableStore`, `VolatileStore`, and `LedgerStore` traits.
+- Storage crate now also exposes a minimal `ChainDb` coordination layer for best-known tip recovery, volatile-prefix promotion into immutable storage, and rollback-time snapshot truncation without moving sync policy into `node`.
 - Consensus hardening with `SecurityParam`, `ChainState` volatile chain tracker, rollback depth enforcement, and stability window detection.
 
 Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas. 640 workspace tests pass across all crates.
