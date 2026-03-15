@@ -22,8 +22,7 @@ use yggdrasil_node::{
     apply_nonce_evolution,
     apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
     evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
-    multi_era_block_to_chain_entry, promote_stable_blocks, promote_stable_blocks_chaindb,
-    recover_ledger_state_chaindb,
+    multi_era_block_to_chain_entry, promote_stable_blocks, recover_ledger_state_chaindb,
     run_verified_sync_service_chaindb, track_chain_state, track_chain_state_entries,
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
     shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
@@ -3149,7 +3148,7 @@ fn promote_stable_blocks_moves_to_immutable() {
 }
 
 #[test]
-fn promote_stable_blocks_chaindb_moves_to_immutable_and_prunes_volatile() {
+fn chaindb_promote_volatile_prefix_moves_to_immutable_and_prunes_volatile() {
     let blocks: Vec<_> = (1..=5)
         .map(|i| {
             let sb = make_shelley_block_with_number(i, i * 10);
@@ -3177,8 +3176,10 @@ fn promote_stable_blocks_chaindb_moves_to_immutable_and_prunes_volatile() {
         })
         .collect();
 
-    let promoted =
-        promote_stable_blocks_chaindb(&stable_entries, &mut chain_db).expect("promote via chaindb");
+    let point = Point::BlockPoint(stable_entries[1].slot, stable_entries[1].hash);
+    let promoted = chain_db
+        .promote_volatile_prefix(&point)
+        .expect("promote via chaindb");
     assert_eq!(promoted, 2);
     assert_eq!(chain_db.immutable().len(), 2);
     assert!(chain_db.immutable().get_block(&blocks[0].header.hash).is_some());

@@ -787,20 +787,74 @@ pub struct VerifiedSyncServiceOutcome {
     pub stable_block_count: usize,
 }
 
-
 #[derive(Clone, Debug)]
-struct SyncCheckpointTracking {
-    base_ledger_state: LedgerState,
-    ledger_state: LedgerState,
-    last_persisted_point: Point,
+pub(crate) struct LedgerCheckpointTracking {
+    pub(crate) base_ledger_state: LedgerState,
+    pub(crate) ledger_state: LedgerState,
+    pub(crate) last_persisted_point: Point,
 }
 
-fn persist_ledger_checkpoint_after_progress<I, V, L>(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LedgerCheckpointUpdateOutcome {
+    ClearedDisabled,
+    ClearedOrigin,
+    Persisted {
+        slot: SlotNo,
+        retained_snapshots: usize,
+        pruned_snapshots: usize,
+        rollback_count: usize,
+    },
+    Skipped {
+        slot: SlotNo,
+        rollback_count: usize,
+        since_last_slot_delta: u64,
+    },
+}
+
+pub(crate) fn for_each_roll_forward_block<E, F>(
+    progress: &MultiEraSyncProgress,
+    mut f: F,
+) -> Result<(), E>
+where
+    F: FnMut(&MultiEraBlock) -> Result<(), E>,
+{
+    for step in &progress.steps {
+        if let MultiEraSyncStep::RollForward { blocks, .. } = step {
+            for block in blocks {
+                f(block)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn advance_ledger_state_with_progress(
+    ledger_state: &mut LedgerState,
+    progress: &MultiEraSyncProgress,
+) -> Result<(), SyncError> {
+    for_each_roll_forward_block(progress, |block| {
+        ledger_state.apply_block(&multi_era_block_to_block(block))?;
+        Ok(())
+    })
+}
+
+pub(crate) fn apply_nonce_evolution_to_progress(
+    nonce_state: &mut NonceEvolutionState,
+    progress: &MultiEraSyncProgress,
+    nonce_cfg: &NonceEvolutionConfig,
+) {
+    let _ = for_each_roll_forward_block(progress, |block| {
+        apply_nonce_evolution(nonce_state, block, nonce_cfg);
+        Ok::<(), core::convert::Infallible>(())
+    });
+}
+
+pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
     chain_db: &mut ChainDb<I, V, L>,
-    tracking: &mut SyncCheckpointTracking,
+    tracking: &mut LedgerCheckpointTracking,
     progress: &MultiEraSyncProgress,
     policy: &LedgerCheckpointPolicy,
-) -> Result<(), SyncError>
+) -> Result<LedgerCheckpointUpdateOutcome, SyncError>
 where
     I: ImmutableStore,
     V: VolatileStore,
@@ -815,19 +869,13 @@ where
         )?
         .ledger_state;
     } else {
-        for step in &progress.steps {
-            if let MultiEraSyncStep::RollForward { blocks, .. } = step {
-                for block in blocks {
-                    tracking.ledger_state.apply_block(&multi_era_block_to_block(block))?;
-                }
-            }
-        }
+        advance_ledger_state_with_progress(&mut tracking.ledger_state, progress)?;
     }
 
     if policy.max_snapshots == 0 {
         chain_db.clear_ledger_checkpoints()?;
         tracking.last_persisted_point = Point::Origin;
-        return Ok(());
+        return Ok(LedgerCheckpointUpdateOutcome::ClearedDisabled);
     }
 
     let current_point = tracking.ledger_state.tip;
@@ -835,36 +883,53 @@ where
         Point::Origin => {
             chain_db.clear_ledger_checkpoints()?;
             tracking.last_persisted_point = Point::Origin;
+            Ok(LedgerCheckpointUpdateOutcome::ClearedOrigin)
         }
-        Point::BlockPoint(_, _) => {
+        Point::BlockPoint(slot, _) => {
             if policy.should_persist(
                 &tracking.last_persisted_point,
                 &current_point,
                 progress.rollback_count > 0,
             ) {
-                chain_db.persist_ledger_checkpoint(
+                let retention = chain_db.persist_ledger_checkpoint(
                     &current_point,
                     &tracking.ledger_state.checkpoint(),
                     policy.max_snapshots,
                 )?;
                 tracking.last_persisted_point = current_point;
+                Ok(LedgerCheckpointUpdateOutcome::Persisted {
+                    slot,
+                    retained_snapshots: retention.retained_snapshots,
+                    pruned_snapshots: retention.pruned_snapshots,
+                    rollback_count: progress.rollback_count,
+                })
+            } else {
+                let since_last_slot_delta = match tracking.last_persisted_point {
+                    Point::BlockPoint(previous_slot, _) => {
+                        slot.0.saturating_sub(previous_slot.0)
+                    }
+                    Point::Origin => slot.0,
+                };
+                Ok(LedgerCheckpointUpdateOutcome::Skipped {
+                    slot,
+                    rollback_count: progress.rollback_count,
+                    since_last_slot_delta,
+                })
             }
         }
     }
-
-    Ok(())
 }
 
-fn default_sync_checkpoint_tracking<I, V, L>(
+pub(crate) fn default_checkpoint_tracking<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
-) -> Result<SyncCheckpointTracking, SyncError>
+) -> Result<LedgerCheckpointTracking, SyncError>
 where
     I: ImmutableStore,
     V: VolatileStore,
     L: LedgerStore,
 {
     let recovery = recover_ledger_state_chaindb(chain_db, LedgerState::new(Era::Byron))?;
-    Ok(SyncCheckpointTracking {
+    Ok(LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state,
         last_persisted_point: recovery.point,
@@ -978,13 +1043,7 @@ where
                 if let Some((ref mut state, nonce_cfg)) =
                     nonce_state.as_mut().zip(config.nonce_config.as_ref())
                 {
-                    for step in &progress.steps {
-                        if let MultiEraSyncStep::RollForward { blocks, .. } = step {
-                            for block in blocks {
-                                apply_nonce_evolution(state, block, nonce_cfg);
-                            }
-                        }
-                    }
+                    apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                 }
             }
         }
@@ -1019,7 +1078,7 @@ where
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
-    let mut checkpoint_tracking = default_sync_checkpoint_tracking(chain_db)?;
+    let mut checkpoint_tracking = default_checkpoint_tracking(chain_db)?;
 
     loop {
         let batch_fut = sync_batch_apply_verified(
@@ -1057,8 +1116,9 @@ where
                     for step in &progress.steps {
                         let stable_entries = track_chain_state_entries(cs, step)?;
                         total_stable += stable_entries.len();
-                        if !stable_entries.is_empty() {
-                            promote_stable_blocks_chaindb(&stable_entries, chain_db)?;
+                        if let Some(last_stable) = stable_entries.last() {
+                            let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
+                            chain_db.promote_volatile_prefix(&point)?;
                         }
                     }
                 }
@@ -1066,16 +1126,10 @@ where
                 if let Some((ref mut state, nonce_cfg)) =
                     nonce_state.as_mut().zip(config.nonce_config.as_ref())
                 {
-                    for step in &progress.steps {
-                        if let MultiEraSyncStep::RollForward { blocks, .. } = step {
-                            for block in blocks {
-                                apply_nonce_evolution(state, block, nonce_cfg);
-                            }
-                        }
-                    }
+                    apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                 }
 
-                persist_ledger_checkpoint_after_progress(
+                let _ = update_ledger_checkpoint_after_progress(
                     chain_db,
                     &mut checkpoint_tracking,
                     &progress,
@@ -1899,29 +1953,6 @@ pub fn promote_stable_blocks<V: VolatileStore, I: ImmutableStore>(
         }
     }
     Ok(promoted)
-}
-
-/// Promote stable blocks through the coordinated storage boundary.
-///
-/// This uses [`ChainDb`] to append the stable volatile prefix into immutable
-/// storage and prune the promoted prefix from volatile storage in one crate-
-/// owned operation. The stable entries are expected to be the ordered prefix
-/// returned by [`track_chain_state`].
-pub fn promote_stable_blocks_chaindb<I, V, L>(
-    stable_entries: &[ChainEntry],
-    chain_db: &mut ChainDb<I, V, L>,
-) -> Result<usize, SyncError>
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    let Some(last_stable) = stable_entries.last() else {
-        return Ok(0);
-    };
-
-    let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
-    chain_db.promote_volatile_prefix(&point).map_err(SyncError::Storage)
 }
 
 /// Apply one multi-era sync step into a volatile store.

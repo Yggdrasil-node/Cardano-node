@@ -33,7 +33,6 @@ pub use sync::{
 	decode_multi_era_blocks, decode_point, decode_shelley_blocks, decode_shelley_header,
 	evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat,
 	multi_era_block_to_block, multi_era_block_to_chain_entry, promote_stable_blocks,
-	promote_stable_blocks_chaindb,
 	recover_ledger_state_chaindb,
 	run_verified_sync_service_chaindb, track_chain_state, track_chain_state_entries,
 	praos_header_body_to_consensus, praos_header_to_consensus, run_sync_service,

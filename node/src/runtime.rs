@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
-    LedgerCheckpointPolicy, LedgerRecoveryOutcome, SyncError, VerifiedSyncServiceConfig,
-    apply_nonce_evolution, MultiEraSyncProgress, MultiEraSyncStep, multi_era_block_to_block,
-    promote_stable_blocks_chaindb, recover_ledger_state_chaindb, sync_batch_apply_verified,
-    track_chain_state, track_chain_state_entries,
+    LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome, SyncError,
+    VerifiedSyncServiceConfig, apply_nonce_evolution_to_progress,
+    recover_ledger_state_chaindb, sync_batch_apply_verified, track_chain_state,
+    track_chain_state_entries, update_ledger_checkpoint_after_progress,
 };
 use crate::tracer::{NodeTracer, trace_fields};
 use serde_json::json;
@@ -27,7 +27,7 @@ use yggdrasil_network::{
     TxSubmissionClient, TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
     peer_attempt_state, resolve_peer_access_points,
 };
-use yggdrasil_ledger::{Era, LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
+use yggdrasil_ledger::{LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
 use yggdrasil_mempool::{
     Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
     SharedMempool, MEMPOOL_ZERO_IDX, SharedTxSubmissionMempoolReader,
@@ -502,12 +502,7 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     pub peer_snapshot_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug)]
-struct CheckpointTracking {
-    base_ledger_state: LedgerState,
-    ledger_state: LedgerState,
-    last_persisted_point: Point,
-}
+type CheckpointTracking = LedgerCheckpointTracking;
 
 struct ReconnectingVerifiedSyncContext<'a> {
     node_config: &'a NodeConfig,
@@ -650,22 +645,7 @@ fn refresh_chain_db_reconnect_fallback_peers(
     refreshed
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum CheckpointPersistenceOutcome {
-    ClearedDisabled,
-    ClearedOrigin,
-    Persisted {
-        slot: SlotNo,
-        retained_snapshots: usize,
-        pruned_snapshots: usize,
-        rollback_count: usize,
-    },
-    Skipped {
-        slot: SlotNo,
-        rollback_count: usize,
-        since_last_slot_delta: u64,
-    },
-}
+type CheckpointPersistenceOutcome = LedgerCheckpointUpdateOutcome;
 
 fn checkpoint_trace_fields(
     outcome: &CheckpointPersistenceOutcome,
@@ -733,99 +713,6 @@ fn trace_checkpoint_outcome(
         message,
         checkpoint_trace_fields(outcome, policy),
     );
-}
-
-fn persist_ledger_checkpoint_after_progress<I, V, L>(
-    chain_db: &mut ChainDb<I, V, L>,
-    tracking: &mut CheckpointTracking,
-    progress: &MultiEraSyncProgress,
-    policy: &LedgerCheckpointPolicy,
-) -> Result<CheckpointPersistenceOutcome, SyncError>
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    if progress.rollback_count > 0 {
-        chain_db.truncate_ledger_checkpoints_after_point(&progress.current_point)?;
-
-        tracking.ledger_state = recover_ledger_state_chaindb(
-            chain_db,
-            tracking.base_ledger_state.clone(),
-        )?
-        .ledger_state;
-    } else {
-        for step in &progress.steps {
-            if let MultiEraSyncStep::RollForward { blocks, .. } = step {
-                for block in blocks {
-                    tracking
-                        .ledger_state
-                        .apply_block(&multi_era_block_to_block(block))?;
-                }
-            }
-        }
-    }
-
-    if policy.max_snapshots == 0 {
-        chain_db.clear_ledger_checkpoints()?;
-        tracking.last_persisted_point = Point::Origin;
-        return Ok(CheckpointPersistenceOutcome::ClearedDisabled);
-    }
-
-    let current_point = tracking.ledger_state.tip;
-    match current_point {
-        Point::Origin => {
-            chain_db.clear_ledger_checkpoints()?;
-            tracking.last_persisted_point = Point::Origin;
-            Ok(CheckpointPersistenceOutcome::ClearedOrigin)
-        }
-        Point::BlockPoint(slot, _) => {
-            if policy.should_persist(
-                &tracking.last_persisted_point,
-                &current_point,
-                progress.rollback_count > 0,
-            ) {
-                let retention = chain_db.persist_ledger_checkpoint(
-                    &current_point,
-                    &tracking.ledger_state.checkpoint(),
-                    policy.max_snapshots,
-                )?;
-                tracking.last_persisted_point = current_point;
-                Ok(CheckpointPersistenceOutcome::Persisted {
-                    slot,
-                    retained_snapshots: retention.retained_snapshots,
-                    pruned_snapshots: retention.pruned_snapshots,
-                    rollback_count: progress.rollback_count,
-                })
-            } else {
-                let since_last_slot_delta = match tracking.last_persisted_point {
-                    Point::BlockPoint(previous_slot, _) => slot.0.saturating_sub(previous_slot.0),
-                    Point::Origin => slot.0,
-                };
-                Ok(CheckpointPersistenceOutcome::Skipped {
-                    slot,
-                    rollback_count: progress.rollback_count,
-                    since_last_slot_delta,
-                })
-            }
-        }
-    }
-}
-
-fn default_checkpoint_tracking<I, V, L>(
-    chain_db: &ChainDb<I, V, L>,
-) -> Result<CheckpointTracking, SyncError>
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    let recovery = recover_ledger_state_chaindb(chain_db, LedgerState::new(Era::Byron))?;
-    Ok(CheckpointTracking {
-        base_ledger_state: recovery.ledger_state.clone(),
-        ledger_state: recovery.ledger_state,
-        last_persisted_point: recovery.point,
-    })
 }
 
 async fn run_reconnecting_verified_sync_service_chaindb_inner<I, V, L, F>(
@@ -994,8 +881,9 @@ where
                                 for step in &progress.steps {
                                     let stable_entries = track_chain_state_entries(cs, step)?;
                                     total_stable += stable_entries.len();
-                                    if !stable_entries.is_empty() {
-                                        promote_stable_blocks_chaindb(&stable_entries, chain_db)?;
+                                    if let Some(last_stable) = stable_entries.last() {
+                                        let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
+                                        chain_db.promote_volatile_prefix(&point)?;
                                     }
                                 }
                             }
@@ -1003,17 +891,11 @@ where
                             if let Some((ref mut state, nonce_cfg)) =
                                 nonce_state.as_mut().zip(config.nonce_config.as_ref())
                             {
-                                for step in &progress.steps {
-                                    if let crate::sync::MultiEraSyncStep::RollForward { blocks, .. } = step {
-                                        for block in blocks {
-                                            apply_nonce_evolution(state, block, nonce_cfg);
-                                        }
-                                    }
-                                }
+                                apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                             }
 
                             if let Some(ref mut tracking) = checkpoint_tracking {
-                                let checkpoint_outcome = persist_ledger_checkpoint_after_progress(
+                                let checkpoint_outcome = update_ledger_checkpoint_after_progress(
                                     chain_db,
                                     tracking,
                                     &progress,
@@ -1430,13 +1312,7 @@ where
                             if let Some((ref mut state, nonce_cfg)) =
                                 nonce_state.as_mut().zip(config.nonce_config.as_ref())
                             {
-                                for step in &progress.steps {
-                                    if let crate::sync::MultiEraSyncStep::RollForward { blocks, .. } = step {
-                                        for block in blocks {
-                                            apply_nonce_evolution(state, block, nonce_cfg);
-                                        }
-                                    }
-                                }
+                                apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                             }
 
                             tracer.trace_runtime(
@@ -1538,7 +1414,7 @@ where
         ]),
     );
 
-    let checkpoint_tracking = CheckpointTracking {
+    let checkpoint_tracking = LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
@@ -1589,7 +1465,7 @@ where
         use_ledger_peers,
         peer_snapshot_path,
     } = request;
-    let checkpoint_tracking = Some(default_checkpoint_tracking(chain_db)?);
+    let checkpoint_tracking = Some(crate::sync::default_checkpoint_tracking(chain_db)?);
 
     run_reconnecting_verified_sync_service_chaindb_inner(
         chain_db,
