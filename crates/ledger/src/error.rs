@@ -105,4 +105,81 @@ pub enum LedgerError {
         expected: u64,
         produced: u64,
     },
+
+    // -- Fee validation errors ----------------------------------------------
+
+    #[error("fee too small: minimum {minimum} lovelace, declared {declared}")]
+    FeeTooSmall { minimum: u64, declared: u64 },
+
+    #[error(
+        "execution units exceed per-tx limit: mem {tx_mem}/{max_mem}, steps {tx_steps}/{max_steps}"
+    )]
+    ExUnitsExceedTxLimit {
+        tx_mem: u64,
+        tx_steps: u64,
+        max_mem: u64,
+        max_steps: u64,
+    },
+
+    #[error("transaction too large: {actual} bytes exceeds max {max}")]
+    TxTooLarge { actual: usize, max: usize },
+
+    // -- Output validation errors -------------------------------------------
+
+    #[error("output too small: minimum {minimum} lovelace, actual {actual}")]
+    OutputTooSmall { minimum: u64, actual: u64 },
+
+    // -- Script validation errors -------------------------------------------
+
+    #[error("native script not satisfied: script hash {hash:02x?}")]
+    NativeScriptFailed { hash: [u8; 28] },
+
+    // -- Collateral validation errors ---------------------------------------
+
+    #[error("no collateral inputs in script transaction")]
+    NoCollateralInputs,
+
+    #[error("too many collateral inputs: {count} exceeds max {max}")]
+    TooManyCollateralInputs { count: usize, max: u32 },
+
+    #[error("collateral input not found in UTxO set")]
+    CollateralInputNotInUtxo,
+
+    #[error(
+        "insufficient collateral: required {required} lovelace (fee {fee} × {percentage}%), \
+         provided {provided}"
+    )]
+    InsufficientCollateral {
+        fee: u64,
+        percentage: u64,
+        required: u64,
+        provided: u64,
+    },
+
+    #[error("collateral output contains non-ADA assets")]
+    CollateralContainsNonAda,
+
+    // -- Block validation errors --------------------------------------------
+
+    #[error("block body too large: {actual} bytes exceeds max {max}")]
+    BlockTooLarge { actual: usize, max: usize },
+
+    #[error(
+        "block execution units exceed limit: mem {block_mem}/{max_mem}, \
+         steps {block_steps}/{max_steps}"
+    )]
+    BlockExUnitsExceeded {
+        block_mem: u64,
+        block_steps: u64,
+        max_mem: u64,
+        max_steps: u64,
+    },
+
+    // -- Witness validation errors ------------------------------------------
+
+    #[error("missing required VKey witness for hash {hash:02x?}")]
+    MissingVKeyWitness { hash: [u8; 28] },
+
+    #[error("VKey witness signature verification failed for hash {hash:02x?}")]
+    InvalidVKeyWitnessSignature { hash: [u8; 28] },
 }

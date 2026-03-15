@@ -16,6 +16,8 @@ pub mod handshake;
 pub mod keepalive_client;
 /// Refresh-oriented provider interfaces for time-varying ledger peers.
 pub mod ledger_peers_provider;
+/// TCP listener for inbound peer connections.
+pub mod listener;
 /// Multiplexer / demultiplexer — SDU routing between bearer and protocol channels.
 pub mod mux;
 /// Multiplexer framing, SDU header, and protocol numbering.
@@ -34,6 +36,17 @@ pub mod peer_selection;
 pub mod protocols;
 /// TxSubmission2 client driver — typed, state-machine-correct protocol loop.
 pub mod txsubmission_client;
+
+// -- Server-side protocol drivers ---------------------------------------------
+
+/// BlockFetch server driver — typed, state-machine-correct responder loop.
+pub mod blockfetch_server;
+/// ChainSync server driver — typed, state-machine-correct responder loop.
+pub mod chainsync_server;
+/// KeepAlive server driver — typed, state-machine-correct responder loop.
+pub mod keepalive_server;
+/// TxSubmission2 server driver — typed, state-machine-correct responder loop.
+pub mod txsubmission_server;
 
 // -- Bearer re-exports --------------------------------------------------------
 pub use bearer::{Bearer, BearerError, Sdu, TcpBearer, MAX_SDU_PAYLOAD};
@@ -54,6 +67,7 @@ pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as star
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
+pub use listener::{PeerListener, PeerListenerError};
 pub use peer_registry::{
     PeerRegistry, PeerRegistryEntry, PeerRegistryStatusCounts, PeerSource,
     PeerStatus,
@@ -112,4 +126,24 @@ pub use keepalive_client::{
 // -- TxSubmission client re-exports -------------------------------------------
 pub use txsubmission_client::{
     TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
+};
+
+// -- BlockFetch server re-exports ---------------------------------------------
+pub use blockfetch_server::{
+    BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
+};
+
+// -- ChainSync server re-exports ----------------------------------------------
+pub use chainsync_server::{
+    ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest,
+};
+
+// -- KeepAlive server re-exports ----------------------------------------------
+pub use keepalive_server::{
+    KeepAliveServer, KeepAliveServerError,
+};
+
+// -- TxSubmission server re-exports -------------------------------------------
+pub use txsubmission_server::{
+    TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
 };

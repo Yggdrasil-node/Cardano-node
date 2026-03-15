@@ -32,3 +32,10 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 - `utxo.rs` module landed: `MultiEraTxOut` enum (Shelley/Mary/Alonzo/Babbage), `MultiEraUtxo` with per-era apply methods including TTL, validity interval start, coin preservation, and multi-asset preservation checks.
 - Era-specific structures live under `eras/`; all eras Shelley through Conway are implemented. Shared layer should stay lightweight and stable.
 - `PlutusData` is integrated into: `Redeemer.data` (typed payload), `DatumOption::Inline` (typed inline datum with tag-24 double encoding), `ShelleyWitnessSet.plutus_data` (typed `Vec<PlutusData>`).
+- `protocol_params.rs`: `ProtocolParameters` struct with all Shelley-through-Conway parameter fields, `Default` (Shelley mainnet), `alonzo_defaults()`, `min_lovelace_for_utxo()`, full CBOR map-based round-trip codec. Wired into `LedgerState` as `Option<ProtocolParameters>` (array element 10, backward-compatible with 9-element legacy).
+- `fees.rs`: Fee calculation and validation — `min_fee_linear()`, `script_fee()`, `total_min_fee()`, `validate_fee()`, `validate_tx_ex_units()`, `validate_tx_size()`.
+- `native_script.rs`: Native (timelock) script evaluator — `evaluate_native_script()`, `native_script_hash()` (Blake2b-224 with language tag prefix), `NativeScriptContext`.
+- `collateral.rs`: Alonzo+ collateral validation — `validate_collateral()` checks count limit, UTxO lookup, non-ADA rejection, and percentage-of-fee sufficiency.
+- `min_utxo.rs`: Minimum UTxO output validation — `validate_min_utxo()`, `validate_all_outputs_min_utxo()` using protocol params.
+- `witnesses.rs`: VKey witness sufficiency — `validate_vkey_witnesses()`, `vkey_hash()` (Blake2b-224), `witness_vkey_hash_set()`.
+- CBOR `Decoder::peek_is_null()` added for nullable field support.

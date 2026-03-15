@@ -22,3 +22,4 @@ This directory is for pure Rust cryptographic implementation code and protocol-f
 
 ## Current Phase
 - Preserve upstream-compatible VRF and KES behavior while avoiding any hidden FFI dependency.
+- `blake2b.rs`: `hash_bytes` (512-bit), `hash_bytes_256` (256-bit), `hash_bytes_224` (224-bit, used for credential/script hashes).

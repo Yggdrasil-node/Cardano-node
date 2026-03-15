@@ -15,7 +15,7 @@ pub mod test_vectors;
 pub mod vrf;
 
 /// Blake2b hash output and hashing entry point.
-pub use blake2b::{Blake2b256Hash, Blake2bHash, hash_bytes, hash_bytes_256};
+pub use blake2b::{Blake2b224Hash, Blake2b256Hash, Blake2bHash, hash_bytes, hash_bytes_224, hash_bytes_256};
 /// Ed25519 byte-backed key and signature types.
 pub use ed25519::{Signature, SigningKey, VerificationKey};
 /// Errors surfaced by the crypto crate.

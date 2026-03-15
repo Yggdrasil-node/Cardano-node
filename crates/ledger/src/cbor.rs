@@ -326,6 +326,12 @@ impl<'a> Decoder<'a> {
         Ok(self.peek_byte()? >> 5)
     }
 
+    /// Returns `true` when the next byte is CBOR `null` (0xf6),
+    /// without consuming it.
+    pub fn peek_is_null(&self) -> bool {
+        self.peek_byte().ok() == Some((MAJOR_SIMPLE << 5) | 22)
+    }
+
     /// Decodes a negative integer (CBOR major type 1).
     ///
     /// Returns the raw argument `n`; the represented value is `-(1 + n)`.
