@@ -5,16 +5,23 @@ use clap::{Parser, Subcommand};
 use eyre::Result;
 use serde_json::json;
 
-use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, TraceNamespaceConfig, default_config};
+use yggdrasil_node::config::{
+    NetworkPreset, NodeConfigFile, TraceNamespaceConfig, default_config,
+    load_peer_snapshot_file,
+};
 use yggdrasil_node::tracer::{NodeTracer, trace_fields};
 use yggdrasil_node::{
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
+    recover_ledger_state_chaindb,
     resume_reconnecting_verified_sync_service_chaindb,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
-use yggdrasil_ledger::{Era, LedgerState, Nonce};
-use yggdrasil_network::HandshakeVersion;
+use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint};
+use yggdrasil_network::{
+    HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
+    resolve_peer_access_points,
+};
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
 
 const CHECKPOINT_TRACE_NAMESPACE: &str = "Node.Recovery.Checkpoint";
@@ -119,24 +126,12 @@ fn main() -> Result<()> {
                 checkpoint_trace_config_mut(&mut file_cfg).backends = checkpoint_trace_backend;
             }
 
-            let peer_addr = peer.unwrap_or(file_cfg.peer_addr);
-            let bootstrap_peers = if peer.is_some() {
-                Vec::new()
-            } else {
-                file_cfg.ordered_fallback_peers()
-            };
             let magic = network_magic.unwrap_or(file_cfg.network_magic);
             let protocol_versions: Vec<HandshakeVersion> = file_cfg
                 .protocol_versions
                 .iter()
                 .map(|v| HandshakeVersion(*v as u16))
                 .collect();
-
-            let node_config = NodeConfig {
-                peer_addr,
-                network_magic: magic,
-                protocol_versions,
-            };
 
             let verification = if no_verify {
                 None
@@ -190,10 +185,77 @@ fn main() -> Result<()> {
                 }
             };
 
-            let rt = tokio::runtime::Runtime::new()?;
             let tracer = NodeTracer::from_config(&file_cfg);
             let storage_dir = resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
-            rt.block_on(run_node(node_config, bootstrap_peers, sync_config, tracer, storage_dir))
+            let chain_db = ChainDb::new(
+                FileImmutable::open(storage_dir.join("immutable"))?,
+                FileVolatile::open(storage_dir.join("volatile"))?,
+                FileLedgerStore::open(storage_dir.join("ledger"))?,
+            );
+
+            let peer_addr = peer.unwrap_or(file_cfg.peer_addr);
+            let recovery = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron));
+            let latest_slot = recovery
+                .as_ref()
+                .ok()
+                .and_then(|recovery| point_slot(&recovery.point))
+                .or_else(|| point_slot(&chain_db.recovery().tip));
+            let ledger_state_judgement = if recovery.is_ok() {
+                LedgerStateJudgement::YoungEnough
+            } else {
+                LedgerStateJudgement::Unavailable
+            };
+            let ledger_snapshot = recovery
+                .as_ref()
+                .map(|recovery| ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state))
+                .unwrap_or_default();
+            let peer_snapshot_path = file_cfg
+                .peer_snapshot_file
+                .as_deref()
+                .map(|path| resolve_config_path(std::path::Path::new(path), config_base_dir.as_deref()));
+
+            if let Err(err) = &recovery {
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "failed to recover ledger state for startup ledger peers",
+                    trace_fields([
+                        ("latestSlot", json!(latest_slot)),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+            }
+
+            let bootstrap_peers = if peer.is_some() {
+                Vec::new()
+            } else {
+                configured_fallback_peers(
+                    &file_cfg,
+                    config_base_dir.as_deref(),
+                    &ledger_snapshot,
+                    latest_slot,
+                    ledger_state_judgement,
+                    &tracer,
+                )
+            };
+
+            let node_config = NodeConfig {
+                peer_addr,
+                network_magic: magic,
+                protocol_versions,
+            };
+
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_node(RunNodeRequest {
+                node_config,
+                bootstrap_peers,
+                sync_config,
+                tracer,
+                storage_dir,
+                chain_db,
+                use_ledger_peers: Some(file_cfg.use_ledger_peers_policy()),
+                peer_snapshot_path,
+            }))
         }
     }
 }
@@ -208,6 +270,149 @@ fn resolve_storage_dir(storage_dir: &std::path::Path, config_base_dir: Option<&s
     }
 }
 
+fn resolve_config_path(path: &std::path::Path, config_base_dir: Option<&std::path::Path>) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(base_dir) = config_base_dir {
+        base_dir.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn point_slot(point: &Point) -> Option<u64> {
+    match point {
+        Point::Origin => None,
+        Point::BlockPoint(slot, _) => Some(slot.0),
+    }
+}
+
+fn extend_unique_peers(target: &mut Vec<SocketAddr>, peers: impl IntoIterator<Item = SocketAddr>) {
+    for peer in peers {
+        if !target.contains(&peer) {
+            target.push(peer);
+        }
+    }
+}
+
+fn extend_unique_ledger_peers(
+    target: &mut Vec<SocketAddr>,
+    access_points: impl IntoIterator<Item = PoolRelayAccessPoint>,
+) {
+    for access_point in access_points {
+        let peer_access_point = PeerAccessPoint {
+            address: access_point.address,
+            port: access_point.port,
+        };
+        extend_unique_peers(target, resolve_peer_access_points(&peer_access_point));
+    }
+}
+
+fn merge_ledger_peer_snapshots(
+    ledger_snapshot: &LedgerPeerSnapshot,
+    snapshot_file: Option<LedgerPeerSnapshot>,
+) -> LedgerPeerSnapshot {
+    let mut merged_ledger_peers = ledger_snapshot.ledger_peers.clone();
+    let mut merged_big_ledger_peers = ledger_snapshot.big_ledger_peers.clone();
+
+    if let Some(snapshot_file) = snapshot_file {
+        extend_unique_peers(&mut merged_ledger_peers, snapshot_file.ledger_peers);
+        extend_unique_peers(
+            &mut merged_big_ledger_peers,
+            snapshot_file.big_ledger_peers,
+        );
+    }
+
+    LedgerPeerSnapshot::new(merged_ledger_peers, merged_big_ledger_peers)
+}
+
+fn ledger_peer_snapshot_from_ledger_state(ledger_state: &LedgerState) -> LedgerPeerSnapshot {
+    let mut ledger_peers = Vec::new();
+    extend_unique_ledger_peers(&mut ledger_peers, ledger_state.pool_state().relay_access_points());
+    LedgerPeerSnapshot::new(ledger_peers, Vec::new())
+}
+
+fn configured_fallback_peers(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&std::path::Path>,
+    ledger_snapshot: &LedgerPeerSnapshot,
+    latest_slot: Option<u64>,
+    ledger_state_judgement: LedgerStateJudgement,
+    tracer: &NodeTracer,
+) -> Vec<SocketAddr> {
+    let mut fallback_peers = file_cfg.ordered_fallback_peers();
+
+    let mut snapshot_slot = None;
+    let mut snapshot_available = file_cfg.peer_snapshot_file.is_none();
+    let mut snapshot_path = None;
+    let mut snapshot_file = None;
+
+    if let Some(peer_snapshot_file) = file_cfg.peer_snapshot_file.as_deref() {
+        let peer_snapshot_path = resolve_config_path(std::path::Path::new(peer_snapshot_file), config_base_dir);
+        snapshot_path = Some(peer_snapshot_path.clone());
+
+        match load_peer_snapshot_file(&peer_snapshot_path) {
+            Ok(loaded_snapshot) => {
+                snapshot_slot = loaded_snapshot.slot;
+                snapshot_available = true;
+                snapshot_file = Some(loaded_snapshot.snapshot);
+            }
+            Err(err) => {
+                let freshness = file_cfg.peer_snapshot_freshness(None, latest_slot, false);
+                let (decision, _) = file_cfg.eligible_ledger_fallback_peers(
+                    ledger_snapshot,
+                    latest_slot,
+                    ledger_state_judgement,
+                    freshness,
+                );
+
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "failed to load peer snapshot fallbacks",
+                    trace_fields([
+                        ("decision", json!(format!("{decision:?}"))),
+                        ("latestSlot", json!(latest_slot)),
+                        ("snapshotPath", json!(peer_snapshot_path.display().to_string())),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+            }
+        }
+    }
+
+    let combined_snapshot = merge_ledger_peer_snapshots(ledger_snapshot, snapshot_file);
+    let freshness = file_cfg.peer_snapshot_freshness(snapshot_slot, latest_slot, snapshot_available);
+    let (decision, eligible_peers) = file_cfg.eligible_ledger_fallback_peers(
+        &combined_snapshot,
+        latest_slot,
+        ledger_state_judgement,
+        freshness,
+    );
+    let snapshot_peer_count = eligible_peers.len();
+    extend_unique_peers(&mut fallback_peers, eligible_peers);
+
+    tracer.trace_runtime(
+        "Net.PeerSelection",
+        "Info",
+        "evaluated ledger-derived startup fallbacks",
+        trace_fields([
+            ("decision", json!(format!("{decision:?}"))),
+            ("latestSlot", json!(latest_slot)),
+            ("snapshotSlot", json!(snapshot_slot)),
+            (
+                "snapshotPath",
+                json!(snapshot_path.map(|path| path.display().to_string())),
+            ),
+            ("ledgerPeerCount", json!(combined_snapshot.ledger_peers.len())),
+            ("bigLedgerPeerCount", json!(combined_snapshot.big_ledger_peers.len())),
+            ("eligiblePeerCount", json!(snapshot_peer_count)),
+        ]),
+    );
+
+    fallback_peers
+}
+
 fn checkpoint_trace_config_mut(file_cfg: &mut NodeConfigFile) -> &mut TraceNamespaceConfig {
     file_cfg
         .trace_options
@@ -216,12 +421,19 @@ fn checkpoint_trace_config_mut(file_cfg: &mut NodeConfigFile) -> &mut TraceNames
 }
 
 async fn run_node(
-    node_config: NodeConfig,
-    bootstrap_peers: Vec<SocketAddr>,
-    sync_config: VerifiedSyncServiceConfig,
-    tracer: NodeTracer,
-    storage_dir: PathBuf,
+    request: RunNodeRequest,
 ) -> Result<()> {
+    let RunNodeRequest {
+        node_config,
+        bootstrap_peers,
+        sync_config,
+        tracer,
+        storage_dir,
+        mut chain_db,
+        use_ledger_peers,
+        peer_snapshot_path,
+    } = request;
+
     tracer.trace_runtime(
         "Startup.DiffusionInit",
         "Notice",
@@ -233,12 +445,6 @@ async fn run_node(
             ("storageDir", json!(storage_dir.display().to_string())),
             ("protocolVersions", json!(node_config.protocol_versions.iter().map(|v| v.0).collect::<Vec<_>>())),
         ]),
-    );
-
-    let mut chain_db = ChainDb::new(
-        FileImmutable::open(storage_dir.join("immutable"))?,
-        FileVolatile::open(storage_dir.join("volatile"))?,
-        FileLedgerStore::open(storage_dir.join("ledger"))?,
     );
 
     let nonce_state = sync_config
@@ -269,6 +475,8 @@ async fn run_node(
             base_ledger_state: LedgerState::new(Era::Byron),
             config: &sync_config,
             nonce_state,
+            use_ledger_peers,
+            peer_snapshot_path,
         },
         async { let _ = shutdown_rx.await; },
     )
@@ -333,12 +541,28 @@ async fn run_node(
     Ok(())
 }
 
+struct RunNodeRequest {
+    node_config: NodeConfig,
+    bootstrap_peers: Vec<SocketAddr>,
+    sync_config: VerifiedSyncServiceConfig,
+    tracer: NodeTracer,
+    storage_dir: PathBuf,
+    chain_db: ChainDb<FileImmutable, FileVolatile, FileLedgerStore>,
+    use_ledger_peers: Option<yggdrasil_network::UseLedgerPeers>,
+    peer_snapshot_path: Option<PathBuf>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         CHECKPOINT_TRACE_NAMESPACE, checkpoint_trace_config_mut,
+        configured_fallback_peers, ledger_peer_snapshot_from_ledger_state,
     };
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use yggdrasil_ledger::{PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval};
+    use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
     use yggdrasil_node::config::default_config;
+    use yggdrasil_node::tracer::NodeTracer;
 
     #[test]
     fn checkpoint_trace_override_creates_namespace_when_missing() {
@@ -394,5 +618,111 @@ mod tests {
                 "Forwarder".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn ledger_peer_snapshot_from_ledger_state_uses_registered_pool_relays() {
+        let mut ledger_state = yggdrasil_ledger::LedgerState::new(yggdrasil_ledger::Era::Shelley);
+        ledger_state.pool_state_mut().register(PoolParams {
+            operator: [1; 28],
+            vrf_keyhash: [2; 32],
+            pledge: 1,
+            cost: 1,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([3; 28]),
+            },
+            pool_owners: vec![[4; 28]],
+            relays: vec![Relay::SingleHostAddr(Some(3001), Some([127, 0, 0, 9]), None)],
+            pool_metadata: None,
+        });
+
+        let snapshot = ledger_peer_snapshot_from_ledger_state(&ledger_state);
+        assert_eq!(
+            snapshot,
+            LedgerPeerSnapshot::new(
+                ["127.0.0.9:3001".parse().expect("peer")],
+                Vec::new(),
+            )
+        );
+    }
+
+    #[test]
+    fn configured_fallback_peers_appends_eligible_ledger_state_peers() {
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = Some(0);
+        cfg.peer_snapshot_file = None;
+        let tracer = NodeTracer::from_config(&cfg);
+        let ledger_snapshot = LedgerPeerSnapshot::new(
+            ["127.0.0.9:3001".parse().expect("peer")],
+            Vec::new(),
+        );
+
+        let fallback_peers = configured_fallback_peers(
+            &cfg,
+            None,
+            &ledger_snapshot,
+            Some(1),
+            LedgerStateJudgement::YoungEnough,
+            &tracer,
+        );
+
+        assert!(fallback_peers.contains(&"127.0.0.9:3001".parse().expect("peer")));
+    }
+
+    #[test]
+    fn configured_fallback_peers_merges_snapshot_big_ledger_peers() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-peer-snapshot-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let snapshot_path = dir.join("peer-snapshot.json");
+        std::fs::write(
+            &snapshot_path,
+            r#"{
+                "version": 2,
+                "slotNo": 10,
+                "bigLedgerPools": [
+                    {
+                        "accumulatedStake": 0.75,
+                        "relativeStake": 0.50,
+                        "relays": [
+                            { "address": "127.0.0.10", "port": 3001 }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .expect("write snapshot");
+
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = Some(0);
+        cfg.peer_snapshot_file = Some("peer-snapshot.json".to_owned());
+        let tracer = NodeTracer::from_config(&cfg);
+        let ledger_snapshot = LedgerPeerSnapshot::new(
+            ["127.0.0.9:3001".parse().expect("peer")],
+            Vec::new(),
+        );
+
+        let fallback_peers = configured_fallback_peers(
+            &cfg,
+            Some(&dir),
+            &ledger_snapshot,
+            Some(10),
+            LedgerStateJudgement::YoungEnough,
+            &tracer,
+        );
+
+        assert!(fallback_peers.contains(&"127.0.0.9:3001".parse().expect("ledger")));
+        assert!(fallback_peers.contains(&"127.0.0.10:3001".parse().expect("big ledger")));
+
+        std::fs::remove_file(snapshot_path).ok();
+        std::fs::remove_dir_all(dir).ok();
     }
 }

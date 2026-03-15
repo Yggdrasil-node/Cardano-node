@@ -6,7 +6,9 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
+use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
     LedgerCheckpointPolicy, LedgerRecoveryOutcome, SyncError, VerifiedSyncServiceConfig,
     apply_nonce_evolution, MultiEraSyncProgress, MultiEraSyncStep, multi_era_block_to_block,
@@ -18,10 +20,12 @@ use serde_json::json;
 use serde_json::Value;
 use yggdrasil_consensus::{ChainState, NonceEvolutionState};
 use yggdrasil_network::{
-    BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
-    MiniProtocolNum, NodeToNodeVersionData, PeerConnection, PeerError, TxIdAndSize,
-    TxServerRequest, TxSubmissionClient, TxSubmissionClientError,
-    PeerAttemptState, peer_attempt_state,
+    AfterSlot, BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
+    LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement, MiniProtocolNum,
+    NodeToNodeVersionData, PeerAccessPoint, PeerConnection, PeerError,
+    PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
+    TxSubmissionClient, TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
+    peer_attempt_state, resolve_peer_access_points,
 };
 use yggdrasil_ledger::{Era, LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
 use yggdrasil_mempool::{
@@ -474,6 +478,10 @@ pub struct ReconnectingVerifiedSyncRequest<'a> {
     pub config: &'a VerifiedSyncServiceConfig,
     /// Optional nonce-evolution state to carry through the run.
     pub nonce_state: Option<NonceEvolutionState>,
+    /// Optional ledger-peer policy for refreshing ChainDb reconnect targets.
+    pub use_ledger_peers: Option<UseLedgerPeers>,
+    /// Optional resolved peer snapshot file path for reconnect-time refresh.
+    pub peer_snapshot_path: Option<PathBuf>,
 }
 
 /// Request parameters for coordinated-storage reconnecting sync resumption.
@@ -488,6 +496,10 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     pub config: &'a VerifiedSyncServiceConfig,
     /// Optional nonce-evolution state to carry through the resumed run.
     pub nonce_state: Option<NonceEvolutionState>,
+    /// Optional ledger-peer policy for refreshing ChainDb reconnect targets.
+    pub use_ledger_peers: Option<UseLedgerPeers>,
+    /// Optional resolved peer snapshot file path for reconnect-time refresh.
+    pub peer_snapshot_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -500,6 +512,8 @@ struct CheckpointTracking {
 struct ReconnectingVerifiedSyncContext<'a> {
     node_config: &'a NodeConfig,
     fallback_peer_addrs: &'a [SocketAddr],
+    use_ledger_peers: Option<UseLedgerPeers>,
+    peer_snapshot_path: Option<&'a Path>,
     config: &'a VerifiedSyncServiceConfig,
     tracer: &'a NodeTracer,
 }
@@ -508,6 +522,132 @@ struct ReconnectingVerifiedSyncState {
     from_point: Point,
     nonce_state: Option<NonceEvolutionState>,
     checkpoint_tracking: Option<CheckpointTracking>,
+}
+
+fn extend_unique_socket_addrs(
+    target: &mut Vec<SocketAddr>,
+    peers: impl IntoIterator<Item = SocketAddr>,
+) {
+    for peer in peers {
+        if !target.contains(&peer) {
+            target.push(peer);
+        }
+    }
+}
+
+fn refresh_chain_db_reconnect_fallback_peers(
+    primary_peer: SocketAddr,
+    fallback_peer_addrs: &[SocketAddr],
+    checkpoint_tracking: Option<&CheckpointTracking>,
+    use_ledger_peers: Option<UseLedgerPeers>,
+    peer_snapshot_path: Option<&Path>,
+    tracer: &NodeTracer,
+) -> Vec<SocketAddr> {
+    let mut refreshed = fallback_peer_addrs.to_vec();
+
+    let Some(checkpoint_tracking) = checkpoint_tracking else {
+        return refreshed;
+    };
+
+    let use_ledger_peers = use_ledger_peers.unwrap_or(UseLedgerPeers::DontUseLedgerPeers);
+    let latest_slot = checkpoint_tracking.ledger_state.tip.slot().map(|slot| slot.0);
+    let ledger_allowed = match use_ledger_peers {
+        UseLedgerPeers::DontUseLedgerPeers => false,
+        UseLedgerPeers::UseLedgerPeers(AfterSlot::Always) => true,
+        UseLedgerPeers::UseLedgerPeers(AfterSlot::After(after_slot)) => checkpoint_tracking
+            .ledger_state
+            .tip
+            .slot()
+            .is_some_and(|slot| slot.0 >= after_slot),
+    };
+
+    let mut ledger_peers = Vec::new();
+    if ledger_allowed {
+        for access_point in checkpoint_tracking.ledger_state.pool_state().relay_access_points() {
+            let peer_access_point = PeerAccessPoint {
+                address: access_point.address,
+                port: access_point.port,
+            };
+            extend_unique_socket_addrs(
+                &mut ledger_peers,
+                resolve_peer_access_points(&peer_access_point),
+            );
+        }
+    }
+
+    let mut snapshot_slot = None;
+    let mut snapshot_available = peer_snapshot_path.is_none();
+    let mut snapshot = LedgerPeerSnapshot::new(ledger_peers, Vec::new());
+
+    if let Some(peer_snapshot_path) = peer_snapshot_path {
+        match load_peer_snapshot_file(peer_snapshot_path) {
+            Ok(loaded_snapshot) => {
+                snapshot_slot = loaded_snapshot.slot;
+                snapshot_available = true;
+                let mut merged_ledger_peers = snapshot.ledger_peers;
+                extend_unique_socket_addrs(&mut merged_ledger_peers, loaded_snapshot.snapshot.ledger_peers);
+
+                snapshot = LedgerPeerSnapshot::new(
+                    merged_ledger_peers,
+                    loaded_snapshot.snapshot.big_ledger_peers,
+                );
+            }
+            Err(err) => {
+                snapshot_available = false;
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "failed to refresh reconnect peer snapshot",
+                    trace_fields([
+                        ("snapshotPath", json!(peer_snapshot_path.display().to_string())),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+            }
+        }
+    }
+
+    let freshness: PeerSnapshotFreshness = derive_peer_snapshot_freshness(
+        use_ledger_peers,
+        peer_snapshot_path.is_some(),
+        snapshot_slot,
+        latest_slot,
+        snapshot_available,
+    );
+    let decision = judge_ledger_peer_usage(
+        use_ledger_peers,
+        latest_slot,
+        LedgerStateJudgement::YoungEnough,
+        freshness,
+    );
+
+    tracer.trace_runtime(
+        "Net.PeerSelection",
+        "Info",
+        "evaluated reconnect ledger-derived peers",
+        trace_fields([
+            ("decision", json!(format!("{decision:?}"))),
+            ("latestSlot", json!(latest_slot)),
+            ("snapshotSlot", json!(snapshot_slot)),
+            ("ledgerPeerCount", json!(snapshot.ledger_peers.len())),
+            ("bigLedgerPeerCount", json!(snapshot.big_ledger_peers.len())),
+            ("peerSnapshotFreshness", json!(format!("{freshness:?}"))),
+        ]),
+    );
+
+    if decision != LedgerPeerUseDecision::Eligible {
+        return refreshed;
+    }
+
+    extend_unique_socket_addrs(
+        &mut refreshed,
+        snapshot
+            .ledger_peers
+            .into_iter()
+            .chain(snapshot.big_ledger_peers)
+            .filter(|peer| *peer != primary_peer),
+    );
+    refreshed
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -706,6 +846,8 @@ where
     let ReconnectingVerifiedSyncContext {
         node_config,
         fallback_peer_addrs,
+        use_ledger_peers,
+        peer_snapshot_path,
         config,
         tracer,
     } = context;
@@ -725,9 +867,38 @@ where
     let mut last_connected_peer_addr = None;
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
-    let mut attempt_state = peer_attempt_state(node_config.peer_addr, fallback_peer_addrs);
+    let mut preferred_peer = None;
 
     loop {
+        let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
+            node_config.peer_addr,
+            fallback_peer_addrs,
+            checkpoint_tracking.as_ref(),
+            use_ledger_peers,
+            peer_snapshot_path,
+            tracer,
+        );
+        let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
+        if let Some(peer_addr) = preferred_peer {
+            attempt_state.record_success(peer_addr);
+        }
+
+        tracer.trace_runtime(
+            "Net.PeerSelection",
+            "Info",
+            "refreshed reconnect peer candidates",
+            trace_fields([
+                ("fallbackPeerCount", json!(refreshed_fallback_peers.len())),
+                (
+                    "latestSlot",
+                    json!(checkpoint_tracking
+                        .as_ref()
+                        .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
+                ),
+                ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+            ]),
+        );
+
         let mut session = tokio::select! {
             biased;
 
@@ -760,6 +931,7 @@ where
             had_session = true;
         }
         last_connected_peer_addr = Some(session.connected_peer_addr);
+        preferred_peer = Some(session.connected_peer_addr);
 
         tracer.trace_runtime(
             "Net.ConnectionManager.Remote",
@@ -1142,6 +1314,8 @@ where
         mut from_point,
         config,
         mut nonce_state,
+        use_ledger_peers: _,
+        peer_snapshot_path: _,
     } = request;
 
     tokio::pin!(shutdown);
@@ -1351,6 +1525,8 @@ where
         base_ledger_state,
         config,
         nonce_state,
+        use_ledger_peers,
+        peer_snapshot_path,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -1376,6 +1552,8 @@ where
         ReconnectingVerifiedSyncContext {
             node_config,
             fallback_peer_addrs,
+            use_ledger_peers,
+            peer_snapshot_path: peer_snapshot_path.as_deref(),
             config,
             tracer,
         },
@@ -1411,6 +1589,8 @@ where
         from_point,
         config,
         nonce_state,
+        use_ledger_peers,
+        peer_snapshot_path,
     } = request;
     let checkpoint_tracking = Some(default_checkpoint_tracking(chain_db)?);
 
@@ -1419,6 +1599,8 @@ where
         ReconnectingVerifiedSyncContext {
             node_config,
             fallback_peer_addrs,
+            use_ledger_peers,
+            peer_snapshot_path: peer_snapshot_path.as_deref(),
             config,
             tracer,
         },

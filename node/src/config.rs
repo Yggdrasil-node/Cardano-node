@@ -8,15 +8,19 @@
 //! Reference: `cardano-node/configuration/` in the IntersectMBO repository.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use thiserror::Error;
 use yggdrasil_network::{
     LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
-    LocalRootConfig, PeerSnapshotFreshness, PublicRootConfig, TopologyConfig,
-    UseLedgerPeers, judge_ledger_peer_usage, ordered_peer_fallbacks,
+    LocalRootConfig, PeerAccessPoint, PeerSnapshotFreshness, PublicRootConfig,
+    TopologyConfig, UseLedgerPeers, judge_ledger_peer_usage,
+    ordered_peer_fallbacks, resolve_peer_access_points,
 };
 
 #[derive(Debug)]
@@ -27,6 +31,39 @@ struct ResolvedTopologyPeers {
     public_roots: Vec<PublicRootConfig>,
     use_ledger_after_slot: Option<u64>,
     peer_snapshot_file: Option<String>,
+}
+
+/// Loaded peer snapshot metadata derived from the upstream
+/// `peerSnapshotFile` JSON formats.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedPeerSnapshot {
+    /// Slot represented by the snapshot file, when available.
+    pub slot: Option<u64>,
+    /// Normalized ledger and big-ledger peer sets resolved from the snapshot.
+    pub snapshot: LedgerPeerSnapshot,
+}
+
+/// Errors returned while loading a configured peer snapshot file.
+#[derive(Debug, Error)]
+pub enum PeerSnapshotLoadError {
+    /// Reading the snapshot file failed.
+    #[error("failed to read peer snapshot file {path}: {source}")]
+    Io {
+        /// File path that could not be read.
+        path: PathBuf,
+        /// Underlying filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Snapshot JSON decoding failed.
+    #[error("failed to parse peer snapshot file {path}: {source}")]
+    Json {
+        /// File path containing invalid JSON.
+        path: PathBuf,
+        /// Underlying JSON parse error.
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 /// Trace dispatcher options for a single tracing namespace.
@@ -238,6 +275,139 @@ impl NodeConfigFile {
         }
 
         (decision, eligible)
+    }
+
+    /// Derive snapshot freshness from the configured `peerSnapshotFile`, the
+    /// snapshot slot, and the latest recovered slot known at startup.
+    pub fn peer_snapshot_freshness(
+        &self,
+        snapshot_slot: Option<u64>,
+        latest_slot: Option<u64>,
+        snapshot_available: bool,
+    ) -> PeerSnapshotFreshness {
+        derive_peer_snapshot_freshness(
+            self.use_ledger_peers_policy(),
+            self.peer_snapshot_file.is_some(),
+            snapshot_slot,
+            latest_slot,
+            snapshot_available,
+        )
+    }
+}
+
+/// Derive peer snapshot freshness from policy, snapshot presence, and slot data.
+pub fn derive_peer_snapshot_freshness(
+    use_ledger_peers: UseLedgerPeers,
+    snapshot_configured: bool,
+    snapshot_slot: Option<u64>,
+    latest_slot: Option<u64>,
+    snapshot_available: bool,
+) -> PeerSnapshotFreshness {
+    if !snapshot_configured {
+        return PeerSnapshotFreshness::NotConfigured;
+    }
+
+    if !snapshot_available {
+        return PeerSnapshotFreshness::Unavailable;
+    }
+
+    match use_ledger_peers {
+        UseLedgerPeers::DontUseLedgerPeers
+        | UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always) => {
+            PeerSnapshotFreshness::Fresh
+        }
+        UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::After(after_slot)) => {
+            let Some(latest_slot) = latest_slot else {
+                return PeerSnapshotFreshness::Awaiting;
+            };
+
+            if latest_slot < after_slot {
+                return PeerSnapshotFreshness::Awaiting;
+            }
+
+            match snapshot_slot {
+                Some(snapshot_slot) if snapshot_slot >= after_slot => PeerSnapshotFreshness::Fresh,
+                Some(_) => PeerSnapshotFreshness::Stale,
+                None => PeerSnapshotFreshness::Unavailable,
+            }
+        }
+    }
+}
+
+/// Load a configured peer snapshot file from disk.
+pub fn load_peer_snapshot_file(path: &Path) -> Result<LoadedPeerSnapshot, PeerSnapshotLoadError> {
+    let snapshot_json = fs::read_to_string(path).map_err(|source| PeerSnapshotLoadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    parse_peer_snapshot_json(&snapshot_json).map_err(|source| PeerSnapshotLoadError::Json {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Parse a peer snapshot JSON document into a normalized snapshot.
+pub fn parse_peer_snapshot_json(
+    snapshot_json: &str,
+) -> Result<LoadedPeerSnapshot, serde_json::Error> {
+    let value: Value = serde_json::from_str(snapshot_json)?;
+    let slot = value
+        .get("slotNo")
+        .and_then(Value::as_u64)
+        .or_else(|| value.get("Point").and_then(extract_snapshot_point_slot));
+
+    Ok(LoadedPeerSnapshot {
+        slot,
+        snapshot: LedgerPeerSnapshot::new(
+            extract_snapshot_pool_peers(&value, "allLedgerPools"),
+            extract_snapshot_pool_peers(&value, "bigLedgerPools"),
+        ),
+    })
+}
+
+fn extract_snapshot_pool_peers(root: &Value, pool_key: &str) -> Vec<SocketAddr> {
+    let Some(pools) = root.get(pool_key).and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut peers = Vec::new();
+    for pool in pools {
+        let Some(relays) = pool.get("relays").and_then(Value::as_array) else {
+            continue;
+        };
+
+        for relay in relays {
+            let Some(access_point) = parse_snapshot_access_point(relay) else {
+                continue;
+            };
+
+            for peer in resolve_peer_access_points(&access_point) {
+                if !peers.contains(&peer) {
+                    peers.push(peer);
+                }
+            }
+        }
+    }
+
+    peers
+}
+
+fn parse_snapshot_access_point(value: &Value) -> Option<PeerAccessPoint> {
+    let address = value.get("address")?.as_str()?.to_owned();
+    let port = value.get("port")?.as_u64().and_then(|port| u16::try_from(port).ok())?;
+
+    Some(PeerAccessPoint { address, port })
+}
+
+fn extract_snapshot_point_slot(point: &Value) -> Option<u64> {
+    match point {
+        Value::Object(object) => ["slotNo", "blockPointSlot", "slot"]
+            .into_iter()
+            .find_map(|field| object.get(field).and_then(Value::as_u64))
+            .or_else(|| object.values().find_map(extract_snapshot_point_slot)),
+        Value::Array(values) => values.iter().find_map(extract_snapshot_point_slot),
+        _ => None,
     }
 }
 
@@ -1021,6 +1191,117 @@ mod tests {
             }
         );
         assert!(peers.is_empty());
+    }
+
+    #[test]
+    fn peer_snapshot_freshness_waits_for_latest_slot_before_gate() {
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = Some(100);
+        cfg.peer_snapshot_file = Some("peer-snapshot.json".to_owned());
+
+        assert_eq!(
+            cfg.peer_snapshot_freshness(Some(100), None, true),
+            PeerSnapshotFreshness::Awaiting
+        );
+        assert_eq!(
+            cfg.peer_snapshot_freshness(Some(100), Some(99), true),
+            PeerSnapshotFreshness::Awaiting
+        );
+    }
+
+    #[test]
+    fn peer_snapshot_freshness_marks_old_snapshot_stale_after_gate() {
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = Some(100);
+        cfg.peer_snapshot_file = Some("peer-snapshot.json".to_owned());
+
+        assert_eq!(
+            cfg.peer_snapshot_freshness(Some(99), Some(100), true),
+            PeerSnapshotFreshness::Stale
+        );
+        assert_eq!(
+            cfg.peer_snapshot_freshness(Some(100), Some(100), true),
+            PeerSnapshotFreshness::Fresh
+        );
+    }
+
+    #[test]
+    fn derive_peer_snapshot_freshness_matches_node_config_helper() {
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = Some(100);
+        cfg.peer_snapshot_file = Some("peer-snapshot.json".to_owned());
+
+        assert_eq!(
+            derive_peer_snapshot_freshness(
+                cfg.use_ledger_peers_policy(),
+                true,
+                Some(100),
+                Some(100),
+                true,
+            ),
+            cfg.peer_snapshot_freshness(Some(100), Some(100), true)
+        );
+    }
+
+    #[test]
+    fn parse_peer_snapshot_json_supports_v2_big_ledger_snapshots() {
+        let loaded = parse_peer_snapshot_json(
+            r#"{
+                "version": 2,
+                "slotNo": 42,
+                "bigLedgerPools": [
+                    {
+                        "accumulatedStake": 0.75,
+                        "relativeStake": 0.50,
+                        "relays": [
+                            { "address": "127.0.0.20", "port": 3001 },
+                            { "address": "127.0.0.21", "port": 3001 }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .expect("parse v2 snapshot");
+
+        assert_eq!(loaded.slot, Some(42));
+        assert!(loaded.snapshot.ledger_peers.is_empty());
+        assert_eq!(
+            loaded.snapshot.big_ledger_peers,
+            vec![
+                "127.0.0.20:3001".parse().expect("peer"),
+                "127.0.0.21:3001".parse().expect("peer"),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_peer_snapshot_json_supports_v23_all_ledger_snapshots() {
+        let loaded = parse_peer_snapshot_json(
+            r#"{
+                "NodeToClientVersion": 23,
+                "Point": {
+                    "slot": 84,
+                    "hash": "00"
+                },
+                "NetworkMagic": 1,
+                "allLedgerPools": [
+                    {
+                        "relativeStake": 0.25,
+                        "relays": [
+                            { "address": "127.0.0.30", "port": 3001 }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .expect("parse v23 snapshot");
+
+        assert_eq!(loaded.slot, Some(84));
+        assert_eq!(
+            loaded.snapshot.ledger_peers,
+            vec!["127.0.0.30:3001".parse().expect("peer")]
+        );
+        assert!(loaded.snapshot.big_ledger_peers.is_empty());
     }
 
     #[test]

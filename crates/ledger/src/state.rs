@@ -6,11 +6,12 @@ use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
 use crate::types::{
     Address, Anchor, DCert, DRep, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount,
-    StakeCredential,
+    Relay, StakeCredential,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
 use std::collections::BTreeMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 fn encode_optional_epoch_no(value: Option<EpochNo>, enc: &mut Encoder) {
     match value {
@@ -105,6 +106,18 @@ pub struct RegisteredPool {
     retiring_epoch: Option<EpochNo>,
 }
 
+/// A directly dialable access point extracted from stake-pool relay data.
+///
+/// This captures only relay forms that can be converted into a concrete
+/// host-plus-port endpoint without extra SRV lookup state.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PoolRelayAccessPoint {
+    /// DNS name or IP address string.
+    pub address: String,
+    /// TCP port number.
+    pub port: u16,
+}
+
 impl CborEncode for RegisteredPool {
     fn encode_cbor(&self, enc: &mut Encoder) {
         enc.array(2);
@@ -139,6 +152,16 @@ impl RegisteredPool {
     /// Returns the scheduled retirement epoch, if any.
     pub fn retiring_epoch(&self) -> Option<EpochNo> {
         self.retiring_epoch
+    }
+
+    /// Returns directly dialable relay access points for the pool.
+    ///
+    /// This includes single-host address and single-host DNS relays that
+    /// declare a port. Multi-host DNS relays and relays without a port are
+    /// omitted because they require extra resolution or policy above the
+    /// shared ledger layer.
+    pub fn relay_access_points(&self) -> Vec<PoolRelayAccessPoint> {
+        relay_access_points_from_relays(&self.params.relays)
     }
 }
 
@@ -193,6 +216,21 @@ impl PoolState {
     /// Iterates over registered pools in key order.
     pub fn iter(&self) -> impl Iterator<Item = (&PoolKeyHash, &RegisteredPool)> {
         self.entries.iter()
+    }
+
+    /// Returns all directly dialable relay access points from registered pools.
+    ///
+    /// The result is deduplicated in stable pool iteration order.
+    pub fn relay_access_points(&self) -> Vec<PoolRelayAccessPoint> {
+        let mut access_points = Vec::new();
+        for pool in self.entries.values() {
+            for access_point in pool.relay_access_points() {
+                if !access_points.contains(&access_point) {
+                    access_points.push(access_point);
+                }
+            }
+        }
+        access_points
     }
 
     /// Inserts or replaces the registration for a pool operator.
@@ -2058,5 +2096,125 @@ fn accumulate_multi_asset(total: &mut MultiAsset, assets: &MultiAsset) {
             let entry = policy_total.entry(asset_name.clone()).or_default();
             *entry = entry.saturating_add(*quantity);
         }
+    }
+}
+
+fn relay_access_points_from_relays(relays: &[Relay]) -> Vec<PoolRelayAccessPoint> {
+    let mut access_points = Vec::new();
+
+    for relay in relays {
+        match relay {
+            Relay::SingleHostAddr(Some(port), ipv4, ipv6) => {
+                if let Some(ipv4) = ipv4 {
+                    access_points.push(PoolRelayAccessPoint {
+                        address: Ipv4Addr::from(*ipv4).to_string(),
+                        port: *port,
+                    });
+                }
+                if let Some(ipv6) = ipv6 {
+                    access_points.push(PoolRelayAccessPoint {
+                        address: Ipv6Addr::from(*ipv6).to_string(),
+                        port: *port,
+                    });
+                }
+            }
+            Relay::SingleHostName(Some(port), domain) => {
+                access_points.push(PoolRelayAccessPoint {
+                    address: domain.clone(),
+                    port: *port,
+                });
+            }
+            Relay::SingleHostAddr(None, _, _)
+            | Relay::SingleHostName(None, _)
+            | Relay::MultiHostName(_) => {}
+        }
+    }
+
+    access_points
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Relay, RewardAccount, UnitInterval};
+
+    fn sample_pool_params(relays: Vec<Relay>, operator: u8) -> PoolParams {
+        PoolParams {
+            operator: [operator; 28],
+            vrf_keyhash: [operator; 32],
+            pledge: 1,
+            cost: 1,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([operator; 28]),
+            },
+            pool_owners: vec![[operator; 28]],
+            relays,
+            pool_metadata: None,
+        }
+    }
+
+    #[test]
+    fn registered_pool_relay_access_points_skip_non_dialable_relays() {
+        let pool = RegisteredPool {
+            params: sample_pool_params(
+                vec![
+                    Relay::SingleHostAddr(Some(3001), Some([127, 0, 0, 1]), None),
+                    Relay::SingleHostName(Some(3002), "relay.example".to_owned()),
+                    Relay::SingleHostName(None, "missing-port.example".to_owned()),
+                    Relay::MultiHostName("srv.example".to_owned()),
+                ],
+                1,
+            ),
+            retiring_epoch: None,
+        };
+
+        assert_eq!(
+            pool.relay_access_points(),
+            vec![
+                PoolRelayAccessPoint {
+                    address: "127.0.0.1".to_owned(),
+                    port: 3001,
+                },
+                PoolRelayAccessPoint {
+                    address: "relay.example".to_owned(),
+                    port: 3002,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn pool_state_relay_access_points_deduplicate_across_pools() {
+        let mut pool_state = PoolState::new();
+        pool_state.register(sample_pool_params(
+            vec![Relay::SingleHostName(Some(3001), "shared.example".to_owned())],
+            1,
+        ));
+        pool_state.register(sample_pool_params(
+            vec![
+                Relay::SingleHostName(Some(3001), "shared.example".to_owned()),
+                Relay::SingleHostAddr(Some(3002), Some([127, 0, 0, 2]), None),
+            ],
+            2,
+        ));
+
+        assert_eq!(
+            pool_state.relay_access_points(),
+            vec![
+                PoolRelayAccessPoint {
+                    address: "shared.example".to_owned(),
+                    port: 3001,
+                },
+                PoolRelayAccessPoint {
+                    address: "127.0.0.2".to_owned(),
+                    port: 3002,
+                },
+            ]
+        );
     }
 }
