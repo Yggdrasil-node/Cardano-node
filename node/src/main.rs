@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use eyre::Result;
 use serde_json::json;
 
-use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, default_config};
+use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, TraceNamespaceConfig, default_config};
 use yggdrasil_node::tracer::{NodeTracer, trace_fields};
 use yggdrasil_node::{
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome, VerificationConfig,
@@ -16,6 +16,8 @@ use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, 
 use yggdrasil_ledger::{Era, LedgerState, Nonce};
 use yggdrasil_network::HandshakeVersion;
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
+
+const CHECKPOINT_TRACE_NAMESPACE: &str = "Node.Recovery.Checkpoint";
 
 /// Yggdrasil — a pure Rust Cardano node.
 #[derive(Parser)]
@@ -47,6 +49,21 @@ enum Command {
         /// Batch size for sync iterations.
         #[arg(long, default_value = "10")]
         batch_size: usize,
+        /// Minimum slot delta between persisted ledger checkpoints.
+        #[arg(long)]
+        checkpoint_interval_slots: Option<u64>,
+        /// Maximum number of persisted ledger checkpoints to retain.
+        #[arg(long)]
+        max_ledger_snapshots: Option<usize>,
+        /// Maximum checkpoint trace events emitted per second. Use `0` to disable rate limiting.
+        #[arg(long)]
+        checkpoint_trace_max_frequency: Option<f64>,
+        /// Severity override for checkpoint trace events, for example `Info` or `Silence`.
+        #[arg(long)]
+        checkpoint_trace_severity: Option<String>,
+        /// Backend override for checkpoint trace events. Repeat the flag to route to multiple backends.
+        #[arg(long, action = clap::ArgAction::Append)]
+        checkpoint_trace_backend: Vec<String>,
     },
     /// Print the default configuration as JSON.
     DefaultConfig,
@@ -68,8 +85,13 @@ fn main() -> Result<()> {
             network_magic,
             no_verify,
             batch_size,
+            checkpoint_interval_slots,
+            max_ledger_snapshots,
+            checkpoint_trace_max_frequency,
+            checkpoint_trace_severity,
+            checkpoint_trace_backend,
         } => {
-            let (file_cfg, config_base_dir) = match config {
+            let (mut file_cfg, config_base_dir) = match config {
                 Some(path) => {
                     let contents = std::fs::read_to_string(&path)?;
                     let parsed: NodeConfigFile = serde_json::from_str(&contents)?;
@@ -80,6 +102,22 @@ fn main() -> Result<()> {
                     None => (default_config(), None),
                 },
             };
+
+            if let Some(max_frequency) = checkpoint_trace_max_frequency {
+                checkpoint_trace_config_mut(&mut file_cfg).max_frequency = if max_frequency > 0.0 {
+                    Some(max_frequency)
+                } else {
+                    None
+                };
+            }
+
+            if let Some(severity) = checkpoint_trace_severity {
+                checkpoint_trace_config_mut(&mut file_cfg).severity = Some(severity);
+            }
+
+            if !checkpoint_trace_backend.is_empty() {
+                checkpoint_trace_config_mut(&mut file_cfg).backends = checkpoint_trace_backend;
+            }
 
             let peer_addr = peer.unwrap_or(file_cfg.peer_addr);
             let bootstrap_peers = if peer.is_some() {
@@ -119,6 +157,10 @@ fn main() -> Result<()> {
             };
 
             let security_param = SecurityParam(file_cfg.security_param_k);
+            let checkpoint_interval_slots = checkpoint_interval_slots
+                .unwrap_or(file_cfg.checkpoint_interval_slots);
+            let max_ledger_snapshots = max_ledger_snapshots
+                .unwrap_or(file_cfg.max_ledger_snapshots);
 
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
@@ -127,8 +169,8 @@ fn main() -> Result<()> {
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),
                     checkpoint_policy: LedgerCheckpointPolicy {
-                        min_slot_delta: file_cfg.checkpoint_interval_slots,
-                        max_snapshots: file_cfg.max_ledger_snapshots,
+                        min_slot_delta: checkpoint_interval_slots,
+                        max_snapshots: max_ledger_snapshots,
                     },
                 }
             } else {
@@ -142,8 +184,8 @@ fn main() -> Result<()> {
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),
                     checkpoint_policy: LedgerCheckpointPolicy {
-                        min_slot_delta: file_cfg.checkpoint_interval_slots,
-                        max_snapshots: file_cfg.max_ledger_snapshots,
+                        min_slot_delta: checkpoint_interval_slots,
+                        max_snapshots: max_ledger_snapshots,
                     },
                 }
             };
@@ -164,6 +206,13 @@ fn resolve_storage_dir(storage_dir: &std::path::Path, config_base_dir: Option<&s
     } else {
         storage_dir.to_path_buf()
     }
+}
+
+fn checkpoint_trace_config_mut(file_cfg: &mut NodeConfigFile) -> &mut TraceNamespaceConfig {
+    file_cfg
+        .trace_options
+        .entry(CHECKPOINT_TRACE_NAMESPACE.to_owned())
+        .or_insert_with(TraceNamespaceConfig::default)
 }
 
 async fn run_node(
@@ -280,4 +329,68 @@ async fn run_node(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CHECKPOINT_TRACE_NAMESPACE, checkpoint_trace_config_mut,
+    };
+    use yggdrasil_node::config::default_config;
+
+    #[test]
+    fn checkpoint_trace_override_creates_namespace_when_missing() {
+        let mut cfg = default_config();
+        cfg.trace_options.remove(CHECKPOINT_TRACE_NAMESPACE);
+
+        checkpoint_trace_config_mut(&mut cfg).severity = Some("Info".to_owned());
+
+        assert_eq!(
+            cfg.trace_options
+                .get(CHECKPOINT_TRACE_NAMESPACE)
+                .expect("checkpoint namespace")
+                .severity
+                .as_deref(),
+            Some("Info")
+        );
+    }
+
+    #[test]
+    fn checkpoint_trace_override_can_disable_rate_limit() {
+        let mut cfg = default_config();
+
+        checkpoint_trace_config_mut(&mut cfg).max_frequency = None;
+
+        assert_eq!(
+            cfg.trace_options
+                .get(CHECKPOINT_TRACE_NAMESPACE)
+                .expect("checkpoint namespace")
+                .max_frequency,
+            None
+        );
+    }
+
+    #[test]
+    fn checkpoint_trace_override_updates_severity_and_backends() {
+        let mut cfg = default_config();
+        let override_cfg = checkpoint_trace_config_mut(&mut cfg);
+        override_cfg.severity = Some("Silence".to_owned());
+        override_cfg.backends = vec![
+            "Stdout MachineFormat".to_owned(),
+            "Forwarder".to_owned(),
+        ];
+
+        let checkpoint_cfg = cfg
+            .trace_options
+            .get(CHECKPOINT_TRACE_NAMESPACE)
+            .expect("checkpoint namespace");
+        assert_eq!(checkpoint_cfg.severity.as_deref(), Some("Silence"));
+        assert_eq!(
+            checkpoint_cfg.backends,
+            vec![
+                "Stdout MachineFormat".to_owned(),
+                "Forwarder".to_owned(),
+            ]
+        );
+    }
 }

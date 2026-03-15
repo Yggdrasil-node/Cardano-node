@@ -14,6 +14,11 @@ fn node_binary_shows_help() {
     assert!(stdout.contains("Yggdrasil"));
     assert!(stdout.contains("run"));
     assert!(stdout.contains("default-config"));
+    assert!(stdout.contains("--checkpoint-interval-slots"));
+    assert!(stdout.contains("--max-ledger-snapshots"));
+    assert!(stdout.contains("--checkpoint-trace-max-frequency"));
+    assert!(stdout.contains("--checkpoint-trace-severity"));
+    assert!(stdout.contains("--checkpoint-trace-backend"));
 }
 
 #[test]
