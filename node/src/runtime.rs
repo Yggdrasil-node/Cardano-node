@@ -576,6 +576,198 @@ impl ReconnectingRunState {
     }
 }
 
+struct BatchTraceExtras {
+    stable_block_count: Option<usize>,
+    checkpoint_tracked: Option<bool>,
+}
+
+enum BatchErrorDisposition {
+    Reconnect,
+    Fail,
+}
+
+fn peer_point_trace_fields(
+    peer_addr: SocketAddr,
+    current_point: Point,
+) -> BTreeMap<String, Value> {
+    trace_fields([
+        ("peer", json!(peer_addr.to_string())),
+        ("currentPoint", json!(format!("{:?}", current_point))),
+    ])
+}
+
+fn session_established_trace_fields(
+    peer_addr: SocketAddr,
+    reconnect_count: usize,
+    from_point: Point,
+) -> BTreeMap<String, Value> {
+    trace_fields([
+        ("peer", json!(peer_addr.to_string())),
+        ("reconnectCount", json!(reconnect_count)),
+        ("fromPoint", json!(format!("{:?}", from_point))),
+    ])
+}
+
+fn sync_error_trace_fields(
+    peer_addr: SocketAddr,
+    error: &impl ToString,
+    current_point: Point,
+) -> BTreeMap<String, Value> {
+    let mut fields = peer_point_trace_fields(peer_addr, current_point);
+    fields.insert("error".to_owned(), json!(error.to_string()));
+    fields
+}
+
+fn verified_sync_batch_trace_fields(
+    peer_addr: SocketAddr,
+    current_point: Point,
+    progress: &MultiEraSyncProgress,
+    run_state: &ReconnectingRunState,
+    extras: BatchTraceExtras,
+) -> BTreeMap<String, Value> {
+    let mut fields = peer_point_trace_fields(peer_addr, current_point);
+    fields.insert("batchFetchedBlocks".to_owned(), json!(progress.fetched_blocks));
+    fields.insert("batchRollbacks".to_owned(), json!(progress.rollback_count));
+    fields.insert("totalBlocks".to_owned(), json!(run_state.total_blocks));
+    fields.insert("batchesCompleted".to_owned(), json!(run_state.batches_completed));
+    if let Some(stable_block_count) = extras.stable_block_count {
+        fields.insert("stableBlocks".to_owned(), json!(stable_block_count));
+    }
+    if let Some(checkpoint_tracked) = extras.checkpoint_tracked {
+        fields.insert("checkpointTracked".to_owned(), json!(checkpoint_tracked));
+    }
+
+    fields
+}
+
+fn trace_shutdown_before_bootstrap(tracer: &NodeTracer) {
+    tracer.trace_runtime(
+        "Node.Shutdown",
+        "Notice",
+        "shutdown requested before bootstrap completed",
+        BTreeMap::new(),
+    );
+}
+
+fn trace_shutdown_during_session(
+    tracer: &NodeTracer,
+    peer_addr: SocketAddr,
+    current_point: Point,
+) {
+    tracer.trace_runtime(
+        "Node.Shutdown",
+        "Notice",
+        "shutdown requested during sync session",
+        peer_point_trace_fields(peer_addr, current_point),
+    );
+}
+
+fn trace_session_established(
+    tracer: &NodeTracer,
+    peer_addr: SocketAddr,
+    reconnect_count: usize,
+    from_point: Point,
+) {
+    tracer.trace_runtime(
+        "Net.ConnectionManager.Remote",
+        "Notice",
+        if reconnect_count == 0 {
+            "verified sync session established"
+        } else {
+            "verified sync session re-established"
+        },
+        session_established_trace_fields(peer_addr, reconnect_count, from_point),
+    );
+}
+
+fn trace_reconnectable_sync_error(
+    tracer: &NodeTracer,
+    namespace: &'static str,
+    message: &'static str,
+    peer_addr: SocketAddr,
+    error: &impl ToString,
+    current_point: Point,
+) {
+    tracer.trace_runtime(
+        namespace,
+        "Warning",
+        message,
+        sync_error_trace_fields(peer_addr, error, current_point),
+    );
+}
+
+fn trace_sync_failure(
+    tracer: &NodeTracer,
+    peer_addr: SocketAddr,
+    error: &SyncError,
+    current_point: Point,
+) {
+    tracer.trace_runtime(
+        "Node.Sync",
+        "Error",
+        "verified sync service failed",
+        sync_error_trace_fields(peer_addr, error, current_point),
+    );
+}
+
+fn trace_verified_sync_batch_applied(
+    tracer: &NodeTracer,
+    peer_addr: SocketAddr,
+    current_point: Point,
+    progress: &MultiEraSyncProgress,
+    run_state: &ReconnectingRunState,
+    extras: BatchTraceExtras,
+) {
+    tracer.trace_runtime(
+        "ChainSync.Client",
+        "Info",
+        "verified sync batch applied",
+        verified_sync_batch_trace_fields(
+            peer_addr,
+            current_point,
+            progress,
+            run_state,
+            extras,
+        ),
+    );
+}
+
+fn handle_reconnect_batch_error(
+    tracer: &NodeTracer,
+    peer_addr: SocketAddr,
+    current_point: Point,
+    error: &SyncError,
+) -> BatchErrorDisposition {
+    match error {
+        SyncError::ChainSync(err) => {
+            trace_reconnectable_sync_error(
+                tracer,
+                "ChainSync.Client",
+                "chainsync connectivity lost; reconnecting",
+                peer_addr,
+                err,
+                current_point,
+            );
+            BatchErrorDisposition::Reconnect
+        }
+        SyncError::BlockFetch(err) => {
+            trace_reconnectable_sync_error(
+                tracer,
+                "BlockFetch.Client.CompletedBlockFetch",
+                "blockfetch connectivity lost; reconnecting",
+                peer_addr,
+                err,
+                current_point,
+            );
+            BatchErrorDisposition::Reconnect
+        }
+        _ => {
+            trace_sync_failure(tracer, peer_addr, error, current_point);
+            BatchErrorDisposition::Fail
+        }
+    }
+}
+
 fn extend_unique_socket_addrs(
     target: &mut Vec<SocketAddr>,
     peers: impl IntoIterator<Item = SocketAddr>,
@@ -839,12 +1031,7 @@ where
             biased;
 
             () = &mut shutdown => {
-                tracer.trace_runtime(
-                    "Node.Shutdown",
-                    "Notice",
-                    "shutdown requested before bootstrap completed",
-                    BTreeMap::new(),
-                );
+                trace_shutdown_before_bootstrap(tracer);
                 return Ok(run_state.finish(from_point, nonce_state, chain_state));
             }
 
@@ -854,19 +1041,11 @@ where
         run_state.record_session(session.connected_peer_addr, &mut had_session);
         preferred_peer = Some(session.connected_peer_addr);
 
-        tracer.trace_runtime(
-            "Net.ConnectionManager.Remote",
-            "Notice",
-            if run_state.reconnect_count == 0 {
-                "verified sync session established"
-            } else {
-                "verified sync session re-established"
-            },
-            trace_fields([
-                ("peer", json!(session.connected_peer_addr.to_string())),
-                ("reconnectCount", json!(run_state.reconnect_count)),
-                ("fromPoint", json!(format!("{:?}", from_point))),
-            ]),
+        trace_session_established(
+            tracer,
+            session.connected_peer_addr,
+            run_state.reconnect_count,
+            from_point,
         );
 
         loop {
@@ -883,14 +1062,10 @@ where
                 biased;
 
                 () = &mut shutdown => {
-                    tracer.trace_runtime(
-                        "Node.Shutdown",
-                        "Notice",
-                        "shutdown requested during sync session",
-                        trace_fields([
-                            ("peer", json!(session.connected_peer_addr.to_string())),
-                            ("currentPoint", json!(format!("{:?}", from_point))),
-                        ]),
+                    trace_shutdown_during_session(
+                        tracer,
+                        session.connected_peer_addr,
+                        from_point,
                     );
                     session.mux.abort();
                     return Ok(run_state.finish(from_point, nonce_state, chain_state));
@@ -933,63 +1108,30 @@ where
                                 );
                             }
 
-                            tracer.trace_runtime(
-                                "ChainSync.Client",
-                                "Info",
-                                "verified sync batch applied",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                    ("batchFetchedBlocks", json!(progress.fetched_blocks)),
-                                    ("batchRollbacks", json!(progress.rollback_count)),
-                                    ("totalBlocks", json!(run_state.total_blocks)),
-                                    ("batchesCompleted", json!(run_state.batches_completed)),
-                                    ("stableBlocks", json!(run_state.stable_block_count)),
-                                    ("checkpointTracked", json!(checkpoint_tracking.is_some())),
-                                ]),
+                            trace_verified_sync_batch_applied(
+                                tracer,
+                                session.connected_peer_addr,
+                                from_point,
+                                &progress,
+                                &run_state,
+                                BatchTraceExtras {
+                                    stable_block_count: Some(run_state.stable_block_count),
+                                    checkpoint_tracked: Some(checkpoint_tracking.is_some()),
+                                },
                             );
-                        }
-                        Err(SyncError::ChainSync(err)) => {
-                            tracer.trace_runtime(
-                                "ChainSync.Client",
-                                "Warning",
-                                "chainsync connectivity lost; reconnecting",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("error", json!(err.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                ]),
-                            );
-                            session.mux.abort();
-                            break;
-                        }
-                        Err(SyncError::BlockFetch(err)) => {
-                            tracer.trace_runtime(
-                                "BlockFetch.Client.CompletedBlockFetch",
-                                "Warning",
-                                "blockfetch connectivity lost; reconnecting",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("error", json!(err.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                ]),
-                            );
-                            session.mux.abort();
-                            break;
                         }
                         Err(err) => {
-                            tracer.trace_runtime(
-                                "Node.Sync",
-                                "Error",
-                                "verified sync service failed",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("error", json!(err.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                ]),
+                            let disposition = handle_reconnect_batch_error(
+                                tracer,
+                                session.connected_peer_addr,
+                                from_point,
+                                &err,
                             );
                             session.mux.abort();
-                            return Err(err);
+                            match disposition {
+                                BatchErrorDisposition::Reconnect => break,
+                                BatchErrorDisposition::Fail => return Err(err),
+                            }
                         }
                     }
                 }
@@ -1234,12 +1376,7 @@ where
             biased;
 
             () = &mut shutdown => {
-                tracer.trace_runtime(
-                    "Node.Shutdown",
-                    "Notice",
-                    "shutdown requested before bootstrap completed",
-                    BTreeMap::new(),
-                );
+                trace_shutdown_before_bootstrap(tracer);
                 return Ok(run_state.finish(from_point, nonce_state, chain_state));
             }
 
@@ -1248,19 +1385,11 @@ where
 
         run_state.record_session(session.connected_peer_addr, &mut had_session);
 
-        tracer.trace_runtime(
-            "Net.ConnectionManager.Remote",
-            "Notice",
-            if run_state.reconnect_count == 0 {
-                "verified sync session established"
-            } else {
-                "verified sync session re-established"
-            },
-            trace_fields([
-                ("peer", json!(session.connected_peer_addr.to_string())),
-                ("reconnectCount", json!(run_state.reconnect_count)),
-                ("fromPoint", json!(format!("{:?}", from_point))),
-            ]),
+        trace_session_established(
+            tracer,
+            session.connected_peer_addr,
+            run_state.reconnect_count,
+            from_point,
         );
 
         loop {
@@ -1277,14 +1406,10 @@ where
                 biased;
 
                 () = &mut shutdown => {
-                    tracer.trace_runtime(
-                        "Node.Shutdown",
-                        "Notice",
-                        "shutdown requested during sync session",
-                        trace_fields([
-                            ("peer", json!(session.connected_peer_addr.to_string())),
-                            ("currentPoint", json!(format!("{:?}", from_point))),
-                        ]),
+                    trace_shutdown_during_session(
+                        tracer,
+                        session.connected_peer_addr,
+                        from_point,
                     );
                     session.mux.abort();
                     return Ok(run_state.finish(from_point, nonce_state, chain_state));
@@ -1308,61 +1433,30 @@ where
                                 apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                             }
 
-                            tracer.trace_runtime(
-                                "ChainSync.Client",
-                                "Info",
-                                "verified sync batch applied",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                    ("batchFetchedBlocks", json!(progress.fetched_blocks)),
-                                    ("batchRollbacks", json!(progress.rollback_count)),
-                                    ("totalBlocks", json!(run_state.total_blocks)),
-                                    ("batchesCompleted", json!(run_state.batches_completed)),
-                                ]),
+                            trace_verified_sync_batch_applied(
+                                tracer,
+                                session.connected_peer_addr,
+                                from_point,
+                                &progress,
+                                &run_state,
+                                BatchTraceExtras {
+                                    stable_block_count: None,
+                                    checkpoint_tracked: None,
+                                },
                             );
-                        }
-                        Err(SyncError::ChainSync(err)) => {
-                            tracer.trace_runtime(
-                                "ChainSync.Client",
-                                "Warning",
-                                "chainsync connectivity lost; reconnecting",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("error", json!(err.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                ]),
-                            );
-                            session.mux.abort();
-                            break;
-                        }
-                        Err(SyncError::BlockFetch(err)) => {
-                            tracer.trace_runtime(
-                                "BlockFetch.Client.CompletedBlockFetch",
-                                "Warning",
-                                "blockfetch connectivity lost; reconnecting",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("error", json!(err.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                ]),
-                            );
-                            session.mux.abort();
-                            break;
                         }
                         Err(err) => {
-                            tracer.trace_runtime(
-                                "Node.Sync",
-                                "Error",
-                                "verified sync service failed",
-                                trace_fields([
-                                    ("peer", json!(session.connected_peer_addr.to_string())),
-                                    ("error", json!(err.to_string())),
-                                    ("currentPoint", json!(format!("{:?}", from_point))),
-                                ]),
+                            let disposition = handle_reconnect_batch_error(
+                                tracer,
+                                session.connected_peer_addr,
+                                from_point,
+                                &err,
                             );
                             session.mux.abort();
-                            return Err(err);
+                            match disposition {
+                                BatchErrorDisposition::Reconnect => break,
+                                BatchErrorDisposition::Fail => return Err(err),
+                            }
                         }
                     }
                 }
@@ -1482,10 +1576,23 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{CheckpointPersistenceOutcome, checkpoint_trace_fields};
+    use super::{
+        BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
+        ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
+        session_established_trace_fields, sync_error_trace_fields,
+        verified_sync_batch_trace_fields,
+    };
+    use crate::sync::{MultiEraSyncProgress, SyncError};
+    use crate::tracer::NodeTracer;
     use crate::sync::LedgerCheckpointPolicy;
     use serde_json::json;
-    use yggdrasil_ledger::SlotNo;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use yggdrasil_ledger::{HeaderHash, Point, SlotNo};
+    use yggdrasil_network::{BlockFetchClientError, ChainSyncClientError};
+
+    fn local_addr(port: u16) -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    }
 
     #[test]
     fn checkpoint_trace_fields_include_persisted_prune_counts() {
@@ -1531,5 +1638,134 @@ mod tests {
         assert_eq!(fields.get("slot"), Some(&json!(1200)));
         assert_eq!(fields.get("sinceLastSlotDelta"), Some(&json!(1200)));
         assert_eq!(fields.get("rollbackCount"), Some(&json!(0)));
+    }
+
+    #[test]
+    fn session_established_trace_fields_include_peer_reconnects_and_point() {
+        let fields = session_established_trace_fields(
+            local_addr(3001),
+            2,
+            Point::BlockPoint(SlotNo(42), HeaderHash([7; 32])),
+        );
+
+        assert_eq!(fields.get("peer"), Some(&json!("127.0.0.1:3001")));
+        assert_eq!(fields.get("reconnectCount"), Some(&json!(2)));
+        let from_point = fields
+            .get("fromPoint")
+            .and_then(|value| value.as_str())
+            .expect("fromPoint should be a string");
+        assert!(from_point.starts_with("BlockPoint(SlotNo(42), HeaderHash(0707070707070707"));
+    }
+
+    #[test]
+    fn verified_sync_batch_trace_fields_include_optional_runtime_context() {
+        let progress = MultiEraSyncProgress {
+            current_point: Point::BlockPoint(SlotNo(21), HeaderHash([5; 32])),
+            steps: vec![],
+            fetched_blocks: 3,
+            rollback_count: 1,
+        };
+        let mut run_state = ReconnectingRunState::new();
+        run_state.record_progress(&progress);
+        run_state.stable_block_count = 9;
+
+        let fields = verified_sync_batch_trace_fields(
+            local_addr(3002),
+            progress.current_point,
+            &progress,
+            &run_state,
+            BatchTraceExtras {
+                stable_block_count: Some(run_state.stable_block_count),
+                checkpoint_tracked: Some(true),
+            },
+        );
+
+        assert_eq!(fields.get("peer"), Some(&json!("127.0.0.1:3002")));
+        assert_eq!(fields.get("batchFetchedBlocks"), Some(&json!(3)));
+        assert_eq!(fields.get("batchRollbacks"), Some(&json!(1)));
+        assert_eq!(fields.get("totalBlocks"), Some(&json!(3)));
+        assert_eq!(fields.get("batchesCompleted"), Some(&json!(1)));
+        assert_eq!(fields.get("stableBlocks"), Some(&json!(9)));
+        assert_eq!(fields.get("checkpointTracked"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn sync_error_trace_fields_include_error_and_point() {
+        let fields = sync_error_trace_fields(
+            local_addr(3003),
+            &SyncError::Recovery("checkpoint gap".to_owned()),
+            Point::Origin,
+        );
+
+        assert_eq!(fields.get("peer"), Some(&json!("127.0.0.1:3003")));
+        assert_eq!(fields.get("currentPoint"), Some(&json!("Origin")));
+        assert_eq!(fields.get("error"), Some(&json!("recovery error: checkpoint gap")));
+    }
+
+    #[test]
+    fn handle_reconnect_batch_error_reconnects_for_connectivity_errors() {
+        let tracer = NodeTracer::disabled();
+
+        let chainsync = handle_reconnect_batch_error(
+            &tracer,
+            local_addr(3004),
+            Point::Origin,
+            &SyncError::ChainSync(ChainSyncClientError::ConnectionClosed),
+        );
+        let blockfetch = handle_reconnect_batch_error(
+            &tracer,
+            local_addr(3005),
+            Point::Origin,
+            &SyncError::BlockFetch(BlockFetchClientError::ConnectionClosed),
+        );
+
+        assert!(matches!(chainsync, BatchErrorDisposition::Reconnect));
+        assert!(matches!(blockfetch, BatchErrorDisposition::Reconnect));
+    }
+
+    #[test]
+    fn handle_reconnect_batch_error_fails_for_non_connectivity_errors() {
+        let tracer = NodeTracer::disabled();
+        let disposition = handle_reconnect_batch_error(
+            &tracer,
+            local_addr(3006),
+            Point::Origin,
+            &SyncError::Recovery("inconsistent checkpoint".to_owned()),
+        );
+
+        assert!(matches!(disposition, BatchErrorDisposition::Fail));
+    }
+
+    #[test]
+    fn reconnecting_run_state_accumulates_progress_and_session_metadata() {
+        let mut run_state = ReconnectingRunState::new();
+        let mut had_session = false;
+        let first_peer = local_addr(3007);
+        let second_peer = local_addr(3008);
+
+        run_state.record_session(first_peer, &mut had_session);
+        run_state.record_session(second_peer, &mut had_session);
+        run_state.record_progress(&MultiEraSyncProgress {
+            current_point: Point::Origin,
+            steps: vec![],
+            fetched_blocks: 2,
+            rollback_count: 1,
+        });
+        run_state.record_progress(&MultiEraSyncProgress {
+            current_point: Point::Origin,
+            steps: vec![],
+            fetched_blocks: 4,
+            rollback_count: 0,
+        });
+        run_state.stable_block_count = 5;
+
+        let outcome = run_state.finish(Point::Origin, None, None);
+
+        assert_eq!(outcome.total_blocks, 6);
+        assert_eq!(outcome.total_rollbacks, 1);
+        assert_eq!(outcome.batches_completed, 2);
+        assert_eq!(outcome.stable_block_count, 5);
+        assert_eq!(outcome.reconnect_count, 1);
+        assert_eq!(outcome.last_connected_peer_addr, Some(second_peer));
     }
 }
