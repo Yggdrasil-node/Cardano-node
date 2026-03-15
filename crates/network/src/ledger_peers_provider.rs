@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 
 use crate::peer_registry::PeerRegistry;
+use crate::root_peers::{AfterSlot, UseLedgerPeers};
 
 /// The ledger peer source a provider is responsible for refreshing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,6 +21,65 @@ pub enum LedgerPeerProviderKind {
     BigLedgerPeers,
     /// A combined snapshot containing both ledger and big-ledger peers.
     Combined,
+}
+
+/// Consensus-facing judgement about whether the current ledger view is usable
+/// for ledger peer selection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LedgerStateJudgement {
+    /// Ledger state is recent enough to use for ledger peer selection.
+    #[default]
+    YoungEnough,
+    /// Ledger state is available but too old to trust for ledger peers.
+    TooOld,
+    /// No authoritative ledger-state judgement is currently available.
+    Unavailable,
+}
+
+/// Freshness state for the optional peer snapshot input referenced by
+/// topology configuration.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PeerSnapshotFreshness {
+    /// No peer snapshot file is configured, so no freshness gate applies.
+    #[default]
+    NotConfigured,
+    /// The configured peer snapshot is present and fresh enough to use.
+    Fresh,
+    /// The configured peer snapshot file exists but is stale.
+    Stale,
+    /// A peer snapshot file is configured, but no freshness judgement is
+    /// currently available yet.
+    Awaiting,
+    /// A peer snapshot file is configured but unavailable or unreadable.
+    Unavailable,
+}
+
+/// Decision describing whether ledger peers are currently eligible for use.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LedgerPeerUseDecision {
+    /// Topology disabled ledger peers entirely.
+    Disabled,
+    /// Ledger peers are enabled, but a latest observed slot is still needed.
+    AwaitingLatestSlot { after_slot: u64 },
+    /// Latest observed slot has not yet crossed the configured gate.
+    BeforeUseLedgerAfterSlot { after_slot: u64, latest_slot: u64 },
+    /// Ledger peers are blocked by the current ledger-state judgement.
+    BlockedByLedgerState { judgement: LedgerStateJudgement },
+    /// Ledger peers are waiting on a configured peer snapshot to become usable.
+    AwaitingPeerSnapshot,
+    /// Ledger peers are blocked by the configured peer snapshot state.
+    BlockedByPeerSnapshot { freshness: PeerSnapshotFreshness },
+    /// Ledger peers are eligible and may be reconciled into the registry.
+    Eligible,
+}
+
+/// Result of applying ledger-peer policy to the registry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LedgerPeerRegistryUpdate {
+    /// Policy decision that was applied.
+    pub decision: LedgerPeerUseDecision,
+    /// Whether the registry changed as a result.
+    pub changed: bool,
 }
 
 /// A normalized snapshot of ledger-derived peer sets.
@@ -63,6 +123,64 @@ pub enum LedgerPeerProviderRefresh {
     LedgerPeers(Vec<SocketAddr>),
     /// Replace only the big-ledger-peer set.
     BigLedgerPeers(Vec<SocketAddr>),
+}
+
+/// Judge whether ledger peers are currently eligible according to topology,
+/// latest-slot gating, and consensus ledger-state judgement.
+pub fn judge_ledger_peer_usage(
+    use_ledger_peers: UseLedgerPeers,
+    latest_slot: Option<u64>,
+    ledger_state_judgement: LedgerStateJudgement,
+    peer_snapshot_freshness: PeerSnapshotFreshness,
+) -> LedgerPeerUseDecision {
+    match use_ledger_peers {
+        UseLedgerPeers::DontUseLedgerPeers => LedgerPeerUseDecision::Disabled,
+        UseLedgerPeers::UseLedgerPeers(AfterSlot::Always) => {
+            if ledger_state_judgement != LedgerStateJudgement::YoungEnough {
+                LedgerPeerUseDecision::BlockedByLedgerState {
+                    judgement: ledger_state_judgement,
+                }
+            } else {
+                judge_peer_snapshot_freshness(peer_snapshot_freshness)
+            }
+        }
+        UseLedgerPeers::UseLedgerPeers(AfterSlot::After(after_slot)) => {
+            let Some(latest_slot) = latest_slot else {
+                return LedgerPeerUseDecision::AwaitingLatestSlot { after_slot };
+            };
+
+            if latest_slot < after_slot {
+                return LedgerPeerUseDecision::BeforeUseLedgerAfterSlot {
+                    after_slot,
+                    latest_slot,
+                };
+            }
+
+            if ledger_state_judgement != LedgerStateJudgement::YoungEnough {
+                LedgerPeerUseDecision::BlockedByLedgerState {
+                    judgement: ledger_state_judgement,
+                }
+            } else {
+                judge_peer_snapshot_freshness(peer_snapshot_freshness)
+            }
+        }
+    }
+}
+
+fn judge_peer_snapshot_freshness(
+    peer_snapshot_freshness: PeerSnapshotFreshness,
+) -> LedgerPeerUseDecision {
+    match peer_snapshot_freshness {
+        PeerSnapshotFreshness::NotConfigured | PeerSnapshotFreshness::Fresh => {
+            LedgerPeerUseDecision::Eligible
+        }
+        PeerSnapshotFreshness::Awaiting => LedgerPeerUseDecision::AwaitingPeerSnapshot,
+        PeerSnapshotFreshness::Stale | PeerSnapshotFreshness::Unavailable => {
+            LedgerPeerUseDecision::BlockedByPeerSnapshot {
+                freshness: peer_snapshot_freshness,
+            }
+        }
+    }
 }
 
 /// Provider-side refresh error.
@@ -117,6 +235,44 @@ where
     }
 }
 
+/// Apply ledger peers to the registry only when the current policy judgement
+/// allows them. Blocked decisions clear crate-owned ledger and big-ledger
+/// sources while preserving unrelated peer sources and status.
+pub fn reconcile_ledger_peer_registry_with_policy(
+    registry: &mut PeerRegistry,
+    snapshot: LedgerPeerSnapshot,
+    use_ledger_peers: UseLedgerPeers,
+    latest_slot: Option<u64>,
+    ledger_state_judgement: LedgerStateJudgement,
+    peer_snapshot_freshness: PeerSnapshotFreshness,
+) -> LedgerPeerRegistryUpdate {
+    let decision = judge_ledger_peer_usage(
+        use_ledger_peers,
+        latest_slot,
+        ledger_state_judgement,
+        peer_snapshot_freshness,
+    );
+
+    let changed = match decision {
+        LedgerPeerUseDecision::Eligible => apply_ledger_peer_refresh(
+            registry,
+            LedgerPeerProviderRefresh::Combined(snapshot),
+        ),
+        LedgerPeerUseDecision::Disabled
+        | LedgerPeerUseDecision::AwaitingLatestSlot { .. }
+        | LedgerPeerUseDecision::BeforeUseLedgerAfterSlot { .. }
+        | LedgerPeerUseDecision::BlockedByLedgerState { .. }
+        | LedgerPeerUseDecision::AwaitingPeerSnapshot
+        | LedgerPeerUseDecision::BlockedByPeerSnapshot { .. } => {
+            let ledger_changed = registry.sync_ledger_peers(Vec::new());
+            let big_ledger_changed = registry.sync_big_ledger_peers(Vec::new());
+            ledger_changed || big_ledger_changed
+        }
+    };
+
+    LedgerPeerRegistryUpdate { decision, changed }
+}
+
 /// In-memory scripted provider useful for tests and early integration.
 #[derive(Clone, Debug)]
 pub struct ScriptedLedgerPeerProvider {
@@ -161,6 +317,7 @@ fn unique_peers(peers: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> 
 mod tests {
     use super::*;
     use crate::peer_registry::{PeerSource, PeerStatus};
+    use crate::root_peers::AfterSlot;
 
     #[test]
     fn ledger_peer_snapshot_normalizes_duplicates_and_overlap() {
@@ -259,5 +416,208 @@ mod tests {
             refresh_ledger_peer_registry(&mut registry, &mut provider).expect_err("error"),
             LedgerPeerProviderError::RefreshFailed("ledger snapshot unavailable".to_owned())
         );
+    }
+
+    #[test]
+    fn judge_ledger_peer_usage_rejects_disabled_policy() {
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::DontUseLedgerPeers,
+                Some(100),
+                LedgerStateJudgement::YoungEnough,
+                PeerSnapshotFreshness::NotConfigured,
+            ),
+            LedgerPeerUseDecision::Disabled
+        );
+    }
+
+    #[test]
+    fn judge_ledger_peer_usage_waits_for_latest_slot_when_thresholded() {
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::After(500)),
+                None,
+                LedgerStateJudgement::YoungEnough,
+                PeerSnapshotFreshness::NotConfigured,
+            ),
+            LedgerPeerUseDecision::AwaitingLatestSlot { after_slot: 500 }
+        );
+    }
+
+    #[test]
+    fn judge_ledger_peer_usage_blocks_before_after_slot() {
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::After(500)),
+                Some(499),
+                LedgerStateJudgement::YoungEnough,
+                PeerSnapshotFreshness::NotConfigured,
+            ),
+            LedgerPeerUseDecision::BeforeUseLedgerAfterSlot {
+                after_slot: 500,
+                latest_slot: 499,
+            }
+        );
+    }
+
+    #[test]
+    fn judge_ledger_peer_usage_requires_young_enough_ledger_state() {
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+                None,
+                LedgerStateJudgement::TooOld,
+                PeerSnapshotFreshness::NotConfigured,
+            ),
+            LedgerPeerUseDecision::BlockedByLedgerState {
+                judgement: LedgerStateJudgement::TooOld,
+            }
+        );
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+                None,
+                LedgerStateJudgement::Unavailable,
+                PeerSnapshotFreshness::NotConfigured,
+            ),
+            LedgerPeerUseDecision::BlockedByLedgerState {
+                judgement: LedgerStateJudgement::Unavailable,
+            }
+        );
+    }
+
+    #[test]
+    fn judge_ledger_peer_usage_blocks_on_peer_snapshot_state() {
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+                None,
+                LedgerStateJudgement::YoungEnough,
+                PeerSnapshotFreshness::Awaiting,
+            ),
+            LedgerPeerUseDecision::AwaitingPeerSnapshot
+        );
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+                None,
+                LedgerStateJudgement::YoungEnough,
+                PeerSnapshotFreshness::Stale,
+            ),
+            LedgerPeerUseDecision::BlockedByPeerSnapshot {
+                freshness: PeerSnapshotFreshness::Stale,
+            }
+        );
+        assert_eq!(
+            judge_ledger_peer_usage(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+                None,
+                LedgerStateJudgement::YoungEnough,
+                PeerSnapshotFreshness::Unavailable,
+            ),
+            LedgerPeerUseDecision::BlockedByPeerSnapshot {
+                freshness: PeerSnapshotFreshness::Unavailable,
+            }
+        );
+    }
+
+    #[test]
+    fn reconcile_ledger_peer_registry_with_policy_applies_snapshot_when_eligible() {
+        let ledger_peer: SocketAddr = "127.0.0.30:3001".parse().expect("addr");
+        let big_ledger_peer: SocketAddr = "127.0.0.31:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        let update = reconcile_ledger_peer_registry_with_policy(
+            &mut registry,
+            LedgerPeerSnapshot::new([ledger_peer], [big_ledger_peer]),
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::After(10)),
+            Some(10),
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::NotConfigured,
+        );
+
+        assert_eq!(update.decision, LedgerPeerUseDecision::Eligible);
+        assert!(update.changed);
+        assert_eq!(
+            registry.get(&ledger_peer).expect("ledger").sources,
+            [PeerSource::PeerSourceLedger].into_iter().collect()
+        );
+        assert_eq!(
+            registry.get(&big_ledger_peer).expect("big ledger").sources,
+            [PeerSource::PeerSourceBigLedger].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn reconcile_ledger_peer_registry_with_policy_clears_blocked_sources_only() {
+        let ledger_peer: SocketAddr = "127.0.0.32:3001".parse().expect("addr");
+        let big_ledger_peer: SocketAddr = "127.0.0.33:3001".parse().expect("addr");
+        let shared_peer: SocketAddr = "127.0.0.34:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(ledger_peer, PeerSource::PeerSourceLedger);
+        registry.insert_source(big_ledger_peer, PeerSource::PeerSourceBigLedger);
+        registry.insert_source(shared_peer, PeerSource::PeerSourceLedger);
+        registry.insert_source(shared_peer, PeerSource::PeerSourcePeerShare);
+        registry.set_status(shared_peer, PeerStatus::PeerWarm);
+
+        let update = reconcile_ledger_peer_registry_with_policy(
+            &mut registry,
+            LedgerPeerSnapshot::new([ledger_peer], [big_ledger_peer]),
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::After(100)),
+            Some(99),
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::NotConfigured,
+        );
+
+        assert_eq!(
+            update.decision,
+            LedgerPeerUseDecision::BeforeUseLedgerAfterSlot {
+                after_slot: 100,
+                latest_slot: 99,
+            }
+        );
+        assert!(update.changed);
+        assert!(registry.get(&ledger_peer).is_none());
+        assert!(registry.get(&big_ledger_peer).is_none());
+
+        let shared_entry = registry.get(&shared_peer).expect("shared peer remains");
+        assert_eq!(
+            shared_entry.sources,
+            [PeerSource::PeerSourcePeerShare].into_iter().collect()
+        );
+        assert_eq!(shared_entry.status, PeerStatus::PeerWarm);
+    }
+
+    #[test]
+    fn reconcile_ledger_peer_registry_with_policy_clears_ledger_sources_when_snapshot_is_stale() {
+        let ledger_peer: SocketAddr = "127.0.0.35:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(ledger_peer, PeerSource::PeerSourceLedger);
+        registry.insert_source(ledger_peer, PeerSource::PeerSourcePeerShare);
+        registry.set_status(ledger_peer, PeerStatus::PeerHot);
+
+        let update = reconcile_ledger_peer_registry_with_policy(
+            &mut registry,
+            LedgerPeerSnapshot::new([ledger_peer], Vec::<SocketAddr>::new()),
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+            None,
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::Stale,
+        );
+
+        assert_eq!(
+            update.decision,
+            LedgerPeerUseDecision::BlockedByPeerSnapshot {
+                freshness: PeerSnapshotFreshness::Stale,
+            }
+        );
+        assert!(update.changed);
+
+        let entry = registry.get(&ledger_peer).expect("peer share remains");
+        assert_eq!(
+            entry.sources,
+            [PeerSource::PeerSourcePeerShare].into_iter().collect()
+        );
+        assert_eq!(entry.status, PeerStatus::PeerHot);
     }
 }

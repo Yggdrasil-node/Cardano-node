@@ -175,8 +175,9 @@ fn ledger_state_snapshot_exposes_tip_and_era() {
 }
 
 #[test]
-fn ledger_state_rejects_byron_block() {
+fn ledger_state_accepts_byron_block_as_tip_only_transition() {
     let mut state = LedgerState::new(Era::Byron);
+    let original_snapshot = state.snapshot();
 
     let block = Block {
         era: Era::Byron,
@@ -190,6 +191,9 @@ fn ledger_state_rejects_byron_block() {
         transactions: vec![],
     };
 
-    let err = state.apply_block(&block).expect_err("byron should be unsupported");
-    assert!(matches!(err, LedgerError::UnsupportedEra(Era::Byron)));
+    state
+        .apply_block(&block)
+        .expect("byron should advance the tip without failing");
+    assert_eq!(state.tip, Point::BlockPoint(SlotNo(1), HeaderHash([0xFF; 32])));
+    assert_eq!(state.snapshot().query_balance(&Address::Byron(vec![0x01])), original_snapshot.query_balance(&Address::Byron(vec![0x01])));
 }

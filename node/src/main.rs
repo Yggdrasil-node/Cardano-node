@@ -9,7 +9,7 @@ use yggdrasil_node::config::{NetworkPreset, NodeConfigFile, TraceNamespaceConfig
 use yggdrasil_node::tracer::{NodeTracer, trace_fields};
 use yggdrasil_node::{
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome, VerificationConfig,
-    VerifiedSyncServiceConfig,
+    ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
     resume_reconnecting_verified_sync_service_chaindb,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
@@ -212,7 +212,7 @@ fn checkpoint_trace_config_mut(file_cfg: &mut NodeConfigFile) -> &mut TraceNames
     file_cfg
         .trace_options
         .entry(CHECKPOINT_TRACE_NAMESPACE.to_owned())
-        .or_insert_with(TraceNamespaceConfig::default)
+    .or_default()
 }
 
 async fn run_node(
@@ -262,12 +262,14 @@ async fn run_node(
     });
 
     let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_chaindb(
-        &node_config,
-        &bootstrap_peers,
         &mut chain_db,
-        LedgerState::new(Era::Byron),
-        &sync_config,
-        nonce_state,
+        ResumeReconnectingVerifiedSyncRequest {
+            node_config: &node_config,
+            fallback_peer_addrs: &bootstrap_peers,
+            base_ledger_state: LedgerState::new(Era::Byron),
+            config: &sync_config,
+            nonce_state,
+        },
         async { let _ = shutdown_rx.await; },
     )
     .await {

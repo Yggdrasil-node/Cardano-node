@@ -190,6 +190,8 @@ fn ledger_store_replaces_same_slot_and_retains_latest_snapshots() {
     assert_eq!(store.count(), 3);
 
     let (slot, data) = store.latest_snapshot().expect("latest snapshot");
+    let latest_slot = slot;
+    let latest_data = data.to_vec();
     assert_eq!(slot, SlotNo(30));
     assert_eq!(
         store
@@ -201,14 +203,14 @@ fn ledger_store_replaces_same_slot_and_retains_latest_snapshots() {
 
     store.retain_latest(2).expect("retain latest");
     assert_eq!(store.count(), 2);
-    assert_eq!(slot, SlotNo(30));
+    assert_eq!(latest_slot, SlotNo(30));
     let (retained_slot, retained_data) = store
         .latest_snapshot_before_or_at(SlotNo(20))
         .expect("retained snapshot at 20");
     assert_eq!(retained_slot, SlotNo(20));
     assert_eq!(retained_data, &[0x2A]);
     assert!(store.latest_snapshot_before_or_at(SlotNo(10)).is_none());
-    assert_eq!(data, &[0x1E]);
+    assert_eq!(latest_data, vec![0x1E]);
 }
 
 // ---------------------------------------------------------------------------

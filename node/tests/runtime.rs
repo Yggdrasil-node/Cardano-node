@@ -8,13 +8,15 @@ use yggdrasil_network::{
     peer_accept,
 };
 use yggdrasil_ledger::{
-    AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, ByronBlock, CborEncode, Era,
-    LedgerError, LedgerState, MultiEraSubmittedTx, Point, Encoder, ShelleyTx,
-    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyWitnessSet, SlotNo, TxId, Value,
+    AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo,
+    ByronBlock, CborEncode, Era, HeaderHash, LedgerError, LedgerState, MultiEraSubmittedTx,
+    Point, Encoder, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyWitnessSet,
+    SlotNo, TxId, Value,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_node::{
     LedgerCheckpointPolicy, MempoolAddTxResult, NodeConfig, TxSubmissionServiceOutcome,
+    ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
     add_tx_to_mempool, add_tx_to_shared_mempool, add_txs_to_mempool,
     add_txs_to_shared_mempool, bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
     ReconnectingSyncServiceOutcome, ResumedSyncServiceOutcome, VerificationConfig,
@@ -24,7 +26,10 @@ use yggdrasil_node::{
     run_reconnecting_verified_sync_service,
     run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
 };
-use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile, VolatileStore};
+use yggdrasil_storage::{
+    ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
+    VolatileStore,
+};
 
 /// Spawn a responder that accepts a connection, then return the listen address.
 async fn spawn_responder(magic: u32) -> SocketAddr {
@@ -668,12 +673,14 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
     });
 
     let outcome: ReconnectingSyncServiceOutcome = run_reconnecting_verified_sync_service(
-        &node_config,
-        &[second_addr],
         &mut store,
-        Point::Origin,
-        &service_config,
-        None,
+        ReconnectingVerifiedSyncRequest {
+            node_config: &node_config,
+            fallback_peer_addrs: &[second_addr],
+            from_point: Point::Origin,
+            config: &service_config,
+            nonce_state: None,
+        },
         async { let _ = shutdown_rx.await; },
     )
     .await
@@ -690,7 +697,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
 async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     let magic = 77;
 
-    let block_one = build_multi_era_envelope(1, &build_byron_ebb_body(0, 1, &[0; 32]));
+    let block_one = build_multi_era_envelope(0, &build_byron_ebb_body(0, 1, &[0; 32]));
     let tip_one = Point::BlockPoint(
         SlotNo(0),
         ByronBlock::decode_ebb(&block_one[2..]).expect("decode ebb 1").header_hash(),
@@ -703,7 +710,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     )
     .await;
 
-    let block_two = build_multi_era_envelope(1, &build_byron_ebb_body(0, 2, &[0; 32]));
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(0, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(0),
         ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
@@ -745,12 +752,14 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     });
 
     let outcome: ReconnectingSyncServiceOutcome = run_reconnecting_verified_sync_service_chaindb(
-        &node_config,
-        &[second_addr],
         &mut chain_db,
-        Point::Origin,
-        &service_config,
-        None,
+        ReconnectingVerifiedSyncRequest {
+            node_config: &node_config,
+            fallback_peer_addrs: &[second_addr],
+            from_point: Point::Origin,
+            config: &service_config,
+            nonce_state: None,
+        },
         async { let _ = shutdown_rx.await; },
     )
     .await
@@ -780,7 +789,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x11; 32]));
     checkpoint_state.tip = recovered_point;
 
-    let block_two = build_multi_era_envelope(1, &build_byron_ebb_body(0, 2, &[0; 32]));
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(0, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(0),
         ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
@@ -816,6 +825,19 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         InMemoryLedgerStore::default(),
     );
     chain_db
+        .add_volatile_block(Block {
+            era: Era::Byron,
+            header: BlockHeader {
+                hash: HeaderHash([0x11; 32]),
+                prev_hash: HeaderHash([0; 32]),
+                slot_no: SlotNo(0),
+                block_no: BlockNo(0),
+                issuer_vkey: [0; 32],
+            },
+            transactions: Vec::new(),
+        })
+        .expect("seed coordinated tip");
+    chain_db
         .save_ledger_checkpoint(SlotNo(0), &checkpoint_state.checkpoint())
         .expect("save checkpoint");
 
@@ -826,12 +848,14 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
     });
 
     let outcome: ResumedSyncServiceOutcome = resume_reconnecting_verified_sync_service_chaindb(
-        &node_config,
-        &[],
         &mut chain_db,
-        LedgerState::new(Era::Byron),
-        &service_config,
-        None,
+        ResumeReconnectingVerifiedSyncRequest {
+            node_config: &node_config,
+            fallback_peer_addrs: &[],
+            base_ledger_state: LedgerState::new(Era::Byron),
+            config: &service_config,
+            nonce_state: None,
+        },
         async { let _ = shutdown_rx.await; },
     )
     .await

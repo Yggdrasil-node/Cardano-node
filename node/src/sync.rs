@@ -718,7 +718,12 @@ impl Default for LedgerCheckpointPolicy {
 }
 
 impl LedgerCheckpointPolicy {
-    fn should_persist(&self, previous_point: &Point, current_point: &Point, forced: bool) -> bool {
+    pub(crate) fn should_persist(
+        &self,
+        previous_point: &Point,
+        current_point: &Point,
+        forced: bool,
+    ) -> bool {
         if self.max_snapshots == 0 {
             return false;
         }
@@ -1009,7 +1014,6 @@ where
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
-    let mut checkpoint_tracking = default_sync_checkpoint_tracking(chain_db)?;
 
     loop {
         let batch_fut = sync_batch_apply_verified(
@@ -1062,8 +1066,6 @@ where
                         }
                     }
                 }
-
-                persist_ledger_checkpoint_after_progress(chain_db, &mut checkpoint_tracking, &progress)?;
             }
         }
     }

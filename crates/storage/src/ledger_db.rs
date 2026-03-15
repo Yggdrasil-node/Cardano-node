@@ -26,7 +26,6 @@ pub trait LedgerStore {
     fn truncate_after(&mut self, slot: Option<SlotNo>) -> Result<(), StorageError>;
 
     /// Retains only the newest `max_snapshots` snapshots.
-
     /// Passing `0` clears all snapshots.
     fn retain_latest(&mut self, max_snapshots: usize) -> Result<(), StorageError>;
 

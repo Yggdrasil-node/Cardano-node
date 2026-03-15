@@ -25,8 +25,9 @@ fn applies_block_for_matching_era() {
 }
 
 #[test]
-fn rejects_block_for_mismatched_era() {
+fn byron_block_advances_tip_without_state_transition() {
     let mut state = LedgerState::new(Era::Shelley);
+    assert_eq!(state.tip, Point::Origin);
     let block = Block {
         era: Era::Byron,
         header: BlockHeader {
@@ -39,14 +40,10 @@ fn rejects_block_for_mismatched_era() {
         transactions: Vec::new(),
     };
 
-    let err = state
+    state
         .apply_block(&block)
-        .expect_err("mismatched era should be rejected");
-    assert_eq!(
-        err,
-        yggdrasil_ledger::LedgerError::UnsupportedEra(Era::Byron)
-    );
-    assert_eq!(state.tip, Point::Origin);
+        .expect("byron blocks should advance the tip as a no-op transition");
+    assert_eq!(state.tip, Point::BlockPoint(SlotNo(1), HeaderHash([0xBB; 32])));
 }
 
 #[test]

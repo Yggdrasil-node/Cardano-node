@@ -8,10 +8,10 @@ use std::future::Future;
 use std::net::SocketAddr;
 
 use crate::sync::{
-    LedgerRecoveryOutcome, SyncError, VerifiedSyncServiceConfig, apply_nonce_evolution,
-    MultiEraSyncProgress, MultiEraSyncStep, multi_era_block_to_block, promote_stable_blocks_chaindb,
-    recover_ledger_state_chaindb, sync_batch_apply_verified, track_chain_state,
-    track_chain_state_entries,
+    LedgerCheckpointPolicy, LedgerRecoveryOutcome, SyncError, VerifiedSyncServiceConfig,
+    apply_nonce_evolution, MultiEraSyncProgress, MultiEraSyncStep, multi_era_block_to_block,
+    promote_stable_blocks_chaindb, recover_ledger_state_chaindb, sync_batch_apply_verified,
+    track_chain_state, track_chain_state_entries,
 };
 use crate::tracer::{NodeTracer, trace_fields};
 use serde_json::json;
@@ -454,7 +454,7 @@ pub struct ReconnectingSyncServiceOutcome {
 
 /// Outcome returned when a coordinated-storage sync run first restores ledger
 /// state from `ChainDb` recovery data and then starts reconnecting sync.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ResumedSyncServiceOutcome {
     /// Ledger recovery state rebuilt before live syncing begins.
     pub recovery: LedgerRecoveryOutcome,
@@ -462,11 +462,52 @@ pub struct ResumedSyncServiceOutcome {
     pub sync: ReconnectingSyncServiceOutcome,
 }
 
+/// Request parameters for reconnecting verified sync runners.
+pub struct ReconnectingVerifiedSyncRequest<'a> {
+    /// Node-to-node bootstrap configuration.
+    pub node_config: &'a NodeConfig,
+    /// Ordered fallback peers tried after the primary peer.
+    pub fallback_peer_addrs: &'a [SocketAddr],
+    /// Chain point from which live sync should begin.
+    pub from_point: Point,
+    /// Verified sync policy and batch configuration.
+    pub config: &'a VerifiedSyncServiceConfig,
+    /// Optional nonce-evolution state to carry through the run.
+    pub nonce_state: Option<NonceEvolutionState>,
+}
+
+/// Request parameters for coordinated-storage reconnecting sync resumption.
+pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
+    /// Node-to-node bootstrap configuration.
+    pub node_config: &'a NodeConfig,
+    /// Ordered fallback peers tried after the primary peer.
+    pub fallback_peer_addrs: &'a [SocketAddr],
+    /// Base ledger state used before replaying persisted recovery data.
+    pub base_ledger_state: LedgerState,
+    /// Verified sync policy and batch configuration.
+    pub config: &'a VerifiedSyncServiceConfig,
+    /// Optional nonce-evolution state to carry through the resumed run.
+    pub nonce_state: Option<NonceEvolutionState>,
+}
+
 #[derive(Clone, Debug)]
 struct CheckpointTracking {
     base_ledger_state: LedgerState,
     ledger_state: LedgerState,
     last_persisted_point: Point,
+}
+
+struct ReconnectingVerifiedSyncContext<'a> {
+    node_config: &'a NodeConfig,
+    fallback_peer_addrs: &'a [SocketAddr],
+    config: &'a VerifiedSyncServiceConfig,
+    tracer: &'a NodeTracer,
+}
+
+struct ReconnectingVerifiedSyncState {
+    from_point: Point,
+    nonce_state: Option<NonceEvolutionState>,
+    checkpoint_tracking: Option<CheckpointTracking>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -607,7 +648,6 @@ where
                 &current_point,
                 progress.rollback_count > 0,
             ) {
-                let before_save = chain_db.ledger().count();
                 chain_db.save_ledger_checkpoint(slot, &tracking.ledger_state.checkpoint())?;
                 let after_save = chain_db.ledger().count();
                 chain_db.retain_latest_ledger_checkpoints(policy.max_snapshots)?;
@@ -652,15 +692,10 @@ where
 }
 
 async fn run_reconnecting_verified_sync_service_chaindb_inner<I, V, L, F>(
-    node_config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
     chain_db: &mut ChainDb<I, V, L>,
-    mut from_point: Point,
-    config: &VerifiedSyncServiceConfig,
-    mut nonce_state: Option<NonceEvolutionState>,
-    tracer: &NodeTracer,
+    context: ReconnectingVerifiedSyncContext<'_>,
+    state: ReconnectingVerifiedSyncState,
     shutdown: F,
-    mut checkpoint_tracking: Option<CheckpointTracking>,
 ) -> Result<ReconnectingSyncServiceOutcome, SyncError>
 where
     I: ImmutableStore,
@@ -668,6 +703,18 @@ where
     L: LedgerStore,
     F: Future<Output = ()>,
 {
+    let ReconnectingVerifiedSyncContext {
+        node_config,
+        fallback_peer_addrs,
+        config,
+        tracer,
+    } = context;
+    let ReconnectingVerifiedSyncState {
+        mut from_point,
+        mut nonce_state,
+        mut checkpoint_tracking,
+    } = state;
+
     tokio::pin!(shutdown);
 
     let mut total_blocks = 0usize;
@@ -875,62 +922,6 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        CheckpointPersistenceOutcome, checkpoint_trace_fields,
-    };
-    use crate::sync::LedgerCheckpointPolicy;
-    use serde_json::json;
-    use yggdrasil_ledger::SlotNo;
-
-    #[test]
-    fn checkpoint_trace_fields_include_persisted_prune_counts() {
-        let policy = LedgerCheckpointPolicy {
-            min_slot_delta: 2160,
-            max_snapshots: 8,
-        };
-        let fields = checkpoint_trace_fields(
-            &CheckpointPersistenceOutcome::Persisted {
-                slot: SlotNo(4320),
-                retained_snapshots: 8,
-                pruned_snapshots: 2,
-                rollback_count: 1,
-            },
-            &policy,
-        );
-
-        assert_eq!(fields.get("action"), Some(&json!("persisted")));
-        assert_eq!(fields.get("slot"), Some(&json!(4320)));
-        assert_eq!(fields.get("retainedSnapshots"), Some(&json!(8)));
-        assert_eq!(fields.get("prunedSnapshots"), Some(&json!(2)));
-        assert_eq!(fields.get("rollbackCount"), Some(&json!(1)));
-        assert_eq!(fields.get("checkpointIntervalSlots"), Some(&json!(2160)));
-        assert_eq!(fields.get("maxLedgerSnapshots"), Some(&json!(8)));
-    }
-
-    #[test]
-    fn checkpoint_trace_fields_include_skip_delta() {
-        let policy = LedgerCheckpointPolicy {
-            min_slot_delta: 2160,
-            max_snapshots: 8,
-        };
-        let fields = checkpoint_trace_fields(
-            &CheckpointPersistenceOutcome::Skipped {
-                slot: SlotNo(1200),
-                rollback_count: 0,
-                since_last_slot_delta: 1200,
-            },
-            &policy,
-        );
-
-        assert_eq!(fields.get("action"), Some(&json!("skipped")));
-        assert_eq!(fields.get("slot"), Some(&json!(1200)));
-        assert_eq!(fields.get("sinceLastSlotDelta"), Some(&json!(1200)));
-        assert_eq!(fields.get("rollbackCount"), Some(&json!(0)));
-    }
-}
-
 // ---------------------------------------------------------------------------
 // bootstrap
 // ---------------------------------------------------------------------------
@@ -1080,12 +1071,8 @@ async fn bootstrap_with_attempt_state(
 /// BlockFetch failures trigger reconnection; decode, verification, and storage
 /// failures still return immediately.
 pub async fn run_reconnecting_verified_sync_service<S, F>(
-    node_config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
     store: &mut S,
-    from_point: Point,
-    config: &VerifiedSyncServiceConfig,
-    nonce_state: Option<NonceEvolutionState>,
+    request: ReconnectingVerifiedSyncRequest<'_>,
     shutdown: F,
 ) -> Result<ReconnectingSyncServiceOutcome, SyncError>
 where
@@ -1093,28 +1080,14 @@ where
     F: Future<Output = ()>,
 {
     let tracer = NodeTracer::disabled();
-    run_reconnecting_verified_sync_service_with_tracer(
-        node_config,
-        fallback_peer_addrs,
-        store,
-        from_point,
-        config,
-        nonce_state,
-        &tracer,
-        shutdown,
-    )
-    .await
+    run_reconnecting_verified_sync_service_with_tracer(store, request, &tracer, shutdown).await
 }
 
 /// Run the verified sync loop, reconnecting through ordered bootstrap peers
 /// while coordinating storage through [`ChainDb`].
 pub async fn run_reconnecting_verified_sync_service_chaindb<I, V, L, F>(
-    node_config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
     chain_db: &mut ChainDb<I, V, L>,
-    from_point: Point,
-    config: &VerifiedSyncServiceConfig,
-    nonce_state: Option<NonceEvolutionState>,
+    request: ReconnectingVerifiedSyncRequest<'_>,
     shutdown: F,
 ) -> Result<ReconnectingSyncServiceOutcome, SyncError>
 where
@@ -1124,28 +1097,15 @@ where
     F: Future<Output = ()>,
 {
     let tracer = NodeTracer::disabled();
-    run_reconnecting_verified_sync_service_chaindb_with_tracer(
-        node_config,
-        fallback_peer_addrs,
-        chain_db,
-        from_point,
-        config,
-        nonce_state,
-        &tracer,
-        shutdown,
-    )
-    .await
+    run_reconnecting_verified_sync_service_chaindb_with_tracer(chain_db, request, &tracer, shutdown)
+        .await
 }
 
 /// Recover ledger state from coordinated storage and then run reconnecting
 /// verified sync from the recovered point.
 pub async fn resume_reconnecting_verified_sync_service_chaindb<I, V, L, F>(
-    node_config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
     chain_db: &mut ChainDb<I, V, L>,
-    base_ledger_state: LedgerState,
-    config: &VerifiedSyncServiceConfig,
-    nonce_state: Option<NonceEvolutionState>,
+    request: ResumeReconnectingVerifiedSyncRequest<'_>,
     shutdown: F,
 ) -> Result<ResumedSyncServiceOutcome, SyncError>
 where
@@ -1155,17 +1115,8 @@ where
     F: Future<Output = ()>,
 {
     let tracer = NodeTracer::disabled();
-    resume_reconnecting_verified_sync_service_chaindb_with_tracer(
-        node_config,
-        fallback_peer_addrs,
-        chain_db,
-        base_ledger_state,
-        config,
-        nonce_state,
-        &tracer,
-        shutdown,
-    )
-    .await
+    resume_reconnecting_verified_sync_service_chaindb_with_tracer(chain_db, request, &tracer, shutdown)
+        .await
 }
 
 /// Run the reconnecting verified sync loop while emitting runtime trace events.
@@ -1176,12 +1127,8 @@ where
 /// graceful shutdown are traced, while decode, verification, and storage
 /// failures still return immediately.
 pub async fn run_reconnecting_verified_sync_service_with_tracer<S, F>(
-    node_config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
     store: &mut S,
-    mut from_point: Point,
-    config: &VerifiedSyncServiceConfig,
-    mut nonce_state: Option<NonceEvolutionState>,
+    request: ReconnectingVerifiedSyncRequest<'_>,
     tracer: &NodeTracer,
     shutdown: F,
 ) -> Result<ReconnectingSyncServiceOutcome, SyncError>
@@ -1189,6 +1136,14 @@ where
     S: VolatileStore,
     F: Future<Output = ()>,
 {
+    let ReconnectingVerifiedSyncRequest {
+        node_config,
+        fallback_peer_addrs,
+        mut from_point,
+        config,
+        mut nonce_state,
+    } = request;
+
     tokio::pin!(shutdown);
 
     let mut total_blocks = 0usize;
@@ -1379,12 +1334,8 @@ where
 /// Recover ledger state from coordinated storage and then run reconnecting
 /// verified sync while emitting runtime trace events.
 pub async fn resume_reconnecting_verified_sync_service_chaindb_with_tracer<I, V, L, F>(
-    node_config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
     chain_db: &mut ChainDb<I, V, L>,
-    base_ledger_state: LedgerState,
-    config: &VerifiedSyncServiceConfig,
-    nonce_state: Option<NonceEvolutionState>,
+    request: ResumeReconnectingVerifiedSyncRequest<'_>,
     tracer: &NodeTracer,
     shutdown: F,
 ) -> Result<ResumedSyncServiceOutcome, SyncError>
@@ -1394,6 +1345,14 @@ where
     L: LedgerStore,
     F: Future<Output = ()>,
 {
+    let ResumeReconnectingVerifiedSyncRequest {
+        node_config,
+        fallback_peer_addrs,
+        base_ledger_state,
+        config,
+        nonce_state,
+    } = request;
+
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
     tracer.trace_runtime(
         "Node.Recovery",
@@ -1413,15 +1372,19 @@ where
     };
 
     let sync = run_reconnecting_verified_sync_service_chaindb_inner(
-        node_config,
-        fallback_peer_addrs,
         chain_db,
-        recovery.point,
-        config,
-        nonce_state,
-        tracer,
+        ReconnectingVerifiedSyncContext {
+            node_config,
+            fallback_peer_addrs,
+            config,
+            tracer,
+        },
+        ReconnectingVerifiedSyncState {
+            from_point: recovery.point,
+            nonce_state,
+            checkpoint_tracking: Some(checkpoint_tracking),
+        },
         shutdown,
-        Some(checkpoint_tracking),
     )
     .await?;
 
@@ -1431,12 +1394,8 @@ where
 /// Run the reconnecting verified sync loop over coordinated storage while
 /// emitting runtime trace events.
 pub async fn run_reconnecting_verified_sync_service_chaindb_with_tracer<I, V, L, F>(
-    node_config: &NodeConfig,
-    fallback_peer_addrs: &[SocketAddr],
     chain_db: &mut ChainDb<I, V, L>,
-    mut from_point: Point,
-    config: &VerifiedSyncServiceConfig,
-    mut nonce_state: Option<NonceEvolutionState>,
+    request: ReconnectingVerifiedSyncRequest<'_>,
     tracer: &NodeTracer,
     shutdown: F,
 ) -> Result<ReconnectingSyncServiceOutcome, SyncError>
@@ -1446,18 +1405,83 @@ where
     L: LedgerStore,
     F: Future<Output = ()>,
 {
-    let checkpoint_tracking = Some(default_checkpoint_tracking(chain_db)?);
-
-    run_reconnecting_verified_sync_service_chaindb_inner(
+    let ReconnectingVerifiedSyncRequest {
         node_config,
         fallback_peer_addrs,
-        chain_db,
         from_point,
         config,
         nonce_state,
-        tracer,
+    } = request;
+    let checkpoint_tracking = Some(default_checkpoint_tracking(chain_db)?);
+
+    run_reconnecting_verified_sync_service_chaindb_inner(
+        chain_db,
+        ReconnectingVerifiedSyncContext {
+            node_config,
+            fallback_peer_addrs,
+            config,
+            tracer,
+        },
+        ReconnectingVerifiedSyncState {
+            from_point,
+            nonce_state,
+            checkpoint_tracking,
+        },
         shutdown,
-        checkpoint_tracking,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CheckpointPersistenceOutcome, checkpoint_trace_fields};
+    use crate::sync::LedgerCheckpointPolicy;
+    use serde_json::json;
+    use yggdrasil_ledger::SlotNo;
+
+    #[test]
+    fn checkpoint_trace_fields_include_persisted_prune_counts() {
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 2160,
+            max_snapshots: 8,
+        };
+        let fields = checkpoint_trace_fields(
+            &CheckpointPersistenceOutcome::Persisted {
+                slot: SlotNo(4320),
+                retained_snapshots: 8,
+                pruned_snapshots: 2,
+                rollback_count: 1,
+            },
+            &policy,
+        );
+
+        assert_eq!(fields.get("action"), Some(&json!("persisted")));
+        assert_eq!(fields.get("slot"), Some(&json!(4320)));
+        assert_eq!(fields.get("retainedSnapshots"), Some(&json!(8)));
+        assert_eq!(fields.get("prunedSnapshots"), Some(&json!(2)));
+        assert_eq!(fields.get("rollbackCount"), Some(&json!(1)));
+        assert_eq!(fields.get("checkpointIntervalSlots"), Some(&json!(2160)));
+        assert_eq!(fields.get("maxLedgerSnapshots"), Some(&json!(8)));
+    }
+
+    #[test]
+    fn checkpoint_trace_fields_include_skip_delta() {
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 2160,
+            max_snapshots: 8,
+        };
+        let fields = checkpoint_trace_fields(
+            &CheckpointPersistenceOutcome::Skipped {
+                slot: SlotNo(1200),
+                rollback_count: 0,
+                since_last_slot_delta: 1200,
+            },
+            &policy,
+        );
+
+        assert_eq!(fields.get("action"), Some(&json!("skipped")));
+        assert_eq!(fields.get("slot"), Some(&json!(1200)));
+        assert_eq!(fields.get("sinceLastSlotDelta"), Some(&json!(1200)));
+        assert_eq!(fields.get("rollbackCount"), Some(&json!(0)));
+    }
 }

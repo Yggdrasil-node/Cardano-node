@@ -70,9 +70,12 @@ pub use root_peers_provider::{
     refresh_root_peer_state, refresh_root_peer_state_and_registry,
 };
 pub use ledger_peers_provider::{
+    LedgerPeerRegistryUpdate, LedgerPeerUseDecision, LedgerStateJudgement,
+    PeerSnapshotFreshness,
     LedgerPeerProvider, LedgerPeerProviderError, LedgerPeerProviderKind,
     LedgerPeerProviderRefresh, LedgerPeerSnapshot, ScriptedLedgerPeerProvider,
-    apply_ledger_peer_refresh, refresh_ledger_peer_registry,
+    apply_ledger_peer_refresh, judge_ledger_peer_usage,
+    reconcile_ledger_peer_registry_with_policy, refresh_ledger_peer_registry,
 };
 pub use peer_selection::{
     LocalRootConfig, PeerAccessPoint, PeerAttemptState, PeerBootstrapTargets,

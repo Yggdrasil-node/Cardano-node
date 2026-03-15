@@ -133,7 +133,22 @@ where
     /// Rolls back the volatile suffix and truncates ledger snapshots newer
     /// than the rollback point.
     pub fn rollback_to(&mut self, point: &Point) -> Result<(), StorageError> {
-        self.volatile.rollback_to(point);
+        match point {
+            Point::Origin => self.volatile.rollback_to(point),
+            Point::BlockPoint(_, hash) => {
+                if self.volatile.get_block(hash).is_some() {
+                    self.volatile.rollback_to(point);
+                } else if self.immutable.get_block(hash).is_some() {
+                    // When the rollback target is already immutable, the
+                    // volatile suffix must be dropped entirely so the best
+                    // known tip realigns with the immutable chain.
+                    self.volatile.rollback_to(&Point::Origin);
+                } else {
+                    return Err(StorageError::PointNotFound);
+                }
+            }
+        }
+
         match point {
             Point::Origin => self.ledger.truncate_after(None),
             Point::BlockPoint(slot, _) => self.ledger.truncate_after(Some(*slot)),

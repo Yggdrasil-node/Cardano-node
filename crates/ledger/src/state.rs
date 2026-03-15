@@ -1226,7 +1226,7 @@ impl LedgerState {
     pub fn snapshot(&self) -> LedgerStateSnapshot {
         LedgerStateSnapshot {
             current_era: self.current_era,
-            tip: self.tip.clone(),
+            tip: self.tip,
             pool_state: self.pool_state.clone(),
             stake_credentials: self.stake_credentials.clone(),
             committee_state: self.committee_state.clone(),
@@ -1273,13 +1273,13 @@ impl LedgerState {
         let slot = block.header.slot_no.0;
 
         match block.era {
+            Era::Byron => {}
             Era::Shelley => self.apply_shelley_block(block, slot)?,
             Era::Allegra => self.apply_allegra_block(block, slot)?,
             Era::Mary => self.apply_mary_block(block, slot)?,
             Era::Alonzo => self.apply_alonzo_block(block, slot)?,
             Era::Babbage => self.apply_babbage_block(block, slot)?,
             Era::Conway => self.apply_conway_block(block, slot)?,
-            era => return Err(LedgerError::UnsupportedEra(era)),
         }
 
         self.tip = Point::BlockPoint(block.header.slot_no, block.header.hash);

@@ -14,8 +14,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use yggdrasil_network::{
-    LocalRootConfig, PublicRootConfig, TopologyConfig,
-    ordered_peer_fallbacks,
+    LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
+    LocalRootConfig, PeerSnapshotFreshness, PublicRootConfig, TopologyConfig,
+    UseLedgerPeers, judge_ledger_peer_usage, ordered_peer_fallbacks,
 };
 
 #[derive(Debug)]
@@ -160,6 +161,34 @@ fn default_max_ledger_snapshots() -> usize {
 }
 
 impl NodeConfigFile {
+    /// Rebuild the network-owned topology configuration from the node config.
+    pub fn topology_config(&self) -> TopologyConfig {
+        TopologyConfig {
+            bootstrap_peers: yggdrasil_network::UseBootstrapPeers::UseBootstrapPeers(
+                self.bootstrap_peers
+                    .iter()
+                    .map(|addr| yggdrasil_network::PeerAccessPoint {
+                        address: addr.ip().to_string(),
+                        port: addr.port(),
+                    })
+                    .collect(),
+            ),
+            local_roots: self.local_roots.clone(),
+            public_roots: self.public_roots.clone(),
+            use_ledger_peers: self.use_ledger_peers_policy(),
+            peer_snapshot_file: self.peer_snapshot_file.clone(),
+        }
+    }
+
+    /// Return the typed network-owned ledger-peer policy for this config.
+    pub fn use_ledger_peers_policy(&self) -> UseLedgerPeers {
+        match self.use_ledger_after_slot {
+            None => UseLedgerPeers::DontUseLedgerPeers,
+            Some(0) => UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always),
+            Some(slot) => UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::After(slot)),
+        }
+    }
+
     /// Returns ordered fallback peers derived from bootstrap peers and richer
     /// topology groups. Ordering follows the upstream topology split: explicit
     /// bootstrap peers first, then trustable local roots, then other local
@@ -171,6 +200,44 @@ impl NodeConfigFile {
             &self.local_roots,
             &self.public_roots,
         )
+    }
+
+    /// Returns currently eligible ledger-derived fallbacks, excluding peers
+    /// already covered by the primary or static topology fallback set.
+    pub fn eligible_ledger_fallback_peers(
+        &self,
+        snapshot: &LedgerPeerSnapshot,
+        latest_slot: Option<u64>,
+        ledger_state_judgement: LedgerStateJudgement,
+        peer_snapshot_freshness: PeerSnapshotFreshness,
+    ) -> (LedgerPeerUseDecision, Vec<SocketAddr>) {
+        let decision = judge_ledger_peer_usage(
+            self.use_ledger_peers_policy(),
+            latest_slot,
+            ledger_state_judgement,
+            peer_snapshot_freshness,
+        );
+
+        if decision != LedgerPeerUseDecision::Eligible {
+            return (decision, Vec::new());
+        }
+
+        let mut blocked = self.ordered_fallback_peers();
+        blocked.push(self.peer_addr);
+
+        let mut eligible = Vec::new();
+        for peer in snapshot
+            .ledger_peers
+            .iter()
+            .chain(snapshot.big_ledger_peers.iter())
+            .copied()
+        {
+            if !blocked.contains(&peer) && !eligible.contains(&peer) {
+                eligible.push(peer);
+            }
+        }
+
+        (decision, eligible)
     }
 }
 
@@ -818,6 +885,142 @@ mod tests {
                 "127.0.0.14:3001".parse().expect("addr"),
             ]
         );
+    }
+
+    #[test]
+    fn use_ledger_peers_policy_preserves_legacy_option_semantics() {
+        let mut cfg = default_config();
+
+        cfg.use_ledger_after_slot = None;
+        assert_eq!(cfg.use_ledger_peers_policy(), UseLedgerPeers::DontUseLedgerPeers);
+
+        cfg.use_ledger_after_slot = Some(0);
+        assert_eq!(
+            cfg.use_ledger_peers_policy(),
+            UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always)
+        );
+
+        cfg.use_ledger_after_slot = Some(42);
+        assert_eq!(
+            cfg.use_ledger_peers_policy(),
+            UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::After(42))
+        );
+    }
+
+    #[test]
+    fn topology_config_round_trips_network_owned_fields() {
+        let cfg = NetworkPreset::Mainnet.to_config();
+        let topology = cfg.topology_config();
+
+        assert_eq!(topology.local_roots, cfg.local_roots);
+        assert_eq!(topology.public_roots, cfg.public_roots);
+        assert_eq!(topology.use_ledger_peers, cfg.use_ledger_peers_policy());
+        assert_eq!(topology.peer_snapshot_file, cfg.peer_snapshot_file);
+    }
+
+    #[test]
+    fn eligible_ledger_fallback_peers_returns_empty_when_policy_blocks_use() {
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = Some(100);
+
+        let snapshot = LedgerPeerSnapshot::new(
+            ["127.0.0.20:3001".parse().expect("ledger")],
+            ["127.0.0.21:3001".parse().expect("big")],
+        );
+
+        let (decision, peers) = cfg.eligible_ledger_fallback_peers(
+            &snapshot,
+            Some(99),
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::Fresh,
+        );
+
+        assert_eq!(
+            decision,
+            LedgerPeerUseDecision::BeforeUseLedgerAfterSlot {
+                after_slot: 100,
+                latest_slot: 99,
+            }
+        );
+        assert!(peers.is_empty());
+    }
+
+    #[test]
+    fn eligible_ledger_fallback_peers_filters_primary_and_static_fallbacks() {
+        let cfg: NodeConfigFile = serde_json::from_str(
+            r#"{
+                "peer_addr": "127.0.0.1:3001",
+                "bootstrap_peers": ["127.0.0.2:3001"],
+                "public_roots": [
+                    {
+                        "accessPoints": [
+                            { "address": "127.0.0.3", "port": 3001 }
+                        ],
+                        "advertise": false
+                    }
+                ],
+                "use_ledger_after_slot": 0,
+                "peer_snapshot_file": "peer-snapshot.json",
+                "network_magic": 42,
+                "protocol_versions": [13]
+            }"#,
+        )
+        .expect("parse config");
+
+        let snapshot = LedgerPeerSnapshot::new(
+            [
+                "127.0.0.1:3001".parse().expect("primary overlap"),
+                "127.0.0.2:3001".parse().expect("bootstrap overlap"),
+                "127.0.0.4:3001".parse().expect("new ledger"),
+            ],
+            [
+                "127.0.0.3:3001".parse().expect("public overlap"),
+                "127.0.0.5:3001".parse().expect("new big ledger"),
+            ],
+        );
+
+        let (decision, peers) = cfg.eligible_ledger_fallback_peers(
+            &snapshot,
+            Some(1),
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::Fresh,
+        );
+
+        assert_eq!(decision, LedgerPeerUseDecision::Eligible);
+        assert_eq!(
+            peers,
+            vec![
+                "127.0.0.4:3001".parse().expect("ledger fallback"),
+                "127.0.0.5:3001".parse().expect("big ledger fallback"),
+            ]
+        );
+    }
+
+    #[test]
+    fn eligible_ledger_fallback_peers_returns_empty_when_snapshot_is_not_fresh() {
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = Some(0);
+        cfg.peer_snapshot_file = Some("peer-snapshot.json".to_owned());
+
+        let snapshot = LedgerPeerSnapshot::new(
+            ["127.0.0.20:3001".parse().expect("ledger")],
+            ["127.0.0.21:3001".parse().expect("big")],
+        );
+
+        let (decision, peers) = cfg.eligible_ledger_fallback_peers(
+            &snapshot,
+            Some(100),
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::Stale,
+        );
+
+        assert_eq!(
+            decision,
+            LedgerPeerUseDecision::BlockedByPeerSnapshot {
+                freshness: PeerSnapshotFreshness::Stale,
+            }
+        );
+        assert!(peers.is_empty());
     }
 
     #[test]

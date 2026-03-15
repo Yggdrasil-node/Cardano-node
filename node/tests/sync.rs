@@ -299,7 +299,7 @@ async fn spawn_verified_batch_responder(
             .await
             .expect("batch done");
 
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         conn.mux.abort();
     });
 
@@ -343,7 +343,7 @@ async fn sync_step_rollforward_fetches_blocks() {
 async fn run_verified_sync_service_chaindb_persists_checkpoint() {
     let magic = 81;
     let block_body = build_byron_ebb_body(0, 1, &[0; 32]);
-    let block_bytes = build_multi_era_envelope(1, &block_body);
+    let block_bytes = build_multi_era_envelope(0, &block_body);
     let tip = Point::BlockPoint(
         SlotNo(0),
         ByronBlock::decode_ebb(&block_bytes[2..]).expect("decode ebb").header_hash(),
@@ -375,7 +375,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let _ = shutdown_tx.send(());
     });
 

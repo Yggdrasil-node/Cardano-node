@@ -8,7 +8,8 @@ pub mod tracer;
 
 pub use runtime::{
 	MempoolAddTxError, MempoolAddTxResult, NodeConfig, PeerSession,
-	ReconnectingSyncServiceOutcome, ResumedSyncServiceOutcome,
+	ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
+	ResumeReconnectingVerifiedSyncRequest, ResumedSyncServiceOutcome,
 	TxSubmissionServiceError, TxSubmissionServiceOutcome, add_tx_to_mempool,
 	add_tx_to_shared_mempool, add_txs_to_mempool, add_txs_to_shared_mempool,
 	bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
