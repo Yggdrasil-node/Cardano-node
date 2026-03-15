@@ -12,7 +12,7 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 
 ##  Rules *Non-Negotiable*
 - Handshake and multiplexing interfaces MUST remain independent from peer policy logic.
-- Topology domain types and simple reusable peer candidate ordering or address resolution helpers belong here, but full governor-style policy should remain a separate layer from transport and handshake primitives.
+- Topology domain types, peer candidate ordering helpers, and the governor decision engine (promotion/demotion/churn policy) belong here. The governor is a pure decision function — effectful connection management stays in `node`.
 - Mini-protocols MUST be introduced incrementally, starting with ChainSync and BlockFetch.
 - Testable state transitions MUST be preferred over implicit runtime behavior.
 - Public protocol types, handshake surfaces, and state-machine functions MUST have Rustdocs where message flow or invariants are not self-evident.
@@ -44,7 +44,11 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Root-set provider layer is now expanded: DNS-backed root-peer provider re-resolves configured local-root, bootstrap, and public-root access points with optional `DnsRefreshPolicy` (TTL clamping 60s/900s, exponential backoff). Provider refreshes reconcile the `PeerRegistry` on crate-owned paths.
 - Peer registry is now extended with ledger, big-ledger, and peer-share source reconciliation helpers that preserve unrelated sources and peer status.
 - Ledger peer provider layer is now complete: `LedgerPeerProvider` trait, `LedgerPeerSnapshot` normalization (deduplicates and enforces disjoint ledger/big-ledger sets), `LedgerPeerProviderRefresh` (combined/per-kind), `apply_ledger_peer_refresh()` helper, `refresh_ledger_peer_registry()` orchestration, `judge_ledger_peer_usage()` plus `reconcile_ledger_peer_registry_with_policy()` for `useLedgerAfterSlot` / latest-slot / ledger-state / peer-snapshot freshness gating, and `ScriptedLedgerPeerProvider` for testing. Provider refreshes reconcile the `PeerRegistry` on crate-owned paths without node involvement.
+- Peer governor module (`governor.rs`) implements a pure decision engine: `GovernorTargets` (target_known/established/active), `LocalRootTargets` (per-group warm/hot valency), `GovernorAction` (PromoteToWarm/PromoteToHot/DemoteToWarm/DemoteToCold), evaluation functions for promotions/demotions, local-root valency enforcement, and combined `governor_tick`. `GovernorState` carries mutable failure-tracking (record_success/record_failure, is_backing_off, filter_backed_off) and churn timing (ChurnConfig, evaluate_churn, tick). 11 governor tests.
+- PeerSharing protocol (mini-protocol 10) is now implemented: `PeerSharingState` state machine, `PeerSharingMessage` (MsgShareRequest/MsgSharePeers/MsgDone), `SharedPeerAddress` (IPv4/IPv6 CBOR codec). Client driver `PeerSharingClient` and server driver `PeerSharingServer` (with serve_loop callback) are in place. 8 protocol-level tests.
+- TCP listener (`listener.rs`) wraps `TcpListener` for inbound peer connections: `PeerListener::bind()`, `from_listener()`, `accept_peer()`.
 - Next implementation order:
-	1. Add consensus-network bridge inputs for ledger peers, latest-slot gating, and peer snapshot freshness.
-	2. Implement governor-style promotion, demotion, peer sharing, churn, and Genesis-specific policy.
-	3. Expand typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical).
+	1. Integrate governor `tick()` into the node runtime loop to drive peer promotions/demotions.
+	2. Wire PeerSharing client into governor for peer discovery.
+	3. Add consensus-network bridge inputs for ledger peers, latest-slot gating, and peer snapshot freshness.
+	4. Expand typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical).

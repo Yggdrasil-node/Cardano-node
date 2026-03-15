@@ -6,7 +6,7 @@ description: Guidance for mini-protocol state machine modules
 Focus on explicit node-to-node and node-to-client protocol state machines, messages, and transition safety.
 
 ## Scope
-- ChainSync, BlockFetch, and later operational mini-protocols.
+- ChainSync, BlockFetch, KeepAlive, TxSubmission, PeerSharing, and future operational mini-protocols.
 - Protocol states, legal transitions, and shared naming conventions.
 
 ##  Rules *Non-Negotiable*
@@ -28,6 +28,7 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - BlockFetch has 4 states (StIdle, StBusy, StStreaming, StDone), 6 message variants with validated transitions, and a CBOR wire codec.
 - KeepAlive has 3 states (StClient, StServer, StDone), 3 message variants with validated transitions, and a CBOR wire codec.
 - TxSubmission2 has 5 states (StInit, StIdle, StTxIds, StTxs, StDone), 6 message variants with validated transitions, and a CBOR wire codec. MsgDone only legal from blocking StTxIds. Transaction identifiers now use ledger `TxId`; transaction bodies remain raw bytes.
-- Wire tags and naming match upstream `Ouroboros.Network.Protocol.{ChainSync,BlockFetch,KeepAlive,TxSubmission2}.Type`.
+- PeerSharing has 3 states (StClient, StServer, StDone), 3 message variants (MsgShareRequest, MsgSharePeers, MsgDone) with validated transitions, and a CBOR wire codec. `SharedPeerAddress` encodes IPv4/IPv6 as `[ip_type, ip_bytes, port]`.
+- Wire tags and naming match upstream `Ouroboros.Network.Protocol.{ChainSync,BlockFetch,KeepAlive,TxSubmission2,PeerSharing}.Type`.
 - Payload typing is incremental: point/tip/header/block payloads are typed where practical, TxSubmission ids are typed, and transaction bodies stay raw until typed transaction codecs are available.
-- PeerSharing protocol deferred until needed.
+- All five data mini-protocols and PeerSharing are now implemented.

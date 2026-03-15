@@ -21,6 +21,10 @@ pub mod native_script;
 pub mod plutus;
 /// Protocol parameters governing transaction and block validation.
 pub mod protocol_params;
+/// Epoch reward calculation implementing the Shelley reward formula.
+pub mod rewards;
+/// Stake distribution snapshots and epoch-boundary snapshot rotation.
+pub mod stake;
 /// Ledger state containers and transition entry points.
 pub mod state;
 /// Transaction and block wrappers.
@@ -82,6 +86,18 @@ pub use plutus::{PlutusData, Script, ScriptRef};
 
 // -- UTxO re-exports ----------------------------------------------------------
 pub use utxo::{MultiEraTxOut, MultiEraUtxo};
+
+// -- Stake distribution re-exports --------------------------------------------
+pub use stake::{
+    Delegations, IndividualStake, PoolStakeDistribution, StakeSnapshot, StakeSnapshots,
+    compute_stake_snapshot,
+};
+
+// -- Reward re-exports --------------------------------------------------------
+pub use rewards::{
+    EpochRewardDistribution, EpochRewardPot, PoolRewardBreakdown, RewardParams,
+    compute_epoch_reward_pot, compute_epoch_rewards, compute_pool_reward, max_pool_reward,
+};
 
 // -- Protocol params re-exports -----------------------------------------------
 pub use protocol_params::ProtocolParameters;

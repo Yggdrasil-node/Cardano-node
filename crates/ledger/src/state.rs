@@ -1015,6 +1015,131 @@ impl LedgerStateSnapshot {
     }
 }
 
+// ---------------------------------------------------------------------------
+// DepositPot — aggregate deposit tracking
+// ---------------------------------------------------------------------------
+
+/// Aggregate deposit accounting tracked by the ledger.
+///
+/// Tracks the total lovelace locked in key deposits, pool deposits, and DRep
+/// deposits.  At epoch boundaries deposit refunds (from unregistrations and
+/// pool retirements) are paid out and deducted from this pot.
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `utxosDeposited`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DepositPot {
+    /// Total lovelace deposited for key registrations.
+    pub key_deposits: u64,
+    /// Total lovelace deposited for pool registrations.
+    pub pool_deposits: u64,
+    /// Total lovelace deposited for DRep registrations (Conway+).
+    pub drep_deposits: u64,
+}
+
+impl DepositPot {
+    /// Returns the total deposits across all categories.
+    pub fn total(&self) -> u64 {
+        self.key_deposits
+            .saturating_add(self.pool_deposits)
+            .saturating_add(self.drep_deposits)
+    }
+
+    /// Adds a key deposit.
+    pub fn add_key_deposit(&mut self, amount: u64) {
+        self.key_deposits = self.key_deposits.saturating_add(amount);
+    }
+
+    /// Returns a key deposit.
+    pub fn return_key_deposit(&mut self, amount: u64) {
+        self.key_deposits = self.key_deposits.saturating_sub(amount);
+    }
+
+    /// Adds a pool deposit.
+    pub fn add_pool_deposit(&mut self, amount: u64) {
+        self.pool_deposits = self.pool_deposits.saturating_add(amount);
+    }
+
+    /// Returns a pool deposit.
+    pub fn return_pool_deposit(&mut self, amount: u64) {
+        self.pool_deposits = self.pool_deposits.saturating_sub(amount);
+    }
+
+    /// Adds a DRep deposit.
+    pub fn add_drep_deposit(&mut self, amount: u64) {
+        self.drep_deposits = self.drep_deposits.saturating_add(amount);
+    }
+
+    /// Returns a DRep deposit.
+    pub fn return_drep_deposit(&mut self, amount: u64) {
+        self.drep_deposits = self.drep_deposits.saturating_sub(amount);
+    }
+}
+
+impl CborEncode for DepositPot {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(3);
+        enc.unsigned(self.key_deposits);
+        enc.unsigned(self.pool_deposits);
+        enc.unsigned(self.drep_deposits);
+    }
+}
+
+impl CborDecode for DepositPot {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 3 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 3,
+                actual: len as usize,
+            });
+        }
+        Ok(Self {
+            key_deposits: dec.unsigned()?,
+            pool_deposits: dec.unsigned()?,
+            drep_deposits: dec.unsigned()?,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TreasuryState — treasury and reserves
+// ---------------------------------------------------------------------------
+
+/// Treasury and reserves accounting tracked by the ledger.
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `esAccountState`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AccountingState {
+    /// Total lovelace in the treasury.
+    pub treasury: u64,
+    /// Total lovelace in the reserves.
+    pub reserves: u64,
+}
+
+impl CborEncode for AccountingState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(2);
+        enc.unsigned(self.treasury);
+        enc.unsigned(self.reserves);
+    }
+}
+
+impl CborDecode for AccountingState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        Ok(Self {
+            treasury: dec.unsigned()?,
+            reserves: dec.unsigned()?,
+        })
+    }
+}
+
 /// Ledger state tracking the current era, chain tip, and UTxO set.
 ///
 /// `apply_block` decodes each transaction body according to the block's
@@ -1046,10 +1171,11 @@ pub struct LedgerState {
     /// Legacy Shelley-only UTxO set kept in sync for backward compatibility.
     shelley_utxo: ShelleyUtxo,
     /// Protocol parameters governing validation rules.
-    ///
-    /// `None` means validation rules that depend on protocol parameters
-    /// (fees, ex-units, collateral, min-UTxO) are not enforced.
     protocol_params: Option<crate::protocol_params::ProtocolParameters>,
+    /// Aggregate deposit accounting.
+    deposit_pot: DepositPot,
+    /// Treasury and reserves accounting.
+    accounting: AccountingState,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -1065,7 +1191,7 @@ pub struct LedgerStateCheckpoint {
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(10);
+        enc.array(12);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
         self.pool_state.encode_cbor(enc);
@@ -1080,16 +1206,18 @@ impl CborEncode for LedgerState {
             Some(pp) => pp.encode_cbor(enc),
             None => { enc.null(); }
         }
+        self.deposit_pot.encode_cbor(enc);
+        self.accounting.encode_cbor(enc);
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept both legacy 9-element and current 10-element arrays.
-        if len != 9 && len != 10 {
+        // Accept legacy 9/10-element arrays and current 12-element arrays.
+        if len != 9 && len != 10 && len != 12 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 10,
+                expected: 12,
                 actual: len as usize,
             });
         }
@@ -1104,8 +1232,7 @@ impl CborDecode for LedgerState {
         let multi_era_utxo = MultiEraUtxo::decode_cbor(dec)?;
         let shelley_utxo = ShelleyUtxo::decode_cbor(dec)?;
 
-        let protocol_params = if len == 10 {
-            // Peek: CBOR null (0xf6) means None, otherwise decode params.
+        let protocol_params = if len >= 10 {
             if dec.peek_is_null() {
                 dec.skip()?;
                 None
@@ -1114,6 +1241,18 @@ impl CborDecode for LedgerState {
             }
         } else {
             None
+        };
+
+        let deposit_pot = if len >= 12 {
+            DepositPot::decode_cbor(dec)?
+        } else {
+            DepositPot::default()
+        };
+
+        let accounting = if len >= 12 {
+            AccountingState::decode_cbor(dec)?
+        } else {
+            AccountingState::default()
         };
 
         Ok(Self {
@@ -1127,6 +1266,8 @@ impl CborDecode for LedgerState {
             multi_era_utxo,
             shelley_utxo,
             protocol_params,
+            deposit_pot,
+            accounting,
         })
     }
 }
@@ -1186,6 +1327,8 @@ impl LedgerState {
             multi_era_utxo: MultiEraUtxo::new(),
             shelley_utxo: ShelleyUtxo::new(),
             protocol_params: None,
+            deposit_pot: DepositPot::default(),
+            accounting: AccountingState::default(),
         }
     }
 
@@ -1309,6 +1452,26 @@ impl LedgerState {
     /// Sets the protocol parameters governing validation.
     pub fn set_protocol_params(&mut self, params: crate::protocol_params::ProtocolParameters) {
         self.protocol_params = Some(params);
+    }
+
+    /// Returns a reference to the deposit pot tracking key/pool/drep deposits.
+    pub fn deposit_pot(&self) -> &DepositPot {
+        &self.deposit_pot
+    }
+
+    /// Returns a mutable reference to the deposit pot.
+    pub fn deposit_pot_mut(&mut self) -> &mut DepositPot {
+        &mut self.deposit_pot
+    }
+
+    /// Returns a reference to the treasury/reserves accounting state.
+    pub fn accounting(&self) -> &AccountingState {
+        &self.accounting
+    }
+
+    /// Returns a mutable reference to the treasury/reserves accounting state.
+    pub fn accounting_mut(&mut self) -> &mut AccountingState {
+        &mut self.accounting
     }
 
     /// Captures a read-only snapshot of the current ledger state.

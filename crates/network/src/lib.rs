@@ -48,6 +48,17 @@ pub mod keepalive_server;
 /// TxSubmission2 server driver — typed, state-machine-correct responder loop.
 pub mod txsubmission_server;
 
+// -- Peer governor ------------------------------------------------------------
+
+/// Peer governor — promotion, demotion, and valency enforcement decisions.
+pub mod governor;
+
+/// PeerSharing client driver — typed, state-machine-correct protocol loop.
+pub mod peersharing_client;
+
+/// PeerSharing server driver — typed, state-machine-correct responder loop.
+pub mod peersharing_server;
+
 // -- Bearer re-exports --------------------------------------------------------
 pub use bearer::{Bearer, BearerError, Sdu, TcpBearer, MAX_SDU_PAYLOAD};
 
@@ -104,6 +115,7 @@ pub use protocols::{
     BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
     ChainSyncMessage, ChainSyncState, ChainSyncTransitionError,
     KeepAliveMessage, KeepAliveState, KeepAliveTransitionError,
+    PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
 
@@ -146,4 +158,20 @@ pub use keepalive_server::{
 // -- TxSubmission server re-exports -------------------------------------------
 pub use txsubmission_server::{
     TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
+};
+
+// -- Governor re-exports ------------------------------------------------------
+pub use governor::{
+    ChurnConfig, GovernorAction, GovernorState, GovernorTargets, LocalRootTargets,
+    enforce_local_root_valency, evaluate_cold_to_warm_promotions,
+    evaluate_hot_to_warm_demotions, evaluate_warm_to_cold_demotions,
+    evaluate_warm_to_hot_promotions, governor_tick,
+};
+
+// -- PeerSharing client re-exports --------------------------------------------
+pub use peersharing_client::{PeerSharingClient, PeerSharingClientError};
+
+// -- PeerSharing server re-exports --------------------------------------------
+pub use peersharing_server::{
+    PeerSharingServer, PeerSharingServerError, PeerSharingServerRequest,
 };

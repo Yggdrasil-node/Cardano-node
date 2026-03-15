@@ -4,6 +4,8 @@ mod block_fetch;
 mod chain_sync;
 /// KeepAlive protocol state machine and messages.
 mod keep_alive;
+/// PeerSharing protocol state machine and messages.
+mod peer_sharing;
 /// TxSubmission2 protocol state machine and messages.
 mod tx_submission;
 
@@ -12,6 +14,9 @@ pub use block_fetch::{
 };
 pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
+pub use peer_sharing::{
+    PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
+};
 pub use tx_submission::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
