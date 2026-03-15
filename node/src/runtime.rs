@@ -10,10 +10,11 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
-    LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome, SyncError,
-    VerifiedSyncServiceConfig, apply_nonce_evolution_to_progress,
-    recover_ledger_state_chaindb, sync_batch_apply_verified, track_chain_state,
-    track_chain_state_entries, update_ledger_checkpoint_after_progress,
+    LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
+    MultiEraSyncProgress, SyncError, VerifiedSyncServiceConfig,
+    apply_nonce_evolution_to_progress, recover_ledger_state_chaindb,
+    sync_batch_apply_verified, track_chain_state, track_chain_state_entries,
+    update_ledger_checkpoint_after_progress,
 };
 use crate::tracer::{NodeTracer, trace_fields};
 use serde_json::json;
@@ -856,7 +857,6 @@ where
         tracer.trace_runtime(
             "Net.ConnectionManager.Remote",
             "Notice",
-            if reconnect_count == 0 {
             if run_state.reconnect_count == 0 {
                 "verified sync session established"
             } else {
@@ -1224,12 +1224,7 @@ where
 
     tokio::pin!(shutdown);
 
-    let mut total_blocks = 0usize;
-    let mut total_rollbacks = 0usize;
-    let mut batches_completed = 0usize;
-    let mut total_stable = 0usize;
-    let mut reconnect_count = 0usize;
-    let mut last_connected_peer_addr = None;
+    let mut run_state = ReconnectingRunState::new();
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
     let mut attempt_state = peer_attempt_state(node_config.peer_addr, fallback_peer_addrs);
@@ -1245,40 +1240,25 @@ where
                     "shutdown requested before bootstrap completed",
                     BTreeMap::new(),
                 );
-                return Ok(ReconnectingSyncServiceOutcome {
-                    final_point: from_point,
-                    total_blocks,
-                    total_rollbacks,
-                    batches_completed,
-                    nonce_state,
-                    chain_state,
-                    stable_block_count: total_stable,
-                    reconnect_count,
-                    last_connected_peer_addr,
-                });
+                return Ok(run_state.finish(from_point, nonce_state, chain_state));
             }
 
             result = bootstrap_with_attempt_state(node_config, &mut attempt_state, tracer) => result?,
         };
 
-        if had_session {
-            reconnect_count += 1;
-        } else {
-            had_session = true;
-        }
-        last_connected_peer_addr = Some(session.connected_peer_addr);
+        run_state.record_session(session.connected_peer_addr, &mut had_session);
 
         tracer.trace_runtime(
             "Net.ConnectionManager.Remote",
             "Notice",
-            if reconnect_count == 0 {
+            if run_state.reconnect_count == 0 {
                 "verified sync session established"
             } else {
                 "verified sync session re-established"
             },
             trace_fields([
                 ("peer", json!(session.connected_peer_addr.to_string())),
-                ("reconnectCount", json!(reconnect_count)),
+                ("reconnectCount", json!(run_state.reconnect_count)),
                 ("fromPoint", json!(format!("{:?}", from_point))),
             ]),
         );
@@ -1307,30 +1287,18 @@ where
                         ]),
                     );
                     session.mux.abort();
-                    return Ok(ReconnectingSyncServiceOutcome {
-                        final_point: from_point,
-                        total_blocks,
-                        total_rollbacks,
-                        batches_completed,
-                        nonce_state,
-                        chain_state,
-                        stable_block_count: total_stable,
-                        reconnect_count,
-                        last_connected_peer_addr,
-                    });
+                    return Ok(run_state.finish(from_point, nonce_state, chain_state));
                 }
 
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
                             from_point = progress.current_point;
-                            total_blocks += progress.fetched_blocks;
-                            total_rollbacks += progress.rollback_count;
-                            batches_completed += 1;
+                            run_state.record_progress(&progress);
 
                             if let Some(ref mut cs) = chain_state {
                                 for step in &progress.steps {
-                                    total_stable += track_chain_state(cs, step)?;
+                                    run_state.stable_block_count += track_chain_state(cs, step)?;
                                 }
                             }
 
@@ -1349,8 +1317,8 @@ where
                                     ("currentPoint", json!(format!("{:?}", from_point))),
                                     ("batchFetchedBlocks", json!(progress.fetched_blocks)),
                                     ("batchRollbacks", json!(progress.rollback_count)),
-                                    ("totalBlocks", json!(total_blocks)),
-                                    ("batchesCompleted", json!(batches_completed)),
+                                    ("totalBlocks", json!(run_state.total_blocks)),
+                                    ("batchesCompleted", json!(run_state.batches_completed)),
                                 ]),
                             );
                         }
