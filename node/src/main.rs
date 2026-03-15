@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use eyre::Result;
+use eyre::{Result, WrapErr, bail};
+use serde::Serialize;
 use serde_json::json;
 
 use yggdrasil_node::config::{
@@ -72,8 +73,53 @@ enum Command {
         #[arg(long, action = clap::ArgAction::Append)]
         checkpoint_trace_backend: Vec<String>,
     },
+    /// Validate config, snapshot inputs, and any existing on-disk storage state.
+    ValidateConfig {
+        /// Path to a JSON configuration file.
+        #[arg(long, short)]
+        config: Option<PathBuf>,
+        /// Network preset (mainnet, preprod, preview). Overridden by --config.
+        #[arg(long, value_parser = clap::value_parser!(NetworkPreset))]
+        network: Option<NetworkPreset>,
+    },
     /// Print the default configuration as JSON.
     DefaultConfig,
+}
+
+#[derive(Serialize)]
+struct ConfigValidationReport {
+    primary_peer: String,
+    network_magic: u32,
+    protocol_versions: Vec<u32>,
+    storage_dir: String,
+    configured_fallback_peer_count: usize,
+    resolved_startup_peer_count: usize,
+    use_ledger_peers: String,
+    checkpoint_interval_slots: u64,
+    max_ledger_snapshots: usize,
+    peer_snapshot: PeerSnapshotValidationReport,
+    storage: StorageValidationReport,
+    warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct PeerSnapshotValidationReport {
+    status: &'static str,
+    path: Option<String>,
+    slot: Option<u64>,
+    ledger_peer_count: usize,
+    big_ledger_peer_count: usize,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct StorageValidationReport {
+    status: &'static str,
+    tip: String,
+    recovered_point: Option<String>,
+    checkpoint_slot: Option<u64>,
+    replayed_volatile_blocks: Option<usize>,
+    ledger_peer_count: usize,
 }
 
 fn main() -> Result<()> {
@@ -82,6 +128,13 @@ fn main() -> Result<()> {
         Command::DefaultConfig => {
             let cfg = default_config();
             let json = serde_json::to_string_pretty(&cfg)?;
+            println!("{json}");
+            Ok(())
+        }
+        Command::ValidateConfig { config, network } => {
+            let (file_cfg, config_base_dir) = load_effective_config(config, network)?;
+            let report = validate_config_report(&file_cfg, config_base_dir.as_deref())?;
+            let json = serde_json::to_string_pretty(&report)?;
             println!("{json}");
             Ok(())
         }
@@ -98,17 +151,7 @@ fn main() -> Result<()> {
             checkpoint_trace_severity,
             checkpoint_trace_backend,
         } => {
-            let (mut file_cfg, config_base_dir) = match config {
-                Some(path) => {
-                    let contents = std::fs::read_to_string(&path)?;
-                    let parsed: NodeConfigFile = serde_json::from_str(&contents)?;
-                    (parsed, path.parent().map(PathBuf::from))
-                }
-                None => match network {
-                    Some(preset) => (preset.to_config(), None),
-                    None => (default_config(), None),
-                },
-            };
+            let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
 
             if let Some(max_frequency) = checkpoint_trace_max_frequency {
                 checkpoint_trace_config_mut(&mut file_cfg).max_frequency = if max_frequency > 0.0 {
@@ -258,6 +301,191 @@ fn main() -> Result<()> {
             }))
         }
     }
+}
+
+fn load_effective_config(
+    config: Option<PathBuf>,
+    network: Option<NetworkPreset>,
+) -> Result<(NodeConfigFile, Option<PathBuf>)> {
+    match config {
+        Some(path) => {
+            let contents = std::fs::read_to_string(&path)
+                .wrap_err_with(|| format!("failed to read config file {}", path.display()))?;
+            let parsed: NodeConfigFile = serde_json::from_str(&contents)
+                .wrap_err_with(|| format!("failed to parse config file {}", path.display()))?;
+            Ok((parsed, path.parent().map(PathBuf::from)))
+        }
+        None => Ok(match network {
+            Some(preset) => (preset.to_config(), Some(preset_config_base_dir(preset))),
+            None => (default_config(), None),
+        }),
+    }
+}
+
+fn preset_config_base_dir(preset: NetworkPreset) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("configuration")
+        .join(preset.to_string())
+}
+
+fn validate_config_report(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&std::path::Path>,
+) -> Result<ConfigValidationReport> {
+    if file_cfg.protocol_versions.is_empty() {
+        bail!("node config must include at least one protocol version");
+    }
+
+    if !(file_cfg.active_slot_coeff.is_finite()
+        && file_cfg.active_slot_coeff > 0.0
+        && file_cfg.active_slot_coeff <= 1.0)
+    {
+        bail!(
+            "active_slot_coeff must be finite and within (0, 1], got {}",
+            file_cfg.active_slot_coeff
+        );
+    }
+
+    let storage_dir = resolve_storage_dir(&file_cfg.storage_dir, config_base_dir);
+    let immutable_dir = storage_dir.join("immutable");
+    let volatile_dir = storage_dir.join("volatile");
+    let ledger_dir = storage_dir.join("ledger");
+
+    let mut warnings = Vec::new();
+    if file_cfg.checkpoint_interval_slots == 0 {
+        warnings.push(
+            "checkpoint_interval_slots is 0; checkpoint persistence cadence is effectively unbounded"
+                .to_owned(),
+        );
+    }
+    if file_cfg.max_ledger_snapshots == 0 {
+        warnings.push(
+            "max_ledger_snapshots is 0; persisted ledger checkpoints will be pruned immediately"
+                .to_owned(),
+        );
+    }
+    if !(file_cfg.turn_on_logging && file_cfg.use_trace_dispatcher) {
+        warnings.push("runtime tracing is disabled for local operator output".to_owned());
+    }
+    if !file_cfg.turn_on_log_metrics {
+        warnings.push("trace metrics production is disabled".to_owned());
+    }
+    let peer_snapshot = if let Some(peer_snapshot_file) = file_cfg.peer_snapshot_file.as_deref() {
+        let peer_snapshot_path =
+            resolve_config_path(std::path::Path::new(peer_snapshot_file), config_base_dir);
+        match load_peer_snapshot_file(&peer_snapshot_path) {
+            Ok(loaded) => PeerSnapshotValidationReport {
+                status: "loaded",
+                path: Some(peer_snapshot_path.display().to_string()),
+                slot: loaded.slot,
+                ledger_peer_count: loaded.snapshot.ledger_peers.len(),
+                big_ledger_peer_count: loaded.snapshot.big_ledger_peers.len(),
+                error: None,
+            },
+            Err(err) => {
+                warnings.push(format!(
+                    "configured peer snapshot file could not be loaded: {}",
+                    err
+                ));
+                PeerSnapshotValidationReport {
+                    status: "unavailable",
+                    path: Some(peer_snapshot_path.display().to_string()),
+                    slot: None,
+                    ledger_peer_count: 0,
+                    big_ledger_peer_count: 0,
+                    error: Some(err.to_string()),
+                }
+            }
+        }
+    } else {
+        PeerSnapshotValidationReport {
+            status: "disabled",
+            path: None,
+            slot: None,
+            ledger_peer_count: 0,
+            big_ledger_peer_count: 0,
+            error: None,
+        }
+    };
+
+    let (storage, latest_slot, ledger_state_judgement, ledger_snapshot) = if immutable_dir.exists()
+        || volatile_dir.exists()
+        || ledger_dir.exists()
+    {
+        let chain_db = ChainDb::new(
+            FileImmutable::open(&immutable_dir)
+                .wrap_err_with(|| format!("failed to open immutable store {}", immutable_dir.display()))?,
+            FileVolatile::open(&volatile_dir)
+                .wrap_err_with(|| format!("failed to open volatile store {}", volatile_dir.display()))?,
+            FileLedgerStore::open(&ledger_dir)
+                .wrap_err_with(|| format!("failed to open ledger store {}", ledger_dir.display()))?,
+        );
+        let tip = chain_db.recovery().tip;
+        let recovery = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron))
+            .wrap_err_with(|| {
+                format!(
+                    "failed to recover ledger state from storage directory {}",
+                    storage_dir.display()
+                )
+            })?;
+        let latest_slot = point_slot(&recovery.point).or_else(|| point_slot(&tip));
+        let ledger_snapshot = ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state);
+        (
+            StorageValidationReport {
+                status: "initialized",
+                tip: format!("{:?}", tip),
+                recovered_point: Some(format!("{:?}", recovery.point)),
+                checkpoint_slot: recovery.checkpoint_slot.map(|slot| slot.0),
+                replayed_volatile_blocks: Some(recovery.replayed_volatile_blocks),
+                ledger_peer_count: ledger_snapshot.ledger_peers.len(),
+            },
+            latest_slot,
+            LedgerStateJudgement::YoungEnough,
+            ledger_snapshot,
+        )
+    } else {
+        warnings.push(
+            "storage directories are not initialized; a deployment preflight cannot validate restart recovery yet"
+                .to_owned(),
+        );
+        (
+            StorageValidationReport {
+                status: "not-initialized",
+                tip: format!("{:?}", Point::Origin),
+                recovered_point: None,
+                checkpoint_slot: None,
+                replayed_volatile_blocks: None,
+                ledger_peer_count: 0,
+            },
+            None,
+            LedgerStateJudgement::Unavailable,
+            LedgerPeerSnapshot::default(),
+        )
+    };
+
+    let fallback_peers = configured_fallback_peers(
+        file_cfg,
+        config_base_dir,
+        &ledger_snapshot,
+        latest_slot,
+        ledger_state_judgement,
+        &NodeTracer::disabled(),
+    );
+
+    Ok(ConfigValidationReport {
+        primary_peer: file_cfg.peer_addr.to_string(),
+        network_magic: file_cfg.network_magic,
+        protocol_versions: file_cfg.protocol_versions.clone(),
+        storage_dir: storage_dir.display().to_string(),
+        configured_fallback_peer_count: file_cfg.ordered_fallback_peers().len(),
+        resolved_startup_peer_count: 1 + fallback_peers.len(),
+        use_ledger_peers: format!("{:?}", file_cfg.use_ledger_peers_policy()),
+        checkpoint_interval_slots: file_cfg.checkpoint_interval_slots,
+        max_ledger_snapshots: file_cfg.max_ledger_snapshots,
+        peer_snapshot,
+        storage,
+        warnings,
+    })
 }
 
 fn resolve_storage_dir(storage_dir: &std::path::Path, config_base_dir: Option<&std::path::Path>) -> PathBuf {
@@ -557,7 +785,9 @@ mod tests {
     use super::{
         CHECKPOINT_TRACE_NAMESPACE, checkpoint_trace_config_mut,
         configured_fallback_peers, ledger_peer_snapshot_from_ledger_state,
+        load_effective_config, preset_config_base_dir, validate_config_report,
     };
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use yggdrasil_ledger::{PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval};
     use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
@@ -724,5 +954,109 @@ mod tests {
 
         std::fs::remove_file(snapshot_path).ok();
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_when_storage_is_uninitialized() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-validate-config-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("validation report");
+
+        assert_eq!(report.storage.status, "not-initialized");
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("storage directories are not initialized")));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_loads_configured_peer_snapshot() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-validate-snapshot-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let snapshot_path = dir.join("peer-snapshot.json");
+        std::fs::write(
+            &snapshot_path,
+            r#"{
+                "version": 2,
+                "slotNo": 10,
+                "allLedgerPools": [
+                    {
+                        "accumulatedStake": 0.75,
+                        "relativeStake": 0.50,
+                        "relays": [
+                            { "address": "127.0.0.11", "port": 3001 }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .expect("write snapshot");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = Some("peer-snapshot.json".to_owned());
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("validation report");
+
+        assert_eq!(report.peer_snapshot.status, "loaded");
+        assert_eq!(report.peer_snapshot.slot, Some(10));
+        assert_eq!(report.peer_snapshot.ledger_peer_count, 1);
+        assert_eq!(report.peer_snapshot.error, None);
+
+        std::fs::remove_file(snapshot_path).ok();
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_rejects_invalid_active_slot_coeff() {
+        let mut cfg = default_config();
+        cfg.active_slot_coeff = 0.0;
+
+        assert!(validate_config_report(&cfg, None).is_err());
+    }
+
+    #[test]
+    fn load_effective_config_uses_network_preset_when_file_is_absent() {
+        let (cfg, config_base_dir) =
+            load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
+                .expect("preset config");
+
+        assert_eq!(cfg.network_magic, 2);
+        assert_eq!(
+            config_base_dir,
+            Some(preset_config_base_dir(yggdrasil_node::config::NetworkPreset::Preview))
+        );
+    }
+
+    #[test]
+    fn validate_config_report_warns_when_peer_snapshot_file_is_missing() {
+        let (cfg, config_base_dir) =
+            load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
+                .expect("preset config");
+
+        let report = validate_config_report(&cfg, config_base_dir.as_deref())
+            .expect("validation report");
+
+        assert_eq!(report.peer_snapshot.status, "unavailable");
+        assert!(report.peer_snapshot.error.is_some());
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("configured peer snapshot file could not be loaded")));
     }
 }

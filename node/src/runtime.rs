@@ -19,7 +19,7 @@ use crate::sync::{
 use crate::tracer::{NodeTracer, trace_fields};
 use serde_json::json;
 use serde_json::Value;
-use yggdrasil_consensus::{ChainState, NonceEvolutionState};
+use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState};
 use yggdrasil_network::{
     AfterSlot, BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
     LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement, MiniProtocolNum,
@@ -586,6 +586,21 @@ enum BatchErrorDisposition {
     Fail,
 }
 
+fn record_verified_batch_progress(
+    from_point: &mut Point,
+    run_state: &mut ReconnectingRunState,
+    progress: &MultiEraSyncProgress,
+    nonce_state: Option<&mut NonceEvolutionState>,
+    nonce_config: Option<&NonceEvolutionConfig>,
+) {
+    *from_point = progress.current_point;
+    run_state.record_progress(progress);
+
+    if let Some((state, nonce_cfg)) = nonce_state.zip(nonce_config) {
+        apply_nonce_evolution_to_progress(state, progress, nonce_cfg);
+    }
+}
+
 fn peer_point_trace_fields(
     peer_addr: SocketAddr,
     current_point: Point,
@@ -1074,8 +1089,13 @@ where
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
-                            from_point = progress.current_point;
-                            run_state.record_progress(&progress);
+                            record_verified_batch_progress(
+                                &mut from_point,
+                                &mut run_state,
+                                &progress,
+                                nonce_state.as_mut(),
+                                config.nonce_config.as_ref(),
+                            );
 
                             if let Some(ref mut cs) = chain_state {
                                 for step in &progress.steps {
@@ -1086,12 +1106,6 @@ where
                                         chain_db.promote_volatile_prefix(&point)?;
                                     }
                                 }
-                            }
-
-                            if let Some((ref mut state, nonce_cfg)) =
-                                nonce_state.as_mut().zip(config.nonce_config.as_ref())
-                            {
-                                apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                             }
 
                             if let Some(ref mut tracking) = checkpoint_tracking {
@@ -1418,19 +1432,18 @@ where
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
-                            from_point = progress.current_point;
-                            run_state.record_progress(&progress);
+                            record_verified_batch_progress(
+                                &mut from_point,
+                                &mut run_state,
+                                &progress,
+                                nonce_state.as_mut(),
+                                config.nonce_config.as_ref(),
+                            );
 
                             if let Some(ref mut cs) = chain_state {
                                 for step in &progress.steps {
                                     run_state.stable_block_count += track_chain_state(cs, step)?;
                                 }
-                            }
-
-                            if let Some((ref mut state, nonce_cfg)) =
-                                nonce_state.as_mut().zip(config.nonce_config.as_ref())
-                            {
-                                apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                             }
 
                             trace_verified_sync_batch_applied(
@@ -1579,7 +1592,8 @@ mod tests {
     use super::{
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
-        session_established_trace_fields, sync_error_trace_fields,
+        record_verified_batch_progress, session_established_trace_fields,
+        sync_error_trace_fields,
         verified_sync_batch_trace_fields,
     };
     use crate::sync::{MultiEraSyncProgress, SyncError};
@@ -1587,7 +1601,8 @@ mod tests {
     use crate::sync::LedgerCheckpointPolicy;
     use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use yggdrasil_ledger::{HeaderHash, Point, SlotNo};
+    use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
+    use yggdrasil_ledger::{HeaderHash, Nonce, Point, SlotNo};
     use yggdrasil_network::{BlockFetchClientError, ChainSyncClientError};
 
     fn local_addr(port: u16) -> SocketAddr {
@@ -1767,5 +1782,37 @@ mod tests {
         assert_eq!(outcome.stable_block_count, 5);
         assert_eq!(outcome.reconnect_count, 1);
         assert_eq!(outcome.last_connected_peer_addr, Some(second_peer));
+    }
+
+    #[test]
+    fn record_verified_batch_progress_updates_point_totals_and_preserves_empty_nonce_state() {
+        let progress = MultiEraSyncProgress {
+            current_point: Point::BlockPoint(SlotNo(5), HeaderHash([9; 32])),
+            steps: vec![],
+            fetched_blocks: 4,
+            rollback_count: 2,
+        };
+        let nonce_cfg = NonceEvolutionConfig {
+            epoch_size: EpochSize(10),
+            stability_window: 100,
+            extra_entropy: Nonce::Neutral,
+        };
+        let mut from_point = Point::Origin;
+        let mut run_state = ReconnectingRunState::new();
+        let mut nonce_state = NonceEvolutionState::new(Nonce::Neutral);
+
+        record_verified_batch_progress(
+            &mut from_point,
+            &mut run_state,
+            &progress,
+            Some(&mut nonce_state),
+            Some(&nonce_cfg),
+        );
+
+        assert_eq!(from_point, progress.current_point);
+        assert_eq!(run_state.total_blocks, 4);
+        assert_eq!(run_state.total_rollbacks, 2);
+        assert_eq!(run_state.batches_completed, 1);
+        assert_eq!(nonce_state.evolving_nonce, Nonce::Neutral);
     }
 }
