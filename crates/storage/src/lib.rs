@@ -26,7 +26,9 @@ pub mod volatile_db;
 pub use error::StorageError;
 
 // -- Coordination re-exports --------------------------------------------------
-pub use chain_db::{ChainDb, ChainDbRecovery};
+pub use chain_db::{
+	ChainDb, ChainDbRecovery, LedgerCheckpointRetention, LedgerRecoveryOutcome,
+};
 
 // -- Trait re-exports ---------------------------------------------------------
 pub use immutable_db::ImmutableStore;

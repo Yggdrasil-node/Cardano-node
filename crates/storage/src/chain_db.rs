@@ -1,4 +1,6 @@
-use yggdrasil_ledger::{Block, CborDecode, CborEncode, LedgerStateCheckpoint, Point, SlotNo};
+use yggdrasil_ledger::{
+    Block, CborDecode, CborEncode, LedgerState, LedgerStateCheckpoint, Point, SlotNo,
+};
 
 use crate::{ImmutableStore, LedgerStore, StorageError, VolatileStore};
 
@@ -9,6 +11,56 @@ pub struct ChainDbRecovery {
     pub tip: Point,
     /// Latest ledger snapshot at or before the current best known point.
     pub ledger_snapshot_slot: Option<SlotNo>,
+}
+
+/// Result of rebuilding typed ledger state from coordinated storage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LedgerRecoveryOutcome {
+    /// Restored ledger state after replaying immutable and volatile suffixes.
+    pub ledger_state: LedgerState,
+    /// Point that the restored ledger state has reached.
+    pub point: Point,
+    /// Slot of the checkpoint used for recovery, if one was available.
+    pub checkpoint_slot: Option<SlotNo>,
+    /// Number of volatile blocks replayed after the checkpoint.
+    pub replayed_volatile_blocks: usize,
+}
+
+/// Snapshot-retention metadata after persisting a typed ledger checkpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LedgerCheckpointRetention {
+    /// Number of checkpoints retained after pruning.
+    pub retained_snapshots: usize,
+    /// Number of checkpoints pruned by the retention pass.
+    pub pruned_snapshots: usize,
+}
+
+fn point_for_block(block: &Block) -> Point {
+    Point::BlockPoint(block.header.slot_no, block.header.hash)
+}
+
+fn volatile_suffix_after<V: VolatileStore>(
+    volatile: &V,
+    replay_from_exclusive: &Point,
+) -> Result<Vec<Block>, StorageError> {
+    let volatile_tip = volatile.tip();
+    if volatile_tip == Point::Origin {
+        return Ok(Vec::new());
+    }
+
+    let mut blocks = volatile.prefix_up_to(&volatile_tip)?;
+    if *replay_from_exclusive == Point::Origin {
+        return Ok(blocks);
+    }
+
+    if let Some(pos) = blocks
+        .iter()
+        .position(|block| point_for_block(block) == *replay_from_exclusive)
+    {
+        Ok(blocks.split_off(pos + 1))
+    } else {
+        Ok(blocks)
+    }
 }
 
 /// Minimal ChainDB-style coordinator for immutable, volatile, and ledger
@@ -128,6 +180,108 @@ where
                     .map_err(|error| StorageError::Serialization(error.to_string()))
             })
             .transpose()
+    }
+
+    /// Clears all stored ledger checkpoints.
+    pub fn clear_ledger_checkpoints(&mut self) -> Result<(), StorageError> {
+        self.ledger.truncate_after(None)
+    }
+
+    /// Truncates stored ledger checkpoints newer than `point`.
+    pub fn truncate_ledger_checkpoints_after_point(
+        &mut self,
+        point: &Point,
+    ) -> Result<(), StorageError> {
+        match point {
+            Point::Origin => self.ledger.truncate_after(None),
+            Point::BlockPoint(slot, _) => self.ledger.truncate_after(Some(*slot)),
+        }
+    }
+
+    /// Saves a typed ledger checkpoint at `point` and retains only the newest
+    /// `max_snapshots` snapshots.
+    pub fn persist_ledger_checkpoint(
+        &mut self,
+        point: &Point,
+        checkpoint: &LedgerStateCheckpoint,
+        max_snapshots: usize,
+    ) -> Result<LedgerCheckpointRetention, StorageError> {
+        match point {
+            Point::Origin => {
+                self.clear_ledger_checkpoints()?;
+                Ok(LedgerCheckpointRetention {
+                    retained_snapshots: 0,
+                    pruned_snapshots: 0,
+                })
+            }
+            Point::BlockPoint(slot, _) => {
+                self.save_ledger_checkpoint(*slot, checkpoint)?;
+                let after_save = self.ledger.count();
+                self.retain_latest_ledger_checkpoints(max_snapshots)?;
+                let after_retain = self.ledger.count();
+                Ok(LedgerCheckpointRetention {
+                    retained_snapshots: after_retain,
+                    pruned_snapshots: after_save.saturating_sub(after_retain),
+                })
+            }
+        }
+    }
+
+    /// Restores ledger state from the latest typed checkpoint and replays any
+    /// remaining immutable and volatile suffix.
+    pub fn recover_ledger_state(
+        &self,
+        base_state: LedgerState,
+    ) -> Result<LedgerRecoveryOutcome, StorageError> {
+        let best_tip = self.tip();
+        let checkpoint = match best_tip {
+            Point::Origin => self.latest_ledger_checkpoint()?,
+            Point::BlockPoint(slot, _) => self.latest_ledger_checkpoint_before_or_at(slot)?,
+        };
+
+        let (mut ledger_state, checkpoint_slot, replay_from_exclusive) = match checkpoint {
+            Some((slot, checkpoint)) => {
+                let state = checkpoint.restore();
+                let point = state.tip;
+                (state, Some(slot), point)
+            }
+            None => {
+                let point = base_state.tip;
+                (base_state, None, point)
+            }
+        };
+
+        let immutable_replay_blocks = self.immutable.suffix_after(&replay_from_exclusive)?;
+        for block in &immutable_replay_blocks {
+            ledger_state
+                .apply_block(block)
+                .map_err(|error| StorageError::Recovery(error.to_string()))?;
+        }
+
+        let replay_anchor = immutable_replay_blocks
+            .last()
+            .map(point_for_block)
+            .unwrap_or(replay_from_exclusive);
+        let replay_blocks = volatile_suffix_after(&self.volatile, &replay_anchor)?;
+        for block in &replay_blocks {
+            ledger_state
+                .apply_block(block)
+                .map_err(|error| StorageError::Recovery(error.to_string()))?;
+        }
+
+        let point = ledger_state.tip;
+        if point != best_tip {
+            return Err(StorageError::Recovery(format!(
+                "recovered ledger tip {point:?} does not match coordinated storage tip {best_tip:?}"
+            )));
+        }
+
+        Ok(LedgerRecoveryOutcome {
+            ledger_state,
+            point,
+            checkpoint_slot,
+            replayed_volatile_blocks: replay_blocks.len(),
+        })
     }
 
     /// Rolls back the volatile suffix and truncates ledger snapshots newer

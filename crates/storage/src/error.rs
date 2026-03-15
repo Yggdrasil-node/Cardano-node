@@ -19,6 +19,11 @@ pub enum StorageError {
     /// A serialization or deserialization error occurred.
     #[error("serialization error: {0}")]
     Serialization(String),
+
+    /// Coordinated recovery failed because the stored chain state was
+    /// internally inconsistent.
+    #[error("recovery error: {0}")]
+    Recovery(String),
 }
 
 impl PartialEq for StorageError {
@@ -28,6 +33,7 @@ impl PartialEq for StorageError {
             (Self::PointNotFound, Self::PointNotFound) => true,
             (Self::Io(a), Self::Io(b)) => a.kind() == b.kind(),
             (Self::Serialization(a), Self::Serialization(b)) => a == b,
+            (Self::Recovery(a), Self::Recovery(b)) => a == b,
             _ => false,
         }
     }

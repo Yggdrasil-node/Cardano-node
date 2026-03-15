@@ -747,10 +747,7 @@ where
     L: LedgerStore,
 {
     if progress.rollback_count > 0 {
-        match progress.current_point {
-            Point::Origin => chain_db.ledger_mut().truncate_after(None)?,
-            Point::BlockPoint(slot, _) => chain_db.ledger_mut().truncate_after(Some(slot))?,
-        }
+        chain_db.truncate_ledger_checkpoints_after_point(&progress.current_point)?;
 
         tracking.ledger_state = recover_ledger_state_chaindb(
             chain_db,
@@ -770,7 +767,7 @@ where
     }
 
     if policy.max_snapshots == 0 {
-        chain_db.ledger_mut().truncate_after(None)?;
+        chain_db.clear_ledger_checkpoints()?;
         tracking.last_persisted_point = Point::Origin;
         return Ok(CheckpointPersistenceOutcome::ClearedDisabled);
     }
@@ -778,7 +775,7 @@ where
     let current_point = tracking.ledger_state.tip;
     match current_point {
         Point::Origin => {
-            chain_db.ledger_mut().truncate_after(None)?;
+            chain_db.clear_ledger_checkpoints()?;
             tracking.last_persisted_point = Point::Origin;
             Ok(CheckpointPersistenceOutcome::ClearedOrigin)
         }
@@ -788,16 +785,16 @@ where
                 &current_point,
                 progress.rollback_count > 0,
             ) {
-                chain_db.save_ledger_checkpoint(slot, &tracking.ledger_state.checkpoint())?;
-                let after_save = chain_db.ledger().count();
-                chain_db.retain_latest_ledger_checkpoints(policy.max_snapshots)?;
-                let after_retain = chain_db.ledger().count();
-                let pruned_snapshots = after_save.saturating_sub(after_retain);
+                let retention = chain_db.persist_ledger_checkpoint(
+                    &current_point,
+                    &tracking.ledger_state.checkpoint(),
+                    policy.max_snapshots,
+                )?;
                 tracking.last_persisted_point = current_point;
                 Ok(CheckpointPersistenceOutcome::Persisted {
                     slot,
-                    retained_snapshots: after_retain,
-                    pruned_snapshots,
+                    retained_snapshots: retention.retained_snapshots,
+                    pruned_snapshots: retention.pruned_snapshots,
                     rollback_count: progress.rollback_count,
                 })
             } else {

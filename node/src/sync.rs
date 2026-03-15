@@ -28,6 +28,8 @@ use yggdrasil_ledger::{
 use yggdrasil_mempool::Mempool;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
 
+pub use yggdrasil_storage::LedgerRecoveryOutcome;
+
 /// Error type for sync orchestration operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -786,52 +788,11 @@ pub struct VerifiedSyncServiceOutcome {
 }
 
 
-/// Result of rebuilding ledger state from coordinated storage recovery data.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LedgerRecoveryOutcome {
-    /// Restored ledger state after replaying any recoverable volatile suffix.
-    pub ledger_state: LedgerState,
-    /// Point that the restored ledger state has reached.
-    pub point: Point,
-    /// Slot of the checkpoint used for recovery, if one was available.
-    pub checkpoint_slot: Option<SlotNo>,
-    /// Number of volatile blocks replayed after the checkpoint.
-    pub replayed_volatile_blocks: usize,
-}
-
 #[derive(Clone, Debug)]
 struct SyncCheckpointTracking {
     base_ledger_state: LedgerState,
     ledger_state: LedgerState,
     last_persisted_point: Point,
-}
-
-fn volatile_replay_blocks<V: VolatileStore>(
-    volatile: &V,
-    replay_from_exclusive: &Point,
-) -> Result<Vec<Block>, SyncError> {
-    let volatile_tip = volatile.tip();
-    if volatile_tip == Point::Origin {
-        return Ok(Vec::new());
-    }
-
-    let mut blocks = volatile.prefix_up_to(&volatile_tip)?;
-
-    if *replay_from_exclusive == Point::Origin {
-        return Ok(blocks);
-    }
-
-    if let Some(pos) = blocks.iter().position(|block| {
-        Point::BlockPoint(block.header.slot_no, block.header.hash) == *replay_from_exclusive
-    }) {
-        Ok(blocks.split_off(pos + 1))
-    } else {
-        Ok(blocks)
-    }
-}
-
-fn point_for_block(block: &Block) -> Point {
-    Point::BlockPoint(block.header.slot_no, block.header.hash)
 }
 
 fn persist_ledger_checkpoint_after_progress<I, V, L>(
@@ -846,10 +807,7 @@ where
     L: LedgerStore,
 {
     if progress.rollback_count > 0 {
-        match progress.current_point {
-            Point::Origin => chain_db.ledger_mut().truncate_after(None)?,
-            Point::BlockPoint(slot, _) => chain_db.ledger_mut().truncate_after(Some(slot))?,
-        }
+        chain_db.truncate_ledger_checkpoints_after_point(&progress.current_point)?;
 
         tracking.ledger_state = recover_ledger_state_chaindb(
             chain_db,
@@ -867,7 +825,7 @@ where
     }
 
     if policy.max_snapshots == 0 {
-        chain_db.ledger_mut().truncate_after(None)?;
+        chain_db.clear_ledger_checkpoints()?;
         tracking.last_persisted_point = Point::Origin;
         return Ok(());
     }
@@ -875,17 +833,20 @@ where
     let current_point = tracking.ledger_state.tip;
     match current_point {
         Point::Origin => {
-            chain_db.ledger_mut().truncate_after(None)?;
+            chain_db.clear_ledger_checkpoints()?;
             tracking.last_persisted_point = Point::Origin;
         }
-        Point::BlockPoint(slot, _) => {
+        Point::BlockPoint(_, _) => {
             if policy.should_persist(
                 &tracking.last_persisted_point,
                 &current_point,
                 progress.rollback_count > 0,
             ) {
-                chain_db.save_ledger_checkpoint(slot, &tracking.ledger_state.checkpoint())?;
-                chain_db.retain_latest_ledger_checkpoints(policy.max_snapshots)?;
+                chain_db.persist_ledger_checkpoint(
+                    &current_point,
+                    &tracking.ledger_state.checkpoint(),
+                    policy.max_snapshots,
+                )?;
                 tracking.last_persisted_point = current_point;
             }
         }
@@ -925,50 +886,9 @@ where
     V: VolatileStore,
     L: LedgerStore,
 {
-    let best_tip = chain_db.tip();
-    let checkpoint = match best_tip {
-        Point::Origin => chain_db.latest_ledger_checkpoint()?,
-        Point::BlockPoint(slot, _) => chain_db.latest_ledger_checkpoint_before_or_at(slot)?,
-    };
-
-    let (mut ledger_state, checkpoint_slot, replay_from_exclusive) = match checkpoint {
-        Some((slot, checkpoint)) => {
-            let state = checkpoint.restore();
-            let point = state.tip;
-            (state, Some(slot), point)
-        }
-        None => {
-            let point = base_state.tip;
-            (base_state, None, point)
-        }
-    };
-
-    let immutable_replay_blocks = chain_db.immutable().suffix_after(&replay_from_exclusive)?;
-    for block in &immutable_replay_blocks {
-        ledger_state.apply_block(block)?;
-    }
-
-    let replay_anchor = immutable_replay_blocks
-        .last()
-        .map(point_for_block)
-        .unwrap_or(replay_from_exclusive);
-    let replay_blocks = volatile_replay_blocks(chain_db.volatile(), &replay_anchor)?;
-    for block in &replay_blocks {
-        ledger_state.apply_block(block)?;
-    }
-
-    let point = ledger_state.tip;
-    if point != best_tip {
-        return Err(SyncError::Recovery(format!(
-            "recovered ledger tip {point:?} does not match coordinated storage tip {best_tip:?}"
-        )));
-    }
-
-    Ok(LedgerRecoveryOutcome {
-        ledger_state,
-        point,
-        checkpoint_slot,
-        replayed_volatile_blocks: replay_blocks.len(),
+    chain_db.recover_ledger_state(base_state).map_err(|error| match error {
+        StorageError::Recovery(message) => SyncError::Recovery(message),
+        other => SyncError::Storage(other),
     })
 }
 /// Run a continuous verified sync loop with multi-era block decoding,

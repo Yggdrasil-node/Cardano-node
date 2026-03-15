@@ -625,3 +625,145 @@ fn chaindb_typed_ledger_checkpoint_round_trip() {
     assert_eq!(restored, checkpoint);
     assert_eq!(restored.to_cbor_bytes(), checkpoint.to_cbor_bytes());
 }
+
+#[test]
+fn chaindb_recover_ledger_state_replays_volatile_suffix_after_checkpoint() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let mut checkpoint_state = LedgerState::new(Era::Shelley);
+    checkpoint_state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0x0A; 32]));
+
+    chain_db
+        .save_ledger_checkpoint(SlotNo(10), &checkpoint_state.checkpoint())
+        .expect("save checkpoint");
+    chain_db
+        .add_volatile_block(test_block(0x14, 20))
+        .expect("add volatile 20");
+    chain_db
+        .add_volatile_block(test_block(0x1E, 30))
+        .expect("add volatile 30");
+
+    let recovered = chain_db
+        .recover_ledger_state(LedgerState::new(Era::Shelley))
+        .expect("recover ledger state from chaindb");
+
+    assert_eq!(recovered.checkpoint_slot, Some(SlotNo(10)));
+    assert_eq!(recovered.replayed_volatile_blocks, 2);
+    assert_eq!(
+        recovered.point,
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
+    );
+    assert_eq!(
+        recovered.ledger_state.tip,
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
+    );
+}
+
+#[test]
+fn chaindb_recover_ledger_state_replays_immutable_suffix_after_checkpoint() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let mut checkpoint_state = LedgerState::new(Era::Shelley);
+    checkpoint_state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0x0A; 32]));
+
+    chain_db
+        .save_ledger_checkpoint(SlotNo(10), &checkpoint_state.checkpoint())
+        .expect("save checkpoint");
+    chain_db
+        .immutable_mut()
+        .append_block(test_block(0x14, 20))
+        .expect("append immutable 20");
+    chain_db
+        .immutable_mut()
+        .append_block(test_block(0x1E, 30))
+        .expect("append immutable 30");
+
+    let recovered = chain_db
+        .recover_ledger_state(LedgerState::new(Era::Shelley))
+        .expect("recover ledger state across immutable replay");
+
+    assert_eq!(recovered.checkpoint_slot, Some(SlotNo(10)));
+    assert_eq!(recovered.replayed_volatile_blocks, 0);
+    assert_eq!(
+        recovered.point,
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
+    );
+}
+
+#[test]
+fn chaindb_persist_ledger_checkpoint_prunes_to_retention_limit() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let mut state = LedgerState::new(Era::Shelley);
+    state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0x0A; 32]));
+    let first = chain_db
+        .persist_ledger_checkpoint(&state.tip, &state.checkpoint(), 2)
+        .expect("persist first checkpoint");
+    assert_eq!(first.retained_snapshots, 1);
+    assert_eq!(first.pruned_snapshots, 0);
+
+    state.tip = Point::BlockPoint(SlotNo(20), HeaderHash([0x14; 32]));
+    let second = chain_db
+        .persist_ledger_checkpoint(&state.tip, &state.checkpoint(), 2)
+        .expect("persist second checkpoint");
+    assert_eq!(second.retained_snapshots, 2);
+    assert_eq!(second.pruned_snapshots, 0);
+
+    state.tip = Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]));
+    let third = chain_db
+        .persist_ledger_checkpoint(&state.tip, &state.checkpoint(), 2)
+        .expect("persist third checkpoint");
+    assert_eq!(third.retained_snapshots, 2);
+    assert_eq!(third.pruned_snapshots, 1);
+    assert!(chain_db
+        .latest_ledger_checkpoint_before_or_at(SlotNo(10))
+        .expect("lookup checkpoint")
+        .is_none());
+    assert!(chain_db
+        .latest_ledger_checkpoint_before_or_at(SlotNo(20))
+        .expect("lookup checkpoint")
+        .is_some());
+}
+
+#[test]
+fn chaindb_checkpoint_truncation_and_clear_follow_points() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    for (slot, hash_byte) in [(10, 0x0A), (20, 0x14), (30, 0x1E)] {
+        let mut state = LedgerState::new(Era::Shelley);
+        state.tip = Point::BlockPoint(SlotNo(slot), HeaderHash([hash_byte; 32]));
+        chain_db
+            .persist_ledger_checkpoint(&state.tip, &state.checkpoint(), 4)
+            .expect("persist checkpoint");
+    }
+
+    chain_db
+        .truncate_ledger_checkpoints_after_point(&Point::BlockPoint(
+            SlotNo(20),
+            HeaderHash([0x14; 32]),
+        ))
+        .expect("truncate after point");
+    assert!(chain_db
+        .latest_ledger_checkpoint_before_or_at(SlotNo(30))
+        .expect("lookup checkpoint")
+        .is_some());
+    let latest = chain_db.latest_ledger_checkpoint().expect("latest checkpoint");
+    assert_eq!(latest.expect("checkpoint present").0, SlotNo(20));
+
+    chain_db
+        .clear_ledger_checkpoints()
+        .expect("clear checkpoints");
+    assert!(chain_db.latest_ledger_checkpoint().expect("latest checkpoint").is_none());
+}
