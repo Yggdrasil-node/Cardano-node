@@ -234,22 +234,15 @@ where
         base_state: LedgerState,
     ) -> Result<LedgerRecoveryOutcome, StorageError> {
         let best_tip = self.tip();
-        let checkpoint = match best_tip {
-            Point::Origin => self.latest_ledger_checkpoint()?,
-            Point::BlockPoint(slot, _) => self.latest_ledger_checkpoint_before_or_at(slot)?,
-        };
 
-        let (mut ledger_state, checkpoint_slot, replay_from_exclusive) = match checkpoint {
-            Some((slot, checkpoint)) => {
-                let state = checkpoint.restore();
-                let point = state.tip;
-                (state, Some(slot), point)
-            }
-            None => {
-                let point = base_state.tip;
-                (base_state, None, point)
-            }
+        // Attempt checkpoint recovery with fallback to progressively older
+        // snapshots when the latest checkpoint is corrupt or undecodable.
+        let max_slot = match best_tip {
+            Point::Origin => None,
+            Point::BlockPoint(slot, _) => Some(slot),
         };
+        let (mut ledger_state, checkpoint_slot, replay_from_exclusive) =
+            self.try_restore_checkpoint(base_state, max_slot)?;
 
         let immutable_replay_blocks = self.immutable.suffix_after(&replay_from_exclusive)?;
         for block in &immutable_replay_blocks {
@@ -282,6 +275,47 @@ where
             checkpoint_slot,
             replayed_volatile_blocks: replay_blocks.len(),
         })
+    }
+
+    /// Attempts to restore a typed ledger checkpoint, falling back to
+    /// progressively older snapshots when the newest one cannot be decoded.
+    ///
+    /// Returns `(ledger_state, checkpoint_slot, replay_from_exclusive)` on
+    /// success, or falls through to the `base_state` when no decodable
+    /// checkpoint exists.
+    fn try_restore_checkpoint(
+        &self,
+        base_state: LedgerState,
+        max_slot: Option<SlotNo>,
+    ) -> Result<(LedgerState, Option<SlotNo>, Point), StorageError> {
+        let mut cursor = max_slot;
+        loop {
+            let raw = match cursor {
+                Some(slot) => self.ledger.latest_snapshot_before_or_at(slot),
+                None => self.ledger.latest_snapshot(),
+            };
+            let Some((snapshot_slot, data)) = raw else {
+                // No (more) snapshots — fall through to base state.
+                let point = base_state.tip;
+                return Ok((base_state, None, point));
+            };
+
+            match LedgerStateCheckpoint::from_cbor_bytes(data) {
+                Ok(checkpoint) => {
+                    let state = checkpoint.restore();
+                    let point = state.tip;
+                    return Ok((state, Some(snapshot_slot), point));
+                }
+                Err(_err) => {
+                    // Snapshot is corrupt; try the next-oldest one.
+                    if snapshot_slot.0 == 0 {
+                        let point = base_state.tip;
+                        return Ok((base_state, None, point));
+                    }
+                    cursor = Some(SlotNo(snapshot_slot.0 - 1));
+                }
+            }
+        }
     }
 
     /// Rolls back the volatile suffix and truncates ledger snapshots newer

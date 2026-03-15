@@ -920,6 +920,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
             nonce_state: None,
             use_ledger_peers: None,
             peer_snapshot_path: None,
+            metrics: None,
         },
         async { let _ = shutdown_rx.await; },
     )
@@ -1020,6 +1021,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
             nonce_state: None,
             use_ledger_peers: Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)),
             peer_snapshot_path: None,
+            metrics: None,
         },
         async { let _ = shutdown_rx.await; },
     )
@@ -1129,6 +1131,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
             nonce_state: None,
             use_ledger_peers: Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)),
             peer_snapshot_path: Some(snapshot_path.clone()),
+            metrics: None,
         },
         async { let _ = shutdown_rx.await; },
     )

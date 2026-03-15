@@ -10,7 +10,7 @@ use yggdrasil_node::config::{
     NetworkPreset, NodeConfigFile, TraceNamespaceConfig, default_config,
     load_peer_snapshot_file,
 };
-use yggdrasil_node::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
@@ -23,7 +23,7 @@ use yggdrasil_network::{
     HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
     resolve_peer_access_points,
 };
-use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
+use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, LedgerStore, VolatileStore};
 
 const CHECKPOINT_TRACE_NAMESPACE: &str = "Node.Recovery.Checkpoint";
 
@@ -72,9 +72,21 @@ enum Command {
         /// Backend override for checkpoint trace events. Repeat the flag to route to multiple backends.
         #[arg(long, action = clap::ArgAction::Append)]
         checkpoint_trace_backend: Vec<String>,
+        /// Port for Prometheus metrics HTTP endpoint. Disabled when not set.
+        #[arg(long)]
+        metrics_port: Option<u16>,
     },
     /// Validate config, snapshot inputs, and any existing on-disk storage state.
     ValidateConfig {
+        /// Path to a JSON configuration file.
+        #[arg(long, short)]
+        config: Option<PathBuf>,
+        /// Network preset (mainnet, preprod, preview). Overridden by --config.
+        #[arg(long, value_parser = clap::value_parser!(NetworkPreset))]
+        network: Option<NetworkPreset>,
+    },
+    /// Inspect on-disk storage and report current sync status.
+    Status {
         /// Path to a JSON configuration file.
         #[arg(long, short)]
         config: Option<PathBuf>,
@@ -138,6 +150,13 @@ fn main() -> Result<()> {
             println!("{json}");
             Ok(())
         }
+        Command::Status { config, network } => {
+            let (file_cfg, config_base_dir) = load_effective_config(config, network)?;
+            let report = status_report(&file_cfg, config_base_dir.as_deref())?;
+            let json = serde_json::to_string_pretty(&report)?;
+            println!("{json}");
+            Ok(())
+        }
         Command::Run {
             config,
             network,
@@ -150,6 +169,7 @@ fn main() -> Result<()> {
             checkpoint_trace_max_frequency,
             checkpoint_trace_severity,
             checkpoint_trace_backend,
+            metrics_port,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
 
@@ -298,6 +318,7 @@ fn main() -> Result<()> {
                 chain_db,
                 use_ledger_peers: Some(file_cfg.use_ledger_peers_policy()),
                 peer_snapshot_path,
+                metrics_port,
             }))
         }
     }
@@ -488,6 +509,114 @@ fn validate_config_report(
     })
 }
 
+// ---------------------------------------------------------------------------
+// status subcommand
+// ---------------------------------------------------------------------------
+
+/// On-disk node status report produced by the `status` subcommand.
+#[derive(Serialize)]
+struct StatusReport {
+    network_magic: u32,
+    storage_dir: String,
+    storage_initialized: bool,
+    chain_tip: String,
+    chain_tip_slot: Option<u64>,
+    chain_tip_hash: Option<String>,
+    immutable_tip: String,
+    immutable_block_count: usize,
+    volatile_tip: String,
+    volatile_block_count: usize,
+    ledger_checkpoint_slot: Option<u64>,
+    ledger_checkpoint_count: usize,
+    replayed_volatile_blocks: Option<usize>,
+    recovered_ledger_point: Option<String>,
+}
+
+fn status_report(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&std::path::Path>,
+) -> Result<StatusReport> {
+    let storage_dir = resolve_storage_dir(&file_cfg.storage_dir, config_base_dir);
+    let immutable_dir = storage_dir.join("immutable");
+    let volatile_dir = storage_dir.join("volatile");
+    let ledger_dir = storage_dir.join("ledger");
+
+    if !(immutable_dir.exists() || volatile_dir.exists() || ledger_dir.exists()) {
+        return Ok(StatusReport {
+            network_magic: file_cfg.network_magic,
+            storage_dir: storage_dir.display().to_string(),
+            storage_initialized: false,
+            chain_tip: format!("{:?}", Point::Origin),
+            chain_tip_slot: None,
+            chain_tip_hash: None,
+            immutable_tip: format!("{:?}", Point::Origin),
+            immutable_block_count: 0,
+            volatile_tip: format!("{:?}", Point::Origin),
+            volatile_block_count: 0,
+            ledger_checkpoint_slot: None,
+            ledger_checkpoint_count: 0,
+            replayed_volatile_blocks: None,
+            recovered_ledger_point: None,
+        });
+    }
+
+    let chain_db = ChainDb::new(
+        FileImmutable::open(immutable_dir)
+            .wrap_err("failed to open immutable store")?,
+        FileVolatile::open(volatile_dir)
+            .wrap_err("failed to open volatile store")?,
+        FileLedgerStore::open(ledger_dir)
+            .wrap_err("failed to open ledger store")?,
+    );
+
+    let chain_tip = chain_db.tip();
+    let immutable_tip = chain_db.immutable().get_tip();
+    let volatile_tip = chain_db.volatile().tip();
+    let immutable_block_count = chain_db.immutable().len();
+
+    // Count volatile blocks by walking the prefix up to the volatile tip.
+    let volatile_block_count: usize = if volatile_tip != Point::Origin {
+        chain_db
+            .volatile()
+            .prefix_up_to(&volatile_tip)
+            .map(|blocks| blocks.len())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let ledger_checkpoint_count = LedgerStore::count(chain_db.ledger());
+    let recovery = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron));
+
+    let (chain_tip_slot, chain_tip_hash) = match &chain_tip {
+        Point::Origin => (None, None),
+        Point::BlockPoint(slot, hash) => (Some(slot.0), Some(format!("{hash:?}"))),
+    };
+
+    Ok(StatusReport {
+        network_magic: file_cfg.network_magic,
+        storage_dir: storage_dir.display().to_string(),
+        storage_initialized: true,
+        chain_tip: format!("{chain_tip:?}"),
+        chain_tip_slot,
+        chain_tip_hash,
+        immutable_tip: format!("{immutable_tip:?}"),
+        immutable_block_count,
+        volatile_tip: format!("{volatile_tip:?}"),
+        volatile_block_count,
+        ledger_checkpoint_slot: recovery
+            .as_ref()
+            .ok()
+            .and_then(|r| r.checkpoint_slot.map(|s| s.0)),
+        ledger_checkpoint_count,
+        replayed_volatile_blocks: recovery.as_ref().ok().map(|r| r.replayed_volatile_blocks),
+        recovered_ledger_point: recovery
+            .as_ref()
+            .ok()
+            .map(|r| format!("{:?}", r.point)),
+    })
+}
+
 fn resolve_storage_dir(storage_dir: &std::path::Path, config_base_dir: Option<&std::path::Path>) -> PathBuf {
     if storage_dir.is_absolute() {
         storage_dir.to_path_buf()
@@ -660,7 +789,20 @@ async fn run_node(
         mut chain_db,
         use_ledger_peers,
         peer_snapshot_path,
+        metrics_port,
     } = request;
+
+    let metrics = std::sync::Arc::new(NodeMetrics::new());
+
+    // Optionally spawn the Prometheus metrics HTTP endpoint.
+    if let Some(port) = metrics_port {
+        let metrics_ref = std::sync::Arc::clone(&metrics);
+        tokio::spawn(async move {
+            if let Err(err) = serve_metrics(port, metrics_ref).await {
+                eprintln!("metrics server error: {err}");
+            }
+        });
+    }
 
     tracer.trace_runtime(
         "Startup.DiffusionInit",
@@ -705,6 +847,7 @@ async fn run_node(
             nonce_state,
             use_ledger_peers,
             peer_snapshot_path,
+            metrics: Some(&metrics),
         },
         async { let _ = shutdown_rx.await; },
     )
@@ -778,6 +921,67 @@ struct RunNodeRequest {
     chain_db: ChainDb<FileImmutable, FileVolatile, FileLedgerStore>,
     use_ledger_peers: Option<yggdrasil_network::UseLedgerPeers>,
     peer_snapshot_path: Option<PathBuf>,
+    metrics_port: Option<u16>,
+}
+
+// ---------------------------------------------------------------------------
+// Prometheus metrics HTTP endpoint
+// ---------------------------------------------------------------------------
+
+/// Lightweight HTTP handler that responds with Prometheus exposition text on
+/// `GET /metrics`, a JSON snapshot on `GET /metrics/json`, and a simple health
+/// check on `GET /health`.
+///
+/// Uses raw tokio TCP — no HTTP framework dependency required.
+async fn serve_metrics(
+    port: u16,
+    metrics: std::sync::Arc<NodeMetrics>,
+) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind(("127.0.0.1", port)).await?;
+    loop {
+        let (mut stream, _addr) = listener.accept().await?;
+        let metrics = std::sync::Arc::clone(&metrics);
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let n = match stream.read(&mut buf).await {
+                Ok(n) if n > 0 => n,
+                _ => return,
+            };
+            let request = String::from_utf8_lossy(&buf[..n]);
+
+            let (status, content_type, body) = if request.starts_with("GET /health") {
+                let snap = metrics.snapshot();
+                let body = serde_json::json!({
+                    "status": "ok",
+                    "uptime_seconds": snap.uptime_ms / 1000,
+                    "blocks_synced": snap.blocks_synced,
+                    "current_slot": snap.current_slot,
+                })
+                .to_string();
+                ("200 OK", "application/json", body)
+            } else if request.starts_with("GET /metrics/json") {
+                let snap = metrics.snapshot();
+                match serde_json::to_string_pretty(&snap) {
+                    Ok(json) => ("200 OK", "application/json", json),
+                    Err(_) => ("500 Internal Server Error", "text/plain", "serialization error".to_owned()),
+                }
+            } else if request.starts_with("GET /metrics") {
+                let body = metrics.snapshot().to_prometheus_text();
+                ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
+            } else {
+                ("404 Not Found", "text/plain", "not found\n".to_owned())
+            };
+
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        });
+    }
 }
 
 #[cfg(test)]
@@ -785,7 +989,8 @@ mod tests {
     use super::{
         CHECKPOINT_TRACE_NAMESPACE, checkpoint_trace_config_mut,
         configured_fallback_peers, ledger_peer_snapshot_from_ledger_state,
-        load_effective_config, preset_config_base_dir, validate_config_report,
+        load_effective_config, preset_config_base_dir, status_report,
+        validate_config_report,
     };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1058,5 +1263,78 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("configured peer snapshot file could not be loaded")));
+    }
+
+    #[test]
+    fn status_report_shows_uninitialized_when_storage_absent() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-status-empty-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        let report = status_report(&cfg, Some(&dir)).expect("status report");
+
+        assert!(!report.storage_initialized);
+        assert_eq!(report.immutable_block_count, 0);
+        assert_eq!(report.volatile_block_count, 0);
+        assert_eq!(report.ledger_checkpoint_count, 0);
+        assert!(report.chain_tip_slot.is_none());
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn status_report_shows_initialized_when_storage_exists() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-status-init-{unique}"));
+        let data_dir = dir.join("data");
+        std::fs::create_dir_all(data_dir.join("immutable")).expect("immutable dir");
+        std::fs::create_dir_all(data_dir.join("volatile")).expect("volatile dir");
+        std::fs::create_dir_all(data_dir.join("ledger")).expect("ledger dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        let report = status_report(&cfg, Some(&dir)).expect("status report");
+
+        assert!(report.storage_initialized);
+        assert_eq!(report.immutable_block_count, 0);
+        assert_eq!(report.volatile_block_count, 0);
+        assert!(report.chain_tip.contains("Origin"));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn status_report_serializes_to_json() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-status-json-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        let report = status_report(&cfg, Some(&dir)).expect("status report");
+        let json = serde_json::to_string_pretty(&report).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
+
+        assert_eq!(parsed["network_magic"], serde_json::Value::from(764_824_073u64));
+        assert_eq!(parsed["storage_initialized"], serde_json::Value::Bool(false));
+
+        std::fs::remove_dir_all(dir).ok();
     }
 }

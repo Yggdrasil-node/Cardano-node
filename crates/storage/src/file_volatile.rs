@@ -15,6 +15,15 @@ use yggdrasil_ledger::{Block, HeaderHash, Point};
 use crate::error::StorageError;
 use crate::volatile_db::VolatileStore;
 
+/// Writes `data` to `path` atomically by writing to a temp file first and
+/// then renaming. This prevents partial writes on crash.
+fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, data)?;
+    fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
 /// File-backed volatile block store with rollback support.
 ///
 /// Blocks are persisted as `{hex_hash}.json` files inside `data_dir`.
@@ -74,7 +83,7 @@ impl VolatileStore for FileVolatile {
         let path = self.block_path(&block.header.hash);
         let json = serde_json::to_string(&block)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
-        fs::write(&path, json)?;
+        atomic_write_file(&path, json.as_bytes())?;
 
         self.chain.push(block.header.hash);
         self.index.insert(block.header.hash, block);

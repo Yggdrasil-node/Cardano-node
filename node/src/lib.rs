@@ -44,4 +44,4 @@ pub use sync::{
 	verify_multi_era_block,
 	verify_praos_header, verify_shelley_header, SHELLEY_KES_DEPTH,
 };
-pub use tracer::{NodeTracer, trace_fields};
+pub use tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};

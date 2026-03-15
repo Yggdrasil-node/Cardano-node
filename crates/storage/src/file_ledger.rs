@@ -13,6 +13,15 @@ use yggdrasil_ledger::SlotNo;
 use crate::error::StorageError;
 use crate::ledger_db::LedgerStore;
 
+/// Writes `data` to `path` atomically by writing to a temp file first and
+/// then renaming. This prevents partial writes on crash.
+fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, data)?;
+    fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
 /// File-backed ledger snapshot store.
 ///
 /// Snapshots are persisted as `snapshot_{slot}.dat` files inside `data_dir`.
@@ -57,7 +66,7 @@ impl FileLedgerStore {
 impl LedgerStore for FileLedgerStore {
     fn save_snapshot(&mut self, slot: SlotNo, data: Vec<u8>) -> Result<(), StorageError> {
         let path = self.snapshot_path(slot);
-        fs::write(&path, &data)?;
+        atomic_write_file(&path, &data)?;
         if let Some((_, existing)) = self
             .snapshots
             .iter_mut()

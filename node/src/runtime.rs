@@ -16,7 +16,7 @@ use crate::sync::{
     sync_batch_apply_verified, track_chain_state, track_chain_state_entries,
     update_ledger_checkpoint_after_progress,
 };
-use crate::tracer::{NodeTracer, trace_fields};
+use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use serde_json::json;
 use serde_json::Value;
 use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState};
@@ -501,6 +501,8 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     pub use_ledger_peers: Option<UseLedgerPeers>,
     /// Optional resolved peer snapshot file path for reconnect-time refresh.
     pub peer_snapshot_path: Option<PathBuf>,
+    /// Optional metrics tracker updated during sync.
+    pub metrics: Option<&'a NodeMetrics>,
 }
 
 type CheckpointTracking = LedgerCheckpointTracking;
@@ -512,6 +514,7 @@ struct ReconnectingVerifiedSyncContext<'a> {
     peer_snapshot_path: Option<&'a Path>,
     config: &'a VerifiedSyncServiceConfig,
     tracer: &'a NodeTracer,
+    metrics: Option<&'a NodeMetrics>,
 }
 
 struct ReconnectingVerifiedSyncState {
@@ -592,12 +595,22 @@ fn record_verified_batch_progress(
     progress: &MultiEraSyncProgress,
     nonce_state: Option<&mut NonceEvolutionState>,
     nonce_config: Option<&NonceEvolutionConfig>,
+    metrics: Option<&NodeMetrics>,
 ) {
     *from_point = progress.current_point;
     run_state.record_progress(progress);
 
     if let Some((state, nonce_cfg)) = nonce_state.zip(nonce_config) {
         apply_nonce_evolution_to_progress(state, progress, nonce_cfg);
+    }
+
+    if let Some(m) = metrics {
+        m.add_blocks_synced(progress.fetched_blocks as u64);
+        m.add_rollbacks(progress.rollback_count as u64);
+        m.inc_batches_completed();
+        if let Point::BlockPoint(slot, _) = progress.current_point {
+            m.set_current_slot(slot.0);
+        }
     }
 }
 
@@ -998,6 +1011,7 @@ where
         peer_snapshot_path,
         config,
         tracer,
+        metrics,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -1054,6 +1068,11 @@ where
         };
 
         run_state.record_session(session.connected_peer_addr, &mut had_session);
+        if had_session && run_state.reconnect_count > 0 {
+            if let Some(m) = metrics {
+                m.inc_reconnects();
+            }
+        }
         preferred_peer = Some(session.connected_peer_addr);
 
         trace_session_established(
@@ -1095,12 +1114,17 @@ where
                                 &progress,
                                 nonce_state.as_mut(),
                                 config.nonce_config.as_ref(),
+                                metrics,
                             );
 
                             if let Some(ref mut cs) = chain_state {
                                 for step in &progress.steps {
                                     let stable_entries = track_chain_state_entries(cs, step)?;
-                                    run_state.stable_block_count += stable_entries.len();
+                                    let promoted = stable_entries.len();
+                                    run_state.stable_block_count += promoted;
+                                    if let Some(m) = metrics {
+                                        m.add_stable_blocks_promoted(promoted as u64);
+                                    }
                                     if let Some(last_stable) = stable_entries.last() {
                                         let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
                                         chain_db.promote_volatile_prefix(&point)?;
@@ -1115,6 +1139,11 @@ where
                                     &progress,
                                     &config.checkpoint_policy,
                                 )?;
+                                if let CheckpointPersistenceOutcome::Persisted { slot, .. } = &checkpoint_outcome {
+                                    if let Some(m) = metrics {
+                                        m.set_checkpoint_slot(slot.0);
+                                    }
+                                }
                                 trace_checkpoint_outcome(
                                     tracer,
                                     &checkpoint_outcome,
@@ -1438,6 +1467,7 @@ where
                                 &progress,
                                 nonce_state.as_mut(),
                                 config.nonce_config.as_ref(),
+                                None,
                             );
 
                             if let Some(ref mut cs) = chain_state {
@@ -1500,6 +1530,7 @@ where
         nonce_state,
         use_ledger_peers,
         peer_snapshot_path,
+        metrics,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -1529,6 +1560,7 @@ where
             peer_snapshot_path: peer_snapshot_path.as_deref(),
             config,
             tracer,
+            metrics,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -1576,6 +1608,7 @@ where
             peer_snapshot_path: peer_snapshot_path.as_deref(),
             config,
             tracer,
+            metrics: None,
         },
         ReconnectingVerifiedSyncState {
             from_point,
@@ -1807,6 +1840,7 @@ mod tests {
             &progress,
             Some(&mut nonce_state),
             Some(&nonce_cfg),
+            None,
         );
 
         assert_eq!(from_point, progress.current_point);

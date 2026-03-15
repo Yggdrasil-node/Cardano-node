@@ -7,6 +7,7 @@
 //! dedicated tracer transport remains a future milestone.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -253,6 +254,174 @@ fn value_to_human(value: &Value) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Operational metrics
+// ---------------------------------------------------------------------------
+
+/// Atomic operational metrics updated by the runtime during sync.
+///
+/// All counters use relaxed ordering for low-overhead lock-free updates.
+/// A [`MetricsSnapshot`] can be read at any time via [`NodeMetrics::snapshot`]
+/// for status queries or future metric export endpoints.
+#[derive(Debug)]
+pub struct NodeMetrics {
+    blocks_synced: AtomicU64,
+    rollbacks: AtomicU64,
+    batches_completed: AtomicU64,
+    stable_blocks_promoted: AtomicU64,
+    reconnects: AtomicU64,
+    current_slot: AtomicU64,
+    current_block_number: AtomicU64,
+    checkpoint_slot: AtomicU64,
+    start_time_ms: u128,
+}
+
+/// Point-in-time snapshot of runtime metrics.
+#[derive(Clone, Debug, Serialize)]
+pub struct MetricsSnapshot {
+    /// Total blocks fetched and applied during sync.
+    pub blocks_synced: u64,
+    /// Total rollback events.
+    pub rollbacks: u64,
+    /// Total sync batches completed.
+    pub batches_completed: u64,
+    /// Blocks promoted from volatile to immutable storage.
+    pub stable_blocks_promoted: u64,
+    /// Peer reconnection count.
+    pub reconnects: u64,
+    /// Latest slot seen by the sync pipeline.
+    pub current_slot: u64,
+    /// Latest block number seen by the sync pipeline.
+    pub current_block_number: u64,
+    /// Slot of the latest persisted ledger checkpoint.
+    pub checkpoint_slot: u64,
+    /// Milliseconds since the metrics tracker was created.
+    pub uptime_ms: u128,
+}
+
+impl NodeMetrics {
+    /// Create a new metrics tracker. Records the creation time for uptime.
+    pub fn new() -> Self {
+        Self {
+            blocks_synced: AtomicU64::new(0),
+            rollbacks: AtomicU64::new(0),
+            batches_completed: AtomicU64::new(0),
+            stable_blocks_promoted: AtomicU64::new(0),
+            reconnects: AtomicU64::new(0),
+            current_slot: AtomicU64::new(0),
+            current_block_number: AtomicU64::new(0),
+            checkpoint_slot: AtomicU64::new(0),
+            start_time_ms: current_unix_millis(),
+        }
+    }
+
+    /// Add `n` to the blocks-synced counter.
+    pub fn add_blocks_synced(&self, n: u64) {
+        self.blocks_synced.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Add `n` to the rollback counter.
+    pub fn add_rollbacks(&self, n: u64) {
+        self.rollbacks.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Increment the batches-completed counter.
+    pub fn inc_batches_completed(&self) {
+        self.batches_completed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Add `n` to the stable-blocks-promoted counter.
+    pub fn add_stable_blocks_promoted(&self, n: u64) {
+        self.stable_blocks_promoted.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Increment the reconnection counter.
+    pub fn inc_reconnects(&self) {
+        self.reconnects.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Update the latest observed slot.
+    pub fn set_current_slot(&self, slot: u64) {
+        self.current_slot.store(slot, Ordering::Relaxed);
+    }
+
+    /// Update the latest observed block number.
+    pub fn set_current_block_number(&self, block_number: u64) {
+        self.current_block_number.store(block_number, Ordering::Relaxed);
+    }
+
+    /// Update the latest persisted checkpoint slot.
+    pub fn set_checkpoint_slot(&self, slot: u64) {
+        self.checkpoint_slot.store(slot, Ordering::Relaxed);
+    }
+
+    /// Read a consistent snapshot of all current metric values.
+    pub fn snapshot(&self) -> MetricsSnapshot {
+        MetricsSnapshot {
+            blocks_synced: self.blocks_synced.load(Ordering::Relaxed),
+            rollbacks: self.rollbacks.load(Ordering::Relaxed),
+            batches_completed: self.batches_completed.load(Ordering::Relaxed),
+            stable_blocks_promoted: self.stable_blocks_promoted.load(Ordering::Relaxed),
+            reconnects: self.reconnects.load(Ordering::Relaxed),
+            current_slot: self.current_slot.load(Ordering::Relaxed),
+            current_block_number: self.current_block_number.load(Ordering::Relaxed),
+            checkpoint_slot: self.checkpoint_slot.load(Ordering::Relaxed),
+            uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
+        }
+    }
+}
+
+impl Default for NodeMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MetricsSnapshot {
+    /// Render the snapshot in Prometheus text exposition format.
+    pub fn to_prometheus_text(&self) -> String {
+        format!(
+            "\
+# HELP yggdrasil_blocks_synced Total blocks fetched and applied.\n\
+# TYPE yggdrasil_blocks_synced counter\n\
+yggdrasil_blocks_synced {}\n\
+# HELP yggdrasil_rollbacks Total rollback events.\n\
+# TYPE yggdrasil_rollbacks counter\n\
+yggdrasil_rollbacks {}\n\
+# HELP yggdrasil_batches_completed Total sync batches completed.\n\
+# TYPE yggdrasil_batches_completed counter\n\
+yggdrasil_batches_completed {}\n\
+# HELP yggdrasil_stable_blocks_promoted Blocks promoted from volatile to immutable.\n\
+# TYPE yggdrasil_stable_blocks_promoted counter\n\
+yggdrasil_stable_blocks_promoted {}\n\
+# HELP yggdrasil_reconnects Peer reconnection count.\n\
+# TYPE yggdrasil_reconnects counter\n\
+yggdrasil_reconnects {}\n\
+# HELP yggdrasil_current_slot Latest slot seen by the sync pipeline.\n\
+# TYPE yggdrasil_current_slot gauge\n\
+yggdrasil_current_slot {}\n\
+# HELP yggdrasil_current_block_number Latest block number.\n\
+# TYPE yggdrasil_current_block_number gauge\n\
+yggdrasil_current_block_number {}\n\
+# HELP yggdrasil_checkpoint_slot Slot of latest persisted ledger checkpoint.\n\
+# TYPE yggdrasil_checkpoint_slot gauge\n\
+yggdrasil_checkpoint_slot {}\n\
+# HELP yggdrasil_uptime_seconds Seconds since node start.\n\
+# TYPE yggdrasil_uptime_seconds gauge\n\
+yggdrasil_uptime_seconds {}\n",
+            self.blocks_synced,
+            self.rollbacks,
+            self.batches_completed,
+            self.stable_blocks_promoted,
+            self.reconnects,
+            self.current_slot,
+            self.current_block_number,
+            self.checkpoint_slot,
+            self.uptime_ms / 1000,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +523,71 @@ mod tests {
         assert!(tracer.should_emit("Node.Recovery.Checkpoint", 1_000));
         assert!(!tracer.should_emit("Node.Recovery.Checkpoint", 1_500));
         assert!(tracer.should_emit("Node.Recovery.Checkpoint", 2_000));
+    }
+
+    #[test]
+    fn node_metrics_accumulates_counters() {
+        let metrics = NodeMetrics::new();
+
+        metrics.add_blocks_synced(10);
+        metrics.add_blocks_synced(5);
+        metrics.add_rollbacks(1);
+        metrics.inc_batches_completed();
+        metrics.inc_batches_completed();
+        metrics.add_stable_blocks_promoted(3);
+        metrics.inc_reconnects();
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.blocks_synced, 15);
+        assert_eq!(snap.rollbacks, 1);
+        assert_eq!(snap.batches_completed, 2);
+        assert_eq!(snap.stable_blocks_promoted, 3);
+        assert_eq!(snap.reconnects, 1);
+    }
+
+    #[test]
+    fn node_metrics_tracks_slot_and_block_number() {
+        let metrics = NodeMetrics::new();
+
+        metrics.set_current_slot(42_000);
+        metrics.set_current_block_number(1_234);
+        metrics.set_checkpoint_slot(41_000);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.current_slot, 42_000);
+        assert_eq!(snap.current_block_number, 1_234);
+        assert_eq!(snap.checkpoint_slot, 41_000);
+    }
+
+    #[test]
+    fn node_metrics_uptime_grows() {
+        let metrics = NodeMetrics::new();
+        let snap = metrics.snapshot();
+        // Uptime should be zero or very small immediately after creation.
+        assert!(snap.uptime_ms < 1000);
+    }
+
+    #[test]
+    fn node_metrics_snapshot_is_serializable() {
+        let metrics = NodeMetrics::new();
+        metrics.add_blocks_synced(7);
+        let snap = metrics.snapshot();
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed["blocks_synced"], Value::from(7));
+    }
+
+    #[test]
+    fn node_metrics_snapshot_renders_prometheus_text() {
+        let metrics = NodeMetrics::new();
+        metrics.add_blocks_synced(42);
+        metrics.set_current_slot(100);
+        let text = metrics.snapshot().to_prometheus_text();
+
+        assert!(text.contains("yggdrasil_blocks_synced 42\n"));
+        assert!(text.contains("yggdrasil_current_slot 100\n"));
+        assert!(text.contains("# TYPE yggdrasil_blocks_synced counter\n"));
+        assert!(text.contains("# TYPE yggdrasil_current_slot gauge\n"));
+        assert!(text.contains("yggdrasil_uptime_seconds"));
     }
 }

@@ -33,7 +33,9 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - `VolatileStore` now exposes ordered prefix access and pruning helpers so stable volatile blocks can be immutalized through a crate-owned boundary instead of ad hoc node-side coordination.
 - `LedgerStore` now supports latest-snapshot lookup at or before a slot plus snapshot truncation after rollback, so restart and rollback flows can reuse the storage layer directly.
 - `ChainDb` now exposes typed `LedgerStateCheckpoint` save/load helpers plus typed ledger recovery replay via `recover_ledger_state()` and checkpoint coordination helpers (`clear_ledger_checkpoints`, `truncate_ledger_checkpoints_after_point`, `persist_ledger_checkpoint`) over the existing raw-byte `LedgerStore` seam, giving recovery code a crate-owned path without hard-coding a permanent on-disk format into the trait.
+- `recover_ledger_state()` uses a fallback strategy: when the latest checkpoint is corrupt (CBOR decode failure), it iterates backward through older snapshots via `try_restore_checkpoint()` until a valid one is found, falling through to the base ledger state when all checkpoints are unreadable. This makes recovery resilient to partial or interrupted checkpoint writes.
+- File-backed stores (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) use atomic file writes (write-to-temp + `fs::rename`) for crash safety, preventing corrupt on-disk state from incomplete writes.
 - Storage operates on typed `Block`, `HeaderHash`, `SlotNo`, and `Point` from `yggdrasil-ledger`.
-- Integration coverage now includes trait behavior plus ChainDb coordination for promotion, rollback, and snapshot lookup/truncation across in-memory and file-backed paths.
+- Integration coverage now includes trait behavior, ChainDb coordination for promotion, rollback, and snapshot lookup/truncation across in-memory and file-backed paths, checkpoint fallback recovery tests, and atomic write verification.
 - File-backed stores use `serde_json` serialization; this is a pragmatic initial format, not a long-term commitment.
 

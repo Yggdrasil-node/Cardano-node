@@ -767,3 +767,111 @@ fn chaindb_checkpoint_truncation_and_clear_follow_points() {
         .expect("clear checkpoints");
     assert!(chain_db.latest_ledger_checkpoint().expect("latest checkpoint").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Checkpoint fallback recovery
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chaindb_recover_ledger_state_skips_corrupt_checkpoint() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let mut ledger = InMemoryLedgerStore::default();
+
+    // Save a valid checkpoint at slot 10.
+    let mut good_state = LedgerState::new(Era::Shelley);
+    good_state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0x0A; 32]));
+    let good_cbor = good_state.checkpoint().to_cbor_bytes();
+    ledger
+        .save_snapshot(SlotNo(10), good_cbor)
+        .expect("save good checkpoint");
+
+    // Save a corrupt checkpoint at slot 20 (invalid CBOR bytes).
+    ledger
+        .save_snapshot(SlotNo(20), vec![0xFF, 0xFE, 0xFD])
+        .expect("save corrupt checkpoint");
+
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    // Add a volatile block at slot 30 so the tip is slot 30.
+    chain_db
+        .add_volatile_block(test_block(0x1E, 30))
+        .expect("add volatile 30");
+
+    // Recovery should skip the corrupt slot-20 checkpoint and fall back to
+    // the valid slot-10 checkpoint, then replay the volatile suffix.
+    let recovered = chain_db
+        .recover_ledger_state(LedgerState::new(Era::Shelley))
+        .expect("recover should succeed via fallback");
+
+    assert_eq!(recovered.checkpoint_slot, Some(SlotNo(10)));
+    assert_eq!(recovered.replayed_volatile_blocks, 1);
+    assert_eq!(
+        recovered.point,
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
+    );
+}
+
+#[test]
+fn chaindb_recover_ledger_state_falls_through_when_all_checkpoints_corrupt() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let mut ledger = InMemoryLedgerStore::default();
+
+    // Save only corrupt checkpoints.
+    ledger
+        .save_snapshot(SlotNo(5), vec![0xFF])
+        .expect("save corrupt 5");
+    ledger
+        .save_snapshot(SlotNo(10), vec![0xFE])
+        .expect("save corrupt 10");
+
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+    chain_db
+        .add_volatile_block(test_block(0x14, 20))
+        .expect("add volatile 20");
+
+    // With all checkpoints corrupt, recovery falls through to the base state
+    // and replays from scratch.
+    let recovered = chain_db
+        .recover_ledger_state(LedgerState::new(Era::Shelley))
+        .expect("recover falls through to base state");
+
+    assert_eq!(recovered.checkpoint_slot, None);
+    assert_eq!(recovered.replayed_volatile_blocks, 1);
+    assert_eq!(
+        recovered.point,
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x14; 32]))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Atomic file writes — verify temp file is cleaned up
+// ---------------------------------------------------------------------------
+
+#[test]
+fn file_ledger_store_does_not_leave_temp_files() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let mut store = FileLedgerStore::open(dir.path()).expect("open ledger store");
+
+    store
+        .save_snapshot(SlotNo(100), vec![1, 2, 3])
+        .expect("save snapshot");
+
+    // The actual file should exist.
+    let expected = dir.path().join("snapshot_100.dat");
+    assert!(expected.exists(), "snapshot file should exist");
+
+    // No .tmp files should remain.
+    let tmp_files: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("read dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "tmp")
+        })
+        .collect();
+    assert!(tmp_files.is_empty(), "no temp files should remain after atomic write");
+}
