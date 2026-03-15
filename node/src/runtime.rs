@@ -519,6 +519,62 @@ struct ReconnectingVerifiedSyncState {
     checkpoint_tracking: Option<CheckpointTracking>,
 }
 
+struct ReconnectingRunState {
+    total_blocks: usize,
+    total_rollbacks: usize,
+    batches_completed: usize,
+    stable_block_count: usize,
+    reconnect_count: usize,
+    last_connected_peer_addr: Option<SocketAddr>,
+}
+
+impl ReconnectingRunState {
+    fn new() -> Self {
+        Self {
+            total_blocks: 0,
+            total_rollbacks: 0,
+            batches_completed: 0,
+            stable_block_count: 0,
+            reconnect_count: 0,
+            last_connected_peer_addr: None,
+        }
+    }
+
+    fn record_session(&mut self, peer_addr: SocketAddr, had_session: &mut bool) {
+        if *had_session {
+            self.reconnect_count += 1;
+        } else {
+            *had_session = true;
+        }
+        self.last_connected_peer_addr = Some(peer_addr);
+    }
+
+    fn record_progress(&mut self, progress: &MultiEraSyncProgress) {
+        self.total_blocks += progress.fetched_blocks;
+        self.total_rollbacks += progress.rollback_count;
+        self.batches_completed += 1;
+    }
+
+    fn finish(
+        self,
+        final_point: Point,
+        nonce_state: Option<NonceEvolutionState>,
+        chain_state: Option<ChainState>,
+    ) -> ReconnectingSyncServiceOutcome {
+        ReconnectingSyncServiceOutcome {
+            final_point,
+            total_blocks: self.total_blocks,
+            total_rollbacks: self.total_rollbacks,
+            batches_completed: self.batches_completed,
+            nonce_state,
+            chain_state,
+            stable_block_count: self.stable_block_count,
+            reconnect_count: self.reconnect_count,
+            last_connected_peer_addr: self.last_connected_peer_addr,
+        }
+    }
+}
+
 fn extend_unique_socket_addrs(
     target: &mut Vec<SocketAddr>,
     peers: impl IntoIterator<Item = SocketAddr>,
@@ -743,12 +799,7 @@ where
 
     tokio::pin!(shutdown);
 
-    let mut total_blocks = 0usize;
-    let mut total_rollbacks = 0usize;
-    let mut batches_completed = 0usize;
-    let mut total_stable = 0usize;
-    let mut reconnect_count = 0usize;
-    let mut last_connected_peer_addr = None;
+    let mut run_state = ReconnectingRunState::new();
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
     let mut preferred_peer = None;
@@ -793,41 +844,27 @@ where
                     "shutdown requested before bootstrap completed",
                     BTreeMap::new(),
                 );
-                return Ok(ReconnectingSyncServiceOutcome {
-                    final_point: from_point,
-                    total_blocks,
-                    total_rollbacks,
-                    batches_completed,
-                    nonce_state,
-                    chain_state,
-                    stable_block_count: total_stable,
-                    reconnect_count,
-                    last_connected_peer_addr,
-                });
+                return Ok(run_state.finish(from_point, nonce_state, chain_state));
             }
 
             result = bootstrap_with_attempt_state(node_config, &mut attempt_state, tracer) => result?,
         };
 
-        if had_session {
-            reconnect_count += 1;
-        } else {
-            had_session = true;
-        }
-        last_connected_peer_addr = Some(session.connected_peer_addr);
+        run_state.record_session(session.connected_peer_addr, &mut had_session);
         preferred_peer = Some(session.connected_peer_addr);
 
         tracer.trace_runtime(
             "Net.ConnectionManager.Remote",
             "Notice",
             if reconnect_count == 0 {
+            if run_state.reconnect_count == 0 {
                 "verified sync session established"
             } else {
                 "verified sync session re-established"
             },
             trace_fields([
                 ("peer", json!(session.connected_peer_addr.to_string())),
-                ("reconnectCount", json!(reconnect_count)),
+                ("reconnectCount", json!(run_state.reconnect_count)),
                 ("fromPoint", json!(format!("{:?}", from_point))),
             ]),
         );
@@ -856,31 +893,19 @@ where
                         ]),
                     );
                     session.mux.abort();
-                    return Ok(ReconnectingSyncServiceOutcome {
-                        final_point: from_point,
-                        total_blocks,
-                        total_rollbacks,
-                        batches_completed,
-                        nonce_state,
-                        chain_state,
-                        stable_block_count: total_stable,
-                        reconnect_count,
-                        last_connected_peer_addr,
-                    });
+                    return Ok(run_state.finish(from_point, nonce_state, chain_state));
                 }
 
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
                             from_point = progress.current_point;
-                            total_blocks += progress.fetched_blocks;
-                            total_rollbacks += progress.rollback_count;
-                            batches_completed += 1;
+                            run_state.record_progress(&progress);
 
                             if let Some(ref mut cs) = chain_state {
                                 for step in &progress.steps {
                                     let stable_entries = track_chain_state_entries(cs, step)?;
-                                    total_stable += stable_entries.len();
+                                    run_state.stable_block_count += stable_entries.len();
                                     if let Some(last_stable) = stable_entries.last() {
                                         let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
                                         chain_db.promote_volatile_prefix(&point)?;
@@ -917,9 +942,9 @@ where
                                     ("currentPoint", json!(format!("{:?}", from_point))),
                                     ("batchFetchedBlocks", json!(progress.fetched_blocks)),
                                     ("batchRollbacks", json!(progress.rollback_count)),
-                                    ("totalBlocks", json!(total_blocks)),
-                                    ("batchesCompleted", json!(batches_completed)),
-                                    ("stableBlocks", json!(total_stable)),
+                                    ("totalBlocks", json!(run_state.total_blocks)),
+                                    ("batchesCompleted", json!(run_state.batches_completed)),
+                                    ("stableBlocks", json!(run_state.stable_block_count)),
                                     ("checkpointTracked", json!(checkpoint_tracking.is_some())),
                                 ]),
                             );
