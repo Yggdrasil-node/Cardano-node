@@ -10,6 +10,7 @@ blake2.workspace = true
 curve25519-dalek.workspace = true
 curve25519-elligator2.workspace = true
 ed25519-dalek.workspace = true
+k256.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 thiserror.workspace = true

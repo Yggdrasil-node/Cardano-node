@@ -11,6 +11,8 @@ pub mod kes;
 pub mod sum_kes;
 /// Published compatibility vectors used by crypto tests.
 pub mod test_vectors;
+/// secp256k1 ECDSA and Schnorr (BIP-340) signature verification.
+pub mod secp256k1;
 /// Verifiable random function key, proof, and output helpers.
 pub mod vrf;
 
@@ -36,6 +38,8 @@ pub use test_vectors::{
 	VrfPraosTestVector, ed25519_rfc8032_vectors, simple_kes_two_period_test_vectors,
 	vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
 };
+/// secp256k1 ECDSA and Schnorr verification entry points.
+pub use secp256k1::{verify_ecdsa, verify_schnorr};
 /// VRF byte-backed key, proof, and output types.
 pub use vrf::{
 	VrfBatchCompatProof, VrfOutput, VrfProof, VrfSecretKey, VrfVerificationKey,

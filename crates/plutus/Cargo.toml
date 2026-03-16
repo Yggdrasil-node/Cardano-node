@@ -7,6 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 sha2.workspace = true
+sha3.workspace = true
+ripemd.workspace = true
 thiserror.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true

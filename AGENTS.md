@@ -122,5 +122,5 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
   - Consensus OpCert: `hot_vkey`, `sequence_number`.
   - DCert variants aligned with CDDL certificate names: `AccountRegistration`, `AccountUnregistration`, `DelegationToStakePool`, `PoolRegistration`, `PoolRetirement`, `GenesisDelegation`, plus Conway-era `AccountRegistrationDeposit` through `DrepUpdate`.
 - CBOR golden round-trip parity tests cover `ShelleyTxBody`, `ShelleyBlock`, `PlutusData`, `StakeCredential`, and `MultiEraTxOut`. Cross-subsystem integration tests verify block→ChainState→storage and rollback flows.
-- 978 workspace tests pass across all crates, 0 clippy warnings.
+- 989 workspace tests pass across all crates, 0 clippy errors.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.

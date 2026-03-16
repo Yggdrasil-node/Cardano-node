@@ -23,4 +23,8 @@ pub enum CryptoError {
     InvalidVrfVerificationKey,
     #[error("kes period overflow")]
     KesPeriodOverflow,
+    #[error("invalid key: {0}")]
+    InvalidKey(String),
+    #[error("invalid signature format: {0}")]
+    SignatureFormat(String),
 }

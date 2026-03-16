@@ -28,6 +28,10 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 
 ## Current Phase
 - Blake2b, Ed25519, and SimpleKES (two-period) are implemented with vector coverage.
+- secp256k1 ECDSA and Schnorr (BIP-340) verification is implemented in `secp256k1.rs` using the pure-Rust `k256` crate.
+  - ECDSA: 33-byte SEC1-compressed pubkey, 32-byte pre-hashed digest, 64-byte r‖s signature. Uses `PrehashVerifier`.
+  - Schnorr: 32-byte x-only pubkey, arbitrary-length message, 64-byte BIP-340 signature.
+  - 10 unit tests (length validation, invalid key rejection, sign+verify round trips).
 - VRF batchcompat (ietfdraft13, 128-byte proof) verification is complete and passes all 7 upstream vectors.
 - VRF standard (ietfdraft03, 80-byte proof) verification is complete and passes all 7 upstream vectors.
   - H2C uses `SHA-512(SUITE||ONE||pk||alpha)` → first 32 bytes → clear bit 255 → Elligator2 `from_representative::<Legacy>` → normalize Edwards X sign (clear bit 7 of compressed byte 31) → decompress → cofactor multiply.

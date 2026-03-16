@@ -23,3 +23,4 @@ This directory is for pure Rust cryptographic implementation code and protocol-f
 ## Current Phase
 - Preserve upstream-compatible VRF and KES behavior while avoiding any hidden FFI dependency.
 - `blake2b.rs`: `hash_bytes` (512-bit), `hash_bytes_256` (256-bit), `hash_bytes_224` (224-bit, used for credential/script hashes).
+- `secp256k1.rs`: Pure-Rust ECDSA and Schnorr (BIP-340) signature verification via `k256`. ECDSA uses `PrehashVerifier` (33-byte SEC1 pubkey, 32-byte digest, 64-byte sig). Schnorr uses 32-byte x-only pubkey, arbitrary-length message, 64-byte sig. Used by PlutusV2 builtins.

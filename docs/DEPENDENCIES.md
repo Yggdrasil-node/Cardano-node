@@ -8,7 +8,10 @@ This file defines how dependencies are introduced into Yggdrasil.
 - `curve25519-dalek`: curve operations used in the crypto foundation.
 - `curve25519-elligator2`: pure Rust legacy elligator2 mapping support needed to mirror `cardano-crypto-praos` batch-compatible VRF hash-to-curve behavior; rejected alternatives were FFI bindings to libsodium/cardano C code and ad-hoc local finite-field reimplementations, and this crate introduces no hidden native build requirements.
 - `ed25519-dalek`: pure Rust Ed25519 signing and verification built on RustCrypto and dalek primitives.
+- `k256`: pure Rust secp256k1 elliptic curve implementation from RustCrypto; provides ECDSA (`PrehashVerifier`) and Schnorr (BIP-340) signature verification required by PlutusV2 builtins (`VerifyEcdsaSecp256k1Signature`, `VerifySchnorrSecp256k1Signature`). Rejected alternatives were `secp256k1` crate (wraps C libsecp256k1 — forbidden FFI) and `p256`/local reimplementation. Features enabled: `ecdsa`, `schnorr`, `std`. No native build requirements.
+- `ripemd`: pure Rust RIPEMD-160 hash from RustCrypto; required by PlutusV3 builtin `Ripemd_160`. No alternative exists in the pure Rust ecosystem. No native build requirements.
 - `sha2`: pure Rust SHA-512 required for Praos-compatible VRF proof-to-output hashing; rejected alternatives were hidden FFI wrappers and reimplementing SHA-512 locally, and it introduces no native build requirements.
+- `sha3`: pure Rust SHA3-256 and Keccak-256 hashes from RustCrypto; required by PlutusV2 builtin `Sha3_256` and PlutusV3 builtin `Keccak_256`. No alternative exists in the pure Rust ecosystem. No native build requirements.
 - `serde`: structured data interchange where handwritten or generated types require it.
 - `serde_json`: JSON serialization/deserialization for node configuration files; natural companion to `serde` with no additional native requirements. Matches the Cardano node's JSON-based configuration format.
 - `thiserror`: library error types.

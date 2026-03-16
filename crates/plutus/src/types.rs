@@ -110,6 +110,7 @@ pub enum Constant {
 /// Reference: `PlutusCore.Default.Builtins.DefaultFun`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[allow(non_camel_case_types)]
 pub enum DefaultFun {
     // -- Integer arithmetic
     AddInteger = 0,
