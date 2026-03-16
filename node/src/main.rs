@@ -14,15 +14,19 @@ use yggdrasil_node::config::{
 use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
     BlockProvider, ChainProvider,
-    LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome, VerificationConfig,
+    LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome,
+    RuntimeGovernorConfig, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
     SharedChainDb, recover_ledger_state_chaindb,
+    run_governor_loop,
     resume_reconnecting_verified_sync_service_shared_chaindb,
+    seed_peer_registry,
     run_inbound_accept_loop,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
 use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint};
 use yggdrasil_network::{
+    GovernorState, GovernorTargets,
     HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
     PeerListener, resolve_peer_access_points,
 };
@@ -311,11 +315,28 @@ fn main() -> Result<()> {
                 protocol_versions,
             };
 
+            let governor_config = RuntimeGovernorConfig::new(
+                std::time::Duration::from_secs(file_cfg.governor_tick_interval_secs),
+                file_cfg.keepalive_interval_secs.map(std::time::Duration::from_secs),
+                GovernorTargets {
+                    target_known: file_cfg.governor_target_known,
+                    target_established: file_cfg.governor_target_established,
+                    target_active: file_cfg.governor_target_active,
+                },
+            );
+
+            let mut topology_config = file_cfg.topology_config();
+            if let Some(peer_snapshot_path) = &peer_snapshot_path {
+                topology_config.peer_snapshot_file = Some(peer_snapshot_path.display().to_string());
+            }
+
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(run_node(RunNodeRequest {
                 node_config,
                 bootstrap_peers,
                 sync_config,
+                governor_config,
+                topology_config,
                 tracer,
                 storage_dir,
                 chain_db,
@@ -788,6 +809,8 @@ async fn run_node(
         node_config,
         bootstrap_peers,
         sync_config,
+        governor_config,
+        topology_config,
         tracer,
         storage_dir,
         chain_db,
@@ -798,6 +821,10 @@ async fn run_node(
     } = request;
 
     let chain_db = Arc::new(RwLock::new(chain_db));
+    let peer_registry = Arc::new(RwLock::new(seed_peer_registry(
+        node_config.peer_addr,
+        &topology_config,
+    )));
 
     let metrics = std::sync::Arc::new(NodeMetrics::new());
 
@@ -844,6 +871,38 @@ async fn run_node(
         );
         let _ = signal_shutdown_tx.send(true);
     });
+
+    let governor_task = {
+        let mut governor_shutdown = shutdown_rx.clone();
+        let governor_node_config = node_config.clone();
+        let governor_chain_db = Arc::clone(&chain_db);
+        let governor_registry = Arc::clone(&peer_registry);
+        let governor_tracer = tracer.clone();
+        let governor_topology = topology_config.clone();
+        tokio::spawn(async move {
+            let shutdown = async move {
+                if *governor_shutdown.borrow() {
+                    return;
+                }
+                while governor_shutdown.changed().await.is_ok() {
+                    if *governor_shutdown.borrow() {
+                        break;
+                    }
+                }
+            };
+
+            run_governor_loop(
+                governor_node_config,
+                governor_chain_db,
+                governor_registry,
+                GovernorState::default(),
+                governor_config,
+                governor_topology,
+                governor_tracer,
+                shutdown,
+            ).await;
+        })
+    };
 
     let inbound_task = if let Some(listen_addr) = inbound_listen_addr {
         let listener = PeerListener::bind(
@@ -926,6 +985,7 @@ async fn run_node(
         Ok(outcome) => outcome,
         Err(err) => {
             let _ = shutdown_tx.send(true);
+            let _ = governor_task.await;
             if let Some(handle) = inbound_task {
                 let _ = handle.await;
             }
@@ -943,6 +1003,7 @@ async fn run_node(
     };
 
     let _ = shutdown_tx.send(true);
+    let _ = governor_task.await;
     if let Some(handle) = inbound_task {
         let _ = handle.await;
     }
@@ -996,6 +1057,8 @@ struct RunNodeRequest {
     node_config: NodeConfig,
     bootstrap_peers: Vec<SocketAddr>,
     sync_config: VerifiedSyncServiceConfig,
+    governor_config: RuntimeGovernorConfig,
+    topology_config: yggdrasil_network::TopologyConfig,
     tracer: NodeTracer,
     storage_dir: PathBuf,
     chain_db: ChainDb<FileImmutable, FileVolatile, FileLedgerStore>,

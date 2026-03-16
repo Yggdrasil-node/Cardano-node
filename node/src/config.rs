@@ -153,6 +153,18 @@ pub struct NodeConfigFile {
     /// KeepAlive heartbeat interval in seconds. `null` disables heartbeats.
     #[serde(default)]
     pub keepalive_interval_secs: Option<u64>,
+    /// Governor tick interval in seconds. Defaults to 5.
+    #[serde(default = "default_governor_tick_interval_secs")]
+    pub governor_tick_interval_secs: u64,
+    /// Target number of known peers the governor maintains.
+    #[serde(default = "default_governor_target_known")]
+    pub governor_target_known: usize,
+    /// Target number of established (warm + hot) peers the governor maintains.
+    #[serde(default = "default_governor_target_established")]
+    pub governor_target_established: usize,
+    /// Target number of active (hot) peers the governor maintains.
+    #[serde(default = "default_governor_target_active")]
+    pub governor_target_active: usize,
     /// Whether local logging output is enabled.
     #[serde(rename = "TurnOnLogging", default = "default_turn_on_logging")]
     pub turn_on_logging: bool,
@@ -434,6 +446,22 @@ fn default_active_slot_coeff() -> f64 {
     0.05
 }
 
+fn default_governor_tick_interval_secs() -> u64 {
+    5
+}
+
+fn default_governor_target_known() -> usize {
+    20
+}
+
+fn default_governor_target_established() -> usize {
+    10
+}
+
+fn default_governor_target_active() -> usize {
+    5
+}
+
 fn default_turn_on_logging() -> bool {
     true
 }
@@ -659,6 +687,10 @@ pub fn mainnet_config() -> NodeConfigFile {
         security_param_k: 2160,
         active_slot_coeff: 0.05,
         keepalive_interval_secs: Some(60),
+        governor_tick_interval_secs: default_governor_tick_interval_secs(),
+        governor_target_known: default_governor_target_known(),
+        governor_target_established: default_governor_target_established(),
+        governor_target_active: default_governor_target_active(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -700,6 +732,10 @@ pub fn preprod_config() -> NodeConfigFile {
         security_param_k: 2160,
         active_slot_coeff: 0.05,
         keepalive_interval_secs: Some(60),
+        governor_tick_interval_secs: default_governor_tick_interval_secs(),
+        governor_target_known: default_governor_target_known(),
+        governor_target_established: default_governor_target_established(),
+        governor_target_active: default_governor_target_active(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -741,6 +777,10 @@ pub fn preview_config() -> NodeConfigFile {
         security_param_k: 432,
         active_slot_coeff: 0.05,
         keepalive_interval_secs: Some(60),
+        governor_tick_interval_secs: default_governor_tick_interval_secs(),
+        governor_target_known: default_governor_target_known(),
+        governor_target_established: default_governor_target_established(),
+        governor_target_active: default_governor_target_active(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -771,6 +811,16 @@ mod tests {
         assert_eq!(parsed.storage_dir, cfg.storage_dir);
         assert_eq!(parsed.checkpoint_interval_slots, cfg.checkpoint_interval_slots);
         assert_eq!(parsed.max_ledger_snapshots, cfg.max_ledger_snapshots);
+        assert_eq!(
+            parsed.governor_tick_interval_secs,
+            cfg.governor_tick_interval_secs
+        );
+        assert_eq!(parsed.governor_target_known, cfg.governor_target_known);
+        assert_eq!(
+            parsed.governor_target_established,
+            cfg.governor_target_established
+        );
+        assert_eq!(parsed.governor_target_active, cfg.governor_target_active);
         assert_eq!(parsed.turn_on_logging, cfg.turn_on_logging);
         assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
         assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);

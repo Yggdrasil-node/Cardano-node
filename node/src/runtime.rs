@@ -8,6 +8,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
@@ -23,19 +24,644 @@ use serde_json::Value;
 use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState};
 use yggdrasil_network::{
     AfterSlot, BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
-    LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement, MiniProtocolNum,
-    NodeToNodeVersionData, PeerAccessPoint, PeerConnection, PeerError,
+    DnsRefreshPolicy, DnsRootPeerProvider,
+    GovernorAction, GovernorState, GovernorTargets, LedgerPeerSnapshot,
+    LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
+    LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
+    PeerConnection, PeerError, PeerRegistry, PeerSource, PeerStatus,
     PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
-    TxSubmissionClient, TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
-    peer_attempt_state, resolve_peer_access_points,
+    RootPeerProviderState, TopologyConfig, TxSubmissionClient,
+    TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
+    peer_attempt_state, reconcile_ledger_peer_registry_with_policy,
+    refresh_root_peer_state_and_registry, resolve_peer_access_points,
 };
-use yggdrasil_ledger::{LedgerError, LedgerState, MultiEraSubmittedTx, Point, SlotNo, TxId};
+use yggdrasil_ledger::{
+    Era, LedgerError, LedgerState, MultiEraSubmittedTx, Point, PoolRelayAccessPoint,
+    SlotNo, TxId,
+};
 use yggdrasil_mempool::{
     Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
     SharedMempool, MEMPOOL_ZERO_IDX, SharedTxSubmissionMempoolReader,
     TxSubmissionMempoolReader,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
+
+/// Runtime governor configuration derived from node configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeGovernorConfig {
+    /// Period between governor evaluation ticks.
+    pub tick_interval: Duration,
+    /// KeepAlive cadence for established warm peers.
+    pub keepalive_interval: Option<Duration>,
+    /// Target peer counts maintained by the governor.
+    pub targets: GovernorTargets,
+}
+
+impl RuntimeGovernorConfig {
+    /// Construct a runtime governor config from the explicit interval and targets.
+    pub fn new(
+        tick_interval: Duration,
+        keepalive_interval: Option<Duration>,
+        targets: GovernorTargets,
+    ) -> Self {
+        Self {
+            tick_interval,
+            keepalive_interval,
+            targets,
+        }
+    }
+}
+
+struct ManagedWarmPeer {
+    session: PeerSession,
+    last_keepalive_at: Instant,
+    next_cookie: u16,
+}
+
+impl ManagedWarmPeer {
+    fn new(session: PeerSession, now: Instant) -> Self {
+        Self {
+            session,
+            last_keepalive_at: now,
+            next_cookie: 1,
+        }
+    }
+
+    async fn maybe_send_keepalive(
+        &mut self,
+        interval: Duration,
+        now: Instant,
+    ) -> Result<bool, SyncError> {
+        if now.duration_since(self.last_keepalive_at) < interval {
+            return Ok(false);
+        }
+
+        self.session.keep_alive.keep_alive(self.next_cookie).await?;
+        self.next_cookie = self.next_cookie.wrapping_add(1);
+        self.last_keepalive_at = now;
+        Ok(true)
+    }
+
+    fn abort(self) {
+        self.session.mux.abort();
+    }
+}
+
+struct OutboundPeerManager {
+    warm_peers: BTreeMap<SocketAddr, ManagedWarmPeer>,
+}
+
+struct RuntimeRootPeerSources {
+    state: RootPeerProviderState,
+    local_roots: Option<DnsRootPeerProvider>,
+    bootstrap_peers: Option<DnsRootPeerProvider>,
+    public_config_peers: Option<DnsRootPeerProvider>,
+}
+
+impl OutboundPeerManager {
+    fn new() -> Self {
+        Self {
+            warm_peers: BTreeMap::new(),
+        }
+    }
+
+    fn contains(&self, peer: &SocketAddr) -> bool {
+        self.warm_peers.contains_key(peer)
+    }
+
+    async fn promote_to_warm(
+        &mut self,
+        node_config: &NodeConfig,
+        peer: SocketAddr,
+        governor_state: &mut GovernorState,
+        tracer: &NodeTracer,
+    ) -> bool {
+        if self.warm_peers.contains_key(&peer) {
+            return false;
+        }
+
+        let peer_config = NodeConfig {
+            peer_addr: peer,
+            network_magic: node_config.network_magic,
+            protocol_versions: node_config.protocol_versions.clone(),
+        };
+
+        match bootstrap(&peer_config).await {
+            Ok(session) => {
+                let connected_peer_addr = session.connected_peer_addr;
+                self.warm_peers.insert(
+                    connected_peer_addr,
+                    ManagedWarmPeer::new(session, Instant::now()),
+                );
+                governor_state.record_success(peer);
+                tracer.trace_runtime(
+                    "Net.Governor",
+                    "Info",
+                    "warm peer connection established",
+                    trace_fields([("peer", json!(connected_peer_addr.to_string()))]),
+                );
+                true
+            }
+            Err(err) => {
+                governor_state.record_failure(peer);
+                tracer.trace_runtime(
+                    "Net.Governor",
+                    "Warning",
+                    "warm peer connection failed",
+                    trace_fields([
+                        ("peer", json!(peer.to_string())),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+                false
+            }
+        }
+    }
+
+    fn demote_to_cold(&mut self, peer: SocketAddr) -> bool {
+        match self.warm_peers.remove(&peer) {
+            Some(session) => {
+                session.abort();
+                true
+            }
+            None => false,
+        }
+    }
+
+    async fn drive_keepalives(
+        &mut self,
+        keepalive_interval: Option<Duration>,
+        governor_state: &mut GovernorState,
+        tracer: &NodeTracer,
+    ) {
+        let Some(interval) = keepalive_interval else {
+            return;
+        };
+
+        let now = Instant::now();
+        let peers = self.warm_peers.keys().copied().collect::<Vec<_>>();
+        let mut failed = Vec::new();
+
+        for peer in peers {
+            let Some(session) = self.warm_peers.get_mut(&peer) else {
+                continue;
+            };
+
+            match session.maybe_send_keepalive(interval, now).await {
+                Ok(sent) => {
+                    if sent {
+                        governor_state.record_success(peer);
+                    }
+                }
+                Err(err) => {
+                    governor_state.record_failure(peer);
+                    failed.push((peer, err));
+                }
+            }
+        }
+
+        for (peer, err) in failed {
+            if let Some(session) = self.warm_peers.remove(&peer) {
+                session.abort();
+            }
+            tracer.trace_runtime(
+                "Net.Governor",
+                "Warning",
+                "warm peer keepalive failed",
+                trace_fields([
+                    ("peer", json!(peer.to_string())),
+                    ("error", json!(err.to_string())),
+                ]),
+            );
+        }
+    }
+}
+
+impl RuntimeRootPeerSources {
+    fn new(topology: &TopologyConfig) -> Self {
+        let policy = DnsRefreshPolicy::default();
+        let local_roots = (!topology.local_roots.is_empty()).then(|| {
+            DnsRootPeerProvider::local_roots(topology.local_roots.clone())
+                .with_policy(policy.clone())
+        });
+        let bootstrap_peers = (!topology.bootstrap_peers.configured_peers().is_empty()).then(|| {
+            DnsRootPeerProvider::bootstrap_peers(
+                topology.bootstrap_peers.configured_peers().to_vec(),
+            )
+            .with_policy(policy.clone())
+        });
+        let public_config_peers = (!topology.public_roots.is_empty()).then(|| {
+            DnsRootPeerProvider::public_config_peers(topology.public_roots.clone())
+                .with_policy(policy)
+        });
+
+        Self {
+            state: RootPeerProviderState::from_topology(topology),
+            local_roots,
+            bootstrap_peers,
+            public_config_peers,
+        }
+    }
+
+    fn sync_registry(&self, registry: &mut PeerRegistry) -> bool {
+        registry.sync_root_peers(self.state.providers())
+    }
+
+    fn local_root_targets(&self) -> Vec<LocalRootTargets> {
+        local_root_targets_from_resolved_groups(&self.state.providers().local_roots)
+    }
+
+    fn refresh(&mut self, registry: &mut PeerRegistry, tracer: &NodeTracer) -> bool {
+        let mut changed = false;
+
+        if let Some(provider) = &mut self.local_roots {
+            match refresh_root_peer_state_and_registry(&mut self.state, registry, provider) {
+                Ok(provider_changed) => changed |= provider_changed,
+                Err(err) => trace_root_refresh_error(tracer, "LocalRoots", err.to_string()),
+            }
+        }
+
+        if let Some(provider) = &mut self.bootstrap_peers {
+            match refresh_root_peer_state_and_registry(&mut self.state, registry, provider) {
+                Ok(provider_changed) => changed |= provider_changed,
+                Err(err) => trace_root_refresh_error(tracer, "BootstrapPeers", err.to_string()),
+            }
+        }
+
+        if let Some(provider) = &mut self.public_config_peers {
+            match refresh_root_peer_state_and_registry(&mut self.state, registry, provider) {
+                Ok(provider_changed) => changed |= provider_changed,
+                Err(err) => {
+                    trace_root_refresh_error(tracer, "PublicConfigPeers", err.to_string())
+                }
+            }
+        }
+
+        changed
+    }
+}
+
+fn trace_root_refresh_error(tracer: &NodeTracer, source: &str, error: String) {
+    tracer.trace_runtime(
+        "Net.PeerSelection",
+        "Warning",
+        "root peer refresh failed",
+        trace_fields([("source", json!(source)), ("error", json!(error))]),
+    );
+}
+
+/// Seed a peer registry from the primary peer and current topology-owned root sources.
+pub fn seed_peer_registry(
+    primary_peer: SocketAddr,
+    topology: &TopologyConfig,
+) -> PeerRegistry {
+    let mut registry = PeerRegistry::default();
+    registry.insert_source(primary_peer, PeerSource::PeerSourceBootstrap);
+
+    registry.sync_root_peers(&topology.resolved_root_providers());
+
+    registry
+}
+
+/// Derive local-root governor targets from resolved topology groups.
+pub fn local_root_targets_from_config(
+    local_roots: &[LocalRootConfig],
+) -> Vec<LocalRootTargets> {
+    local_roots
+        .iter()
+        .filter_map(|group| {
+            let peers = group
+                .access_points
+                .iter()
+                .flat_map(resolve_peer_access_points)
+                .collect::<Vec<_>>();
+            if peers.is_empty() {
+                None
+            } else {
+                Some(LocalRootTargets::from_config(group, peers))
+            }
+        })
+        .collect()
+}
+
+fn local_root_targets_from_resolved_groups(
+    local_roots: &[yggdrasil_network::ResolvedLocalRootGroup],
+) -> Vec<LocalRootTargets> {
+    local_roots
+        .iter()
+        .map(|group| LocalRootTargets {
+            peers: group.peers.clone(),
+            hot_valency: group.hot_valency,
+            warm_valency: group.warm_valency,
+        })
+        .collect()
+}
+
+fn point_slot(point: &Point) -> Option<u64> {
+    match point {
+        Point::Origin => None,
+        Point::BlockPoint(slot, _) => Some(slot.0),
+    }
+}
+
+fn extend_unique_peers(target: &mut Vec<SocketAddr>, peers: impl IntoIterator<Item = SocketAddr>) {
+    for peer in peers {
+        if !target.contains(&peer) {
+            target.push(peer);
+        }
+    }
+}
+
+fn extend_unique_ledger_peers(
+    target: &mut Vec<SocketAddr>,
+    access_points: impl IntoIterator<Item = PoolRelayAccessPoint>,
+) {
+    for access_point in access_points {
+        let peer_access_point = PeerAccessPoint {
+            address: access_point.address,
+            port: access_point.port,
+        };
+        extend_unique_peers(target, resolve_peer_access_points(&peer_access_point));
+    }
+}
+
+fn merge_ledger_peer_snapshots(
+    ledger_snapshot: &LedgerPeerSnapshot,
+    snapshot_file: Option<LedgerPeerSnapshot>,
+) -> LedgerPeerSnapshot {
+    let mut merged_ledger_peers = ledger_snapshot.ledger_peers.clone();
+    let mut merged_big_ledger_peers = ledger_snapshot.big_ledger_peers.clone();
+
+    if let Some(snapshot_file) = snapshot_file {
+        extend_unique_peers(&mut merged_ledger_peers, snapshot_file.ledger_peers);
+        extend_unique_peers(&mut merged_big_ledger_peers, snapshot_file.big_ledger_peers);
+    }
+
+    LedgerPeerSnapshot::new(merged_ledger_peers, merged_big_ledger_peers)
+}
+
+fn ledger_peer_snapshot_from_ledger_state(ledger_state: &LedgerState) -> LedgerPeerSnapshot {
+    let mut ledger_peers = Vec::new();
+    extend_unique_ledger_peers(&mut ledger_peers, ledger_state.pool_state().relay_access_points());
+    LedgerPeerSnapshot::new(ledger_peers, Vec::new())
+}
+
+fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
+    registry: &mut PeerRegistry,
+    chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
+    topology: &TopologyConfig,
+    tracer: &NodeTracer,
+) -> bool
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    if !topology.use_ledger_peers.enabled() {
+        return false;
+    }
+
+    let (latest_slot, ledger_state_judgement, ledger_snapshot) = {
+        let chain_db = chain_db.read().expect("chain db lock poisoned");
+        let tip = chain_db.recovery().tip;
+        match recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron)) {
+            Ok(recovery) => (
+                point_slot(&recovery.point).or_else(|| point_slot(&tip)),
+                LedgerStateJudgement::YoungEnough,
+                ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state),
+            ),
+            Err(err) => {
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "failed to recover ledger peers from chain db",
+                    trace_fields([("error", json!(err.to_string()))]),
+                );
+                (
+                    point_slot(&tip),
+                    LedgerStateJudgement::Unavailable,
+                    LedgerPeerSnapshot::default(),
+                )
+            }
+        }
+    };
+
+    let mut snapshot_slot = None;
+    let mut snapshot_available = topology.peer_snapshot_file.is_none();
+    let mut snapshot_file = None;
+
+    if let Some(peer_snapshot_file) = topology.peer_snapshot_file.as_deref() {
+        match load_peer_snapshot_file(Path::new(peer_snapshot_file)) {
+            Ok(loaded_snapshot) => {
+                snapshot_slot = loaded_snapshot.slot;
+                snapshot_available = true;
+                snapshot_file = Some(loaded_snapshot.snapshot);
+            }
+            Err(err) => {
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "failed to refresh configured peer snapshot",
+                    trace_fields([
+                        ("snapshotPath", json!(peer_snapshot_file)),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+            }
+        }
+    }
+
+    let peer_snapshot_freshness = derive_peer_snapshot_freshness(
+        topology.use_ledger_peers,
+        topology.peer_snapshot_file.is_some(),
+        snapshot_slot,
+        latest_slot,
+        snapshot_available,
+    );
+
+    let update = reconcile_ledger_peer_registry_with_policy(
+        registry,
+        merge_ledger_peer_snapshots(&ledger_snapshot, snapshot_file),
+        topology.use_ledger_peers,
+        latest_slot,
+        ledger_state_judgement,
+        peer_snapshot_freshness,
+    );
+
+    if update.changed {
+        tracer.trace_runtime(
+            "Net.PeerSelection",
+            "Info",
+            "ledger peer registry refreshed",
+            trace_fields([
+                ("decision", json!(format!("{:?}", update.decision))),
+                ("latestSlot", json!(latest_slot)),
+                (
+                    "peerSnapshotFreshness",
+                    json!(format!("{:?}", peer_snapshot_freshness)),
+                ),
+            ]),
+        );
+    }
+
+    update.changed
+}
+
+fn governor_action_name(action: &GovernorAction) -> &'static str {
+    match action {
+        GovernorAction::PromoteToWarm(_) => "PromoteToWarm",
+        GovernorAction::PromoteToHot(_) => "PromoteToHot",
+        GovernorAction::DemoteToWarm(_) => "DemoteToWarm",
+        GovernorAction::DemoteToCold(_) => "DemoteToCold",
+    }
+}
+
+fn governor_action_peer(action: &GovernorAction) -> SocketAddr {
+    match action {
+        GovernorAction::PromoteToWarm(peer)
+        | GovernorAction::PromoteToHot(peer)
+        | GovernorAction::DemoteToWarm(peer)
+        | GovernorAction::DemoteToCold(peer) => *peer,
+    }
+}
+
+/// Run the peer governor loop until shutdown.
+///
+/// The loop periodically refreshes root peers from DNS-backed providers,
+/// refreshes ledger peers from the current ChainDb recovery view plus optional
+/// peer snapshot file, drives warm-peer KeepAlive traffic, and then executes
+/// governor actions against the shared peer registry and outbound warm sessions.
+pub async fn run_governor_loop<I, V, L, F>(
+    node_config: NodeConfig,
+    chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
+    peer_registry: Arc<RwLock<PeerRegistry>>,
+    mut governor_state: GovernorState,
+    config: RuntimeGovernorConfig,
+    topology: TopologyConfig,
+    tracer: NodeTracer,
+    shutdown: F,
+) where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let mut interval = tokio::time::interval(config.tick_interval);
+    let mut peer_manager = OutboundPeerManager::new();
+    let mut root_sources = RuntimeRootPeerSources::new(&topology);
+    tokio::pin!(shutdown);
+
+    {
+        let mut registry = peer_registry.write().expect("peer registry lock poisoned");
+        root_sources.sync_registry(&mut registry);
+        refresh_ledger_peer_sources_from_chain_db(&mut registry, &chain_db, &topology, &tracer);
+    }
+
+    tracer.trace_runtime(
+        "Net.Governor",
+        "Notice",
+        "peer governor started",
+        trace_fields([
+            ("tickIntervalSecs", json!(config.tick_interval.as_secs())),
+            ("targetKnown", json!(config.targets.target_known)),
+            (
+                "targetEstablished",
+                json!(config.targets.target_established),
+            ),
+            ("targetActive", json!(config.targets.target_active)),
+        ]),
+    );
+
+    loop {
+        tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                tracer.trace_runtime(
+                    "Net.Governor",
+                    "Notice",
+                    "peer governor stopped",
+                    BTreeMap::new(),
+                );
+                return;
+            }
+
+            _ = interval.tick() => {
+                {
+                    let mut registry = peer_registry.write().expect("peer registry lock poisoned");
+                    root_sources.refresh(&mut registry, &tracer);
+                    refresh_ledger_peer_sources_from_chain_db(&mut registry, &chain_db, &topology, &tracer);
+                }
+
+                peer_manager
+                    .drive_keepalives(config.keepalive_interval, &mut governor_state, &tracer)
+                    .await;
+
+                let local_root_groups = root_sources.local_root_targets();
+                let actions = {
+                    let registry = peer_registry.read().expect("peer registry lock poisoned");
+                    governor_state.tick(&registry, &config.targets, &local_root_groups, Instant::now())
+                };
+
+                if actions.is_empty() {
+                    continue;
+                }
+
+                for action in actions {
+                    let peer = governor_action_peer(&action);
+                    let changed = match action {
+                        GovernorAction::PromoteToWarm(peer) => {
+                            if peer_manager
+                                .promote_to_warm(&node_config, peer, &mut governor_state, &tracer)
+                                .await
+                            {
+                                let mut registry = peer_registry
+                                    .write()
+                                    .expect("peer registry lock poisoned");
+                                registry.set_status(peer, PeerStatus::PeerWarm)
+                            } else {
+                                false
+                            }
+                        }
+                        GovernorAction::PromoteToHot(peer) => {
+                            if peer_manager.contains(&peer) {
+                                let mut registry = peer_registry
+                                    .write()
+                                    .expect("peer registry lock poisoned");
+                                registry.set_status(peer, PeerStatus::PeerHot)
+                            } else {
+                                false
+                            }
+                        }
+                        GovernorAction::DemoteToWarm(peer) => {
+                            let mut registry = peer_registry
+                                .write()
+                                .expect("peer registry lock poisoned");
+                            registry.set_status(peer, PeerStatus::PeerWarm)
+                        }
+                        GovernorAction::DemoteToCold(peer) => {
+                            let connection_changed = peer_manager.demote_to_cold(peer);
+                            let mut registry = peer_registry
+                                .write()
+                                .expect("peer registry lock poisoned");
+                            registry.set_status(peer, PeerStatus::PeerCold) || connection_changed
+                        }
+                    };
+                    tracer.trace_runtime(
+                        "Net.Governor",
+                        if changed { "Info" } else { "Debug" },
+                        "peer governor action applied",
+                        trace_fields([
+                            ("action", json!(governor_action_name(&action))),
+                            ("peer", json!(peer.to_string())),
+                            ("changed", json!(changed)),
+                        ]),
+                    );
+                }
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // TxSubmission mempool integration
@@ -399,6 +1025,7 @@ where
 /// Minimal configuration for establishing a node-to-node connection.
 ///
 /// This covers the subset needed for initial sync bootstrapping.
+#[derive(Clone, Debug)]
 pub struct NodeConfig {
     /// Address of the upstream peer to connect to.
     pub peer_addr: SocketAddr,
@@ -1905,8 +2532,8 @@ mod tests {
     use super::{
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
-        record_verified_batch_progress, session_established_trace_fields,
-        sync_error_trace_fields,
+        local_root_targets_from_config, record_verified_batch_progress,
+        seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
         verified_sync_batch_trace_fields,
     };
     use crate::sync::{MultiEraSyncProgress, SyncError};
@@ -1916,7 +2543,11 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
     use yggdrasil_ledger::{HeaderHash, Nonce, Point, SlotNo};
-    use yggdrasil_network::{BlockFetchClientError, ChainSyncClientError};
+    use yggdrasil_network::{
+        BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
+        PeerAccessPoint, PeerSource, TopologyConfig, UseBootstrapPeers,
+        UseLedgerPeers,
+    };
 
     fn local_addr(port: u16) -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
@@ -2128,5 +2759,79 @@ mod tests {
         assert_eq!(run_state.total_rollbacks, 2);
         assert_eq!(run_state.batches_completed, 1);
         assert_eq!(nonce_state.evolving_nonce, Nonce::Neutral);
+    }
+
+    #[test]
+    fn seed_peer_registry_preserves_bootstrap_and_local_root_sources() {
+        let primary = local_addr(3001);
+        let local_root = LocalRootConfig {
+            access_points: vec![PeerAccessPoint {
+                address: "127.0.0.1".to_owned(),
+                port: 3002,
+            }],
+            advertise: false,
+            trustable: true,
+            hot_valency: 1,
+            warm_valency: Some(1),
+            diffusion_mode: Default::default(),
+        };
+        let topology = TopologyConfig {
+            bootstrap_peers: UseBootstrapPeers::UseBootstrapPeers(vec![PeerAccessPoint {
+                address: "127.0.0.1".to_owned(),
+                port: 3003,
+            }]),
+            local_roots: vec![local_root],
+            public_roots: Vec::new(),
+            use_ledger_peers: UseLedgerPeers::DontUseLedgerPeers,
+            peer_snapshot_file: None,
+        };
+
+        let registry = seed_peer_registry(primary, &topology);
+
+        let primary_entry = registry.get(&primary).expect("primary peer present");
+        let local_root_entry = registry
+            .get(&local_addr(3002))
+            .expect("local root peer present");
+        let bootstrap_entry = registry
+            .get(&local_addr(3003))
+            .expect("bootstrap peer present");
+
+        assert!(
+            primary_entry
+                .sources
+                .contains(&PeerSource::PeerSourceBootstrap)
+        );
+        assert!(
+            local_root_entry
+                .sources
+                .contains(&PeerSource::PeerSourceLocalRoot)
+        );
+        assert!(
+            bootstrap_entry
+                .sources
+                .contains(&PeerSource::PeerSourceBootstrap)
+        );
+    }
+
+    #[test]
+    fn local_root_targets_use_effective_warm_valency() {
+        let local_roots = vec![LocalRootConfig {
+            access_points: vec![PeerAccessPoint {
+                address: "127.0.0.1".to_owned(),
+                port: 4001,
+            }],
+            advertise: false,
+            trustable: false,
+            hot_valency: 2,
+            warm_valency: None,
+            diffusion_mode: Default::default(),
+        }];
+
+        let targets = local_root_targets_from_config(&local_roots);
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].hot_valency, 2);
+        assert_eq!(targets[0].warm_valency, 2);
+        assert_eq!(targets[0].peers, vec![local_addr(4001)]);
     }
 }
