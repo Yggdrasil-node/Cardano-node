@@ -53,7 +53,9 @@ pub use tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};
 
 pub use server::{
 	BlockProvider, ChainProvider, InboundPeerSession, InboundServiceError,
+	SharedTxSubmissionConsumer, TxSubmissionConsumer,
 	SharedChainDb,
 	run_blockfetch_server, run_chainsync_server, run_inbound_accept_loop,
 	run_keepalive_server,
+	run_txsubmission_server,
 };

@@ -15,16 +15,19 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
+use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool};
+use crate::sync::recover_ledger_state_chaindb;
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock,
-    Decoder, Point, ShelleyBlock,
+    Decoder, MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo,
 };
+use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
     ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest,
     KeepAliveServer, KeepAliveServerError,
     MuxHandle, PeerConnection, PeerListener, PeerListenerError,
-    TxSubmissionServer,
+    TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
 };
 use yggdrasil_network::multiplexer::MiniProtocolNum;
 use yggdrasil_storage::{ChainDb, ImmutableStore, VolatileStore, LedgerStore};
@@ -49,6 +52,79 @@ pub struct InboundPeerSession {
     pub mux: MuxHandle,
     /// Remote peer address.
     pub remote_addr: SocketAddr,
+}
+
+/// A sink for transactions pulled from an inbound TxSubmission client.
+pub trait TxSubmissionConsumer: Send + Sync {
+    /// Consume submitted transaction bytes and return the number accepted.
+    fn consume_txs(&self, txs: Vec<Vec<u8>>) -> usize;
+}
+
+/// Shared `ChainDb` + shared mempool backed TxSubmission consumer.
+///
+/// This implementation recovers the current ledger state from coordinated
+/// storage, decodes submitted transactions using the current ledger era, and
+/// then admits them into the shared mempool using the existing runtime helper.
+#[derive(Clone, Debug)]
+pub struct SharedTxSubmissionConsumer<I, V, L> {
+    chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
+    mempool: SharedMempool,
+}
+
+impl<I, V, L> SharedTxSubmissionConsumer<I, V, L> {
+    /// Create a new shared TxSubmission consumer from coordinated storage and a mempool.
+    pub fn new(chain_db: Arc<RwLock<ChainDb<I, V, L>>>, mempool: SharedMempool) -> Self {
+        Self { chain_db, mempool }
+    }
+
+    /// Shared mempool receiving admitted inbound transactions.
+    pub fn mempool(&self) -> &SharedMempool {
+        &self.mempool
+    }
+}
+
+impl<I, V, L> TxSubmissionConsumer for SharedTxSubmissionConsumer<I, V, L>
+where
+    I: ImmutableStore + Send + Sync,
+    V: VolatileStore + Send + Sync,
+    L: LedgerStore + Send + Sync,
+{
+    fn consume_txs(&self, txs: Vec<Vec<u8>>) -> usize {
+        let mut ledger_state = {
+            let chain_db = match self.chain_db.read() {
+                Ok(guard) => guard,
+                Err(_) => return 0,
+            };
+            match recover_ledger_state_chaindb(&chain_db, yggdrasil_ledger::LedgerState::new(yggdrasil_ledger::Era::Byron)) {
+                Ok(recovery) => recovery.ledger_state,
+                Err(_) => return 0,
+            }
+        };
+
+        let current_slot = match ledger_state.tip {
+            Point::Origin => SlotNo(0),
+            Point::BlockPoint(slot, _) => slot,
+        };
+
+        let decoded = txs
+            .into_iter()
+            .filter_map(|raw_tx| {
+                MultiEraSubmittedTx::from_cbor_bytes_for_era(ledger_state.current_era, &raw_tx).ok()
+            })
+            .collect::<Vec<_>>();
+
+        if decoded.is_empty() {
+            return 0;
+        }
+
+        match add_txs_to_shared_mempool(&mut ledger_state, &self.mempool, decoded, current_slot) {
+            Ok(results) => results
+                .into_iter()
+                .filter(|result| matches!(result, MempoolAddTxResult::MempoolTxAdded(_)))
+                .count(),
+            Err(_) => 0,
+        }
+    }
 }
 
 impl InboundPeerSession {
@@ -197,6 +273,38 @@ pub async fn run_chainsync_server(
                 }
             }
             ChainSyncServerRequest::Done => return Ok(()),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TxSubmission server task
+// ---------------------------------------------------------------------------
+
+/// Run the TxSubmission server loop, pulling transactions from the remote peer.
+///
+/// The server requests batches of transaction ids, requests the corresponding
+/// bodies, hands those bodies to the provided consumer, then acknowledges the
+/// advertised ids on the next request. The loop terminates cleanly when the
+/// remote client responds with `MsgDone` to a blocking request.
+pub async fn run_txsubmission_server(
+    mut server: TxSubmissionServer,
+    consumer: &dyn TxSubmissionConsumer,
+) -> Result<(), TxSubmissionServerError> {
+    const TXSUBMISSION_BATCH_SIZE: u16 = 16;
+
+    server.recv_init().await?;
+    let mut ack = 0u16;
+
+    loop {
+        match server.request_tx_ids(true, ack, TXSUBMISSION_BATCH_SIZE).await? {
+            TxIdsReply::Done => return Ok(()),
+            TxIdsReply::TxIds(txids) => {
+                ack = txids.len().min(u16::MAX as usize) as u16;
+                let requested = txids.into_iter().map(|item| item.txid).collect();
+                let txs = server.request_txs(requested).await?;
+                let _accepted = consumer.consume_txs(txs);
+            }
         }
     }
 }
@@ -497,6 +605,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     listener: &PeerListener,
     block_provider: Option<Arc<dyn BlockProvider>>,
     chain_provider: Option<Arc<dyn ChainProvider>>,
+    tx_submission_consumer: Option<Arc<dyn TxSubmissionConsumer>>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
     tokio::pin!(shutdown);
@@ -513,6 +622,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
 
                 let bp = block_provider.clone();
                 let cp = chain_provider.clone();
+                let tx_consumer = tx_submission_consumer.clone();
 
                 tokio::spawn(async move {
                     let ka = tokio::spawn(run_keepalive_server(session.keep_alive));
@@ -529,11 +639,18 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         })
                     });
 
+                    let tx = tx_consumer.map(|consumer| {
+                        tokio::spawn(async move {
+                            let _ = run_txsubmission_server(session.tx_submission, &*consumer).await;
+                        })
+                    });
+
                     // Wait for KeepAlive to finish (indicates peer disconnected
                     // or sent MsgDone). Then abort the remaining tasks.
                     let _ = ka.await;
                     if let Some(h) = bf { h.abort(); }
                     if let Some(h) = cs { h.abort(); }
+                    if let Some(h) = tx { h.abort(); }
                     session.mux.abort();
                 });
             }
@@ -543,16 +660,24 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockProvider, ChainProvider, SharedChainDb};
+    use super::{
+        BlockProvider, ChainProvider, SharedChainDb, TxSubmissionConsumer,
+        run_inbound_accept_loop,
+    };
+    use std::sync::{Arc, Mutex};
     use std::collections::HashMap;
+    use std::time::Duration;
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
         ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo,
     };
+    use yggdrasil_network::{HandshakeVersion, PeerListener, TxIdAndSize};
     use yggdrasil_storage::{
         ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         VolatileStore,
     };
+    use crate::NodeConfig;
+    use crate::runtime::bootstrap;
 
     const SHELLEY_ERA_TAG: u64 = 2;
 
@@ -696,5 +821,127 @@ mod tests {
         assert!(provider.next_header(&Some(second_point.to_cbor_bytes())).is_none());
         assert_eq!(provider.find_intersect(&[second_point.to_cbor_bytes()]), Some((second_point.to_cbor_bytes(), second_point.to_cbor_bytes())));
         assert_eq!(provider.chain_tip(), second_point.to_cbor_bytes());
+    }
+
+    #[derive(Default)]
+    struct RecordingTxSubmissionConsumer {
+        received: Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl TxSubmissionConsumer for RecordingTxSubmissionConsumer {
+        fn consume_txs(&self, txs: Vec<Vec<u8>>) -> usize {
+            let accepted = txs.len();
+            self.received.lock().expect("poisoned").extend(txs);
+            accepted
+        }
+    }
+
+    #[tokio::test]
+    async fn inbound_accept_loop_runs_txsubmission_server() {
+        let listener = PeerListener::bind(
+            "127.0.0.1:0",
+            42,
+            vec![HandshakeVersion(15)],
+        )
+        .await
+        .expect("bind listener");
+        let listen_addr = listener.local_addr().expect("listen addr");
+        let consumer = Arc::new(RecordingTxSubmissionConsumer::default());
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let accept_task = tokio::spawn({
+            let consumer = Arc::clone(&consumer);
+            async move {
+                run_inbound_accept_loop(
+                    &listener,
+                    None,
+                    None,
+                    Some(consumer),
+                    async move {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await
+            }
+        });
+
+        let mut session = bootstrap(&NodeConfig {
+            peer_addr: listen_addr,
+            network_magic: 42,
+            protocol_versions: vec![HandshakeVersion(15)],
+        })
+        .await
+        .expect("bootstrap client");
+
+        session.tx_submission.init().await.expect("init txsubmission");
+
+        let first_request = session
+            .tx_submission
+            .recv_request()
+            .await
+            .expect("recv tx ids request");
+        let (ack, req) = match first_request {
+            yggdrasil_network::TxServerRequest::RequestTxIds { blocking, ack, req } => {
+                assert!(blocking);
+                (ack, req)
+            }
+            other => panic!("expected tx ids request, got {other:?}"),
+        };
+        assert_eq!(ack, 0);
+        assert_eq!(req, 16);
+
+        let txid = yggdrasil_ledger::TxId([7; 32]);
+        session
+            .tx_submission
+            .reply_tx_ids(vec![TxIdAndSize { txid, size: 3 }])
+            .await
+            .expect("reply tx ids");
+
+        let second_request = session
+            .tx_submission
+            .recv_request()
+            .await
+            .expect("recv tx bodies request");
+        match second_request {
+            yggdrasil_network::TxServerRequest::RequestTxs { txids } => {
+                assert_eq!(txids, vec![txid]);
+            }
+            other => panic!("expected tx request, got {other:?}"),
+        }
+
+        session
+            .tx_submission
+            .reply_txs(vec![vec![1, 2, 3]])
+            .await
+            .expect("reply tx bodies");
+
+        let third_request = session
+            .tx_submission
+            .recv_request()
+            .await
+            .expect("recv follow-up tx ids request");
+        match third_request {
+            yggdrasil_network::TxServerRequest::RequestTxIds { blocking, ack, req } => {
+                assert!(blocking);
+                assert_eq!(ack, 1);
+                assert_eq!(req, 16);
+            }
+            other => panic!("expected follow-up tx ids request, got {other:?}"),
+        }
+
+        session
+            .tx_submission
+            .send_done()
+            .await
+            .expect("send done");
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            consumer.received.lock().expect("poisoned").clone(),
+            vec![vec![1, 2, 3]]
+        );
+
+        let _ = shutdown_tx.send(());
+        accept_task.await.expect("accept task join").expect("accept loop");
     }
 }

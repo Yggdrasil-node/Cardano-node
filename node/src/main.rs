@@ -17,7 +17,7 @@ use yggdrasil_node::{
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome,
     RuntimeGovernorConfig, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
-    SharedChainDb, recover_ledger_state_chaindb,
+    SharedChainDb, SharedTxSubmissionConsumer, recover_ledger_state_chaindb,
     run_governor_loop,
     resume_reconnecting_verified_sync_service_shared_chaindb,
     seed_peer_registry,
@@ -25,6 +25,7 @@ use yggdrasil_node::{
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
 use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint};
+use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     GovernorState, GovernorTargets,
     HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
@@ -922,6 +923,10 @@ async fn run_node(
         let shared_provider = Arc::new(SharedChainDb::from_arc(Arc::clone(&chain_db)));
         let block_provider: Arc<dyn BlockProvider> = shared_provider.clone();
         let chain_provider: Arc<dyn ChainProvider> = shared_provider;
+        let tx_submission_consumer = Arc::new(SharedTxSubmissionConsumer::new(
+            Arc::clone(&chain_db),
+            SharedMempool::default(),
+        ));
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
 
@@ -941,6 +946,7 @@ async fn run_node(
                 &listener,
                 Some(block_provider),
                 Some(chain_provider),
+                Some(tx_submission_consumer),
                 shutdown,
             )
             .await
