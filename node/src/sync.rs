@@ -7,7 +7,9 @@
 
 use std::time::Duration;
 
-use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ConsensusError, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceEvolutionConfig, NonceEvolutionState, OpCert as ConsensusOpCert, SecurityParam, verify_header, verify_leader_proof};
+use std::collections::BTreeMap;
+
+use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ConsensusError, EpochSize, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceEvolutionConfig, NonceEvolutionState, OpCert as ConsensusOpCert, SecurityParam, is_new_epoch, slot_to_epoch, verify_header, verify_leader_proof};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
@@ -20,10 +22,10 @@ use yggdrasil_network::{
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
     CborDecode, CborEncode, ConwayBlock,
-    Decoder, Era, HeaderHash, LedgerError, LedgerState, Nonce, Point, PraosHeader, PraosHeaderBody,
-    ShelleyBlock,
-    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, SlotNo, Tx, TxId,
-    compute_block_body_hash,
+    Decoder, Era, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState, Nonce, Point,
+    PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
+    SlotNo, StakeSnapshots, Tx, TxId,
+    apply_epoch_boundary, compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
@@ -201,6 +203,7 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
             issuer_vkey: body.issuer_vkey,
         },
         transactions,
+        raw_cbor: None,
     }
 }
 
@@ -792,6 +795,14 @@ pub(crate) struct LedgerCheckpointTracking {
     pub(crate) base_ledger_state: LedgerState,
     pub(crate) ledger_state: LedgerState,
     pub(crate) last_persisted_point: Point,
+    /// Stake snapshots for epoch boundary processing.  When present,
+    /// block application detects epoch transitions and applies the
+    /// NEWEPOCH / SNAP / RUPD sequence before the first block of each
+    /// new epoch.
+    pub(crate) stake_snapshots: Option<StakeSnapshots>,
+    /// Epoch size (slots per epoch) for epoch boundary detection.
+    /// Required when `stake_snapshots` is `Some`.
+    pub(crate) epoch_size: Option<EpochSize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -838,6 +849,44 @@ pub(crate) fn advance_ledger_state_with_progress(
     })
 }
 
+/// Advances the ledger state block-by-block, detecting epoch transitions
+/// and applying the NEWEPOCH / SNAP / RUPD boundary rules before the
+/// first block of each new epoch.
+///
+/// Returns the list of epoch boundary events that fired during this batch.
+/// When no epoch transition occurs, the returned vec is empty and the
+/// behavior is identical to [`advance_ledger_state_with_progress`].
+pub(crate) fn advance_ledger_with_epoch_boundary(
+    ledger_state: &mut LedgerState,
+    snapshots: &mut StakeSnapshots,
+    epoch_size: EpochSize,
+    progress: &MultiEraSyncProgress,
+) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
+    let mut events = Vec::new();
+    for_each_roll_forward_block(progress, |block| -> Result<(), SyncError> {
+        let converted = multi_era_block_to_block(block);
+        let block_slot = converted.header.slot_no;
+
+        // Detect epoch transition relative to the current ledger tip.
+        let prev_slot = match ledger_state.tip {
+            Point::BlockPoint(s, _) => Some(s),
+            Point::Origin => None,
+        };
+        if is_new_epoch(prev_slot, block_slot, epoch_size) {
+            let new_epoch = slot_to_epoch(block_slot, epoch_size);
+            // Pool performance is not yet tracked; treat all pools as
+            // having ideal performance (empty map → perfect σ/σ̂ ratio).
+            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &BTreeMap::new())
+                .map(|event| events.push(event))
+                .map_err(SyncError::LedgerDecode)?;
+        }
+
+        ledger_state.apply_block(&converted)?;
+        Ok(())
+    })?;
+    Ok(events)
+}
+
 pub(crate) fn apply_nonce_evolution_to_progress(
     nonce_state: &mut NonceEvolutionState,
     progress: &MultiEraSyncProgress,
@@ -868,6 +917,20 @@ where
             tracking.base_ledger_state.clone(),
         )?
         .ledger_state;
+        // After rollback recovery, stake snapshots are stale — reset them
+        // so epoch boundary processing restarts cleanly.
+        if tracking.stake_snapshots.is_some() {
+            tracking.stake_snapshots = Some(StakeSnapshots::new());
+        }
+    } else if let (Some(snapshots), Some(epoch_size)) =
+        (tracking.stake_snapshots.as_mut(), tracking.epoch_size)
+    {
+        let _events = advance_ledger_with_epoch_boundary(
+            &mut tracking.ledger_state,
+            snapshots,
+            epoch_size,
+            progress,
+        )?;
     } else {
         advance_ledger_state_with_progress(&mut tracking.ledger_state, progress)?;
     }
@@ -933,6 +996,8 @@ where
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state,
         last_persisted_point: recovery.point,
+        stake_snapshots: None,
+        epoch_size: None,
     })
 }
 
@@ -1080,11 +1145,16 @@ where
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut checkpoint_tracking = default_checkpoint_tracking(chain_db)?;
 
+    // Enable epoch boundary processing when nonce config provides epoch size.
+    if let Some(ref nonce_cfg) = config.nonce_config {
+        checkpoint_tracking.stake_snapshots = Some(StakeSnapshots::new());
+        checkpoint_tracking.epoch_size = Some(nonce_cfg.epoch_size);
+    }
+
     loop {
-        let batch_fut = sync_batch_apply_verified(
+        let batch_fut = sync_batch_verified(
             chain_sync,
             block_fetch,
-            chain_db.volatile_mut(),
             from_point,
             config.batch_size,
             Some(&config.verification),
@@ -1107,34 +1177,24 @@ where
 
             result = batch_fut => {
                 let progress = result?;
+                let applied = apply_verified_progress_to_chaindb(
+                    chain_db,
+                    &progress,
+                    chain_state.as_mut(),
+                    Some(&mut checkpoint_tracking),
+                    &config.checkpoint_policy,
+                )?;
                 from_point = progress.current_point;
                 total_blocks += progress.fetched_blocks;
                 total_rollbacks += progress.rollback_count;
                 batches_completed += 1;
-
-                if let Some(ref mut cs) = chain_state {
-                    for step in &progress.steps {
-                        let stable_entries = track_chain_state_entries(cs, step)?;
-                        total_stable += stable_entries.len();
-                        if let Some(last_stable) = stable_entries.last() {
-                            let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
-                            chain_db.promote_volatile_prefix(&point)?;
-                        }
-                    }
-                }
+                total_stable += applied.stable_block_count;
 
                 if let Some((ref mut state, nonce_cfg)) =
                     nonce_state.as_mut().zip(config.nonce_config.as_ref())
                 {
                     apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
                 }
-
-                let _ = update_ledger_checkpoint_after_progress(
-                    chain_db,
-                    &mut checkpoint_tracking,
-                    &progress,
-                    &config.checkpoint_policy,
-                )?;
             }
         }
     }
@@ -1452,6 +1512,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                 issuer_vkey: [0u8; 32],
             },
             transactions: vec![],
+            raw_cbor: None,
         },
     }
 }
@@ -1484,6 +1545,7 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
             issuer_vkey: body.issuer_vkey,
         },
         transactions,
+        raw_cbor: None,
     }
 }
 
@@ -1515,6 +1577,7 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
             issuer_vkey: body.issuer_vkey,
         },
         transactions,
+        raw_cbor: None,
     }
 }
 
@@ -1546,6 +1609,7 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
             issuer_vkey: body.issuer_vkey,
         },
         transactions,
+        raw_cbor: None,
     }
 }
 
@@ -1815,6 +1879,11 @@ pub enum MultiEraSyncStep {
         tip: Point,
         /// Decoded multi-era blocks.
         blocks: Vec<MultiEraBlock>,
+        /// Original wire-format bytes for each block, parallel to `blocks`.
+        ///
+        /// When present, these are stored alongside the decoded `Block` so
+        /// the inbound server can re-serve the block over BlockFetch.
+        raw_blocks: Option<Vec<Vec<u8>>>,
     },
     /// Roll backward to a given point.
     RollBackward {
@@ -1842,6 +1911,7 @@ pub async fn sync_step_multi_era(
                 raw_header: header,
                 tip,
                 blocks: fetch_range_blocks_multi_era(block_fetch, from_point, tip).await?,
+                raw_blocks: None,
             })
         }
         TypedNextResponse::RollBackward { point, tip }
@@ -1958,15 +2028,20 @@ pub fn promote_stable_blocks<V: VolatileStore, I: ImmutableStore>(
 /// Apply one multi-era sync step into a volatile store.
 ///
 /// Roll-forward blocks are converted to generic `Block` values and appended.
+/// When `raw_blocks` is present, original wire-format bytes are preserved on
+/// each stored block so the inbound server can re-serve them over BlockFetch.
 /// Roll-backward steps trigger a store rollback to the given point.
 pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
     store: &mut S,
     step: &MultiEraSyncStep,
 ) -> Result<(), SyncError> {
     match step {
-        MultiEraSyncStep::RollForward { blocks, .. } => {
-            for b in blocks {
-                store.add_block(multi_era_block_to_block(b))?;
+        MultiEraSyncStep::RollForward { blocks, raw_blocks, .. } => {
+            let raws = raw_blocks.as_deref();
+            for (i, b) in blocks.iter().enumerate() {
+                let mut block = multi_era_block_to_block(b);
+                block.raw_cbor = raws.and_then(|r| r.get(i)).cloned();
+                store.add_block(block)?;
             }
         }
         MultiEraSyncStep::RollBackward { point, .. } => {
@@ -1976,22 +2051,60 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
     Ok(())
 }
 
-/// Execute one batch of verified multi-era sync and apply results to storage.
-///
-/// This combines `sync_step` with optional body-hash and header verification
-/// (via `verify_block_body_hash` and `verify_multi_era_block`) and
-/// `apply_multi_era_step_to_volatile` into a single composable batch.
-///
-/// When `verification` is `Some`:
-/// - If `verify_body_hash` is set, each raw block envelope is checked against
-///   its declared header body hash before decoding.
-/// - Every Shelley-family block header is KES-verified after decoding.
-///
-/// Byron blocks pass through both checks without verification.
-pub async fn sync_batch_apply_verified<S: VolatileStore>(
+#[derive(Clone, Debug)]
+pub(crate) struct AppliedVerifiedProgress {
+    pub stable_block_count: usize,
+    pub checkpoint_outcome: Option<LedgerCheckpointUpdateOutcome>,
+}
+
+pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
+    chain_db: &mut ChainDb<I, V, L>,
+    progress: &MultiEraSyncProgress,
+    chain_state: Option<&mut ChainState>,
+    checkpoint_tracking: Option<&mut LedgerCheckpointTracking>,
+    checkpoint_policy: &LedgerCheckpointPolicy,
+) -> Result<AppliedVerifiedProgress, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    for step in &progress.steps {
+        apply_multi_era_step_to_volatile(chain_db.volatile_mut(), step)?;
+    }
+
+    let mut total_stable = 0usize;
+    if let Some(chain_state) = chain_state {
+        for step in &progress.steps {
+            let stable_entries = track_chain_state_entries(chain_state, step)?;
+            total_stable += stable_entries.len();
+            if let Some(last_stable) = stable_entries.last() {
+                let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
+                chain_db.promote_volatile_prefix(&point)?;
+            }
+        }
+    }
+
+    let checkpoint_outcome = checkpoint_tracking
+        .map(|tracking| {
+            update_ledger_checkpoint_after_progress(
+                chain_db,
+                tracking,
+                progress,
+                checkpoint_policy,
+            )
+        })
+        .transpose()?;
+
+    Ok(AppliedVerifiedProgress {
+        stable_block_count: total_stable,
+        checkpoint_outcome,
+    })
+}
+
+pub(crate) async fn sync_batch_verified(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
-    store: &mut S,
     mut from_point: Point,
     batch_size: usize,
     verification: Option<&VerificationConfig>,
@@ -2017,8 +2130,8 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
                     }
                 }
 
-                let decoded_blocks: Vec<MultiEraBlock> =
-                    raw_and_decoded.into_iter().map(|(_, block)| block).collect();
+                let (raw_bytes, decoded_blocks): (Vec<Vec<u8>>, Vec<MultiEraBlock>) =
+                    raw_and_decoded.into_iter().unzip();
 
                 if let Some(config) = verification {
                     for block in &decoded_blocks {
@@ -2033,6 +2146,7 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
                     raw_header: header,
                     tip,
                     blocks: decoded_blocks,
+                    raw_blocks: Some(raw_bytes),
                 }
             }
             TypedNextResponse::RollBackward { point, tip }
@@ -2044,7 +2158,6 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
             }
         };
 
-        apply_multi_era_step_to_volatile(store, &me_step)?;
         steps.push(me_step);
     }
 
@@ -2054,6 +2167,42 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
         fetched_blocks,
         rollback_count,
     })
+}
+
+/// Execute one batch of verified multi-era sync and apply results to storage.
+///
+/// This combines `sync_step` with optional body-hash and header verification
+/// (via `verify_block_body_hash` and `verify_multi_era_block`) and
+/// `apply_multi_era_step_to_volatile` into a single composable batch.
+///
+/// When `verification` is `Some`:
+/// - If `verify_body_hash` is set, each raw block envelope is checked against
+///   its declared header body hash before decoding.
+/// - Every Shelley-family block header is KES-verified after decoding.
+///
+/// Byron blocks pass through both checks without verification.
+pub async fn sync_batch_apply_verified<S: VolatileStore>(
+    chain_sync: &mut ChainSyncClient,
+    block_fetch: &mut BlockFetchClient,
+    store: &mut S,
+    from_point: Point,
+    batch_size: usize,
+    verification: Option<&VerificationConfig>,
+) -> Result<MultiEraSyncProgress, SyncError> {
+    let progress = sync_batch_verified(
+        chain_sync,
+        block_fetch,
+        from_point,
+        batch_size,
+        verification,
+    )
+    .await?;
+
+    for step in &progress.steps {
+        apply_multi_era_step_to_volatile(store, step)?;
+    }
+
+    Ok(progress)
 }
 
 /// Progress summary from a multi-era sync batch.

@@ -28,6 +28,7 @@ pub(super) fn make_shelley_block_with_txs(
             issuer_vkey: [0x11; 32],
         },
         transactions: tx_list,
+        raw_cbor: None,
     }
 }
 
@@ -255,6 +256,7 @@ fn ledger_state_empty_block_advances_tip() {
             issuer_vkey: [0; 32],
         },
         transactions: vec![],
+        raw_cbor: None,
     };
 
     state.apply_block(&block).expect("empty block");

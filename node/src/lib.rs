@@ -15,9 +15,11 @@ pub use runtime::{
 	add_tx_to_shared_mempool, add_txs_to_mempool, add_txs_to_shared_mempool,
 	bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
 	resume_reconnecting_verified_sync_service_chaindb,
+	resume_reconnecting_verified_sync_service_shared_chaindb,
 	run_reconnecting_verified_sync_service_chaindb,
 	run_reconnecting_verified_sync_service,
 	resume_reconnecting_verified_sync_service_chaindb_with_tracer,
+	resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer,
 	run_reconnecting_verified_sync_service_chaindb_with_tracer,
 	run_reconnecting_verified_sync_service_with_tracer,
 	run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
@@ -49,6 +51,7 @@ pub use tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};
 
 pub use server::{
 	BlockProvider, ChainProvider, InboundPeerSession, InboundServiceError,
+	SharedChainDb,
 	run_blockfetch_server, run_chainsync_server, run_inbound_accept_loop,
 	run_keepalive_server,
 };

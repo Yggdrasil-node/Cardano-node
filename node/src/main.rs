@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, bail};
@@ -12,16 +13,18 @@ use yggdrasil_node::config::{
 };
 use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
+    BlockProvider, ChainProvider,
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
-    recover_ledger_state_chaindb,
-    resume_reconnecting_verified_sync_service_chaindb,
+    SharedChainDb, recover_ledger_state_chaindb,
+    resume_reconnecting_verified_sync_service_shared_chaindb,
+    run_inbound_accept_loop,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
 use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint};
 use yggdrasil_network::{
     HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
-    resolve_peer_access_points,
+    PeerListener, resolve_peer_access_points,
 };
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, LedgerStore, VolatileStore};
 
@@ -316,6 +319,7 @@ fn main() -> Result<()> {
                 tracer,
                 storage_dir,
                 chain_db,
+                inbound_listen_addr: file_cfg.inbound_listen_addr,
                 use_ledger_peers: Some(file_cfg.use_ledger_peers_policy()),
                 peer_snapshot_path,
                 metrics_port,
@@ -786,11 +790,14 @@ async fn run_node(
         sync_config,
         tracer,
         storage_dir,
-        mut chain_db,
+        chain_db,
+        inbound_listen_addr,
         use_ledger_peers,
         peer_snapshot_path,
         metrics_port,
     } = request;
+
+    let chain_db = Arc::new(RwLock::new(chain_db));
 
     let metrics = std::sync::Arc::new(NodeMetrics::new());
 
@@ -822,10 +829,11 @@ async fn run_node(
         .as_ref()
         .map(|_| NonceEvolutionState::new(Nonce::Neutral));
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     // Spawn signal handler for graceful shutdown.
     let signal_tracer = tracer.clone();
+    let signal_shutdown_tx = shutdown_tx.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         signal_tracer.trace_runtime(
@@ -834,11 +842,65 @@ async fn run_node(
             "shutdown signal received",
             std::collections::BTreeMap::new(),
         );
-        let _ = shutdown_tx.send(());
+        let _ = signal_shutdown_tx.send(true);
     });
 
-    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_chaindb(
-        &mut chain_db,
+    let inbound_task = if let Some(listen_addr) = inbound_listen_addr {
+        let listener = PeerListener::bind(
+            listen_addr,
+            node_config.network_magic,
+            node_config.protocol_versions.clone(),
+        )
+        .await?;
+        let bound_addr = listener.local_addr().unwrap_or(listen_addr);
+        tracer.trace_runtime(
+            "Net.Inbound",
+            "Notice",
+            "inbound listener bound",
+            trace_fields([("listenAddr", json!(bound_addr.to_string()))]),
+        );
+
+        let shared_provider = Arc::new(SharedChainDb::from_arc(Arc::clone(&chain_db)));
+        let block_provider: Arc<dyn BlockProvider> = shared_provider.clone();
+        let chain_provider: Arc<dyn ChainProvider> = shared_provider;
+        let mut inbound_shutdown = shutdown_rx.clone();
+        let inbound_tracer = tracer.clone();
+
+        Some(tokio::spawn(async move {
+            let shutdown = async move {
+                if *inbound_shutdown.borrow() {
+                    return;
+                }
+                while inbound_shutdown.changed().await.is_ok() {
+                    if *inbound_shutdown.borrow() {
+                        break;
+                    }
+                }
+            };
+
+            if let Err(err) = run_inbound_accept_loop(
+                &listener,
+                Some(block_provider),
+                Some(chain_provider),
+                shutdown,
+            )
+            .await
+            {
+                inbound_tracer.trace_runtime(
+                    "Net.Inbound",
+                    "Error",
+                    "inbound listener stopped with error",
+                    trace_fields([("error", json!(err.to_string()))]),
+                );
+            }
+        }))
+    } else {
+        None
+    };
+
+    let mut sync_shutdown = shutdown_rx.clone();
+    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb(
+        &chain_db,
         ResumeReconnectingVerifiedSyncRequest {
             node_config: &node_config,
             fallback_peer_addrs: &bootstrap_peers,
@@ -849,11 +911,24 @@ async fn run_node(
             peer_snapshot_path,
             metrics: Some(&metrics),
         },
-        async { let _ = shutdown_rx.await; },
+        async move {
+            if *sync_shutdown.borrow() {
+                return;
+            }
+            while sync_shutdown.changed().await.is_ok() {
+                if *sync_shutdown.borrow() {
+                    break;
+                }
+            }
+        },
     )
     .await {
         Ok(outcome) => outcome,
         Err(err) => {
+            let _ = shutdown_tx.send(true);
+            if let Some(handle) = inbound_task {
+                let _ = handle.await;
+            }
             tracer.trace_runtime(
                 "Node.Sync",
                 "Error",
@@ -866,6 +941,11 @@ async fn run_node(
             return Err(err.into());
         }
     };
+
+    let _ = shutdown_tx.send(true);
+    if let Some(handle) = inbound_task {
+        let _ = handle.await;
+    }
 
     tracer.trace_runtime(
         "Node.Sync",
@@ -919,6 +999,7 @@ struct RunNodeRequest {
     tracer: NodeTracer,
     storage_dir: PathBuf,
     chain_db: ChainDb<FileImmutable, FileVolatile, FileLedgerStore>,
+    inbound_listen_addr: Option<SocketAddr>,
     use_ledger_peers: Option<yggdrasil_network::UseLedgerPeers>,
     peer_snapshot_path: Option<PathBuf>,
     metrics_port: Option<u16>,

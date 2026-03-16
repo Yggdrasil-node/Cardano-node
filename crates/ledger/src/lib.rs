@@ -25,6 +25,8 @@ pub mod protocol_params;
 pub mod rewards;
 /// Stake distribution snapshots and epoch-boundary snapshot rotation.
 pub mod stake;
+/// Epoch boundary processing (NEWEPOCH / SNAP / RUPD).
+pub mod epoch_boundary;
 /// Ledger state containers and transition entry points.
 pub mod state;
 /// Transaction and block wrappers.
@@ -60,7 +62,8 @@ pub use error::LedgerError;
 // -- State re-exports ---------------------------------------------------------
 /// Top-level ledger state wrapper.
 pub use state::{
-    CommitteeAuthorization, CommitteeMemberState, CommitteeState, DrepState, LedgerState,
+    AccountingState, CommitteeAuthorization, CommitteeMemberState, CommitteeState,
+    DepositPot, DrepState, LedgerState,
     LedgerStateCheckpoint, LedgerStateSnapshot, PoolRelayAccessPoint, PoolState,
     RegisteredDrep, RegisteredPool, RewardAccountState,
     RewardAccounts, StakeCredentialState, StakeCredentials,
@@ -97,6 +100,12 @@ pub use stake::{
 pub use rewards::{
     EpochRewardDistribution, EpochRewardPot, PoolRewardBreakdown, RewardParams,
     compute_epoch_reward_pot, compute_epoch_rewards, compute_pool_reward, max_pool_reward,
+};
+
+// -- Epoch boundary re-exports ------------------------------------------------
+pub use epoch_boundary::{
+    EpochBoundaryEvent, apply_epoch_boundary,
+    retire_pools_with_refunds,
 };
 
 // -- Protocol params re-exports -----------------------------------------------

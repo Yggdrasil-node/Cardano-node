@@ -3,6 +3,7 @@ members = [
     "crates/crypto",
     "crates/consensus",
     "crates/ledger",
+    "crates/plutus",
     "crates/network",
     "crates/storage",
     "crates/mempool",
@@ -37,6 +38,7 @@ yggdrasil-crypto = { path = "crates/crypto" }
 yggdrasil-ledger = { path = "crates/ledger" }
 yggdrasil-mempool = { path = "crates/mempool" }
 yggdrasil-network = { path = "crates/network" }
+yggdrasil-plutus = { path = "crates/plutus" }
 yggdrasil-storage = { path = "crates/storage" }
 
 [workspace.lints.clippy]

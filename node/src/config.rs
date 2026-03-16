@@ -104,6 +104,9 @@ pub struct TraceOptionForwarder {
 pub struct NodeConfigFile {
     /// Peer address in `host:port` form.
     pub peer_addr: SocketAddr,
+    /// Optional local listen address for inbound node-to-node diffusion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbound_listen_addr: Option<SocketAddr>,
     /// Ordered fallback bootstrap relay addresses tried after `peer_addr`.
     #[serde(default)]
     pub bootstrap_peers: Vec<SocketAddr>,
@@ -639,6 +642,7 @@ pub fn mainnet_config() -> NodeConfigFile {
 
     NodeConfigFile {
         peer_addr: topology.primary_peer,
+        inbound_listen_addr: None,
         bootstrap_peers: topology.fallback_peers,
         local_roots: topology.local_roots,
         public_roots: topology.public_roots,
@@ -679,6 +683,7 @@ pub fn preprod_config() -> NodeConfigFile {
 
     NodeConfigFile {
         peer_addr: topology.primary_peer,
+        inbound_listen_addr: None,
         bootstrap_peers: topology.fallback_peers,
         local_roots: topology.local_roots,
         public_roots: topology.public_roots,
@@ -719,6 +724,7 @@ pub fn preview_config() -> NodeConfigFile {
 
     NodeConfigFile {
         peer_addr: topology.primary_peer,
+        inbound_listen_addr: None,
         bootstrap_peers: topology.fallback_peers,
         local_roots: topology.local_roots,
         public_roots: topology.public_roots,

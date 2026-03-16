@@ -182,4 +182,9 @@ pub enum LedgerError {
 
     #[error("VKey witness signature verification failed for hash {hash:02x?}")]
     InvalidVKeyWitnessSignature { hash: [u8; 28] },
+
+    // -- Epoch boundary errors ----------------------------------------------
+
+    #[error("protocol parameters are required but missing")]
+    MissingProtocolParameters,
 }

@@ -256,6 +256,24 @@ impl PoolState {
         entry.retiring_epoch = Some(epoch);
         true
     }
+
+    /// Removes all pools whose `retiring_epoch` ≤ `current_epoch`.
+    ///
+    /// Returns the operator keys of the pools that were retired.
+    pub fn process_retirements(&mut self, current_epoch: EpochNo) -> Vec<PoolKeyHash> {
+        let retiring: Vec<PoolKeyHash> = self
+            .entries
+            .iter()
+            .filter(|(_, pool)| {
+                pool.retiring_epoch.is_some_and(|e| e <= current_epoch)
+            })
+            .map(|(k, _)| *k)
+            .collect();
+        for key in &retiring {
+            self.entries.remove(key);
+        }
+        retiring
+    }
 }
 
 /// Reward-account state visible from the ledger.
@@ -882,6 +900,8 @@ pub struct LedgerStateSnapshot {
     multi_era_utxo: MultiEraUtxo,
     shelley_utxo: ShelleyUtxo,
     protocol_params: Option<crate::protocol_params::ProtocolParameters>,
+    deposit_pot: DepositPot,
+    accounting: AccountingState,
 }
 
 impl LedgerStateSnapshot {
@@ -969,6 +989,16 @@ impl LedgerStateSnapshot {
     /// Returns the protocol parameters captured in this snapshot.
     pub fn protocol_params(&self) -> Option<&crate::protocol_params::ProtocolParameters> {
         self.protocol_params.as_ref()
+    }
+
+    /// Returns the deposit pot captured in this snapshot.
+    pub fn deposit_pot(&self) -> &DepositPot {
+        &self.deposit_pot
+    }
+
+    /// Returns the treasury/reserves accounting captured in this snapshot.
+    pub fn accounting(&self) -> &AccountingState {
+        &self.accounting
     }
 
     /// Returns all UTxO entries paying to `address`.
@@ -1487,6 +1517,8 @@ impl LedgerState {
             multi_era_utxo: self.multi_era_utxo.clone(),
             shelley_utxo: self.shelley_utxo.clone(),
             protocol_params: self.protocol_params.clone(),
+            deposit_pot: self.deposit_pot.clone(),
+            accounting: self.accounting.clone(),
         }
     }
 
@@ -1577,12 +1609,16 @@ impl LedgerState {
                 let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
+                let mut staged_deposit_pot = self.deposit_pot.clone();
+                let (kd, pd) = self.deposit_amounts();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    kd, pd,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
@@ -1598,6 +1634,7 @@ impl LedgerState {
                 self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
+                self.deposit_pot = staged_deposit_pot;
             }
             crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
                 if let Some(params) = &self.protocol_params {
@@ -1614,12 +1651,16 @@ impl LedgerState {
                 let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
+                let mut staged_deposit_pot = self.deposit_pot.clone();
+                let (kd, pd) = self.deposit_amounts();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    kd, pd,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
@@ -1630,6 +1671,7 @@ impl LedgerState {
                 self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
+                self.deposit_pot = staged_deposit_pot;
             }
             crate::tx::MultiEraSubmittedTx::Mary(tx) => {
                 if let Some(params) = &self.protocol_params {
@@ -1646,12 +1688,16 @@ impl LedgerState {
                 let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
+                let mut staged_deposit_pot = self.deposit_pot.clone();
+                let (kd, pd) = self.deposit_amounts();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    kd, pd,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
@@ -1662,6 +1708,7 @@ impl LedgerState {
                 self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
+                self.deposit_pot = staged_deposit_pot;
             }
             crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
                 if let Some(params) = &self.protocol_params {
@@ -1681,12 +1728,16 @@ impl LedgerState {
                 let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
+                let mut staged_deposit_pot = self.deposit_pot.clone();
+                let (kd, pd) = self.deposit_amounts();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    kd, pd,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
@@ -1697,6 +1748,7 @@ impl LedgerState {
                 self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
+                self.deposit_pot = staged_deposit_pot;
             }
             crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
                 if let Some(params) = &self.protocol_params {
@@ -1716,12 +1768,16 @@ impl LedgerState {
                 let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
+                let mut staged_deposit_pot = self.deposit_pot.clone();
+                let (kd, pd) = self.deposit_amounts();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    kd, pd,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
@@ -1732,6 +1788,7 @@ impl LedgerState {
                 self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
+                self.deposit_pot = staged_deposit_pot;
             }
             crate::tx::MultiEraSubmittedTx::Conway(tx) => {
                 if let Some(params) = &self.protocol_params {
@@ -1751,12 +1808,16 @@ impl LedgerState {
                 let mut staged_committee_state = self.committee_state.clone();
                 let mut staged_drep_state = self.drep_state.clone();
                 let mut staged_reward_accounts = self.reward_accounts.clone();
+                let mut staged_deposit_pot = self.deposit_pot.clone();
+                let (kd, pd) = self.deposit_amounts();
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
                     &mut staged_drep_state,
                     &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    kd, pd,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
@@ -1767,10 +1828,20 @@ impl LedgerState {
                 self.committee_state = staged_committee_state;
                 self.drep_state = staged_drep_state;
                 self.reward_accounts = staged_reward_accounts;
+                self.deposit_pot = staged_deposit_pot;
             }
         }
 
         Ok(())
+    }
+
+    // -- Private helpers ------------------------------------------------------
+
+    fn deposit_amounts(&self) -> (u64, u64) {
+        match &self.protocol_params {
+            Some(p) => (p.key_deposit, p.pool_deposit),
+            None => (0, 0),
+        }
     }
 
     // -- Private per-era apply helpers --------------------------------------
@@ -1803,6 +1874,8 @@ impl LedgerState {
         let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
+        let mut staged_deposit_pot = self.deposit_pot.clone();
+        let (kd, pd) = self.deposit_amounts();
         for (tx_id, tx_size, body) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -1816,6 +1889,8 @@ impl LedgerState {
                 &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
+                &mut staged_deposit_pot,
+                kd, pd,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
@@ -1827,6 +1902,7 @@ impl LedgerState {
         self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
+        self.deposit_pot = staged_deposit_pot;
         Ok(())
     }
 
@@ -1854,6 +1930,8 @@ impl LedgerState {
         let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
+        let mut staged_deposit_pot = self.deposit_pot.clone();
+        let (kd, pd) = self.deposit_amounts();
         for (tx_id, tx_size, body) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -1867,6 +1945,8 @@ impl LedgerState {
                 &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
+                &mut staged_deposit_pot,
+                kd, pd,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
@@ -1878,6 +1958,7 @@ impl LedgerState {
         self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
+        self.deposit_pot = staged_deposit_pot;
         Ok(())
     }
 
@@ -1905,6 +1986,8 @@ impl LedgerState {
         let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
+        let mut staged_deposit_pot = self.deposit_pot.clone();
+        let (kd, pd) = self.deposit_amounts();
         for (tx_id, tx_size, body) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -1918,6 +2001,8 @@ impl LedgerState {
                 &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
+                &mut staged_deposit_pot,
+                kd, pd,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
@@ -1929,6 +2014,7 @@ impl LedgerState {
         self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
+        self.deposit_pot = staged_deposit_pot;
         Ok(())
     }
 
@@ -1956,6 +2042,8 @@ impl LedgerState {
         let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
+        let mut staged_deposit_pot = self.deposit_pot.clone();
+        let (kd, pd) = self.deposit_amounts();
         for (tx_id, tx_size, body) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -1972,6 +2060,8 @@ impl LedgerState {
                 &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
+                &mut staged_deposit_pot,
+                kd, pd,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
@@ -1983,6 +2073,7 @@ impl LedgerState {
         self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
+        self.deposit_pot = staged_deposit_pot;
         Ok(())
     }
 
@@ -2010,6 +2101,8 @@ impl LedgerState {
         let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
+        let mut staged_deposit_pot = self.deposit_pot.clone();
+        let (kd, pd) = self.deposit_amounts();
         for (tx_id, tx_size, body) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -2026,6 +2119,8 @@ impl LedgerState {
                 &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
+                &mut staged_deposit_pot,
+                kd, pd,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
@@ -2037,6 +2132,7 @@ impl LedgerState {
         self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
+        self.deposit_pot = staged_deposit_pot;
         Ok(())
     }
 
@@ -2064,6 +2160,8 @@ impl LedgerState {
         let mut staged_committee_state = self.committee_state.clone();
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
+        let mut staged_deposit_pot = self.deposit_pot.clone();
+        let (kd, pd) = self.deposit_amounts();
         for (tx_id, tx_size, body) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -2080,6 +2178,8 @@ impl LedgerState {
                 &mut staged_committee_state,
                 &mut staged_drep_state,
                 &mut staged_reward_accounts,
+                &mut staged_deposit_pot,
+                kd, pd,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
@@ -2091,29 +2191,42 @@ impl LedgerState {
         self.committee_state = staged_committee_state;
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
+        self.deposit_pot = staged_deposit_pot;
         Ok(())
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_certificates_and_withdrawals(
     pool_state: &mut PoolState,
     stake_credentials: &mut StakeCredentials,
     committee_state: &mut CommitteeState,
     drep_state: &mut DrepState,
     reward_accounts: &mut RewardAccounts,
+    deposit_pot: &mut DepositPot,
+    key_deposit: u64,
+    pool_deposit: u64,
     certificates: Option<&[DCert]>,
     withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
 ) -> Result<u64, LedgerError> {
     if let Some(certs) = certificates {
         for cert in certs {
             match cert {
-                DCert::AccountRegistration(credential)
-                | DCert::AccountRegistrationDeposit(credential, _) => {
+                DCert::AccountRegistration(credential) => {
                     register_stake_credential(stake_credentials, *credential)?;
+                    deposit_pot.add_key_deposit(key_deposit);
                 }
-                DCert::AccountUnregistration(credential)
-                | DCert::AccountUnregistrationDeposit(credential, _) => {
+                DCert::AccountRegistrationDeposit(credential, deposit) => {
+                    register_stake_credential(stake_credentials, *credential)?;
+                    deposit_pot.add_key_deposit(*deposit);
+                }
+                DCert::AccountUnregistration(credential) => {
                     unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
+                    deposit_pot.return_key_deposit(key_deposit);
+                }
+                DCert::AccountUnregistrationDeposit(credential, refund) => {
+                    unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
+                    deposit_pot.return_key_deposit(*refund);
                 }
                 DCert::DelegationToStakePool(credential, pool) => {
                     delegate_stake_credential(
@@ -2124,8 +2237,9 @@ fn apply_certificates_and_withdrawals(
                         *pool,
                     )?;
                 }
-                DCert::AccountRegistrationDelegationToStakePool(credential, pool, _) => {
+                DCert::AccountRegistrationDelegationToStakePool(credential, pool, deposit) => {
                     register_stake_credential(stake_credentials, *credential)?;
+                    deposit_pot.add_key_deposit(*deposit);
                     delegate_stake_credential(
                         pool_state,
                         stake_credentials,
@@ -2147,12 +2261,14 @@ fn apply_certificates_and_withdrawals(
                     )?;
                     delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
                 }
-                DCert::AccountRegistrationDelegationToDrep(credential, drep, _) => {
+                DCert::AccountRegistrationDelegationToDrep(credential, drep, deposit) => {
                     register_stake_credential(stake_credentials, *credential)?;
+                    deposit_pot.add_key_deposit(*deposit);
                     delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
                 }
-                DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, _) => {
+                DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, deposit) => {
                     register_stake_credential(stake_credentials, *credential)?;
+                    deposit_pot.add_key_deposit(*deposit);
                     delegate_stake_credential(
                         pool_state,
                         stake_credentials,
@@ -2176,7 +2292,13 @@ fn apply_certificates_and_withdrawals(
                         anchor.clone(),
                     )?;
                 }
-                DCert::PoolRegistration(params) => pool_state.register(params.clone()),
+                DCert::PoolRegistration(params) => {
+                    let is_new = !pool_state.is_registered(&params.operator);
+                    pool_state.register(params.clone());
+                    if is_new {
+                        deposit_pot.add_pool_deposit(pool_deposit);
+                    }
+                }
                 DCert::PoolRetirement(pool, epoch) => {
                     if !pool_state.retire(*pool, *epoch) {
                         return Err(LedgerError::PoolNotRegistered(*pool));
@@ -2184,9 +2306,11 @@ fn apply_certificates_and_withdrawals(
                 }
                 DCert::DrepRegistration(credential, deposit, anchor) => {
                     register_drep(drep_state, *credential, *deposit, anchor.clone())?;
+                    deposit_pot.add_drep_deposit(*deposit);
                 }
-                DCert::DrepUnregistration(credential, _) => {
+                DCert::DrepUnregistration(credential, refund) => {
                     unregister_drep(drep_state, *credential)?;
+                    deposit_pot.return_drep_deposit(*refund);
                 }
                 DCert::DrepUpdate(credential, anchor) => {
                     update_drep(drep_state, *credential, anchor.clone())?;

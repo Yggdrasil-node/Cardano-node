@@ -371,7 +371,7 @@ pub fn compute_epoch_rewards(
         denominator: 1,
     };
 
-    for (pool_hash, _pool_params) in &go_snapshot.pool_params {
+    for pool_hash in go_snapshot.pool_params.keys() {
         let performance = pool_performance
             .get(pool_hash)
             .copied()

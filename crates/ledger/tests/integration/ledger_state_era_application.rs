@@ -23,6 +23,7 @@ fn make_allegra_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<AllegraT
             issuer_vkey: [0x11; 32],
         },
         transactions: tx_list,
+        raw_cbor: None,
     }
 }
 
@@ -49,6 +50,7 @@ fn make_mary_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<MaryTxBody>
             issuer_vkey: [0x11; 32],
         },
         transactions: tx_list,
+        raw_cbor: None,
     }
 }
 
@@ -158,6 +160,7 @@ fn ledger_state_empty_allegra_block_advances_tip() {
             issuer_vkey: [0; 32],
         },
         transactions: vec![],
+        raw_cbor: None,
     };
 
     state.apply_block(&block).expect("empty allegra block");
@@ -189,6 +192,7 @@ fn ledger_state_accepts_byron_block_as_tip_only_transition() {
             issuer_vkey: [0; 32],
         },
         transactions: vec![],
+        raw_cbor: None,
     };
 
     state

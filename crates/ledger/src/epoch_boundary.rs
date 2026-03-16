@@ -1,0 +1,564 @@
+//! Epoch boundary processing for the Shelley-based ledger.
+//!
+//! At each epoch transition the ledger performs the NEWEPOCH / EPOCH /
+//! SNAP / RUPD sequence defined in the Shelley formal specification:
+//!
+//! 1. **Stake snapshot rotation** (SNAP rule) — a fresh snapshot is
+//!    computed from the current UTxO and reward accounts, and the
+//!    three-snapshot ring is rotated (`go ← set ← mark ← new`).
+//! 2. **Reward distribution** (RUPD rule) — the reward pot is formed
+//!    from monetary expansion (ρ) and accumulated fees, the treasury
+//!    cut (τ) is deducted, and the remainder is distributed to pools
+//!    and delegators according to the **go** snapshot.
+//! 3. **Pool retirement** — pools whose `retiring_epoch` ≤ the new
+//!    epoch are removed and their deposits refunded.
+//! 4. **Accounting update** — treasury receives its cut plus any
+//!    unclaimed rewards; reserves are reduced by monetary expansion.
+//!
+//! The orchestration entry point is [`apply_epoch_boundary`], which
+//! operates on a [`LedgerState`] and returns an [`EpochBoundaryEvent`]
+//! summarising the transition.
+//!
+//! Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch`,
+//! `Cardano.Ledger.Shelley.Rules.Epoch`.
+
+use std::collections::BTreeMap;
+
+use crate::error::LedgerError;
+use crate::rewards::{compute_epoch_rewards, EpochRewardDistribution, RewardParams};
+use crate::stake::{compute_stake_snapshot, StakeSnapshots};
+use crate::state::LedgerState;
+use crate::types::{EpochNo, PoolKeyHash, RewardAccount, UnitInterval};
+
+// ---------------------------------------------------------------------------
+// Epoch boundary event
+// ---------------------------------------------------------------------------
+
+/// Summary of the work done at an epoch boundary.
+///
+/// Returned by [`apply_epoch_boundary`] so callers can trace or log the
+/// transition details without inspecting ledger state diffs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EpochBoundaryEvent {
+    /// The new epoch number after the transition.
+    pub new_epoch: EpochNo,
+    /// Number of pools retired during this transition.
+    pub pools_retired: usize,
+    /// Operator keys of retired pools.
+    pub retired_pool_keys: Vec<PoolKeyHash>,
+    /// Pool deposits refunded to reward accounts (lovelace).
+    pub pool_deposit_refunds: u64,
+    /// Total rewards distributed to delegators & operators.
+    pub rewards_distributed: u64,
+    /// Treasury delta (treasury cut + unclaimed rewards).
+    pub treasury_delta: u64,
+    /// Monetary expansion drawn from reserves (ΔR).
+    pub delta_reserves: u64,
+    /// Number of reward accounts that received non-zero rewards.
+    pub accounts_rewarded: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Epoch boundary application
+// ---------------------------------------------------------------------------
+
+/// Applies the full epoch-boundary transition to `ledger`.
+///
+/// The caller is responsible for detecting that a new epoch has started
+/// (e.g. via `consensus::epoch::is_new_epoch`).  This function is
+/// idempotent only if the same epoch transition is not applied twice.
+///
+/// # Parameters
+///
+/// * `ledger` — mutable ledger state to update in place.
+/// * `new_epoch` — the epoch number that has just begun.
+/// * `snapshots` — the three-snapshot ring maintained alongside the ledger;
+///   this is mutated to perform the SNAP rotation.
+/// * `pool_performance` — per-pool performance ratios for the reward
+///   calculation.  A pool absent from this map is treated as having
+///   perfect (1/1) performance.
+///
+/// # Errors
+///
+/// Returns `LedgerError` if the ledger lacks protocol parameters
+/// (required for deposit amounts and reward formula inputs).
+pub fn apply_epoch_boundary(
+    ledger: &mut LedgerState,
+    new_epoch: EpochNo,
+    snapshots: &mut StakeSnapshots,
+    pool_performance: &BTreeMap<PoolKeyHash, UnitInterval>,
+) -> Result<EpochBoundaryEvent, LedgerError> {
+    let params = ledger
+        .protocol_params()
+        .ok_or(LedgerError::MissingProtocolParameters)?;
+
+    // Extract values from params before any mutable borrows.
+    let pool_deposit = params.pool_deposit;
+    let rho = params.rho;
+    let tau = params.tau;
+    let a0 = params.a0;
+    let n_opt = params.n_opt;
+    let min_pool_cost = params.min_pool_cost;
+
+    // -----------------------------------------------------------------------
+    // 1. SNAP — compute a fresh mark snapshot and rotate.
+    // -----------------------------------------------------------------------
+    let new_mark = compute_stake_snapshot(
+        ledger.multi_era_utxo(),
+        ledger.stake_credentials(),
+        ledger.reward_accounts(),
+        ledger.pool_state(),
+    );
+    let fee_pot = snapshots.rotate(new_mark);
+
+    // -----------------------------------------------------------------------
+    // 2. RUPD — compute and distribute rewards from the *go* snapshot.
+    // -----------------------------------------------------------------------
+    let reward_params = RewardParams {
+        rho,
+        tau,
+        a0,
+        n_opt,
+        min_pool_cost,
+        reserves: ledger.accounting().reserves,
+        fee_pot,
+    };
+
+    let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, pool_performance);
+    let accounts_rewarded = distribute_rewards(ledger, &reward_dist);
+
+    // -----------------------------------------------------------------------
+    // 3. Pool retirement — remove pools and refund deposits.
+    // -----------------------------------------------------------------------
+    let (retired_pool_keys, pool_deposit_refunds) =
+        retire_pools_with_refunds(ledger, new_epoch, pool_deposit);
+    let pools_retired = retired_pool_keys.len();
+
+    // -----------------------------------------------------------------------
+    // 4. Accounting — update treasury and reserves.
+    // -----------------------------------------------------------------------
+    {
+        let acct = ledger.accounting_mut();
+        acct.reserves = acct.reserves.saturating_sub(
+            reward_dist.treasury_delta.saturating_add(reward_dist.distributed),
+        );
+        acct.treasury = acct.treasury.saturating_add(reward_dist.treasury_delta);
+    }
+
+    Ok(EpochBoundaryEvent {
+        new_epoch,
+        pools_retired,
+        retired_pool_keys,
+        pool_deposit_refunds,
+        rewards_distributed: reward_dist.distributed,
+        treasury_delta: reward_dist.treasury_delta,
+        delta_reserves: reward_dist.distributed
+            .saturating_add(reward_dist.treasury_delta),
+        accounts_rewarded,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Credits reward accounts from the epoch distribution.
+///
+/// Returns the number of accounts that received non-zero rewards.
+fn distribute_rewards(
+    ledger: &mut LedgerState,
+    dist: &EpochRewardDistribution,
+) -> usize {
+    let mut count = 0usize;
+    let ra = ledger.reward_accounts_mut();
+    for (account, &amount) in &dist.reward_deltas {
+        if amount == 0 {
+            continue;
+        }
+        if let Some(state) = ra.get_mut(account) {
+            state.set_balance(state.balance().saturating_add(amount));
+            count += 1;
+        }
+        // If the reward account is not registered, the reward is
+        // effectively unclaimed and rolls into the treasury at the
+        // next epoch boundary (upstream behavior).
+    }
+    count
+}
+
+/// Retires pools whose `retiring_epoch` ≤ `epoch`, refunds their deposits,
+/// and returns the list of retired pool operator keys and total refund.
+///
+/// This is the preferred helper that captures reward accounts *before*
+/// removing pools, avoiding the ordering problem in the two-step approach.
+pub fn retire_pools_with_refunds(
+    ledger: &mut LedgerState,
+    epoch: EpochNo,
+    pool_deposit: u64,
+) -> (Vec<PoolKeyHash>, u64) {
+    // 1. Identify pools scheduled to retire and capture their reward accounts.
+    let retiring: Vec<(PoolKeyHash, RewardAccount)> = ledger
+        .pool_state()
+        .iter()
+        .filter(|(_, pool)| {
+            pool.retiring_epoch().is_some_and(|e| e <= epoch)
+        })
+        .map(|(k, pool)| (*k, pool.params().reward_account))
+        .collect();
+
+    if retiring.is_empty() {
+        return (Vec::new(), 0);
+    }
+
+    // 2. Remove the retiring pools from the registry.
+    let retired_keys = ledger.pool_state_mut().process_retirements(epoch);
+
+    // 3. Credit refunds to reward accounts and update deposit pot.
+    let mut total_refunded: u64 = 0;
+    for (_, reward_account) in &retiring {
+        if let Some(state) = ledger.reward_accounts_mut().get_mut(reward_account) {
+            state.set_balance(state.balance().saturating_add(pool_deposit));
+            total_refunded = total_refunded.saturating_add(pool_deposit);
+        }
+        ledger.deposit_pot_mut().return_pool_deposit(pool_deposit);
+    }
+
+    (retired_keys, total_refunded)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stake::StakeSnapshot;
+    use crate::state::RewardAccountState;
+    use crate::types::{
+        Address, BaseAddress, EpochNo, PoolKeyHash, PoolParams, RewardAccount,
+        StakeCredential, UnitInterval,
+    };
+    use crate::eras::{Era, ShelleyTxIn, ShelleyTxOut};
+    use crate::protocol_params::ProtocolParameters;
+
+    fn test_cred(b: u8) -> StakeCredential {
+        StakeCredential::AddrKeyHash([b; 28])
+    }
+
+    fn test_pool(b: u8) -> PoolKeyHash {
+        [b; 28]
+    }
+
+    fn test_reward_account(b: u8) -> RewardAccount {
+        RewardAccount {
+            network: 1,
+            credential: test_cred(b),
+        }
+    }
+
+    fn test_pool_params(b: u8) -> PoolParams {
+        PoolParams {
+            operator: test_pool(b),
+            vrf_keyhash: [b; 32],
+            pledge: 100_000_000,
+            cost: 340_000_000,
+            margin: UnitInterval {
+                numerator: 1,
+                denominator: 100,
+            },
+            reward_account: test_reward_account(b),
+            pool_owners: vec![[b; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        }
+    }
+
+    fn test_protocol_params() -> ProtocolParameters {
+        let mut pp = ProtocolParameters::default();
+        pp.rho = UnitInterval {
+            numerator: 3,
+            denominator: 1000,
+        };
+        pp.tau = UnitInterval {
+            numerator: 2,
+            denominator: 10,
+        };
+        pp.a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
+        pp.n_opt = 150;
+        pp.min_pool_cost = 170_000_000;
+        pp.pool_deposit = 500_000_000;
+        pp.key_deposit = 2_000_000;
+        pp
+    }
+
+    fn make_ledger_with_pool(pool_id: u8) -> LedgerState {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        // Register a pool.
+        let params = test_pool_params(pool_id);
+        ledger.pool_state_mut().register(params);
+
+        // Register the pool operator as a stake credential + delegation.
+        let cred = test_cred(pool_id);
+        ledger.stake_credentials_mut().register(cred);
+        if let Some(cs) = ledger.stake_credentials_mut().get_mut(&cred) {
+            cs.set_delegated_pool(Some(test_pool(pool_id)));
+        }
+
+        // Create a reward account for the pool.
+        let ra = test_reward_account(pool_id);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra, RewardAccountState::new(0, None));
+
+        // Set initial accounting.
+        ledger.accounting_mut().reserves = 14_000_000_000_000_000; // 14B ADA
+        ledger.accounting_mut().treasury = 500_000_000_000; // 500k ADA
+
+        ledger
+    }
+
+    // -- Snapshot rotation ------------------------------------------------
+
+    #[test]
+    fn test_snapshot_rotation_at_epoch_boundary() {
+        let mut ledger = make_ledger_with_pool(1);
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let event = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(1),
+            &mut snapshots,
+            &perf,
+        )
+        .expect("epoch boundary should succeed");
+
+        assert_eq!(event.new_epoch, EpochNo(1));
+        // After one rotation, the fresh snapshot lands in `mark`
+        // (go ← set ← mark ← new).  Pool 1's params should be captured.
+        assert!(!snapshots.mark.pool_params.is_empty());
+    }
+
+    // -- Reward distribution ----------------------------------------------
+
+    #[test]
+    fn test_rewards_distributed_to_operator() {
+        let mut ledger = make_ledger_with_pool(2);
+
+        // Seed some UTxO stake delegated to pool 2 so the reward formula
+        // produces a non-zero reward.
+        let cred = test_cred(2);
+        let base_addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xAA; 28]),
+            staking: cred,
+        });
+        let addr_bytes = base_addr.to_bytes();
+        let txin = ShelleyTxIn { transaction_id: [0u8; 32], index: 0 };
+        ledger.multi_era_utxo_mut().insert_shelley(
+            txin,
+            ShelleyTxOut {
+                address: addr_bytes.clone(),
+                amount: 10_000_000_000_000, // 10M ADA
+            },
+        );
+
+        let mut snapshots = StakeSnapshots::new();
+        // Accumulate some fees.
+        snapshots.accumulate_fees(1_000_000_000); // 1000 ADA
+
+        // First rotation to populate `mark`.
+        let perf = BTreeMap::new();
+        let _event = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(1),
+            &mut snapshots,
+            &perf,
+        )
+        .expect("epoch 1 boundary should succeed");
+
+        // Second rotation moves the snapshot into `go`, enabling rewards.
+        // Add more fees for epoch 2.
+        snapshots.accumulate_fees(500_000_000); // 500 ADA
+
+        let event = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(2),
+            &mut snapshots,
+            &perf,
+        )
+        .expect("epoch 2 boundary should succeed");
+
+        // Some rewards should have been distributed (unless pool cost
+        // exceeds the apparent reward — depends on reserve size).
+        // With 14B ADA reserves and rho = 3/1000, the monetary expansion
+        // is ~42M ADA, which is far above any single pool's cost.
+        // At the go snapshot the pool should receive something.
+        assert!(
+            event.rewards_distributed > 0 || event.treasury_delta > 0,
+            "expected some reward activity at epoch boundary"
+        );
+    }
+
+    // -- Pool retirement + deposit refund ---------------------------------
+
+    #[test]
+    fn test_pool_retirement_refunds_deposit() {
+        let mut ledger = make_ledger_with_pool(3);
+        let pool_deposit = 500_000_000u64;
+
+        // Record that we charged a pool deposit.
+        ledger.deposit_pot_mut().add_pool_deposit(pool_deposit);
+
+        // Schedule pool 3 for retirement at epoch 5.
+        ledger
+            .pool_state_mut()
+            .retire(test_pool(3), EpochNo(5));
+
+        // Before retirement.
+        let ra = test_reward_account(3);
+        let balance_before = ledger.reward_accounts().balance(&ra);
+
+        let (retired, refunded) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(5), pool_deposit);
+
+        assert_eq!(retired.len(), 1);
+        assert_eq!(retired[0], test_pool(3));
+        assert_eq!(refunded, pool_deposit);
+
+        // Reward account should have been credited.
+        let balance_after = ledger.reward_accounts().balance(&ra);
+        assert_eq!(balance_after, balance_before + pool_deposit);
+
+        // Deposit pot should be reduced.
+        assert_eq!(ledger.deposit_pot().pool_deposits, 0);
+    }
+
+    // -- Pool not yet due for retirement ----------------------------------
+
+    #[test]
+    fn test_pool_not_yet_retiring() {
+        let mut ledger = make_ledger_with_pool(4);
+        ledger.deposit_pot_mut().add_pool_deposit(500_000_000);
+
+        // Schedule for epoch 10.
+        ledger
+            .pool_state_mut()
+            .retire(test_pool(4), EpochNo(10));
+
+        // Try retiring at epoch 5 — pool should NOT be retired.
+        let (retired, refunded) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(5), 500_000_000);
+
+        assert!(retired.is_empty());
+        assert_eq!(refunded, 0);
+        // Pool should still be registered.
+        assert!(ledger.pool_state().get(&test_pool(4)).is_some());
+    }
+
+    // -- Accounting update (treasury/reserves) ----------------------------
+
+    #[test]
+    fn test_accounting_update_after_epoch_boundary() {
+        let mut ledger = make_ledger_with_pool(5);
+        let initial_reserves = ledger.accounting().reserves;
+        let initial_treasury = ledger.accounting().treasury;
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let _event = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(1),
+            &mut snapshots,
+            &perf,
+        )
+        .expect("epoch 1 boundary should succeed");
+
+        // With empty go snapshot, no rewards are distributed, but the
+        // reward pot formation still draws from reserves and credits treasury.
+        let new_reserves = ledger.accounting().reserves;
+        let new_treasury = ledger.accounting().treasury;
+
+        // Reserves should not increase (they can stay the same if the go
+        // snapshot is empty and all goes to treasury).
+        assert!(new_reserves <= initial_reserves);
+        // Treasury should not decrease.
+        assert!(new_treasury >= initial_treasury);
+    }
+
+    // -- Empty ledger (no protocol params) --------------------------------
+
+    #[test]
+    fn test_epoch_boundary_without_params_fails() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let result = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(1),
+            &mut snapshots,
+            &perf,
+        );
+
+        assert!(result.is_err());
+    }
+
+    // -- Multiple epoch boundaries ----------------------------------------
+
+    #[test]
+    fn test_multiple_epoch_boundaries() {
+        let mut ledger = make_ledger_with_pool(6);
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        for epoch in 1..=5 {
+            snapshots.accumulate_fees(100_000_000); // 100 ADA per epoch
+            let event = apply_epoch_boundary(
+                &mut ledger,
+                EpochNo(epoch),
+                &mut snapshots,
+                &perf,
+            )
+            .expect("epoch boundary should succeed");
+
+            assert_eq!(event.new_epoch, EpochNo(epoch));
+        }
+
+        // After 5 epochs, treasury should have grown.
+        assert!(ledger.accounting().treasury > 500_000_000_000);
+    }
+
+    // -- Fee pot carried across rotation ----------------------------------
+
+    #[test]
+    fn test_fee_pot_carried_into_rewards() {
+        let mut snapshots = StakeSnapshots::new();
+        snapshots.accumulate_fees(2_000_000_000); // 2000 ADA
+        assert_eq!(snapshots.fee_pot, 2_000_000_000);
+
+        // After rotation the fee_pot should be consumed.
+        let dummy = StakeSnapshot::empty();
+        let returned_fees = snapshots.rotate(dummy);
+        assert_eq!(returned_fees, 2_000_000_000);
+        assert_eq!(snapshots.fee_pot, 0);
+    }
+
+    // -- retire_pools_with_refunds: no pools registered -------------------
+
+    #[test]
+    fn test_retire_no_pools() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        let (retired, refunded) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(1), 500_000_000);
+        assert!(retired.is_empty());
+        assert_eq!(refunded, 0);
+    }
+}

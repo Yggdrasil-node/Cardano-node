@@ -981,6 +981,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-plutus"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+ "thiserror",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
+]
+
+[[package]]
 name = "yggdrasil-storage"
 version = "0.1.0"
 dependencies = [

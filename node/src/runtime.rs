@@ -7,14 +7,15 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
     MultiEraSyncProgress, SyncError, VerifiedSyncServiceConfig,
+    apply_verified_progress_to_chaindb,
     apply_nonce_evolution_to_progress, recover_ledger_state_chaindb,
-    sync_batch_apply_verified, track_chain_state, track_chain_state_entries,
-    update_ledger_checkpoint_after_progress,
+    sync_batch_apply_verified, sync_batch_verified, track_chain_state,
 };
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use serde_json::json;
@@ -506,6 +507,10 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
 }
 
 type CheckpointTracking = LedgerCheckpointTracking;
+
+fn shared_chaindb_lock_error() -> SyncError {
+    SyncError::Recovery("shared ChainDb lock poisoned".to_owned())
+}
 
 struct ReconnectingVerifiedSyncContext<'a> {
     node_config: &'a NodeConfig,
@@ -1083,10 +1088,9 @@ where
         );
 
         loop {
-            let batch_fut = sync_batch_apply_verified(
+            let batch_fut = sync_batch_verified(
                 &mut session.chain_sync,
                 &mut session.block_fetch,
-                chain_db.volatile_mut(),
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
@@ -1108,6 +1112,14 @@ where
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
+                            let applied = apply_verified_progress_to_chaindb(
+                                chain_db,
+                                &progress,
+                                chain_state.as_mut(),
+                                checkpoint_tracking.as_mut(),
+                                &config.checkpoint_policy,
+                            )?;
+
                             record_verified_batch_progress(
                                 &mut from_point,
                                 &mut run_state,
@@ -1117,36 +1129,205 @@ where
                                 metrics,
                             );
 
-                            if let Some(ref mut cs) = chain_state {
-                                for step in &progress.steps {
-                                    let stable_entries = track_chain_state_entries(cs, step)?;
-                                    let promoted = stable_entries.len();
-                                    run_state.stable_block_count += promoted;
-                                    if let Some(m) = metrics {
-                                        m.add_stable_blocks_promoted(promoted as u64);
-                                    }
-                                    if let Some(last_stable) = stable_entries.last() {
-                                        let point = Point::BlockPoint(last_stable.slot, last_stable.hash);
-                                        chain_db.promote_volatile_prefix(&point)?;
-                                    }
-                                }
+                            run_state.stable_block_count += applied.stable_block_count;
+                            if let Some(m) = metrics {
+                                m.add_stable_blocks_promoted(applied.stable_block_count as u64);
                             }
 
-                            if let Some(ref mut tracking) = checkpoint_tracking {
-                                let checkpoint_outcome = update_ledger_checkpoint_after_progress(
-                                    chain_db,
-                                    tracking,
-                                    &progress,
-                                    &config.checkpoint_policy,
-                                )?;
-                                if let CheckpointPersistenceOutcome::Persisted { slot, .. } = &checkpoint_outcome {
+                            if let Some(checkpoint_outcome) = applied.checkpoint_outcome.as_ref() {
+                                if let CheckpointPersistenceOutcome::Persisted { slot, .. } = checkpoint_outcome {
                                     if let Some(m) = metrics {
                                         m.set_checkpoint_slot(slot.0);
                                     }
                                 }
                                 trace_checkpoint_outcome(
                                     tracer,
-                                    &checkpoint_outcome,
+                                    checkpoint_outcome,
+                                    &config.checkpoint_policy,
+                                );
+                            }
+
+                            trace_verified_sync_batch_applied(
+                                tracer,
+                                session.connected_peer_addr,
+                                from_point,
+                                &progress,
+                                &run_state,
+                                BatchTraceExtras {
+                                    stable_block_count: Some(run_state.stable_block_count),
+                                    checkpoint_tracked: Some(checkpoint_tracking.is_some()),
+                                },
+                            );
+                        }
+                        Err(err) => {
+                            let disposition = handle_reconnect_batch_error(
+                                tracer,
+                                session.connected_peer_addr,
+                                from_point,
+                                &err,
+                            );
+                            session.mux.abort();
+                            match disposition {
+                                BatchErrorDisposition::Reconnect => break,
+                                BatchErrorDisposition::Fail => return Err(err),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_reconnecting_verified_sync_service_shared_chaindb_inner<I, V, L, F>(
+    chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
+    context: ReconnectingVerifiedSyncContext<'_>,
+    state: ReconnectingVerifiedSyncState,
+    shutdown: F,
+) -> Result<ReconnectingSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let ReconnectingVerifiedSyncContext {
+        node_config,
+        fallback_peer_addrs,
+        use_ledger_peers,
+        peer_snapshot_path,
+        config,
+        tracer,
+        metrics,
+    } = context;
+    let ReconnectingVerifiedSyncState {
+        mut from_point,
+        mut nonce_state,
+        mut checkpoint_tracking,
+    } = state;
+
+    tokio::pin!(shutdown);
+
+    let mut run_state = ReconnectingRunState::new();
+    let mut chain_state = config.security_param.map(ChainState::new);
+    let mut had_session = false;
+    let mut preferred_peer = None;
+
+    loop {
+        let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
+            node_config.peer_addr,
+            fallback_peer_addrs,
+            checkpoint_tracking.as_ref(),
+            use_ledger_peers,
+            peer_snapshot_path,
+            tracer,
+        );
+        let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
+        if let Some(peer_addr) = preferred_peer {
+            attempt_state.record_success(peer_addr);
+        }
+
+        tracer.trace_runtime(
+            "Net.PeerSelection",
+            "Info",
+            "refreshed reconnect peer candidates",
+            trace_fields([
+                ("fallbackPeerCount", json!(refreshed_fallback_peers.len())),
+                (
+                    "latestSlot",
+                    json!(checkpoint_tracking
+                        .as_ref()
+                        .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
+                ),
+                ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+            ]),
+        );
+
+        let mut session = tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                trace_shutdown_before_bootstrap(tracer);
+                return Ok(run_state.finish(from_point, nonce_state, chain_state));
+            }
+
+            result = bootstrap_with_attempt_state(node_config, &mut attempt_state, tracer) => result?,
+        };
+
+        run_state.record_session(session.connected_peer_addr, &mut had_session);
+        if had_session && run_state.reconnect_count > 0 {
+            if let Some(m) = metrics {
+                m.inc_reconnects();
+            }
+        }
+        preferred_peer = Some(session.connected_peer_addr);
+
+        trace_session_established(
+            tracer,
+            session.connected_peer_addr,
+            run_state.reconnect_count,
+            from_point,
+        );
+
+        loop {
+            let batch_fut = sync_batch_verified(
+                &mut session.chain_sync,
+                &mut session.block_fetch,
+                from_point,
+                config.batch_size,
+                Some(&config.verification),
+            );
+
+            tokio::select! {
+                biased;
+
+                () = &mut shutdown => {
+                    trace_shutdown_during_session(
+                        tracer,
+                        session.connected_peer_addr,
+                        from_point,
+                    );
+                    session.mux.abort();
+                    return Ok(run_state.finish(from_point, nonce_state, chain_state));
+                }
+
+                result = batch_fut => {
+                    match result {
+                        Ok(progress) => {
+                            let applied = {
+                                let mut chain_db = chain_db.write().map_err(|_| shared_chaindb_lock_error())?;
+                                apply_verified_progress_to_chaindb(
+                                    &mut *chain_db,
+                                    &progress,
+                                    chain_state.as_mut(),
+                                    checkpoint_tracking.as_mut(),
+                                    &config.checkpoint_policy,
+                                )?
+                            };
+
+                            record_verified_batch_progress(
+                                &mut from_point,
+                                &mut run_state,
+                                &progress,
+                                nonce_state.as_mut(),
+                                config.nonce_config.as_ref(),
+                                metrics,
+                            );
+
+                            run_state.stable_block_count += applied.stable_block_count;
+                            if let Some(m) = metrics {
+                                m.add_stable_blocks_promoted(applied.stable_block_count as u64);
+                            }
+
+                            if let Some(checkpoint_outcome) = applied.checkpoint_outcome.as_ref() {
+                                if let CheckpointPersistenceOutcome::Persisted { slot, .. } = checkpoint_outcome {
+                                    if let Some(m) = metrics {
+                                        m.set_checkpoint_slot(slot.0);
+                                    }
+                                }
+                                trace_checkpoint_outcome(
+                                    tracer,
+                                    checkpoint_outcome,
                                     &config.checkpoint_policy,
                                 );
                             }
@@ -1549,9 +1730,101 @@ where
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
+        stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
+        epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
     };
 
     let sync = run_reconnecting_verified_sync_service_chaindb_inner(
+        chain_db,
+        ReconnectingVerifiedSyncContext {
+            node_config,
+            fallback_peer_addrs,
+            use_ledger_peers,
+            peer_snapshot_path: peer_snapshot_path.as_deref(),
+            config,
+            tracer,
+            metrics,
+        },
+        ReconnectingVerifiedSyncState {
+            from_point: recovery.point,
+            nonce_state,
+            checkpoint_tracking: Some(checkpoint_tracking),
+        },
+        shutdown,
+    )
+    .await?;
+
+    Ok(ResumedSyncServiceOutcome { recovery, sync })
+}
+
+pub async fn resume_reconnecting_verified_sync_service_shared_chaindb<I, V, L, F>(
+    chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
+    request: ResumeReconnectingVerifiedSyncRequest<'_>,
+    shutdown: F,
+) -> Result<ResumedSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let tracer = NodeTracer::disabled();
+    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(
+        chain_db,
+        request,
+        &tracer,
+        shutdown,
+    )
+    .await
+}
+
+pub async fn resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer<I, V, L, F>(
+    chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
+    request: ResumeReconnectingVerifiedSyncRequest<'_>,
+    tracer: &NodeTracer,
+    shutdown: F,
+) -> Result<ResumedSyncServiceOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let ResumeReconnectingVerifiedSyncRequest {
+        node_config,
+        fallback_peer_addrs,
+        base_ledger_state,
+        config,
+        nonce_state,
+        use_ledger_peers,
+        peer_snapshot_path,
+        metrics,
+    } = request;
+
+    let recovery = {
+        let chain_db = chain_db.read().map_err(|_| shared_chaindb_lock_error())?;
+        recover_ledger_state_chaindb(&chain_db, base_ledger_state)?
+    };
+    tracer.trace_runtime(
+        "Node.Recovery",
+        "Notice",
+        "recovered ledger state from coordinated storage",
+        trace_fields([
+            ("point", json!(format!("{:?}", recovery.point))),
+            ("checkpointSlot", json!(recovery.checkpoint_slot.map(|slot| slot.0))),
+            ("replayedVolatileBlocks", json!(recovery.replayed_volatile_blocks)),
+        ]),
+    );
+
+    let checkpoint_tracking = LedgerCheckpointTracking {
+        base_ledger_state: recovery.ledger_state.clone(),
+        ledger_state: recovery.ledger_state.clone(),
+        last_persisted_point: recovery.point,
+        stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
+        epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
+    };
+
+    let sync = run_reconnecting_verified_sync_service_shared_chaindb_inner(
         chain_db,
         ReconnectingVerifiedSyncContext {
             node_config,
@@ -1597,7 +1870,14 @@ where
         use_ledger_peers,
         peer_snapshot_path,
     } = request;
-    let checkpoint_tracking = Some(crate::sync::default_checkpoint_tracking(chain_db)?);
+    let checkpoint_tracking = {
+        let mut ct = crate::sync::default_checkpoint_tracking(chain_db)?;
+        if let Some(ref nonce_cfg) = config.nonce_config {
+            ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
+            ct.epoch_size = Some(nonce_cfg.epoch_size);
+        }
+        Some(ct)
+    };
 
     run_reconnecting_verified_sync_service_chaindb_inner(
         chain_db,

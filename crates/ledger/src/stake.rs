@@ -176,7 +176,7 @@ impl CborDecode for Delegations {
                 });
             }
             let mut pool = [0u8; 28];
-            pool.copy_from_slice(&hash_bytes);
+            pool.copy_from_slice(hash_bytes);
             entries.insert(cred, pool);
         }
         Ok(Self { entries })
@@ -247,7 +247,7 @@ impl CborDecode for StakeSnapshot {
                 });
             }
             let mut key = [0u8; 28];
-            key.copy_from_slice(&hash_bytes);
+            key.copy_from_slice(hash_bytes);
             let params = PoolParams::decode_cbor(dec)?;
             pool_params.insert(key, params);
         }

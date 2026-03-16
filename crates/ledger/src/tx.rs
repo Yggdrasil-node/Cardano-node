@@ -400,4 +400,12 @@ pub struct Block {
     pub header: BlockHeader,
     /// Transactions included in this block.
     pub transactions: Vec<Tx>,
+    /// Original wire-format CBOR bytes received from the network.
+    ///
+    /// When present, these bytes can be served directly via BlockFetch
+    /// without re-encoding. Populated during sync when blocks arrive
+    /// from the network; absent for blocks constructed programmatically
+    /// or recovered from legacy storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_cbor: Option<Vec<u8>>,
 }

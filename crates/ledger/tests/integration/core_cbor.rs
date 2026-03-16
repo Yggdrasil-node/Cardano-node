@@ -16,6 +16,7 @@ fn applies_block_for_matching_era() {
             issuer_vkey: [0x11; 32],
         },
         transactions: Vec::new(),
+        raw_cbor: None,
     };
 
     state
@@ -38,6 +39,7 @@ fn byron_block_advances_tip_without_state_transition() {
             issuer_vkey: [0; 32],
         },
         transactions: Vec::new(),
+        raw_cbor: None,
     };
 
     state
