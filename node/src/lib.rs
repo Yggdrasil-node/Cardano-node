@@ -2,6 +2,8 @@
 //! storage, and mempool crates into a running Cardano node.
 
 pub mod config;
+pub mod genesis;
+pub mod plutus_eval;
 pub mod runtime;
 pub mod server;
 pub mod sync;

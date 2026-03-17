@@ -29,6 +29,7 @@ use yggdrasil_ledger::{
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
+use yggdrasil_plutus::CostModel;
 
 pub use yggdrasil_storage::LedgerRecoveryOutcome;
 
@@ -772,6 +773,10 @@ pub struct VerifiedSyncServiceConfig {
     /// Ledger checkpoint write cadence and retention policy for coordinated
     /// storage runs.
     pub checkpoint_policy: LedgerCheckpointPolicy,
+    /// Optional calibrated CEK cost model used when applying blocks through
+    /// phase-2 Plutus validation during checkpoint-tracked ledger replay.
+    /// When absent, `CekPlutusEvaluator` falls back to `CostModel::default()`.
+    pub plutus_cost_model: Option<CostModel>,
 }
 
 /// Outcome returned when the verified sync service finishes.
@@ -803,6 +808,7 @@ pub(crate) struct LedgerCheckpointTracking {
     pub(crate) base_ledger_state: LedgerState,
     pub(crate) ledger_state: LedgerState,
     pub(crate) last_persisted_point: Point,
+    pub(crate) plutus_evaluator: crate::plutus_eval::CekPlutusEvaluator,
     /// Stake snapshots for epoch boundary processing.  When present,
     /// block application detects epoch transitions and applies the
     /// NEWEPOCH / SNAP / RUPD sequence before the first block of each
@@ -850,9 +856,10 @@ where
 pub(crate) fn advance_ledger_state_with_progress(
     ledger_state: &mut LedgerState,
     progress: &MultiEraSyncProgress,
+    evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
 ) -> Result<(), SyncError> {
     for_each_roll_forward_block(progress, |block| {
-        ledger_state.apply_block(&multi_era_block_to_block(block))?;
+        ledger_state.apply_block_validated(&multi_era_block_to_block(block), evaluator)?;
         Ok(())
     })
 }
@@ -869,6 +876,7 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
     snapshots: &mut StakeSnapshots,
     epoch_size: EpochSize,
     progress: &MultiEraSyncProgress,
+    evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
     for_each_roll_forward_block(progress, |block| -> Result<(), SyncError> {
@@ -889,7 +897,7 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
                 .map_err(SyncError::LedgerDecode)?;
         }
 
-        ledger_state.apply_block(&converted)?;
+        ledger_state.apply_block_validated(&converted, evaluator)?;
         Ok(())
     })?;
     Ok(events)
@@ -938,9 +946,14 @@ where
             snapshots,
             epoch_size,
             progress,
+            Some(&tracking.plutus_evaluator),
         )?;
     } else {
-        advance_ledger_state_with_progress(&mut tracking.ledger_state, progress)?;
+        advance_ledger_state_with_progress(
+            &mut tracking.ledger_state,
+            progress,
+            Some(&tracking.plutus_evaluator),
+        )?;
     }
 
     if policy.max_snapshots == 0 {
@@ -993,17 +1006,22 @@ where
 
 pub(crate) fn default_checkpoint_tracking<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
+    base_ledger_state: LedgerState,
+    plutus_cost_model: Option<CostModel>,
 ) -> Result<LedgerCheckpointTracking, SyncError>
 where
     I: ImmutableStore,
     V: VolatileStore,
     L: LedgerStore,
 {
-    let recovery = recover_ledger_state_chaindb(chain_db, LedgerState::new(Era::Byron))?;
+    let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
     Ok(LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state,
         last_persisted_point: recovery.point,
+        plutus_evaluator: plutus_cost_model
+            .map(crate::plutus_eval::CekPlutusEvaluator::with_cost_model)
+            .unwrap_or_default(),
         stake_snapshots: None,
         epoch_size: None,
     })
@@ -1133,6 +1151,7 @@ pub async fn run_verified_sync_service_chaindb<I, V, L, F>(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
     chain_db: &mut ChainDb<I, V, L>,
+    base_ledger_state: LedgerState,
     mut from_point: Point,
     config: &VerifiedSyncServiceConfig,
     mut nonce_state: Option<NonceEvolutionState>,
@@ -1151,7 +1170,11 @@ where
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
-    let mut checkpoint_tracking = default_checkpoint_tracking(chain_db)?;
+    let mut checkpoint_tracking = default_checkpoint_tracking(
+        chain_db,
+        base_ledger_state,
+        config.plutus_cost_model.clone(),
+    )?;
 
     // Enable epoch boundary processing when nonce config provides epoch size.
     if let Some(ref nonce_cfg) = config.nonce_config {

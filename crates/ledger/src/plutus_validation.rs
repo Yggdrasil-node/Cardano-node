@@ -383,6 +383,7 @@ pub fn validate_plutus_scripts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cbor::CborEncode;
     use crate::eras::shelley::ShelleyWitnessSet;
 
     #[test]

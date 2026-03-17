@@ -316,10 +316,12 @@ pub fn seed_peer_registry(
     topology: &TopologyConfig,
 ) -> PeerRegistry {
     let mut registry = PeerRegistry::default();
-    registry.insert_source(primary_peer, PeerSource::PeerSourceBootstrap);
-
     registry.sync_root_peers(&topology.resolved_root_providers());
-
+    // Insert the primary peer after syncing root peers so that sync_root_peers
+    // (which clears all Bootstrap/LocalRoot/PublicRoot sources first) does not
+    // remove the primary peer's Bootstrap source when the primary is not listed
+    // in the topology bootstrap set.
+    registry.insert_source(primary_peer, PeerSource::PeerSourceBootstrap);
     registry
 }
 
@@ -1103,6 +1105,8 @@ pub struct ReconnectingVerifiedSyncRequest<'a> {
     pub fallback_peer_addrs: &'a [SocketAddr],
     /// Chain point from which live sync should begin.
     pub from_point: Point,
+    /// Base ledger state used for coordinated-storage replay paths.
+    pub base_ledger_state: LedgerState,
     /// Verified sync policy and batch configuration.
     pub config: &'a VerifiedSyncServiceConfig,
     /// Optional nonce-evolution state to carry through the run.
@@ -2209,6 +2213,7 @@ where
         node_config,
         fallback_peer_addrs,
         mut from_point,
+        base_ledger_state: _,
         config,
         mut nonce_state,
         use_ledger_peers: _,
@@ -2357,6 +2362,11 @@ where
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
+        plutus_evaluator: config
+            .plutus_cost_model
+            .clone()
+            .map(crate::plutus_eval::CekPlutusEvaluator::with_cost_model)
+            .unwrap_or_default(),
         stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
     };
@@ -2447,6 +2457,11 @@ where
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
+        plutus_evaluator: config
+            .plutus_cost_model
+            .clone()
+            .map(crate::plutus_eval::CekPlutusEvaluator::with_cost_model)
+            .unwrap_or_default(),
         stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
     };
@@ -2492,13 +2507,18 @@ where
         node_config,
         fallback_peer_addrs,
         from_point,
+        base_ledger_state,
         config,
         nonce_state,
         use_ledger_peers,
         peer_snapshot_path,
     } = request;
     let checkpoint_tracking = {
-        let mut ct = crate::sync::default_checkpoint_tracking(chain_db)?;
+        let mut ct = crate::sync::default_checkpoint_tracking(
+            chain_db,
+            base_ledger_state,
+            config.plutus_cost_model.clone(),
+        )?;
         if let Some(ref nonce_cfg) = config.nonce_config {
             ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
             ct.epoch_size = Some(nonce_cfg.epoch_size);

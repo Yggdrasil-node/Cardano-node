@@ -268,6 +268,16 @@ pub fn required_script_hashes_from_withdrawals(
     }
 }
 
+/// Collects required script hashes from mint policy IDs.
+pub fn required_script_hashes_from_mint(
+    mint: &crate::eras::mary::MintAsset,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for policy_id in mint.keys() {
+        out.insert(*policy_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +302,20 @@ mod tests {
             result,
             Err(LedgerError::MissingVKeyWitness { hash }) if hash == h2
         ));
+    }
+
+    #[test]
+    fn collects_required_script_hashes_from_mint_policy_ids() {
+        let mut mint = crate::eras::mary::MintAsset::new();
+        mint.insert([1u8; 28], std::collections::BTreeMap::new());
+        mint.insert([2u8; 28], std::collections::BTreeMap::new());
+
+        let mut required = HashSet::new();
+        required_script_hashes_from_mint(&mint, &mut required);
+
+        assert!(required.contains(&[1u8; 28]));
+        assert!(required.contains(&[2u8; 28]));
+        assert_eq!(required.len(), 2);
     }
 
     #[test]

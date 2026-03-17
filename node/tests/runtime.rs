@@ -722,6 +722,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         nonce_config: None,
         security_param: None,
         checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
     };
     let mut store = InMemoryVolatile::default();
 
@@ -737,6 +738,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
             node_config: &node_config,
             fallback_peer_addrs: &[second_addr],
             from_point: Point::Origin,
+            base_ledger_state: LedgerState::new(Era::Byron),
             config: &service_config,
             nonce_state: None,
             use_ledger_peers: None,
@@ -799,6 +801,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -818,6 +821,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
             node_config: &node_config,
             fallback_peer_addrs: &[second_addr],
             from_point: Point::Origin,
+            base_ledger_state: LedgerState::new(Era::Byron),
             config: &service_config,
             nonce_state: None,
             use_ledger_peers: None,
@@ -881,6 +885,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -976,6 +981,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Shelley);
@@ -1090,6 +1096,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);

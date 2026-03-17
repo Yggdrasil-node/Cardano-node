@@ -16,6 +16,7 @@ yggdrasil-consensus.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true
 yggdrasil-mempool.workspace = true
+yggdrasil-plutus.workspace = true
 yggdrasil-network.workspace = true
 yggdrasil-storage.workspace = true
 

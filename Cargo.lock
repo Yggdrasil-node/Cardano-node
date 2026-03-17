@@ -1267,6 +1267,7 @@ dependencies = [
  "yggdrasil-ledger",
  "yggdrasil-mempool",
  "yggdrasil-network",
+ "yggdrasil-plutus",
  "yggdrasil-storage",
 ]
 

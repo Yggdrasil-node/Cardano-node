@@ -44,6 +44,9 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - `cost_model.rs` — `CostModel` with per-builtin CPU/memory cost functions.
 - `error.rs` — `MachineError` variants.
 
+### Integration with `node` crate
+`node/src/plutus_eval.rs` implements `yggdrasil_ledger::plutus_validation::PlutusEvaluator` using `yggdrasil_plutus::evaluate_term`. `CekPlutusEvaluator` decodes script bytes via `decode_script_bytes`, builds term-level argument applications (datum if spending, redeemer, placeholder `ScriptContext`), and evaluates with the `ExBudget` declared by the transaction. The current simplified flat `CostModel` can now be calibrated from the upstream named Alonzo genesis `costModels.PlutusV1` map via `CostModel::from_alonzo_genesis_params()`, which maps shared CEK step costs (`Var`/`Const`/`Lam`/`Delay`/`Force`/`Apply`) and `cekBuiltinCost-*` onto the crate's flat four-field model. Full per-builtin parameterized costing and full `ScriptContext` / `TxInfo` construction remain future milestones.
+
 ### Implemented Builtins
 - **Integer**: add, subtract, multiply, divide, quotient, remainder, mod, equals, less-than, less-than-equals
 - **ByteString**: append, cons, slice, length, index, equals, less-than
@@ -66,6 +69,6 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - `MachineError::CryptoError(String)` variant added for BLS operation failures.
 
 ## Next Steps
-1. Calibrate cost model against upstream cost-model JSON.
+1. Replace the current flat CEK model with per-builtin parameterized costing keyed by the full upstream cost-model parameter set.
 2. Add integration tests with on-chain script samples.
-3. Wire into ledger redeemer execution for phase-2 validation.
+3. Expand version-aware cost-model support so Conway `plutusV3CostModel` arrays can be mapped without falling back to Alonzo named maps.

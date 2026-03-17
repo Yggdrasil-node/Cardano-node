@@ -365,6 +365,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         nonce_config: None,
         security_param: Some(SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
     };
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let mut chain_db = ChainDb::new(
@@ -383,6 +384,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         &mut session.chain_sync,
         &mut session.block_fetch,
         &mut chain_db,
+        LedgerState::new(Era::Byron),
         Point::Origin,
         &service_config,
         None,
@@ -1630,9 +1632,15 @@ fn build_byron_main_body(
     enc.bytes(&[0u8; 64]); // pubkey (dummy)
     enc.array(1).unsigned(difficulty); // [difficulty]
     enc.bytes(&[0u8; 64]); // signature (dummy)
-    enc.unsigned(0); // extra_data (dummy)
-    enc.bytes(&[]); // body (dummy)
-    enc.bytes(&[]); // extra (dummy)
+    enc.unsigned(0); // extra_data — 5th element of header array
+    // body: [tx_payload, ssc_payload, dlg_payload, upd_payload]
+    // decode_main reads body as array(4), then reads tx_payload as array(N).
+    enc.array(4); // body array
+    enc.array(0); // tx_payload: empty list of TxAux
+    enc.unsigned(0); // ssc_payload (placeholder, skipped by decoder)
+    enc.unsigned(0); // dlg_payload (placeholder, skipped by decoder)
+    enc.unsigned(0); // upd_payload (placeholder, skipped by decoder)
+    enc.unsigned(0); // extra — 3rd element of outer array
     enc.into_bytes()
 }
 

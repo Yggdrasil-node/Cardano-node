@@ -31,6 +31,7 @@ mod ledger_state_era_application;
 mod ledger_state_pools_rewards_queries;
 mod ledger_state_stake_and_drep;
 mod multi_era_utxo;
+mod plutus_evaluation;
 mod plutus_scripts;
 mod shelley;
 mod txbody_keys;

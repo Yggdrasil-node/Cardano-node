@@ -203,6 +203,9 @@ fn main() -> Result<()> {
                 .iter()
                 .map(|v| HandshakeVersion(*v as u16))
                 .collect();
+            let plutus_cost_model = file_cfg
+                .load_plutus_cost_model(config_base_dir.as_deref())
+                .wrap_err("failed to load genesis Plutus cost model")?;
 
             let verification = if no_verify {
                 None
@@ -238,6 +241,7 @@ fn main() -> Result<()> {
                         min_slot_delta: checkpoint_interval_slots,
                         max_snapshots: max_ledger_snapshots,
                     },
+                    plutus_cost_model: plutus_cost_model.clone(),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -253,11 +257,13 @@ fn main() -> Result<()> {
                         min_slot_delta: checkpoint_interval_slots,
                         max_snapshots: max_ledger_snapshots,
                     },
+                    plutus_cost_model: plutus_cost_model.clone(),
                 }
             };
 
             let tracer = NodeTracer::from_config(&file_cfg);
             let storage_dir = resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
+            let base_ledger_state = strict_base_ledger_state(&file_cfg, config_base_dir.as_deref())?;
             let chain_db = ChainDb::new(
                 FileImmutable::open(storage_dir.join("immutable"))?,
                 FileVolatile::open(storage_dir.join("volatile"))?,
@@ -265,7 +271,7 @@ fn main() -> Result<()> {
             );
 
             let peer_addr = peer.unwrap_or(file_cfg.peer_addr);
-            let recovery = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron));
+            let recovery = recover_ledger_state_chaindb(&chain_db, base_ledger_state.clone());
             let latest_slot = recovery
                 .as_ref()
                 .ok()
@@ -345,9 +351,32 @@ fn main() -> Result<()> {
                 use_ledger_peers: Some(file_cfg.use_ledger_peers_policy()),
                 peer_snapshot_path,
                 metrics_port,
+                base_ledger_state,
             }))
         }
     }
+}
+
+fn strict_base_ledger_state(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&std::path::Path>,
+) -> Result<LedgerState> {
+    let mut state = LedgerState::new(Era::Byron);
+    if let Some(params) = file_cfg
+        .load_genesis_protocol_params(config_base_dir)
+        .wrap_err("failed to load genesis protocol parameters")?
+    {
+        state.set_protocol_params(params);
+    }
+    Ok(state)
+}
+
+fn best_effort_base_ledger_state(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&std::path::Path>,
+) -> LedgerState {
+    strict_base_ledger_state(file_cfg, config_base_dir)
+        .unwrap_or_else(|_| LedgerState::new(Era::Byron))
 }
 
 fn load_effective_config(
@@ -459,6 +488,7 @@ fn validate_config_report(
         || volatile_dir.exists()
         || ledger_dir.exists()
     {
+        let base_ledger_state = best_effort_base_ledger_state(file_cfg, config_base_dir);
         let chain_db = ChainDb::new(
             FileImmutable::open(&immutable_dir)
                 .wrap_err_with(|| format!("failed to open immutable store {}", immutable_dir.display()))?,
@@ -468,7 +498,7 @@ fn validate_config_report(
                 .wrap_err_with(|| format!("failed to open ledger store {}", ledger_dir.display()))?,
         );
         let tip = chain_db.recovery().tip;
-        let recovery = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron))
+        let recovery = recover_ledger_state_chaindb(&chain_db, base_ledger_state)
             .wrap_err_with(|| {
                 format!(
                     "failed to recover ledger state from storage directory {}",
@@ -612,7 +642,10 @@ fn status_report(
     };
 
     let ledger_checkpoint_count = LedgerStore::count(chain_db.ledger());
-    let recovery = recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron));
+    let recovery = recover_ledger_state_chaindb(
+        &chain_db,
+        best_effort_base_ledger_state(file_cfg, config_base_dir),
+    );
 
     let (chain_tip_slot, chain_tip_hash) = match &chain_tip {
         Point::Origin => (None, None),
@@ -819,6 +852,7 @@ async fn run_node(
         use_ledger_peers,
         peer_snapshot_path,
         metrics_port,
+        base_ledger_state,
     } = request;
 
     let chain_db = Arc::new(RwLock::new(chain_db));
@@ -969,7 +1003,7 @@ async fn run_node(
         ResumeReconnectingVerifiedSyncRequest {
             node_config: &node_config,
             fallback_peer_addrs: &bootstrap_peers,
-            base_ledger_state: LedgerState::new(Era::Byron),
+            base_ledger_state,
             config: &sync_config,
             nonce_state,
             use_ledger_peers,
@@ -1072,6 +1106,8 @@ struct RunNodeRequest {
     use_ledger_peers: Option<yggdrasil_network::UseLedgerPeers>,
     peer_snapshot_path: Option<PathBuf>,
     metrics_port: Option<u16>,
+    /// Genesis-seeded base ledger state used for recovery and fresh sync.
+    base_ledger_state: LedgerState,
 }
 
 // ---------------------------------------------------------------------------

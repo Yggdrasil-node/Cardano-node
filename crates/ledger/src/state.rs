@@ -1556,6 +1556,20 @@ impl LedgerState {
     ///
     /// On success the tip advances to the applied block's slot and hash.
     pub fn apply_block(&mut self, block: &crate::tx::Block) -> Result<(), LedgerError> {
+        self.apply_block_validated(block, None)
+    }
+
+    /// Applies a block with optional Plutus Phase-2 script evaluation.
+    ///
+    /// When `evaluator` is `Some`, Alonzo+ transactions with Plutus
+    /// scripts have their scripts evaluated via the provided
+    /// [`PlutusEvaluator`]. When `None`, Plutus scripts are silently
+    /// skipped (soft-skip for sync without a CEK machine configured).
+    pub fn apply_block_validated(
+        &mut self,
+        block: &crate::tx::Block,
+        evaluator: Option<&dyn crate::plutus_validation::PlutusEvaluator>,
+    ) -> Result<(), LedgerError> {
         let slot = block.header.slot_no.0;
 
         // Block-level size validation when protocol parameters are available.
@@ -1574,9 +1588,9 @@ impl LedgerState {
             Era::Shelley => self.apply_shelley_block(block, slot)?,
             Era::Allegra => self.apply_allegra_block(block, slot)?,
             Era::Mary => self.apply_mary_block(block, slot)?,
-            Era::Alonzo => self.apply_alonzo_block(block, slot)?,
-            Era::Babbage => self.apply_babbage_block(block, slot)?,
-            Era::Conway => self.apply_conway_block(block, slot)?,
+            Era::Alonzo => self.apply_alonzo_block(block, slot, evaluator)?,
+            Era::Babbage => self.apply_babbage_block(block, slot, evaluator)?,
+            Era::Conway => self.apply_conway_block(block, slot, evaluator)?,
         }
 
         self.tip = Point::BlockPoint(block.header.slot_no, block.header.hash);
@@ -2091,6 +2105,7 @@ impl LedgerState {
         &mut self,
         block: &crate::tx::Block,
         slot: u64,
+        evaluator: Option<&dyn crate::plutus_validation::PlutusEvaluator>,
     ) -> Result<(), LedgerError> {
         if block.transactions.is_empty() {
             return Ok(());
@@ -2155,7 +2170,26 @@ impl LedgerState {
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
             }
+            if let Some(mint) = &body.mint {
+                crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+            }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            // Plutus script validation (Alonzo)
+            {
+                let mut sorted_inputs = body.inputs.clone();
+                sorted_inputs.sort();
+                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                    .map(|m| m.keys().copied().collect())
+                    .unwrap_or_default();
+                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                    .unwrap_or_default();
+                crate::plutus_validation::validate_plutus_scripts(
+                    evaluator, witness_bytes.as_deref(), &required_scripts,
+                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
+                )?;
+            }
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -2183,6 +2217,7 @@ impl LedgerState {
         &mut self,
         block: &crate::tx::Block,
         slot: u64,
+        evaluator: Option<&dyn crate::plutus_validation::PlutusEvaluator>,
     ) -> Result<(), LedgerError> {
         if block.transactions.is_empty() {
             return Ok(());
@@ -2247,7 +2282,26 @@ impl LedgerState {
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
             }
+            if let Some(mint) = &body.mint {
+                crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+            }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            // Plutus script validation (Babbage)
+            {
+                let mut sorted_inputs = body.inputs.clone();
+                sorted_inputs.sort();
+                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                    .map(|m| m.keys().copied().collect())
+                    .unwrap_or_default();
+                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                    .unwrap_or_default();
+                crate::plutus_validation::validate_plutus_scripts(
+                    evaluator, witness_bytes.as_deref(), &required_scripts,
+                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
+                )?;
+            }
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -2275,6 +2329,7 @@ impl LedgerState {
         &mut self,
         block: &crate::tx::Block,
         slot: u64,
+        evaluator: Option<&dyn crate::plutus_validation::PlutusEvaluator>,
     ) -> Result<(), LedgerError> {
         if block.transactions.is_empty() {
             return Ok(());
@@ -2339,7 +2394,26 @@ impl LedgerState {
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
             }
+            if let Some(mint) = &body.mint {
+                crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+            }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            // Plutus script validation (Conway)
+            {
+                let mut sorted_inputs = body.inputs.clone();
+                sorted_inputs.sort();
+                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                    .map(|m| m.keys().copied().collect())
+                    .unwrap_or_default();
+                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                    .unwrap_or_default();
+                crate::plutus_validation::validate_plutus_scripts(
+                    evaluator, witness_bytes.as_deref(), &required_scripts,
+                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
+                )?;
+            }
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,

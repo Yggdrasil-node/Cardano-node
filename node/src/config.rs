@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use yggdrasil_ledger::ProtocolParameters;
+use yggdrasil_plutus::CostModel;
 use serde_json::Value;
 use thiserror::Error;
 use yggdrasil_network::{
@@ -198,6 +200,18 @@ pub struct NodeConfigFile {
     /// Namespace trace options following the official node config shape.
     #[serde(rename = "TraceOptions", default = "default_trace_options")]
     pub trace_options: BTreeMap<String, TraceNamespaceConfig>,
+        /// Relative path to the Shelley genesis file.  Matches `ShelleyGenesisFile`
+        /// in the official Cardano node configuration.
+        #[serde(rename = "ShelleyGenesisFile", default, skip_serializing_if = "Option::is_none")]
+        pub shelley_genesis_file: Option<String>,
+        /// Relative path to the Alonzo genesis file.  Matches `AlonzoGenesisFile`
+        /// in the official Cardano node configuration.
+        #[serde(rename = "AlonzoGenesisFile", default, skip_serializing_if = "Option::is_none")]
+        pub alonzo_genesis_file: Option<String>,
+        /// Relative path to the Conway genesis file.  Matches `ConwayGenesisFile`
+        /// in the official Cardano node configuration.
+        #[serde(rename = "ConwayGenesisFile", default, skip_serializing_if = "Option::is_none")]
+        pub conway_genesis_file: Option<String>,
 }
 
 fn default_storage_dir() -> PathBuf {
@@ -214,6 +228,88 @@ fn default_max_ledger_snapshots() -> usize {
 
 impl NodeConfigFile {
     /// Rebuild the network-owned topology configuration from the node config.
+    /// Load and build a [`ProtocolParameters`] from the configured genesis files.
+    ///
+    /// Returns `None` when neither `ShelleyGenesisFile` nor `AlonzoGenesisFile`
+    /// is configured (e.g. integration tests using programmatic configs), so
+    /// callers can safely fall back to `ProtocolParameters::default()`.
+    ///
+    /// Returns an error if a configured path exists but cannot be parsed.
+    pub fn load_genesis_protocol_params(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<Option<ProtocolParameters>, crate::genesis::GenesisLoadError> {
+        use crate::genesis::{
+            build_protocol_parameters, load_alonzo_genesis, load_conway_genesis,
+            load_shelley_genesis,
+        };
+
+        let shelley_path = self.shelley_genesis_file.as_deref().map(|f| {
+            let p = std::path::Path::new(f);
+            if let Some(base) = config_base_dir {
+                base.join(p)
+            } else {
+                p.to_path_buf()
+            }
+        });
+        let alonzo_path = self.alonzo_genesis_file.as_deref().map(|f| {
+            let p = std::path::Path::new(f);
+            if let Some(base) = config_base_dir {
+                base.join(p)
+            } else {
+                p.to_path_buf()
+            }
+        });
+        let conway_path = self.conway_genesis_file.as_deref().map(|f| {
+            let p = std::path::Path::new(f);
+            if let Some(base) = config_base_dir {
+                base.join(p)
+            } else {
+                p.to_path_buf()
+            }
+        });
+
+        match (shelley_path, alonzo_path) {
+            (Some(sp), Some(ap)) => {
+                let shelley = load_shelley_genesis(&sp)?;
+                let alonzo = load_alonzo_genesis(&ap)?;
+                let conway = if let Some(cp) = conway_path {
+                    Some(load_conway_genesis(&cp)?)
+                } else {
+                    None
+                };
+                Ok(Some(build_protocol_parameters(
+                    &shelley,
+                    &alonzo,
+                    conway.as_ref(),
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Load the simplified CEK [`CostModel`] from the configured Alonzo
+    /// genesis file when a named Plutus cost-model map is available.
+    pub fn load_plutus_cost_model(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<Option<CostModel>, crate::genesis::GenesisCostModelError> {
+        use crate::genesis::{build_plutus_cost_model, load_alonzo_genesis};
+
+        let Some(path) = self.alonzo_genesis_file.as_deref() else {
+            return Ok(None);
+        };
+
+        let path = if let Some(base) = config_base_dir {
+            base.join(Path::new(path))
+        } else {
+            Path::new(path).to_path_buf()
+        };
+
+        let alonzo = load_alonzo_genesis(&path)?;
+        build_plutus_cost_model(&alonzo).map_err(Into::into)
+    }
+
     pub fn topology_config(&self) -> TopologyConfig {
         TopologyConfig {
             bootstrap_peers: yggdrasil_network::UseBootstrapPeers::UseBootstrapPeers(
@@ -699,6 +795,9 @@ pub fn mainnet_config() -> NodeConfigFile {
         trace_option_resource_frequency: default_trace_option_resource_frequency(),
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
+        shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
+        conway_genesis_file: Some("conway-genesis.json".to_owned()),
     }
 }
 
@@ -744,6 +843,9 @@ pub fn preprod_config() -> NodeConfigFile {
         trace_option_resource_frequency: default_trace_option_resource_frequency(),
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
+        shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
+        conway_genesis_file: Some("conway-genesis.json".to_owned()),
     }
 }
 
@@ -789,6 +891,9 @@ pub fn preview_config() -> NodeConfigFile {
         trace_option_resource_frequency: default_trace_option_resource_frequency(),
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
+        shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
+        conway_genesis_file: Some("conway-genesis.json".to_owned()),
     }
 }
 
@@ -825,6 +930,9 @@ mod tests {
         assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
         assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);
         assert_eq!(parsed.trace_options, cfg.trace_options);
+        assert_eq!(parsed.shelley_genesis_file, cfg.shelley_genesis_file);
+        assert_eq!(parsed.alonzo_genesis_file, cfg.alonzo_genesis_file);
+        assert_eq!(parsed.conway_genesis_file, cfg.conway_genesis_file);
     }
 
     #[test]
@@ -853,6 +961,9 @@ mod tests {
         assert!(cfg.use_trace_dispatcher);
         assert!(cfg.turn_on_log_metrics);
         assert!(cfg.trace_option_node_name.is_none());
+        assert!(cfg.shelley_genesis_file.is_none());
+        assert!(cfg.alonzo_genesis_file.is_none());
+        assert!(cfg.conway_genesis_file.is_none());
         assert!(cfg.trace_options.contains_key(""));
         assert!(cfg.trace_options.contains_key("Node.Recovery.Checkpoint"));
         assert_eq!(
@@ -942,8 +1053,25 @@ mod tests {
         assert_eq!(cfg.storage_dir, PathBuf::from("data/mainnet"));
         assert_eq!(cfg.checkpoint_interval_slots, 2160);
         assert_eq!(cfg.max_ledger_snapshots, 8);
+        assert_eq!(cfg.shelley_genesis_file.as_deref(), Some("shelley-genesis.json"));
+        assert_eq!(cfg.alonzo_genesis_file.as_deref(), Some("alonzo-genesis.json"));
+        assert_eq!(cfg.conway_genesis_file.as_deref(), Some("conway-genesis.json"));
         assert!(!candidates.is_empty());
         assert!(candidates.len() <= 3);
+    }
+
+    #[test]
+    fn mainnet_preset_loads_plutus_cost_model() {
+        let cfg = NetworkPreset::Mainnet.to_config();
+        let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("configuration/mainnet");
+        let model = cfg
+            .load_plutus_cost_model(Some(base_dir.as_path()))
+            .expect("load plutus cost model")
+            .expect("mainnet plutus cost model");
+        assert_eq!(model.step_cpu, 29_773);
+        assert_eq!(model.step_mem, 100);
+        assert_eq!(model.builtin_cpu, 29_773);
+        assert_eq!(model.builtin_mem, 100);
     }
 
     #[test]
