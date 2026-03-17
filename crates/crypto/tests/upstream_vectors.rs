@@ -3,6 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use yggdrasil_crypto::{
+    bls12_381::{
+        self, g1_add, g1_equal, g1_hash_to_group, g1_neg, g1_scalar_mul,
+        g1_uncompress, g2_add, g2_equal, g2_neg, g2_scalar_mul, g2_uncompress,
+        miller_loop, mul_ml_result, final_verify,
+    },
     vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors, VrfBatchCompatProof, VrfOutput,
     VrfProof, VrfVerificationKey,
 };
@@ -65,15 +70,178 @@ fn upstream_praos_vrf_vector_files_are_present_and_well_formed() {
     }
 }
 
+fn bls_vector_dir() -> PathBuf {
+    vendored_root().join("cardano-crypto-class/bls12-381-test-vectors/test_vectors")
+}
+
+fn read_hex_lines(path: &Path) -> Vec<Vec<u8>> {
+    let content = fs::read_to_string(path).expect("vector file should be readable as UTF-8");
+    content.lines().map(|line| decode_hex_vec(line)).collect()
+}
+
 #[test]
 fn upstream_bls_vector_files_are_present_and_well_formed() {
-    let dir = vendored_root().join("cardano-crypto-class/bls12-381-test-vectors/test_vectors");
+    let dir = bls_vector_dir();
 
     assert_hex_lines(&dir.join("pairing_test_vectors"), 10);
     assert_hex_lines(&dir.join("ec_operations_test_vectors"), 12);
     assert_hex_lines(&dir.join("serde_test_vectors"), 8);
     assert_hex_lines(&dir.join("bls_sig_aug_test_vectors"), 2);
     assert_hex_lines(&dir.join("h2c_large_dst"), 3);
+}
+
+#[test]
+fn bls_ec_operations_match_upstream_vectors() {
+    let lines = read_hex_lines(&bls_vector_dir().join("ec_operations_test_vectors"));
+    assert_eq!(lines.len(), 12);
+
+    // G1 points: P, Q, P+Q, P-Q, [scalar]Q, -P
+    let g1_p = g1_uncompress(&lines[0]).expect("G1 P");
+    let g1_q = g1_uncompress(&lines[1]).expect("G1 Q");
+    let g1_add_expected = g1_uncompress(&lines[2]).expect("G1 P+Q");
+    let g1_sub_expected = g1_uncompress(&lines[3]).expect("G1 P-Q");
+    let g1_mul_expected = g1_uncompress(&lines[4]).expect("G1 [s]Q");
+    let g1_neg_expected = g1_uncompress(&lines[5]).expect("G1 -P");
+
+    // Verify G1 operations
+    assert!(g1_equal(&g1_add(&g1_p, &g1_q), &g1_add_expected), "G1 add mismatch");
+    assert!(
+        g1_equal(&g1_add(&g1_p, &g1_neg(&g1_q)), &g1_sub_expected),
+        "G1 sub mismatch"
+    );
+    assert!(g1_equal(&g1_neg(&g1_p), &g1_neg_expected), "G1 neg mismatch");
+
+    let scalar = decode_hex_vec("40df499974f62e2f268cd5096b0d952073900054122ffce0a27c9d96932891a5");
+    assert!(
+        g1_equal(&g1_scalar_mul(&scalar, false, &g1_q), &g1_mul_expected),
+        "G1 scalar mul mismatch"
+    );
+
+    // G2 points: P, Q, P+Q, P-Q, [scalar]Q, -P
+    let g2_p = g2_uncompress(&lines[6]).expect("G2 P");
+    let g2_q = g2_uncompress(&lines[7]).expect("G2 Q");
+    let g2_add_expected = g2_uncompress(&lines[8]).expect("G2 P+Q");
+    let g2_sub_expected = g2_uncompress(&lines[9]).expect("G2 P-Q");
+    let g2_mul_expected = g2_uncompress(&lines[10]).expect("G2 [s]Q");
+    let g2_neg_expected = g2_uncompress(&lines[11]).expect("G2 -P");
+
+    assert!(g2_equal(&g2_add(&g2_p, &g2_q), &g2_add_expected), "G2 add mismatch");
+    assert!(
+        g2_equal(&g2_add(&g2_p, &g2_neg(&g2_q)), &g2_sub_expected),
+        "G2 sub mismatch"
+    );
+    assert!(g2_equal(&g2_neg(&g2_p), &g2_neg_expected), "G2 neg mismatch");
+    assert!(
+        g2_equal(&g2_scalar_mul(&scalar, false, &g2_q), &g2_mul_expected),
+        "G2 scalar mul mismatch"
+    );
+}
+
+#[test]
+fn bls_pairing_identities_match_upstream_vectors() {
+    let lines = read_hex_lines(&bls_vector_dir().join("pairing_test_vectors"));
+    assert_eq!(lines.len(), 10);
+
+    // G1: P, [a]P, [b]P, [a+b]P, [a*b]P
+    let p = g1_uncompress(&lines[0]).expect("P");
+    let a_p = g1_uncompress(&lines[1]).expect("[a]P");
+    let b_p = g1_uncompress(&lines[2]).expect("[b]P");
+    let ab_sum_p = g1_uncompress(&lines[3]).expect("[a+b]P");
+    let ab_prod_p = g1_uncompress(&lines[4]).expect("[a*b]P");
+
+    // G2: Q, [a]Q, [b]Q, [a+b]Q, [a*b]Q
+    let q = g2_uncompress(&lines[5]).expect("Q");
+    let a_q = g2_uncompress(&lines[6]).expect("[a]Q");
+    let b_q = g2_uncompress(&lines[7]).expect("[b]Q");
+    let ab_sum_q = g2_uncompress(&lines[8]).expect("[a+b]Q");
+    let ab_prod_q = g2_uncompress(&lines[9]).expect("[a*b]Q");
+
+    // Identity 1: e([a]P, Q) == e(P, [a]Q)
+    let lhs = miller_loop(&a_p, &q);
+    let rhs = miller_loop(&p, &a_q);
+    assert!(final_verify(&lhs, &rhs), "e([a]P, Q) != e(P, [a]Q)");
+
+    // Identity 2: e([a]P, [b]Q) == e([b]P, [a]Q)
+    let lhs = miller_loop(&a_p, &b_q);
+    let rhs = miller_loop(&b_p, &a_q);
+    assert!(final_verify(&lhs, &rhs), "e([a]P, [b]Q) != e([b]P, [a]Q)");
+
+    // Identity 3: e([a]P, [b]Q) == e([a*b]P, Q)
+    let lhs = miller_loop(&a_p, &b_q);
+    let rhs = miller_loop(&ab_prod_p, &q);
+    assert!(final_verify(&lhs, &rhs), "e([a]P, [b]Q) != e([a*b]P, Q)");
+
+    // Identity 4: e([a]P, Q) * e([b]P, Q) == e([a+b]P, Q)
+    let ml_a = miller_loop(&a_p, &q);
+    let ml_b = miller_loop(&b_p, &q);
+    let lhs = mul_ml_result(&ml_a, &ml_b);
+    let rhs = miller_loop(&ab_sum_p, &q);
+    assert!(final_verify(&lhs, &rhs), "e([a]P,Q)*e([b]P,Q) != e([a+b]P,Q)");
+
+    // Identity 5: e([a]P, [b]Q) == e(P, [a*b]Q)
+    let lhs = miller_loop(&a_p, &b_q);
+    let rhs = miller_loop(&p, &ab_prod_q);
+    assert!(final_verify(&lhs, &rhs), "e([a]P, [b]Q) != e(P, [a*b]Q)");
+
+    // Identity 6: e(P, [a]Q) * e(P, [b]Q) == e(P, [a+b]Q)
+    let ml_a = miller_loop(&p, &a_q);
+    let ml_b = miller_loop(&p, &b_q);
+    let lhs = mul_ml_result(&ml_a, &ml_b);
+    let rhs = miller_loop(&p, &ab_sum_q);
+    assert!(final_verify(&lhs, &rhs), "e(P,[a]Q)*e(P,[b]Q) != e(P,[a+b]Q)");
+}
+
+#[test]
+fn bls_serde_rejects_invalid_points() {
+    let lines = read_hex_lines(&bls_vector_dir().join("serde_test_vectors"));
+    assert_eq!(lines.len(), 8);
+
+    // Line 2 (idx 1): G1 compressed, not on curve
+    assert!(g1_uncompress(&lines[1]).is_err(), "G1 compressed not-on-curve should fail");
+
+    // Line 3 (idx 2): G1 compressed, not in subgroup
+    assert!(g1_uncompress(&lines[2]).is_err(), "G1 compressed not-in-group should fail");
+
+    // Line 6 (idx 5): G2 compressed, not on curve
+    assert!(g2_uncompress(&lines[5]).is_err(), "G2 compressed not-on-curve should fail");
+
+    // Line 7 (idx 6): G2 compressed, not in subgroup
+    assert!(g2_uncompress(&lines[6]).is_err(), "G2 compressed not-in-group should fail");
+}
+
+#[test]
+fn bls_sig_aug_pairing_check() {
+    let lines = read_hex_lines(&bls_vector_dir().join("bls_sig_aug_test_vectors"));
+    assert_eq!(lines.len(), 2);
+
+    let sig = g1_uncompress(&lines[0]).expect("sig");
+    let pk = g2_uncompress(&lines[1]).expect("pk");
+
+    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    let aug = b"Random value for test aug. ";
+    let msg = b"blst is such a blast";
+    let mut full_msg = Vec::with_capacity(aug.len() + msg.len());
+    full_msg.extend_from_slice(aug);
+    full_msg.extend_from_slice(msg);
+
+    let hashed_msg = g1_hash_to_group(&full_msg, dst).expect("hash to G1");
+    let lhs = miller_loop(&sig, &bls12_381::g2_generator());
+    let rhs = miller_loop(&hashed_msg, &pk);
+    assert!(final_verify(&lhs, &rhs), "BLS sig aug pairing check failed");
+}
+
+#[test]
+fn bls_hash_to_curve_large_dst() {
+    let lines = read_hex_lines(&bls_vector_dir().join("h2c_large_dst"));
+    assert_eq!(lines.len(), 3);
+
+    let msg = &lines[0];
+    let large_dst = &lines[1];
+    let expected = g1_uncompress(&lines[2]).expect("expected G1 output");
+
+    // Large DST (> 255 bytes) triggers hash-to-curve internal DST pre-hashing.
+    let result = g1_hash_to_group(msg, large_dst).expect("hash to G1 with large DST");
+    assert!(g1_equal(&result, &expected), "hash-to-curve large DST mismatch");
 }
 
 #[test]

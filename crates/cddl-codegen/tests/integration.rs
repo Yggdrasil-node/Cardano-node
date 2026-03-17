@@ -1,6 +1,6 @@
 use yggdrasil_cddl_codegen::{
     FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr,
-    generate_module, parse_schema,
+    generate_module, generate_module_with_codecs, parse_schema,
 };
 
 #[test]
@@ -323,4 +323,183 @@ fn parses_shelley_fixture_tagged_and_choice() {
     assert_module_contains(&generated, "Reg {");
     assert_module_contains(&generated, "Dereg {");
     assert_module_contains(&generated, "Delegate {");
+}
+
+// ===========================================================================
+// CBOR codec generation
+// ===========================================================================
+
+#[test]
+fn codec_gen_array_struct() {
+    let schema = "input = [id: hash32, index: uint .size 2]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // CborEncode
+    assert_module_contains(&generated, "impl CborEncode for Input {");
+    assert_module_contains(&generated, "enc.array(2)");
+    assert_module_contains(&generated, "self.id.encode_cbor(enc)");
+    assert_module_contains(&generated, "enc.unsigned(self.index as u64)");
+
+    // CborDecode
+    assert_module_contains(&generated, "impl CborDecode for Input {");
+    assert_module_contains(&generated, "let _len = dec.array()?");
+    assert_module_contains(&generated, "let id = Hash32::decode_cbor(dec)?");
+    assert_module_contains(&generated, "let index = dec.unsigned()? as u16");
+    assert_module_contains(&generated, "Ok(Self {");
+}
+
+#[test]
+fn codec_gen_map_with_integer_keys() {
+    let schema = "body = {\n  0: [* uint],\n  1: [* bytes],\n  2: uint,\n}\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // CborEncode
+    assert_module_contains(&generated, "impl CborEncode for Body {");
+    assert_module_contains(&generated, "enc.map(3)");
+    assert_module_contains(&generated, "enc.unsigned(0)");
+    assert_module_contains(&generated, "enc.unsigned(1)");
+    assert_module_contains(&generated, "enc.unsigned(2)");
+
+    // CborDecode
+    assert_module_contains(&generated, "impl CborDecode for Body {");
+    assert_module_contains(&generated, "let map_len = dec.map()?");
+    assert_module_contains(&generated, "let key = dec.unsigned()?");
+    assert_module_contains(&generated, "match key {");
+    assert_module_contains(&generated, "0 => {");
+    assert_module_contains(&generated, "1 => {");
+    assert_module_contains(&generated, "2 => {");
+    assert_module_contains(&generated, "_ => { dec.skip()?; }");
+}
+
+#[test]
+fn codec_gen_map_with_optional_fields() {
+    let schema = "tx = {\n  0: uint,\n  1: bytes,\n  ? 2: uint,\n}\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // Encode: conditional count and optional field encoding.
+    assert_module_contains(&generated, "let mut count: u64 = 2");
+    assert_module_contains(&generated, "if self.field_2.is_some() { count += 1; }");
+    assert_module_contains(&generated, "if let Some(ref val) = self.field_2 {");
+    assert_module_contains(&generated, "enc.unsigned(2)");
+
+    // Decode: optional fields are None when missing.
+    assert_module_contains(&generated, "let mut field_2: Option<u64> = None");
+    assert_module_contains(&generated, "field_2,");
+}
+
+#[test]
+fn codec_gen_map_with_string_keys() {
+    let schema = "header = { slot: uint, issuer: bytes }\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // CborEncode
+    assert_module_contains(&generated, "impl CborEncode for Header {");
+    assert_module_contains(&generated, "enc.text(\"slot\")");
+    assert_module_contains(&generated, "enc.text(\"issuer\")");
+
+    // CborDecode
+    assert_module_contains(&generated, "let key = dec.text()?");
+    assert_module_contains(&generated, "\"slot\" => {");
+    assert_module_contains(&generated, "\"issuer\" => {");
+}
+
+#[test]
+fn codec_gen_group_choice() {
+    let schema = "cert = [reg: uint, cred: bytes] // [dereg: uint, cred: bytes]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // CborEncode
+    assert_module_contains(&generated, "impl CborEncode for Cert {");
+    assert_module_contains(&generated, "match self {");
+    assert_module_contains(&generated, "Self::Reg { reg, cred } => {");
+    assert_module_contains(&generated, "enc.array(2)");
+
+    // CborDecode
+    assert_module_contains(&generated, "impl CborDecode for Cert {");
+    assert_module_contains(&generated, "let len = dec.array()?");
+}
+
+#[test]
+fn codec_gen_alias_no_impl() {
+    let schema = "coin = uint\nhash = bytes .size 32\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // Aliases should NOT get CborEncode/CborDecode impls.
+    assert!(
+        !generated.source.contains("impl CborEncode for Coin"),
+        "alias should not generate codec impl"
+    );
+    assert!(
+        !generated.source.contains("impl CborDecode for Hash"),
+        "alias should not generate codec impl"
+    );
+}
+
+#[test]
+fn codec_gen_tagged_type_in_array() {
+    let schema = "tagged = [val: #6.258([* uint])]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // Encode should emit tag then inner array.
+    assert_module_contains(&generated, "enc.tag(258)");
+    // Decode should consume tag.
+    assert_module_contains(&generated, "let t = dec.tag()?");
+}
+
+#[test]
+fn codec_gen_var_array_in_map() {
+    let schema = "body = { 0: [* uint] }\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // Encode: array of items inside map.
+    assert_module_contains(&generated, "enc.array(self.field_0.len() as u64)");
+    assert_module_contains(&generated, "for item in &self.field_0 {");
+
+    // Decode: array inside map key dispatch.
+    assert_module_contains(&generated, "let count = dec.array()?");
+    assert_module_contains(&generated, "v.push(dec.unsigned()?)");
+}
+
+#[test]
+fn codec_gen_shelley_fixture_transaction_body() {
+    let fixture = std::fs::read_to_string("../../specs/mini-ledger.cddl")
+        .expect("pinned Shelley fixture should exist");
+    let parsed = parse_schema(&fixture).expect("fixture should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // TransactionBody should get integer-keyed map codec.
+    assert_module_contains(&generated, "impl CborEncode for TransactionBody {");
+    assert_module_contains(&generated, "impl CborDecode for TransactionBody {");
+
+    // TransactionInput should get array codec.
+    assert_module_contains(&generated, "impl CborEncode for TransactionInput {");
+    assert_module_contains(&generated, "impl CborDecode for TransactionInput {");
+
+    // TransactionOutput should get array codec.
+    assert_module_contains(&generated, "impl CborEncode for TransactionOutput {");
+    assert_module_contains(&generated, "impl CborDecode for TransactionOutput {");
+
+    // Certificate should get group-choice codec.
+    assert_module_contains(&generated, "impl CborEncode for Certificate {");
+    assert_module_contains(&generated, "impl CborDecode for Certificate {");
+}
+
+#[test]
+fn codec_gen_fixed_bytes_decode() {
+    let schema = "key = [vkey: bytes .size 32, sig: bytes .size 64]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // Fixed bytes decode should use try_into with error.
+    assert_module_contains(&generated, "let b = dec.bytes()?");
+    assert_module_contains(&generated, "try_into().map_err");
+    assert_module_contains(&generated, "LedgerError::CborInvalidLength");
 }

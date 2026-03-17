@@ -421,6 +421,9 @@ impl<'a> FlatDecoder<'a> {
                 self.build_applied_type(inner_tag)
             }
             8 => Ok(Type::Data),
+            9 => Ok(Type::Bls12_381_G1_Element),
+            10 => Ok(Type::Bls12_381_G2_Element),
+            11 => Ok(Type::Bls12_381_MlResult),
             _ => Err(MachineError::FlatDecodeError(format!(
                 "unknown type tag {first_tag}"
             ))),
@@ -537,6 +540,21 @@ impl<'a> FlatDecoder<'a> {
             Type::Data => {
                 let data = self.decode_plutus_data()?;
                 Ok(Constant::Data(data))
+            }
+            Type::Bls12_381_G1_Element => {
+                let bs = self.read_bytestring()?;
+                let elem = yggdrasil_crypto::bls12_381::g1_uncompress(&bs)
+                    .map_err(|e| MachineError::FlatDecodeError(format!("invalid G1 element: {e}")))?;
+                Ok(Constant::Bls12_381_G1_Element(elem))
+            }
+            Type::Bls12_381_G2_Element => {
+                let bs = self.read_bytestring()?;
+                let elem = yggdrasil_crypto::bls12_381::g2_uncompress(&bs)
+                    .map_err(|e| MachineError::FlatDecodeError(format!("invalid G2 element: {e}")))?;
+                Ok(Constant::Bls12_381_G2_Element(elem))
+            }
+            Type::Bls12_381_MlResult => {
+                Err(MachineError::FlatDecodeError("MlResult cannot appear in Flat-encoded programs".into()))
             }
         }
     }

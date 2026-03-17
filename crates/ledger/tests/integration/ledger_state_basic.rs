@@ -14,6 +14,7 @@ pub(super) fn make_shelley_block_with_txs(
             yggdrasil_ledger::Tx {
                 id: TxId(id_hash.0),
                 body: raw,
+                witnesses: None,
             }
         })
         .collect();

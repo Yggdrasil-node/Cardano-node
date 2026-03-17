@@ -23,4 +23,5 @@ Keep modules in this folder focused on a single era family or ledger-state subdo
 - Formal ledger rules: <https://github.com/IntersectMBO/formal-ledger-specifications>
 
 ## Current Phase
-- The integration test crate is organized into focused modules for core CBOR, Shelley, Allegra/Mary, Alonzo, Byron, Babbage, Conway, Praos block envelopes, governance updates, Plutus/script codecs, multi-era UTxO behavior, and ledger-state subdomains.
+- The integration test crate is organized into focused modules for core CBOR, Shelley, Allegra/Mary, Alonzo, Byron, Babbage, Conway, Praos block envelopes, governance updates, Plutus/script codecs, multi-era UTxO behavior, ledger-state subdomains, and witness validation.
+- `witness_validation.rs`: 12 tests covering VKey witness sufficiency (accept valid, reject missing/wrong, skip when absent, reject empty set), Ed25519 signature verification (reject forged signature, reject signature on wrong body), and native script evaluation through `apply_block()` (ScriptPubkey accept, InvalidBefore/InvalidHereafter timelock rejection, timelock in-range accept, ScriptAll multisig accept and reject with missing key). All tests use real Ed25519 signing via `yggdrasil_crypto::ed25519::SigningKey`.

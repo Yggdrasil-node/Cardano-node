@@ -2932,6 +2932,7 @@ fn apply_nonce_evolution_byron_is_no_op() {
             chain_difficulty: 0,
             prev_hash: [0; 32],
             raw_header: vec![],
+            transactions: vec![],
         },
         era_tag: 1,
     };
@@ -3046,6 +3047,7 @@ fn chain_entry_from_byron_returns_some() {
             chain_difficulty: 42,
             prev_hash: [0x11; 32],
             raw_header: vec![0xCC],
+            transactions: vec![],
         },
         era_tag: 1,
     };
@@ -3278,6 +3280,7 @@ fn track_chain_state_includes_byron_blocks() {
                 chain_difficulty: 1,
                 prev_hash: [0; 32],
                 raw_header: vec![0xDD],
+                transactions: vec![],
             },
             era_tag: 1,
         },

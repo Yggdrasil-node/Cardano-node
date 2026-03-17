@@ -43,6 +43,15 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
   - Response: `s = c * x + k mod l` using Dalek scalar arithmetic (matches `sc25519_muladd`).
   - Standard proof layout: Gamma(32) || challenge(16) || response(32) = 80 bytes.
   - Batchcompat proof layout: Gamma(32) || kB(32) || kH(32) || response(32) = 128 bytes.
-- Zeroize hardening applied: `VrfSecretKey` derives `ZeroizeOnDrop`; secret scalar, nonce prefix, and nonce temporaries are zeroized in `prove()`, `prove_batchcompat()`, and `derive_secret_scalar_and_nonce()`.
+- BLS12-381 elliptic curve operations implemented in `bls12_381.rs` for PlutusV3/CIP-0381:
+  - Opaque wrappers: `G1Element`, `G2Element`, `MlResult` (all with `PartialEq`).
+  - G1/G2: add, neg, scalar_mul, equal, compress/uncompress, hash_to_group, identity, generator.
+  - Pairing: `miller_loop`, `mul_ml_result`, `final_verify`.
+  - Hash-to-curve uses `sha2_09::Sha256` (renamed sha2 0.9 dep for digest 0.9 compatibility with `bls12_381` crate).
+  - 12 unit tests + 5 upstream vector integration tests (ec_operations, pairing, serde, sig_aug, h2c_large_dst).
+- Zeroize hardening applied across all secret-bearing types:
+  - `VrfSecretKey` derives `ZeroizeOnDrop`; secret scalar, nonce prefix, and nonce temporaries are zeroized in `prove()`, `prove_batchcompat()`, and `derive_secret_scalar_and_nonce()`.
+  - `ed25519::SigningKey` derives `Zeroize + ZeroizeOnDrop`.
+  - `kes::KesSigningKey` and `kes::SimpleKesSigningKey` have manual `Zeroize` impl + `Drop` calling `zeroize()`.
 - Tampering rejection tests cover bit-flips across all proof components for both standard and batchcompat formats.
-- Next priorities: cddl-codegen expansion, network mini-protocol groundwork.
+- Next priorities: ledger type expansion, multi-era CBOR round-trip testing.

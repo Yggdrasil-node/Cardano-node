@@ -1,6 +1,7 @@
 use crate::{CryptoError, Signature, SigningKey, VerificationKey};
 use std::fmt;
 use subtle::ConstantTimeEq;
+use zeroize::Zeroize;
 
 /// Serialized size of the single-period KES signing key.
 pub const KES_SIGNING_KEY_SIZE: usize = 32;
@@ -25,8 +26,22 @@ pub struct KesPeriod(pub u32);
 ///
 /// This is currently aligned with upstream `SingleKES Ed25519DSIGN` behavior:
 /// the seed serialisation matches Ed25519 and only period `0` is valid.
+///
+/// Secret key material is zeroized on drop.
 #[derive(Clone)]
 pub struct KesSigningKey(pub [u8; KES_SIGNING_KEY_SIZE]);
+
+impl Zeroize for KesSigningKey {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl Drop for KesSigningKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
 
 /// A byte-backed single-period KES verification key.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,8 +62,24 @@ pub struct CompactKesSignature(pub [u8; COMPACT_KES_SIGNATURE_SIZE]);
 ///
 /// The key stores one 32-byte seed per period and signs by selecting the key
 /// corresponding to the requested period index.
+///
+/// Secret key material is zeroized on drop.
 #[derive(Clone, Eq, PartialEq)]
 pub struct SimpleKesSigningKey(pub Vec<KesSigningKey>);
+
+impl Zeroize for SimpleKesSigningKey {
+    fn zeroize(&mut self) {
+        for key in &mut self.0 {
+            key.zeroize();
+        }
+    }
+}
+
+impl Drop for SimpleKesSigningKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
 
 /// A byte-backed multi-period verification key for a `SimpleKES`-style baseline.
 #[derive(Clone, Debug, Eq, PartialEq)]

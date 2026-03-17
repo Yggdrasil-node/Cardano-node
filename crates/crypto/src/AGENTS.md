@@ -24,3 +24,5 @@ This directory is for pure Rust cryptographic implementation code and protocol-f
 - Preserve upstream-compatible VRF and KES behavior while avoiding any hidden FFI dependency.
 - `blake2b.rs`: `hash_bytes` (512-bit), `hash_bytes_256` (256-bit), `hash_bytes_224` (224-bit, used for credential/script hashes).
 - `secp256k1.rs`: Pure-Rust ECDSA and Schnorr (BIP-340) signature verification via `k256`. ECDSA uses `PrehashVerifier` (33-byte SEC1 pubkey, 32-byte digest, 64-byte sig). Schnorr uses 32-byte x-only pubkey, arbitrary-length message, 64-byte sig. Used by PlutusV2 builtins.
+- `bls12_381.rs`: BLS12-381 curve operations for PlutusV3/CIP-0381. Opaque wrappers `G1Element`, `G2Element`, `MlResult`. All 17 Plutus builtins: G1/G2 add/neg/scalar_mul/equal/compress/uncompress/hash_to_group, miller_loop, mul_ml_result, final_verify. Hash-to-curve uses renamed `sha2_09` dep for digest 0.9 compat. 12 unit tests + 5 upstream vector integration tests.
+- Zeroize: `ed25519::SigningKey` derives `Zeroize + ZeroizeOnDrop`. `kes::KesSigningKey` and `kes::SimpleKesSigningKey` have manual `Zeroize + Drop`.

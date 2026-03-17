@@ -134,6 +134,23 @@ pub enum LedgerError {
     #[error("native script not satisfied: script hash {hash:02x?}")]
     NativeScriptFailed { hash: [u8; 28] },
 
+    // -- Plutus script validation errors ------------------------------------
+
+    #[error("Plutus script evaluation failed: script hash {hash:02x?}: {reason}")]
+    PlutusScriptFailed { hash: [u8; 28], reason: String },
+
+    #[error("Plutus script not found for script hash {hash:02x?}")]
+    PlutusScriptNotFound { hash: [u8; 28] },
+
+    #[error("no matching redeemer for script hash {hash:02x?} (purpose {purpose})")]
+    MissingRedeemer { hash: [u8; 28], purpose: String },
+
+    #[error("datum not found for spending input (tx {tx_id:02x?} index {index})")]
+    MissingDatum { tx_id: [u8; 32], index: u64 },
+
+    #[error("Plutus script decode failed for script hash {hash:02x?}: {reason}")]
+    PlutusScriptDecodeError { hash: [u8; 28], reason: String },
+
     // -- Collateral validation errors ---------------------------------------
 
     #[error("no collateral inputs in script transaction")]

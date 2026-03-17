@@ -27,4 +27,10 @@ pub enum CryptoError {
     InvalidKey(String),
     #[error("invalid signature format: {0}")]
     SignatureFormat(String),
+    #[error("invalid elliptic curve point encoding")]
+    InvalidPoint,
+    #[error("invalid input length for curve operation")]
+    InvalidLength,
+    #[error("invalid or empty domain separation tag")]
+    InvalidDomain,
 }

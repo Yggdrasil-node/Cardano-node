@@ -1,7 +1,8 @@
 use yggdrasil_ledger::{
 	Address, AllegraTxBody, AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Anchor,
 	BabbageBlock, BabbageTxBody, BabbageTxOut, BaseAddress, Block, BlockHeader, BlockNo,
-	BootstrapWitness, ByronBlock, CborDecode, CborEncode, CommitteeAuthorization,
+	BootstrapWitness, ByronBlock, ByronTx, ByronTxAux, ByronTxIn, ByronTxOut, ByronTxWitness,
+	CborDecode, CborEncode, CommitteeAuthorization,
 	Constitution, ConwayBlock, ConwayTxBody, DCert, DRep, DatumOption, Decoder, Encoder,
 	EnterpriseAddress, Era, EpochNo, ExUnits, GovAction, GovActionId, HeaderHash, LedgerError,
 	LedgerState, LedgerStateCheckpoint, MaryTxBody, MaryTxOut, MultiEraSubmittedTx, MultiEraTxOut, MultiEraUtxo,
@@ -12,7 +13,7 @@ use yggdrasil_ledger::{
 	ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness,
 	ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value,
 	Vote, Voter, VotingProcedure, VotingProcedures,
-	BYRON_SLOTS_PER_EPOCH, compute_tx_id,
+	BYRON_SLOTS_PER_EPOCH, compute_tx_id, native_script_hash, vkey_hash,
 };
 
 mod core_cbor;
@@ -34,3 +35,4 @@ mod plutus_scripts;
 mod shelley;
 mod txbody_keys;
 mod types_and_certs;
+mod witness_validation;

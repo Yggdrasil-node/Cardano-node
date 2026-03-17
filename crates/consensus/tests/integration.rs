@@ -110,8 +110,8 @@ fn is_new_epoch_transitions() {
 
 #[test]
 fn computes_nonzero_threshold() {
-    let threshold = leadership_threshold(ActiveSlotCoeff(0.05), 0.7)
-        .expect("active slot coefficient within bounds should compute a threshold");
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
+    let threshold = leadership_threshold(&asc, 0.7);
     assert!(threshold > 0.0);
     assert!(threshold < 1.0);
 }
@@ -119,29 +119,22 @@ fn computes_nonzero_threshold() {
 #[test]
 fn full_stake_equals_active_slot_coeff() {
     // With sigma = 1.0 the threshold should be exactly f.
-    let f = 0.05;
-    let threshold = leadership_threshold(ActiveSlotCoeff(f), 1.0)
-        .expect("valid coefficient");
-    assert!((threshold - f).abs() < 1e-10);
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
+    let threshold = leadership_threshold(&asc, 1.0);
+    assert!((threshold - 0.05).abs() < 1e-10);
 }
 
 #[test]
 fn zero_stake_yields_zero_threshold() {
-    let threshold = leadership_threshold(ActiveSlotCoeff(0.05), 0.0)
-        .expect("valid coefficient");
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
+    let threshold = leadership_threshold(&asc, 0.0);
     assert!(threshold.abs() < 1e-15);
 }
 
 #[test]
 fn rejects_invalid_active_slot_coeff() {
-    assert_eq!(
-        leadership_threshold(ActiveSlotCoeff(-0.1), 0.5),
-        Err(ConsensusError::InvalidActiveSlotCoeff)
-    );
-    assert_eq!(
-        leadership_threshold(ActiveSlotCoeff(1.5), 0.5),
-        Err(ConsensusError::InvalidActiveSlotCoeff)
-    );
+    assert!(ActiveSlotCoeff::new(-0.1).is_err());
+    assert!(ActiveSlotCoeff::new(1.5).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -196,21 +189,23 @@ fn vrf_input_neutral_nonce_has_no_nonce_bytes() {
 
 #[test]
 fn check_leader_value_all_zeros_output_is_leader() {
-    // An all-zeros VRF output maps to p ≈ 0 which is below any positive
+    // An all-zeros VRF output maps to p = 0 which is below any positive
     // threshold, so it should always be a leader.
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
     let output = VrfOutput::from_bytes([0u8; 64]);
-    let result = check_leader_value(&output, 1.0, ActiveSlotCoeff(0.05))
-        .expect("valid coefficient");
+    let result = check_leader_value(&output, 1, 1, &asc)
+        .expect("valid");
     assert!(result, "all-zeros output should be below any positive threshold");
 }
 
 #[test]
 fn check_leader_value_all_ones_output_is_not_leader() {
-    // An all-FF VRF output maps to p ≈ 1 which exceeds the threshold for
+    // An all-FF VRF output maps to p ≈ max which exceeds the threshold for
     // any stake fraction less than 1.
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
     let output = VrfOutput::from_bytes([0xFF; 64]);
-    let result = check_leader_value(&output, 0.01, ActiveSlotCoeff(0.05))
-        .expect("valid coefficient");
+    let result = check_leader_value(&output, 1, 100, &asc)
+        .expect("valid");
     assert!(!result, "all-ones output should exceed threshold for small stake");
 }
 
@@ -226,15 +221,14 @@ fn check_is_leader_round_trip() {
     let slot = SlotNo(100);
     let epoch_nonce = Nonce::Hash([0xAA; 32]);
     // Use full stake and high active slot coefficient to guarantee leadership.
-    let asc = ActiveSlotCoeff(1.0);
-    let sigma = 1.0;
+    let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let result = check_is_leader(&sk, slot, epoch_nonce, sigma, asc)
+    let result = check_is_leader(&sk, slot, epoch_nonce, 1, 1, &asc)
         .expect("should not error with valid parameters");
     let (_output, proof_bytes) = result.expect("with sigma=1 and f=1, should always be leader");
 
     // Verify the proof.
-    let verified = verify_leader_proof(&vk, slot, epoch_nonce, &proof_bytes, sigma, asc)
+    let verified = verify_leader_proof(&vk, slot, epoch_nonce, &proof_bytes, 1, 1, &asc)
         .expect("verification should succeed");
     assert!(verified, "valid proof should pass leader threshold");
 }
@@ -246,15 +240,14 @@ fn verify_leader_proof_rejects_wrong_slot() {
     let vk = sk.verification_key();
     let slot = SlotNo(50);
     let epoch_nonce = Nonce::Hash([0xCC; 32]);
-    let asc = ActiveSlotCoeff(1.0);
-    let sigma = 1.0;
+    let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let (_, proof_bytes) = check_is_leader(&sk, slot, epoch_nonce, sigma, asc)
+    let (_, proof_bytes) = check_is_leader(&sk, slot, epoch_nonce, 1, 1, &asc)
         .expect("valid")
         .expect("leader with f=1,σ=1");
 
     // Wrong slot should fail VRF verification.
-    let result = verify_leader_proof(&vk, SlotNo(51), epoch_nonce, &proof_bytes, sigma, asc);
+    let result = verify_leader_proof(&vk, SlotNo(51), epoch_nonce, &proof_bytes, 1, 1, &asc);
     assert!(result.is_err(), "proof computed for slot 50 should not verify at slot 51");
 }
 
@@ -266,14 +259,13 @@ fn verify_leader_proof_rejects_wrong_key() {
     let vk_b = VrfSecretKey::from_seed(seed_b).verification_key();
     let slot = SlotNo(10);
     let epoch_nonce = Nonce::Neutral;
-    let asc = ActiveSlotCoeff(1.0);
-    let sigma = 1.0;
+    let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let (_, proof_bytes) = check_is_leader(&sk_a, slot, epoch_nonce, sigma, asc)
+    let (_, proof_bytes) = check_is_leader(&sk_a, slot, epoch_nonce, 1, 1, &asc)
         .expect("valid")
         .expect("leader");
 
-    let result = verify_leader_proof(&vk_b, slot, epoch_nonce, &proof_bytes, sigma, asc);
+    let result = verify_leader_proof(&vk_b, slot, epoch_nonce, &proof_bytes, 1, 1, &asc);
     assert!(result.is_err(), "proof from key A should not verify with key B");
 }
 
@@ -283,10 +275,9 @@ fn verify_leader_proof_rejects_truncated_proof() {
     let vk = VrfSecretKey::from_seed(seed).verification_key();
     let slot = SlotNo(1);
     let epoch_nonce = Nonce::Neutral;
-    let asc = ActiveSlotCoeff(1.0);
-    let sigma = 1.0;
+    let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let result = verify_leader_proof(&vk, slot, epoch_nonce, &[0u8; 10], sigma, asc);
+    let result = verify_leader_proof(&vk, slot, epoch_nonce, &[0u8; 10], 1, 1, &asc);
     assert_eq!(result, Err(ConsensusError::InvalidVrfProof));
 }
 
@@ -920,14 +911,14 @@ fn mainnet_security_param() {
 /// Mainnet active slot coefficient is 1/20 = 0.05.
 #[test]
 fn mainnet_active_slot_coeff() {
-    let f = ActiveSlotCoeff(0.05);
+    let f = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
 
     // With full stake, threshold = f.
-    let t_full = leadership_threshold(f, 1.0).expect("valid");
+    let t_full = leadership_threshold(&f, 1.0);
     assert!((t_full - 0.05).abs() < 1e-10);
 
     // With half stake, threshold = 1 - (1 - 0.05)^0.5 ≈ 0.02532..
-    let t_half = leadership_threshold(f, 0.5).expect("valid");
+    let t_half = leadership_threshold(&f, 0.5);
     let expected = 1.0 - (0.95_f64).powf(0.5);
     assert!((t_half - expected).abs() < 1e-10);
 }

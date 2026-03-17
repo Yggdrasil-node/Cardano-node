@@ -13,7 +13,7 @@ pub use alonzo::{AlonzoBlock, AlonzoTxBody, AlonzoTxOut, ExUnits, Redeemer};
 pub use babbage::BABBAGE_NAME;
 pub use babbage::{BabbageBlock, BabbageTxBody, BabbageTxOut, DatumOption};
 pub use byron::BYRON_NAME;
-pub use byron::{ByronBlock, BYRON_SLOTS_PER_EPOCH};
+pub use byron::{ByronBlock, ByronTx, ByronTxAux, ByronTxIn, ByronTxOut, ByronTxWitness, BYRON_SLOTS_PER_EPOCH};
 pub use conway::CONWAY_NAME;
 pub use conway::{
     Constitution, ConwayBlock, ConwayTxBody, GovAction, GovActionId, ProposalProcedure, Vote,

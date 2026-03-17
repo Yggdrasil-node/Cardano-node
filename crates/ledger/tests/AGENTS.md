@@ -26,3 +26,6 @@ Keep tests in this directory close to ledger rules and era-specific invariants.
 ## Current Phase
 - Tests in this directory protect codec round-trips, submitted-transaction handling, UTxO evolution, and era-specific block application behavior.
 - The integration test crate is now split into focused modules for Shelley, Allegra/Mary, Alonzo, Byron, Babbage, Conway, Praos block envelopes, and ledger-state subdomains.
+- Byron tests (`eras_byron.rs`): 15 tests covering EBB/MainBlock round-trips, header hash, transaction types (TxIn, TxOut, Tx, TxWitness, TxAux CBOR round-trips), transaction ID determinism, and block-with-transactions decode.
+- Golden tests (`golden.rs`): 17 tests covering construct-encode-decode round-trips for all eras (Byron TX, Shelley/Allegra/Mary/Alonzo/Babbage/Conway submitted transactions, MultiEraTxOut, MultiEraSubmittedTx, PlutusData, StakeCredential, TxId determinism).
+- Witness validation tests (`witness_validation.rs`): 10 tests covering VKey witness sufficiency (accept valid, reject missing/wrong, skip when absent, reject empty set) and native script evaluation (ScriptPubkey accept, InvalidBefore/InvalidHereafter timelock rejection, timelock in-range accept, ScriptAll multisig accept and reject).

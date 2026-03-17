@@ -20,5 +20,8 @@ Keep tests in this directory focused on deterministic parser and generator behav
 - Ledger binary support library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
 
 ## Current Phase
-- Tests in this directory protect the supported CDDL subset and deterministic Rust output generation against fixture regressions.
+- 26 integration tests in `integration.rs`:
+  - 16 parser/generator tests covering CDDL syntax subsets (aliases, arrays, maps, size constraints, var-arrays, optional fields, tags, group choices, Shelley fixture).
+  - 10 codec generation tests covering CborEncode/CborDecode impl generation for array structs, integer-keyed maps, optional map fields, string-keyed maps, group choices, aliases (no impl), tagged types, var-arrays in maps, Shelley fixture transaction body, and fixed-size bytes decode.
+- Tests protect the supported CDDL subset and deterministic Rust output generation against fixture regressions.
 - Keep coverage aligned with `specs/mini-ledger.cddl` and the supported subset documented by the crate.

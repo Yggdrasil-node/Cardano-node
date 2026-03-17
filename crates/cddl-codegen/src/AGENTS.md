@@ -24,6 +24,10 @@ Focus on small parser and generator internals that are deterministic, testable, 
 - Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>
 
 ## Current Phase
-- Parser AST uses `TypeExpr` enum (Named, Sized, VarArray, Optional) for type expressions, `FieldKey` enum (Label, Index) for map keys, and `ArrayItem` with optional names for array elements.
+- Parser AST uses `TypeExpr` enum (Named, Sized, VarArray, Optional, Tagged) for type expressions, `FieldKey` enum (Label, Index) for map keys, and `ArrayItem` with optional names for array elements.
+- Generator has two entry points: `generate_module()` (struct/enum defs only) and `generate_module_with_codecs()` (defs + CborEncode/CborDecode impls).
+- Codec generation handles: builtin primitive types (unsigned, integer, bool, bytes, text), sized types (uint .size N casts, bytes .size N try_into), variable-length arrays (array loop), CBOR tags (tag + inner), compound named types (delegate to encode_cbor/decode_cbor).
+- Map codec generation supports integer-keyed and string-keyed maps, optional fields with conditional map counts, and unknown key skipping for forward compatibility.
+- GroupChoice codec generation discriminates by array length, with first-element tag dispatch when multiple variants share the same length.
 - The supported subset is intentionally explicit and fixture-driven.
 - Expand only where pinned fixtures demonstrate a concrete need.

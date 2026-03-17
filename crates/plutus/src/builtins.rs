@@ -1,13 +1,13 @@
 //! Built-in function implementations for the UPLC evaluator.
 //!
-//! All PlutusV1 and PlutusV2 builtins are implemented. PlutusV3
-//! builtins (BLS12-381, bitwise, integer/bytestring conversion,
-//! modular exponentiation) are implemented except for BLS12-381
-//! which returns `MachineError::UnimplementedBuiltin`.
+//! All PlutusV1, PlutusV2, and PlutusV3 builtins are implemented,
+//! including BLS12-381 curve operations (CIP-0381), bitwise operations,
+//! integer/bytestring conversions, and extra hash functions.
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs>
 
 use yggdrasil_crypto::blake2b;
+use yggdrasil_crypto::bls12_381;
 use yggdrasil_crypto::secp256k1;
 use yggdrasil_ledger::cbor::{Encoder, CborEncode};
 use yggdrasil_ledger::plutus::PlutusData;
@@ -438,17 +438,100 @@ pub fn evaluate_builtin(
         }
 
         // ---------------------------------------------------------------
-        // PlutusV3 — BLS12-381, bitwise, extra hashing (not yet)
+        // PlutusV3 — BLS12-381
         // ---------------------------------------------------------------
-        Bls12_381_G1_Add | Bls12_381_G1_Neg | Bls12_381_G1_ScalarMul
-        | Bls12_381_G1_Equal | Bls12_381_G1_HashToGroup
-        | Bls12_381_G1_Compress | Bls12_381_G1_Uncompress
-        | Bls12_381_G2_Add | Bls12_381_G2_Neg | Bls12_381_G2_ScalarMul
-        | Bls12_381_G2_Equal | Bls12_381_G2_HashToGroup
-        | Bls12_381_G2_Compress | Bls12_381_G2_Uncompress
-        | Bls12_381_MillerLoop | Bls12_381_MulMlResult
-        | Bls12_381_FinalVerify => {
-            Err(MachineError::UnimplementedBuiltin(fun.name().into()))
+        Bls12_381_G1_Add => {
+            let a = get_g1(&args[0])?;
+            let b = get_g1(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(bls12_381::g1_add(a, b))))
+        }
+        Bls12_381_G1_Neg => {
+            let a = get_g1(&args[0])?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(bls12_381::g1_neg(a))))
+        }
+        Bls12_381_G1_ScalarMul => {
+            let scalar = get_int(&args[0])?;
+            let point = get_g1(&args[1])?;
+            let (magnitude, negative) = int_to_scalar_bytes(scalar);
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
+                bls12_381::g1_scalar_mul(&magnitude, negative, point),
+            )))
+        }
+        Bls12_381_G1_Equal => {
+            let a = get_g1(&args[0])?;
+            let b = get_g1(&args[1])?;
+            Ok(Value::Constant(Constant::Bool(bls12_381::g1_equal(a, b))))
+        }
+        Bls12_381_G1_HashToGroup => {
+            let msg = get_bytestring(&args[0])?;
+            let dst = get_bytestring(&args[1])?;
+            let point = bls12_381::g1_hash_to_group(msg, dst)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(point)))
+        }
+        Bls12_381_G1_Compress => {
+            let point = get_g1(&args[0])?;
+            Ok(Value::Constant(Constant::ByteString(bls12_381::g1_compress(point).to_vec())))
+        }
+        Bls12_381_G1_Uncompress => {
+            let bs = get_bytestring(&args[0])?;
+            let point = bls12_381::g1_uncompress(bs)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(point)))
+        }
+        Bls12_381_G2_Add => {
+            let a = get_g2(&args[0])?;
+            let b = get_g2(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(bls12_381::g2_add(a, b))))
+        }
+        Bls12_381_G2_Neg => {
+            let a = get_g2(&args[0])?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(bls12_381::g2_neg(a))))
+        }
+        Bls12_381_G2_ScalarMul => {
+            let scalar = get_int(&args[0])?;
+            let point = get_g2(&args[1])?;
+            let (magnitude, negative) = int_to_scalar_bytes(scalar);
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
+                bls12_381::g2_scalar_mul(&magnitude, negative, point),
+            )))
+        }
+        Bls12_381_G2_Equal => {
+            let a = get_g2(&args[0])?;
+            let b = get_g2(&args[1])?;
+            Ok(Value::Constant(Constant::Bool(bls12_381::g2_equal(a, b))))
+        }
+        Bls12_381_G2_HashToGroup => {
+            let msg = get_bytestring(&args[0])?;
+            let dst = get_bytestring(&args[1])?;
+            let point = bls12_381::g2_hash_to_group(msg, dst)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(point)))
+        }
+        Bls12_381_G2_Compress => {
+            let point = get_g2(&args[0])?;
+            Ok(Value::Constant(Constant::ByteString(bls12_381::g2_compress(point).to_vec())))
+        }
+        Bls12_381_G2_Uncompress => {
+            let bs = get_bytestring(&args[0])?;
+            let point = bls12_381::g2_uncompress(bs)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(point)))
+        }
+        Bls12_381_MillerLoop => {
+            let g1 = get_g1(&args[0])?;
+            let g2 = get_g2(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(bls12_381::miller_loop(g1, g2))))
+        }
+        Bls12_381_MulMlResult => {
+            let a = get_ml(&args[0])?;
+            let b = get_ml(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(bls12_381::mul_ml_result(a, b))))
+        }
+        Bls12_381_FinalVerify => {
+            let a = get_ml(&args[0])?;
+            let b = get_ml(&args[1])?;
+            Ok(Value::Constant(Constant::Bool(bls12_381::final_verify(a, b))))
         }
 
         Keccak_256 => {
@@ -758,6 +841,9 @@ fn constant_type_name(c: &Constant) -> String {
         Constant::ProtoList(..) => "list".into(),
         Constant::ProtoPair(..) => "pair".into(),
         Constant::Data(_) => "data".into(),
+        Constant::Bls12_381_G1_Element(_) => "bls12_381_G1_element".into(),
+        Constant::Bls12_381_G2_Element(_) => "bls12_381_G2_element".into(),
+        Constant::Bls12_381_MlResult(_) => "bls12_381_MlResult".into(),
     }
 }
 
@@ -769,6 +855,60 @@ fn data_variant_name(d: &PlutusData) -> String {
         PlutusData::Integer(..) => "Integer".into(),
         PlutusData::Bytes(..) => "Bytes".into(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// BLS12-381 helpers
+// ---------------------------------------------------------------------------
+
+fn get_g1(val: &Value) -> Result<&yggdrasil_crypto::G1Element, MachineError> {
+    match val.as_constant()? {
+        Constant::Bls12_381_G1_Element(e) => Ok(e),
+        other => Err(MachineError::TypeMismatch {
+            expected: "bls12_381_G1_element",
+            actual: constant_type_name(other),
+        }),
+    }
+}
+
+fn get_g2(val: &Value) -> Result<&yggdrasil_crypto::G2Element, MachineError> {
+    match val.as_constant()? {
+        Constant::Bls12_381_G2_Element(e) => Ok(e),
+        other => Err(MachineError::TypeMismatch {
+            expected: "bls12_381_G2_element",
+            actual: constant_type_name(other),
+        }),
+    }
+}
+
+fn get_ml(val: &Value) -> Result<&yggdrasil_crypto::MlResult, MachineError> {
+    match val.as_constant()? {
+        Constant::Bls12_381_MlResult(r) => Ok(r),
+        other => Err(MachineError::TypeMismatch {
+            expected: "bls12_381_MlResult",
+            actual: constant_type_name(other),
+        }),
+    }
+}
+
+/// Converts a Plutus integer to (magnitude_bytes, negative) for BLS scalar mul.
+fn int_to_scalar_bytes(val: i128) -> (Vec<u8>, bool) {
+    let negative = val < 0;
+    let abs = if val == i128::MIN {
+        // i128::MIN.unsigned_abs() works correctly.
+        val.unsigned_abs()
+    } else if negative {
+        (-val) as u128
+    } else {
+        val as u128
+    };
+    if abs == 0 {
+        return (vec![0], false);
+    }
+    let be_bytes = abs.to_be_bytes();
+    // Strip leading zeros.
+    let start = be_bytes.iter().position(|&b| b != 0).unwrap_or(be_bytes.len());
+    (be_bytes[start..].to_vec(), negative)
 }
 
 // ---------------------------------------------------------------------------

@@ -67,4 +67,8 @@ pub enum MachineError {
     /// Flat binary decoding error.
     #[error("flat decode: {0}")]
     FlatDecodeError(String),
+
+    /// Cryptographic operation failed (e.g. invalid BLS point).
+    #[error("crypto error: {0}")]
+    CryptoError(String),
 }

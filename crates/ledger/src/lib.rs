@@ -19,6 +19,8 @@ pub mod min_utxo;
 pub mod native_script;
 /// PlutusData AST and Script types.
 pub mod plutus;
+/// Plutus Phase-2 script validation bridge (evaluator trait + resolution).
+pub mod plutus_validation;
 /// Protocol parameters governing transaction and block validation.
 pub mod protocol_params;
 /// Epoch reward calculation implementing the Shelley reward formula.
@@ -47,7 +49,8 @@ pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 pub use eras::Era;
 pub use eras::{
     AllegraTxBody, AlonzoBlock, AlonzoTxBody, AlonzoTxOut, AssetName, BabbageBlock, BabbageTxBody, BabbageTxOut,
-    BootstrapWitness, ByronBlock, Constitution, ConwayBlock, ConwayTxBody, DatumOption, ExUnits,
+    BootstrapWitness, ByronBlock, ByronTx, ByronTxAux, ByronTxIn, ByronTxOut, ByronTxWitness,
+    Constitution, ConwayBlock, ConwayTxBody, DatumOption, ExUnits,
     GovAction, GovActionId, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId,
     PraosHeader, PraosHeaderBody, ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader,
     ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,

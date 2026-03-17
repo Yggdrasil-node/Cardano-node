@@ -2,13 +2,16 @@ use crate::CryptoError;
 use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey as DalekSigningKey, VerifyingKey};
 use std::fmt;
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// A byte-backed Ed25519 signing key.
 ///
 /// This wrapper stores the 32-byte signing seed and derives the verification key
 /// using `ed25519-dalek`, matching the usual Ed25519 seed-based API shape used by
 /// upstream Cardano components.
-#[derive(Clone)]
+///
+/// Secret key material is zeroized on drop.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SigningKey(pub [u8; 32]);
 
 /// A byte-backed Ed25519 verification key.

@@ -462,6 +462,21 @@ impl Address {
         }
     }
 
+    /// Returns the payment credential for address types that carry one.
+    ///
+    /// Base, Enterprise, and Pointer addresses carry a payment credential.
+    /// Reward addresses carry only a staking credential (returned here).
+    /// Byron addresses have no extractable credential.
+    pub fn payment_credential(&self) -> Option<&StakeCredential> {
+        match self {
+            Self::Base(b) => Some(&b.payment),
+            Self::Enterprise(e) => Some(&e.payment),
+            Self::Pointer(p) => Some(&p.payment),
+            Self::Reward(r) => Some(&r.credential),
+            Self::Byron(_) => None,
+        }
+    }
+
     /// Serializes the address to its canonical byte representation.
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {

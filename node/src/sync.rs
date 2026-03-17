@@ -184,11 +184,19 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
-        .map(|tx_body| {
+        .zip(
+            block
+                .transaction_witness_sets
+                .iter()
+                .map(Some)
+                .chain(std::iter::repeat(None)),
+        )
+        .map(|(tx_body, ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
+                witnesses: ws.map(|w| w.to_cbor_bytes()),
             }
         })
         .collect();
@@ -1495,25 +1503,39 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 /// - `slot_no`: absolute slot via `epoch * 21600 + slot_in_epoch`
 /// - `block_no`: `chain_difficulty` from consensus data
 /// - `issuer_vkey`: zeroed (Byron uses a different signature scheme)
-/// - `transactions`: empty (Byron tx decode not yet implemented)
+/// - `transactions`: decoded from block body tx_payload
 pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
     match block {
         MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley),
         MultiEraBlock::Alonzo(alonzo) => alonzo_block_to_block(alonzo),
         MultiEraBlock::Babbage(babbage) => babbage_block_to_block(babbage),
         MultiEraBlock::Conway(conway) => conway_block_to_block(conway),
-        MultiEraBlock::Byron { block: byron, .. } => Block {
-            era: Era::Byron,
-            header: BlockHeader {
-                hash: byron.header_hash(),
-                prev_hash: HeaderHash(*byron.prev_hash()),
-                slot_no: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
-                block_no: BlockNo(byron.chain_difficulty()),
-                issuer_vkey: [0u8; 32],
-            },
-            transactions: vec![],
-            raw_cbor: None,
-        },
+        MultiEraBlock::Byron { block: byron, .. } => {
+            let transactions: Vec<Tx> = byron
+                .transactions()
+                .iter()
+                .map(|tx_aux| {
+                    let raw = tx_aux.tx.to_cbor_bytes();
+                    Tx {
+                        id: compute_tx_id(&raw),
+                        body: raw,
+                        witnesses: None,
+                    }
+                })
+                .collect();
+            Block {
+                era: Era::Byron,
+                header: BlockHeader {
+                    hash: byron.header_hash(),
+                    prev_hash: HeaderHash(*byron.prev_hash()),
+                    slot_no: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
+                    block_no: BlockNo(byron.chain_difficulty()),
+                    issuer_vkey: [0u8; 32],
+                },
+                transactions,
+                raw_cbor: None,
+            }
+        }
     }
 }
 
@@ -1526,11 +1548,19 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
-        .map(|tx_body| {
+        .zip(
+            block
+                .transaction_witness_sets
+                .iter()
+                .map(Some)
+                .chain(std::iter::repeat(None)),
+        )
+        .map(|(tx_body, ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
+                witnesses: ws.map(|w| w.to_cbor_bytes()),
             }
         })
         .collect();
@@ -1558,11 +1588,19 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
-        .map(|tx_body| {
+        .zip(
+            block
+                .transaction_witness_sets
+                .iter()
+                .map(Some)
+                .chain(std::iter::repeat(None)),
+        )
+        .map(|(tx_body, ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
+                witnesses: ws.map(|w| w.to_cbor_bytes()),
             }
         })
         .collect();
@@ -1590,11 +1628,19 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
-        .map(|tx_body| {
+        .zip(
+            block
+                .transaction_witness_sets
+                .iter()
+                .map(Some)
+                .chain(std::iter::repeat(None)),
+        )
+        .map(|(tx_body, ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
+                witnesses: ws.map(|w| w.to_cbor_bytes()),
             }
         })
         .collect();
@@ -1642,8 +1688,10 @@ pub struct VerificationConfig {
 pub struct VrfVerificationParams {
     /// Epoch nonce for the current epoch.
     pub epoch_nonce: Nonce,
-    /// Relative stake (σ) of the block issuer, in the range `[0.0, 1.0]`.
-    pub sigma: f64,
+    /// Numerator of relative stake (σ) of the block issuer.
+    pub sigma_num: u64,
+    /// Denominator of relative stake (σ) of the block issuer.
+    pub sigma_den: u64,
     /// Active slot coefficient `f` from genesis.
     pub active_slot_coeff: ActiveSlotCoeff,
 }
@@ -1698,8 +1746,9 @@ pub fn verify_block_vrf(
         slot,
         params.epoch_nonce,
         leader_proof,
-        params.sigma,
-        params.active_slot_coeff,
+        params.sigma_num,
+        params.sigma_den,
+        &params.active_slot_coeff,
     )
     .map_err(SyncError::Consensus)
 }

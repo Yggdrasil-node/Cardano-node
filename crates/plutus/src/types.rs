@@ -75,6 +75,15 @@ pub enum Type {
     List(Box<Type>),
     Pair(Box<Type>, Box<Type>),
     Data,
+    /// BLS12-381 G1 group element.
+    #[allow(non_camel_case_types)]
+    Bls12_381_G1_Element,
+    /// BLS12-381 G2 group element.
+    #[allow(non_camel_case_types)]
+    Bls12_381_G2_Element,
+    /// BLS12-381 Miller loop result.
+    #[allow(non_camel_case_types)]
+    Bls12_381_MlResult,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +107,15 @@ pub enum Constant {
     ProtoPair(Type, Type, Box<Constant>, Box<Constant>),
     /// Embedded Plutus data.
     Data(PlutusData),
+    /// BLS12-381 G1 group element.
+    #[allow(non_camel_case_types)]
+    Bls12_381_G1_Element(yggdrasil_crypto::G1Element),
+    /// BLS12-381 G2 group element.
+    #[allow(non_camel_case_types)]
+    Bls12_381_G2_Element(yggdrasil_crypto::G2Element),
+    /// BLS12-381 Miller loop intermediate result.
+    #[allow(non_camel_case_types)]
+    Bls12_381_MlResult(yggdrasil_crypto::MlResult),
 }
 
 // ---------------------------------------------------------------------------

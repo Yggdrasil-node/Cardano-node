@@ -2,6 +2,8 @@
 
 /// Blake2b hashing helpers.
 pub mod blake2b;
+/// BLS12-381 elliptic curve operations for PlutusV3 builtins.
+pub mod bls12_381;
 /// Ed25519 signing and verification types.
 pub mod ed25519;
 mod error;
@@ -18,6 +20,8 @@ pub mod vrf;
 
 /// Blake2b hash output and hashing entry point.
 pub use blake2b::{Blake2b224Hash, Blake2b256Hash, Blake2bHash, hash_bytes, hash_bytes_224, hash_bytes_256};
+/// BLS12-381 opaque element types.
+pub use bls12_381::{G1Element, G2Element, MlResult};
 /// Ed25519 byte-backed key and signature types.
 pub use ed25519::{Signature, SigningKey, VerificationKey};
 /// Errors surfaced by the crypto crate.

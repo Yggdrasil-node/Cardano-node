@@ -11,6 +11,7 @@ use crate::types::{
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 fn encode_optional_epoch_no(value: Option<EpochNo>, enc: &mut Encoder) {
@@ -1855,12 +1856,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, ShelleyTxBody)> = block
+        let decoded: Vec<(crate::types::TxId, usize, ShelleyTxBody, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = ShelleyTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -1876,13 +1877,27 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
             }
+            // Witness validation: compute required VKey hashes and check
+            let mut required = HashSet::new();
+            crate::witnesses::required_vkey_hashes_from_inputs_shelley(
+                &body.inputs, &staged, &mut required,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+            }
+            validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -1915,12 +1930,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, AllegraTxBody)> = block
+        let decoded: Vec<(crate::types::TxId, usize, AllegraTxBody, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = AllegraTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -1932,13 +1947,40 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
             }
+            let mut required = HashSet::new();
+            crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+            }
+            validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // Native script validation (Allegra+)
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -1971,12 +2013,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, crate::eras::mary::MaryTxBody)> = block
+        let decoded: Vec<(crate::types::TxId, usize, crate::eras::mary::MaryTxBody, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = crate::eras::mary::MaryTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -1988,13 +2030,40 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes) in &decoded {
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Mary(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
             }
+            let mut required = HashSet::new();
+            crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+            }
+            validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // Native script validation (Mary)
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -2027,12 +2096,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, AlonzoTxBody)> = block
+        let decoded: Vec<(crate::types::TxId, usize, AlonzoTxBody, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = AlonzoTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2044,16 +2113,49 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+            let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                     .collect();
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
-                    body.collateral.as_deref(), None,
+                    body.collateral.as_deref(), total_eu.as_ref(),
                 )?;
             }
+            let mut required = HashSet::new();
+            crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+            }
+            if let Some(signers) = &body.required_signers {
+                for signer in signers {
+                    required.insert(*signer);
+                }
+            }
+            validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // Native script validation (Alonzo)
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -2086,12 +2188,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, BabbageTxBody)> = block
+        let decoded: Vec<(crate::types::TxId, usize, BabbageTxBody, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = BabbageTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2103,16 +2205,49 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+            let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
-                    body.collateral.as_deref(), None,
+                    body.collateral.as_deref(), total_eu.as_ref(),
                 )?;
             }
+            let mut required = HashSet::new();
+            crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+            }
+            if let Some(signers) = &body.required_signers {
+                for signer in signers {
+                    required.insert(*signer);
+                }
+            }
+            validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // Native script validation (Babbage)
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -2145,12 +2280,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, ConwayTxBody)> = block
+        let decoded: Vec<(crate::types::TxId, usize, ConwayTxBody, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = ConwayTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2162,16 +2297,49 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+            let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
-                    body.collateral.as_deref(), None,
+                    body.collateral.as_deref(), total_eu.as_ref(),
                 )?;
             }
+            let mut required = HashSet::new();
+            crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+            }
+            if let Some(signers) = &body.required_signers {
+                for signer in signers {
+                    required.insert(*signer);
+                }
+            }
+            validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // Native script validation (Conway)
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs, &staged, &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -2603,6 +2771,90 @@ fn sum_redeemer_ex_units(
         total.steps = total.steps.saturating_add(redeemer.ex_units.steps);
     }
     Some(total)
+}
+
+/// Extracts total redeemer execution units from raw witness bytes.
+///
+/// Returns `None` when witness bytes are absent, malformed, or carry no
+/// redeemers — matching the soft-skip semantics used elsewhere.
+fn sum_redeemer_ex_units_from_bytes(
+    witness_bytes: Option<&[u8]>,
+) -> Option<crate::eras::alonzo::ExUnits> {
+    let wb = witness_bytes?;
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb).ok()?;
+    sum_redeemer_ex_units(&ws)
+}
+
+/// Decodes a witness set from raw bytes and validates that all required
+/// VKey hashes are covered.
+///
+/// `required` is the set of 28-byte Blake2b-224 hashes that must be
+/// witnessed (spending inputs, certificates, withdrawals, required_signers).
+///
+/// `tx_body_hash` is the 32-byte Blake2b-256 hash of the serialized
+/// transaction body — the message that each VKey witness must sign.
+fn validate_witnesses_if_present(
+    witness_bytes: Option<&[u8]>,
+    required: &HashSet<[u8; 28]>,
+    tx_body_hash: &[u8; 32],
+) -> Result<(), LedgerError> {
+    let witness_bytes = match witness_bytes {
+        Some(wb) => wb,
+        None => return Ok(()),
+    };
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
+    let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
+    crate::witnesses::validate_vkey_witnesses(required, &vkey_hashes)?;
+    crate::witnesses::verify_vkey_signatures(tx_body_hash, &ws.vkey_witnesses)
+}
+
+/// Validates native scripts referenced by script-hash credentials.
+///
+/// For each required script hash, looks up the native script in the
+/// witness set, computes its hash, and evaluates it. Skips validation
+/// when witness bytes are absent (backward compatibility).
+fn validate_native_scripts_if_present(
+    witness_bytes: Option<&[u8]>,
+    required_script_hashes: &HashSet<[u8; 28]>,
+    current_slot: u64,
+) -> Result<(), LedgerError> {
+    if required_script_hashes.is_empty() {
+        return Ok(());
+    }
+    let witness_bytes = match witness_bytes {
+        Some(wb) => wb,
+        None => return Ok(()),
+    };
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
+    let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
+
+    // Build a lookup from script hash → native script
+    let mut script_map: std::collections::HashMap<[u8; 28], &crate::eras::allegra::NativeScript> =
+        std::collections::HashMap::new();
+    for ns in &ws.native_scripts {
+        let h = crate::native_script::native_script_hash(ns);
+        script_map.insert(h, ns);
+    }
+
+    let ctx = crate::native_script::NativeScriptContext {
+        vkey_hashes: &vkey_hashes,
+        current_slot,
+    };
+
+    for required_hash in required_script_hashes {
+        if let Some(script) = script_map.get(required_hash) {
+            if !crate::native_script::evaluate_native_script(script, &ctx) {
+                return Err(LedgerError::NativeScriptFailed {
+                    hash: *required_hash,
+                });
+            }
+        }
+        // When a required script is not in the native_scripts witness
+        // list, it may be a Plutus script (validated by Phase-2).
+        // For now, skip missing scripts rather than fail.
+    }
+
+    Ok(())
 }
 
 fn accumulate_multi_asset(total: &mut MultiAsset, assets: &MultiAsset) {

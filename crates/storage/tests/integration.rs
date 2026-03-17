@@ -234,6 +234,7 @@ fn cross_store_block_flow() {
         transactions: vec![Tx {
             id: TxId([0xFF; 32]),
             body: vec![0xCA, 0xFE],
+            witnesses: None,
         }],
         raw_cbor: None,
     };
@@ -581,6 +582,7 @@ fn file_cross_store_block_flow() {
         transactions: vec![Tx {
             id: TxId([0xFF; 32]),
             body: vec![0xCA, 0xFE],
+            witnesses: None,
         }],
         raw_cbor: None,
     };

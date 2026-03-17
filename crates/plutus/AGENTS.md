@@ -32,7 +32,7 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - **Flat decoder**: complete. Parses on-chain script bytes into UPLC `Program`.
 - **PlutusV1 builtins**: all 60+ implemented (integer, bytestring, string, bool, list, pair, data, crypto).
 - **PlutusV2 builtins**: secp256k1 ECDSA/Schnorr verify, SHA3-256, Keccak-256 — all implemented.
-- **PlutusV3 builtins**: RIPEMD-160, integer↔bytestring conversion, all bitwise operations, modular exponentiation — all implemented. BLS12-381 remains unimplemented.
+- **PlutusV3 builtins**: RIPEMD-160, integer↔bytestring conversion, all bitwise operations, modular exponentiation, BLS12-381 (17 builtins: G1/G2 add/neg/scalar-mul/equal/hash-to-group/compress/uncompress, miller-loop, mul-ml-result, final-verify) — all implemented.
 - **Budget tracking**: CPU/memory cost accounting with configurable `CostModel`.
 - **Dependencies**: `yggdrasil-crypto` (blake2b, ed25519, secp256k1), `yggdrasil-ledger` (CBOR, PlutusData), `sha2`, `sha3`, `ripemd`.
 
@@ -59,11 +59,13 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - **Bitwise**: andByteString, orByteString, xorByteString, complementByteString, readBit, writeBits, replicateByte, shiftByteString, rotateByteString, countSetBits, findFirstSetBit
 - **Modular arithmetic**: expModInteger
 
-### Unimplemented Builtins (return `UnimplementedBuiltin`)
-- **PlutusV3**: BLS12-381 operations (17 builtins: G1/G2 add, neg, scalar-mul, equal, hash-to-group, compress, uncompress, miller-loop, mul-ml-result, final-verify)
+### BLS12-381 Builtins (PlutusV3)
+- All 17 BLS12-381 builtins fully implemented: `Bls12_381_G1_add`, `Bls12_381_G1_neg`, `Bls12_381_G1_scalarMul`, `Bls12_381_G1_equal`, `Bls12_381_G1_hashToGroup`, `Bls12_381_G1_compress`, `Bls12_381_G1_uncompress`, and G2 equivalents, plus `Bls12_381_millerLoop`, `Bls12_381_mulMlResult`, `Bls12_381_finalVerify`.
+- `Type` and `Constant` enums extended with `Bls12_381_G1_Element`, `Bls12_381_G2_Element`, `Bls12_381_MlResult` variants.
+- Flat decoder handles tags 9/10/11 for BLS types.
+- `MachineError::CryptoError(String)` variant added for BLS operation failures.
 
 ## Next Steps
-1. Add PlutusV3 BLS12-381 builtins (dependent on crypto crate adding BLS12-381; upstream vectors already vendored).
-2. Calibrate cost model against upstream cost-model JSON.
-3. Add integration tests with on-chain script samples.
-4. Wire into ledger redeemer execution for phase-2 validation.
+1. Calibrate cost model against upstream cost-model JSON.
+2. Add integration tests with on-chain script samples.
+3. Wire into ledger redeemer execution for phase-2 validation.

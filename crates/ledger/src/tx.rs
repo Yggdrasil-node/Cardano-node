@@ -27,6 +27,13 @@ pub struct Tx {
     pub id: TxId,
     /// Opaque serialized transaction body (to be replaced by typed payload).
     pub body: Vec<u8>,
+    /// Optional serialized witness set (CBOR-encoded `ShelleyWitnessSet`).
+    ///
+    /// Populated when the block carries witness data alongside transaction
+    /// bodies (all Shelley+ eras). Used by the ledger to perform VKey
+    /// witness sufficiency validation during block application.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witnesses: Option<Vec<u8>>,
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:

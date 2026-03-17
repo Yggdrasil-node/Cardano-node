@@ -50,6 +50,224 @@ pub fn witness_vkey_hash_set(
     witnesses.iter().map(|w| vkey_hash(&w.vkey)).collect()
 }
 
+/// Verifies Ed25519 signatures in VKey witnesses against the transaction body hash.
+///
+/// Each VKey witness carries a 32-byte verification key and a 64-byte Ed25519
+/// signature. The signed message is the 32-byte Blake2b-256 hash of the
+/// serialized transaction body (i.e. the `TxId` bytes).
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxow` — signature verification.
+pub fn verify_vkey_signatures(
+    tx_body_hash: &[u8; 32],
+    witnesses: &[crate::eras::shelley::ShelleyVkeyWitness],
+) -> Result<(), LedgerError> {
+    for w in witnesses {
+        let vk = yggdrasil_crypto::ed25519::VerificationKey::from_bytes(w.vkey);
+        let sig = yggdrasil_crypto::ed25519::Signature::from_bytes(w.signature);
+        vk.verify(tx_body_hash, &sig).map_err(|_| {
+            LedgerError::InvalidVKeyWitnessSignature { hash: vkey_hash(&w.vkey) }
+        })?;
+    }
+    Ok(())
+}
+
+/// Collects the VKey hashes required to authorize a certificate.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `witsVKeyNeeded`.
+pub fn required_vkey_hashes_from_cert(
+    cert: &crate::types::DCert,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    use crate::types::DCert;
+    match cert {
+        // Shelley: unregistration requires the credential key
+        DCert::AccountUnregistration(cred)
+        | DCert::AccountUnregistrationDeposit(cred, _) => {
+            if let crate::types::StakeCredential::AddrKeyHash(h) = cred {
+                out.insert(*h);
+            }
+        }
+        // Delegation requires the delegator credential key
+        DCert::DelegationToStakePool(cred, _)
+        | DCert::DelegationToDrep(cred, _)
+        | DCert::DelegationToStakePoolAndDrep(cred, _, _) => {
+            if let crate::types::StakeCredential::AddrKeyHash(h) = cred {
+                out.insert(*h);
+            }
+        }
+        // Registration + delegation requires the credential key
+        DCert::AccountRegistrationDelegationToStakePool(cred, _, _)
+        | DCert::AccountRegistrationDelegationToDrep(cred, _, _)
+        | DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, _, _, _) => {
+            if let crate::types::StakeCredential::AddrKeyHash(h) = cred {
+                out.insert(*h);
+            }
+        }
+        // Pool registration requires the operator key
+        DCert::PoolRegistration(params) => {
+            out.insert(params.operator);
+        }
+        // Pool retirement requires the operator key
+        DCert::PoolRetirement(operator, _) => {
+            out.insert(*operator);
+        }
+        // Genesis delegation requires the genesis key hash
+        DCert::GenesisDelegation(genesis_hash, _, _) => {
+            out.insert(*genesis_hash);
+        }
+        // Committee authorization requires the cold credential key
+        DCert::CommitteeAuthorization(cold_cred, _) => {
+            if let crate::types::StakeCredential::AddrKeyHash(h) = cold_cred {
+                out.insert(*h);
+            }
+        }
+        // Committee resignation requires the cold credential key
+        DCert::CommitteeResignation(cold_cred, _) => {
+            if let crate::types::StakeCredential::AddrKeyHash(h) = cold_cred {
+                out.insert(*h);
+            }
+        }
+        // DRep registration requires the credential key
+        DCert::DrepRegistration(cred, _, _)
+        | DCert::DrepUnregistration(cred, _)
+        | DCert::DrepUpdate(cred, _) => {
+            if let crate::types::StakeCredential::AddrKeyHash(h) = cred {
+                out.insert(*h);
+            }
+        }
+        // Simple registration does not require a witness in Shelley
+        DCert::AccountRegistration(_)
+        | DCert::AccountRegistrationDeposit(_, _) => {}
+    }
+}
+
+/// Collects VKey hashes required by withdrawal reward accounts.
+pub fn required_vkey_hashes_from_withdrawals(
+    withdrawals: &std::collections::BTreeMap<crate::types::RewardAccount, u64>,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for ra in withdrawals.keys() {
+        if let crate::types::StakeCredential::AddrKeyHash(h) = &ra.credential {
+            out.insert(*h);
+        }
+    }
+}
+
+/// Collects VKey hashes from spending input payment credentials.
+///
+/// For each input, looks up the corresponding UTxO output, parses the
+/// address, and if the payment credential is a key hash, adds it to `out`.
+pub fn required_vkey_hashes_from_inputs_shelley(
+    inputs: &[crate::eras::shelley::ShelleyTxIn],
+    utxo: &crate::eras::shelley::ShelleyUtxo,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for txin in inputs {
+        if let Some(txout) = utxo.get(txin) {
+            if let Some(addr) = crate::types::Address::from_bytes(&txout.address) {
+                if let Some(crate::types::StakeCredential::AddrKeyHash(h)) = addr.payment_credential() {
+                    out.insert(*h);
+                }
+            }
+        }
+    }
+}
+
+/// Collects VKey hashes from spending input payment credentials (multi-era).
+pub fn required_vkey_hashes_from_inputs_multi_era(
+    inputs: &[crate::eras::shelley::ShelleyTxIn],
+    utxo: &crate::utxo::MultiEraUtxo,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for txin in inputs {
+        if let Some(txout) = utxo.get(txin) {
+            if let Some(addr) = crate::types::Address::from_bytes(txout.address()) {
+                if let Some(crate::types::StakeCredential::AddrKeyHash(h)) = addr.payment_credential() {
+                    out.insert(*h);
+                }
+            }
+        }
+    }
+}
+
+/// Collects required script hashes from spending input payment credentials (Shelley UTxO).
+pub fn required_script_hashes_from_inputs_shelley(
+    inputs: &[crate::eras::shelley::ShelleyTxIn],
+    utxo: &crate::eras::shelley::ShelleyUtxo,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for txin in inputs {
+        if let Some(txout) = utxo.get(txin) {
+            if let Some(addr) = crate::types::Address::from_bytes(&txout.address) {
+                if let Some(crate::types::StakeCredential::ScriptHash(h)) = addr.payment_credential() {
+                    out.insert(*h);
+                }
+            }
+        }
+    }
+}
+
+/// Collects required script hashes from spending input payment credentials (multi-era).
+pub fn required_script_hashes_from_inputs_multi_era(
+    inputs: &[crate::eras::shelley::ShelleyTxIn],
+    utxo: &crate::utxo::MultiEraUtxo,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for txin in inputs {
+        if let Some(txout) = utxo.get(txin) {
+            if let Some(addr) = crate::types::Address::from_bytes(txout.address()) {
+                if let Some(crate::types::StakeCredential::ScriptHash(h)) = addr.payment_credential() {
+                    out.insert(*h);
+                }
+            }
+        }
+    }
+}
+
+/// Collects required script hashes from certificate credentials.
+pub fn required_script_hashes_from_cert(
+    cert: &crate::types::DCert,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    use crate::types::DCert;
+    match cert {
+        DCert::AccountUnregistration(cred)
+        | DCert::AccountUnregistrationDeposit(cred, _)
+        | DCert::DelegationToStakePool(cred, _)
+        | DCert::DelegationToDrep(cred, _)
+        | DCert::DelegationToStakePoolAndDrep(cred, _, _)
+        | DCert::AccountRegistrationDelegationToStakePool(cred, _, _)
+        | DCert::AccountRegistrationDelegationToDrep(cred, _, _)
+        | DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, _, _, _)
+        | DCert::DrepRegistration(cred, _, _)
+        | DCert::DrepUnregistration(cred, _)
+        | DCert::DrepUpdate(cred, _) => {
+            if let crate::types::StakeCredential::ScriptHash(h) = cred {
+                out.insert(*h);
+            }
+        }
+        DCert::CommitteeAuthorization(cold_cred, _)
+        | DCert::CommitteeResignation(cold_cred, _) => {
+            if let crate::types::StakeCredential::ScriptHash(h) = cold_cred {
+                out.insert(*h);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Collects required script hashes from withdrawal reward accounts.
+pub fn required_script_hashes_from_withdrawals(
+    withdrawals: &std::collections::BTreeMap<crate::types::RewardAccount, u64>,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for ra in withdrawals.keys() {
+        if let crate::types::StakeCredential::ScriptHash(h) = &ra.credential {
+            out.insert(*h);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

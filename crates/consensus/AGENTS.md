@@ -30,7 +30,7 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Chain selection uses typed `BlockNo`/`SlotNo` with optional VRF tiebreaker (lower wins).
 - Praos leader election pipeline is implemented: `vrf_input` → `check_is_leader` → `verify_leader_proof`, backed by the crypto crate's standard VRF (80-byte proofs per CDDL `vrf_cert = [bytes, bytes .size 80]` and upstream `VRF StandardCrypto = PraosVRF`).
 - `Nonce` type (neutral + hash, XOR combination) lives in `yggdrasil-ledger::types`.
-- Leadership threshold uses f64 arithmetic for now; deterministic fixed-point math is a future hardening target.
+- Leadership threshold uses deterministic fixed-point BigUint arithmetic (`taylorExpCmp` + rational sigma) — matches upstream Haskell `checkLeaderNatValue`. `ActiveSlotCoeff` stores pre-computed `-ln(1-f)` as rational `(log_num, log_den)` BigUint. No floating-point in the chain-deciding path. Dependencies: `num-bigint`, `num-integer`, `num-traits`.
 - Operational certificate (`OpCert`) type and verification implemented in `opcert.rs`: cold-key signature over (hot_vkey ‖ sequence_number ‖ kes_period), KES period window checks, `kes_period_of_slot` helper.
 - Block header types (`HeaderBody`, `Header`) and full verification pipeline in `header.rs`: verify OpCert → check KES period → verify KES signature over header body. SumKES signing/verification at configurable depth (0–6+).
 - Field names aligned with CDDL: `HeaderBody` uses `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `leader_vrf_output`, `leader_vrf_proof`, `nonce_vrf_output`, `nonce_vrf_proof`, `block_body_size`, `block_body_hash`, `operational_cert`; `OpCert` uses `hot_vkey`, `sequence_number`.
