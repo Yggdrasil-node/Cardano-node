@@ -36,7 +36,7 @@ use yggdrasil_network::{
     refresh_root_peer_state_and_registry, resolve_peer_access_points,
 };
 use yggdrasil_ledger::{
-    Era, LedgerError, LedgerState, MultiEraSubmittedTx, Point, PoolRelayAccessPoint,
+    LedgerError, LedgerState, MultiEraSubmittedTx, Point, PoolRelayAccessPoint,
     SlotNo, TxId,
 };
 use yggdrasil_mempool::{
@@ -411,6 +411,7 @@ fn ledger_peer_snapshot_from_ledger_state(ledger_state: &LedgerState) -> LedgerP
 fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
     registry: &mut PeerRegistry,
     chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
+    base_ledger_state: &LedgerState,
     topology: &TopologyConfig,
     tracer: &NodeTracer,
 ) -> bool
@@ -426,7 +427,7 @@ where
     let (latest_slot, ledger_state_judgement, ledger_snapshot) = {
         let chain_db = chain_db.read().expect("chain db lock poisoned");
         let tip = chain_db.recovery().tip;
-        match recover_ledger_state_chaindb(&chain_db, LedgerState::new(Era::Byron)) {
+        match recover_ledger_state_chaindb(&chain_db, base_ledger_state.clone()) {
             Ok(recovery) => (
                 point_slot(&recovery.point).or_else(|| point_slot(&tip)),
                 LedgerStateJudgement::YoungEnough,
@@ -540,6 +541,7 @@ pub async fn run_governor_loop<I, V, L, F>(
     mut governor_state: GovernorState,
     config: RuntimeGovernorConfig,
     topology: TopologyConfig,
+    base_ledger_state: LedgerState,
     tracer: NodeTracer,
     shutdown: F,
 ) where
@@ -556,7 +558,13 @@ pub async fn run_governor_loop<I, V, L, F>(
     {
         let mut registry = peer_registry.write().expect("peer registry lock poisoned");
         root_sources.sync_registry(&mut registry);
-        refresh_ledger_peer_sources_from_chain_db(&mut registry, &chain_db, &topology, &tracer);
+        refresh_ledger_peer_sources_from_chain_db(
+            &mut registry,
+            &chain_db,
+            &base_ledger_state,
+            &topology,
+            &tracer,
+        );
     }
 
     tracer.trace_runtime(
@@ -592,7 +600,13 @@ pub async fn run_governor_loop<I, V, L, F>(
                 {
                     let mut registry = peer_registry.write().expect("peer registry lock poisoned");
                     root_sources.refresh(&mut registry, &tracer);
-                    refresh_ledger_peer_sources_from_chain_db(&mut registry, &chain_db, &topology, &tracer);
+                    refresh_ledger_peer_sources_from_chain_db(
+                        &mut registry,
+                        &chain_db,
+                        &base_ledger_state,
+                        &topology,
+                        &tracer,
+                    );
                 }
 
                 peer_manager
@@ -1117,6 +1131,47 @@ pub struct ReconnectingVerifiedSyncRequest<'a> {
     pub peer_snapshot_path: Option<PathBuf>,
 }
 
+impl<'a> ReconnectingVerifiedSyncRequest<'a> {
+    /// Construct a reconnecting verified-sync request with optional fields
+    /// initialized to their disabled defaults.
+    pub fn new(
+        node_config: &'a NodeConfig,
+        fallback_peer_addrs: &'a [SocketAddr],
+        from_point: Point,
+        base_ledger_state: LedgerState,
+        config: &'a VerifiedSyncServiceConfig,
+    ) -> Self {
+        Self {
+            node_config,
+            fallback_peer_addrs,
+            from_point,
+            base_ledger_state,
+            config,
+            nonce_state: None,
+            use_ledger_peers: None,
+            peer_snapshot_path: None,
+        }
+    }
+
+    /// Attach a nonce-evolution state to carry through the reconnecting run.
+    pub fn with_nonce_state(mut self, nonce_state: Option<NonceEvolutionState>) -> Self {
+        self.nonce_state = nonce_state;
+        self
+    }
+
+    /// Enable reconnect-time ledger-peer policy refresh.
+    pub fn with_use_ledger_peers(mut self, use_ledger_peers: Option<UseLedgerPeers>) -> Self {
+        self.use_ledger_peers = use_ledger_peers;
+        self
+    }
+
+    /// Provide an optional resolved peer snapshot file path for reconnect-time refresh.
+    pub fn with_peer_snapshot_path(mut self, peer_snapshot_path: Option<PathBuf>) -> Self {
+        self.peer_snapshot_path = peer_snapshot_path;
+        self
+    }
+}
+
 /// Request parameters for coordinated-storage reconnecting sync resumption.
 pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     /// Node-to-node bootstrap configuration.
@@ -1135,6 +1190,52 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     pub peer_snapshot_path: Option<PathBuf>,
     /// Optional metrics tracker updated during sync.
     pub metrics: Option<&'a NodeMetrics>,
+}
+
+impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
+    /// Construct a coordinated-storage resume request with optional fields
+    /// initialized to their disabled defaults.
+    pub fn new(
+        node_config: &'a NodeConfig,
+        fallback_peer_addrs: &'a [SocketAddr],
+        base_ledger_state: LedgerState,
+        config: &'a VerifiedSyncServiceConfig,
+    ) -> Self {
+        Self {
+            node_config,
+            fallback_peer_addrs,
+            base_ledger_state,
+            config,
+            nonce_state: None,
+            use_ledger_peers: None,
+            peer_snapshot_path: None,
+            metrics: None,
+        }
+    }
+
+    /// Attach a nonce-evolution state to carry through the resumed run.
+    pub fn with_nonce_state(mut self, nonce_state: Option<NonceEvolutionState>) -> Self {
+        self.nonce_state = nonce_state;
+        self
+    }
+
+    /// Enable reconnect-time ledger-peer policy refresh.
+    pub fn with_use_ledger_peers(mut self, use_ledger_peers: Option<UseLedgerPeers>) -> Self {
+        self.use_ledger_peers = use_ledger_peers;
+        self
+    }
+
+    /// Provide an optional resolved peer snapshot file path for reconnect-time refresh.
+    pub fn with_peer_snapshot_path(mut self, peer_snapshot_path: Option<PathBuf>) -> Self {
+        self.peer_snapshot_path = peer_snapshot_path;
+        self
+    }
+
+    /// Attach an optional metrics sink for runtime progress reporting.
+    pub fn with_metrics(mut self, metrics: Option<&'a NodeMetrics>) -> Self {
+        self.metrics = metrics;
+        self
+    }
 }
 
 type CheckpointTracking = LedgerCheckpointTracking;
@@ -2551,26 +2652,204 @@ where
 mod tests {
     use super::{
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
+        NodeConfig, ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
+        VerifiedSyncServiceConfig,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
+        refresh_ledger_peer_sources_from_chain_db,
         seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
         verified_sync_batch_trace_fields,
     };
-    use crate::sync::{MultiEraSyncProgress, SyncError};
+    use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
     use crate::tracer::NodeTracer;
     use crate::sync::LedgerCheckpointPolicy;
     use serde_json::json;
+    use std::sync::{Arc, RwLock};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
-    use yggdrasil_ledger::{HeaderHash, Nonce, Point, SlotNo};
+    use yggdrasil_ledger::{
+        Era, HeaderHash, LedgerState, Nonce, Point, PoolParams, Relay,
+        RewardAccount, SlotNo, StakeCredential, UnitInterval,
+    };
     use yggdrasil_network::{
-        BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
-        PeerAccessPoint, PeerSource, TopologyConfig, UseBootstrapPeers,
+        AfterSlot, BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
+        HandshakeVersion, PeerAccessPoint, PeerSource, TopologyConfig, UseBootstrapPeers,
         UseLedgerPeers,
     };
+    use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
     fn local_addr(port: u16) -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    }
+
+    fn sample_node_config() -> NodeConfig {
+        NodeConfig {
+            peer_addr: local_addr(3001),
+            network_magic: 42,
+            protocol_versions: vec![HandshakeVersion(15)],
+        }
+    }
+
+    fn sample_sync_config() -> VerifiedSyncServiceConfig {
+        VerifiedSyncServiceConfig {
+            batch_size: 1,
+            verification: VerificationConfig {
+                slots_per_kes_period: 129_600,
+                max_kes_evolutions: 62,
+                verify_body_hash: true,
+            },
+            nonce_config: None,
+            security_param: None,
+            checkpoint_policy: LedgerCheckpointPolicy::default(),
+            plutus_cost_model: None,
+        }
+    }
+
+    fn sample_pool_params(relay: Relay, operator: u8) -> PoolParams {
+        PoolParams {
+            operator: [operator; 28],
+            vrf_keyhash: [operator; 32],
+            pledge: 1,
+            cost: 1,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([operator; 28]),
+            },
+            pool_owners: vec![[operator; 28]],
+            relays: vec![relay],
+            pool_metadata: None,
+        }
+    }
+
+    fn ledger_state_with_pool_relay(peer: SocketAddr) -> LedgerState {
+        let mut state = LedgerState::new(Era::Conway);
+        state.pool_state_mut().register(sample_pool_params(
+            Relay::SingleHostAddr(
+                Some(peer.port()),
+                Some(match peer.ip() {
+                    IpAddr::V4(addr) => addr.octets(),
+                    IpAddr::V6(_) => panic!("test peer should be IPv4"),
+                }),
+                None,
+            ),
+            7,
+        ));
+        state
+    }
+
+    #[test]
+    fn reconnect_request_builder_sets_optional_fields() {
+        let node = sample_node_config();
+        let cfg = sample_sync_config();
+        let path = std::path::PathBuf::from("snapshot.json");
+
+        let req = ReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            Point::Origin,
+            LedgerState::new(Era::Byron),
+            &cfg,
+        )
+        .with_nonce_state(Some(NonceEvolutionState::new(Nonce::Neutral)))
+        .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(
+            yggdrasil_network::AfterSlot::Always,
+        )))
+        .with_peer_snapshot_path(Some(path.clone()));
+
+        assert!(req.nonce_state.is_some());
+        assert_eq!(
+            req.use_ledger_peers,
+            Some(UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always))
+        );
+        assert_eq!(req.peer_snapshot_path, Some(path));
+    }
+
+    #[test]
+    fn reconnect_request_builder_last_call_wins_for_overrides() {
+        let node = sample_node_config();
+        let cfg = sample_sync_config();
+        let first = std::path::PathBuf::from("first.json");
+        let second = std::path::PathBuf::from("second.json");
+
+        let req = ReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            Point::Origin,
+            LedgerState::new(Era::Byron),
+            &cfg,
+        )
+        .with_peer_snapshot_path(Some(first))
+        .with_peer_snapshot_path(Some(second.clone()))
+        .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(
+            yggdrasil_network::AfterSlot::Always,
+        )))
+        .with_use_ledger_peers(None)
+        .with_nonce_state(Some(NonceEvolutionState::new(Nonce::Neutral)))
+        .with_nonce_state(None);
+
+        assert_eq!(req.peer_snapshot_path, Some(second));
+        assert_eq!(req.use_ledger_peers, None);
+        assert_eq!(req.nonce_state, None);
+    }
+
+    #[test]
+    fn resume_request_builder_sets_optional_fields() {
+        let node = sample_node_config();
+        let cfg = sample_sync_config();
+        let path = std::path::PathBuf::from("snapshot.json");
+        let metrics = crate::tracer::NodeMetrics::new();
+
+        let req = ResumeReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            LedgerState::new(Era::Byron),
+            &cfg,
+        )
+        .with_nonce_state(Some(NonceEvolutionState::new(Nonce::Neutral)))
+        .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(
+            yggdrasil_network::AfterSlot::Always,
+        )))
+        .with_peer_snapshot_path(Some(path.clone()))
+        .with_metrics(Some(&metrics));
+
+        assert!(req.nonce_state.is_some());
+        assert_eq!(
+            req.use_ledger_peers,
+            Some(UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always))
+        );
+        assert_eq!(req.peer_snapshot_path, Some(path));
+        assert!(req.metrics.is_some());
+    }
+
+    #[test]
+    fn resume_request_builder_last_call_wins_for_overrides() {
+        let node = sample_node_config();
+        let cfg = sample_sync_config();
+        let first = std::path::PathBuf::from("first.json");
+        let second = std::path::PathBuf::from("second.json");
+
+        let req = ResumeReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            LedgerState::new(Era::Byron),
+            &cfg,
+        )
+        .with_peer_snapshot_path(Some(first))
+        .with_peer_snapshot_path(Some(second.clone()))
+        .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(
+            yggdrasil_network::AfterSlot::Always,
+        )))
+        .with_use_ledger_peers(None)
+        .with_nonce_state(Some(NonceEvolutionState::new(Nonce::Neutral)))
+        .with_nonce_state(None);
+
+        assert_eq!(req.peer_snapshot_path, Some(second));
+        assert_eq!(req.use_ledger_peers, None);
+        assert_eq!(req.nonce_state, None);
     }
 
     #[test]
@@ -2831,6 +3110,37 @@ mod tests {
                 .sources
                 .contains(&PeerSource::PeerSourceBootstrap)
         );
+    }
+
+    #[test]
+    fn refresh_ledger_peer_sources_uses_supplied_base_ledger_state() {
+        let relay_peer = local_addr(3010);
+        let base_ledger_state = ledger_state_with_pool_relay(relay_peer);
+        let chain_db = Arc::new(RwLock::new(ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        )));
+        let topology = TopologyConfig {
+            use_ledger_peers: UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+            ..TopologyConfig::default()
+        };
+        let tracer = NodeTracer::disabled();
+        let mut registry = yggdrasil_network::PeerRegistry::default();
+
+        let changed = refresh_ledger_peer_sources_from_chain_db(
+            &mut registry,
+            &chain_db,
+            &base_ledger_state,
+            &topology,
+            &tracer,
+        );
+
+        assert!(changed);
+        let entry = registry
+            .get(&relay_peer)
+            .expect("ledger-derived relay peer should be present");
+        assert!(entry.sources.contains(&PeerSource::PeerSourceLedger));
     }
 
     #[test]

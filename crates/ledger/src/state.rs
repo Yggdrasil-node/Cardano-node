@@ -898,8 +898,8 @@ pub struct LedgerStateSnapshot {
     committee_state: CommitteeState,
     drep_state: DrepState,
     reward_accounts: RewardAccounts,
-    multi_era_utxo: MultiEraUtxo,
     shelley_utxo: ShelleyUtxo,
+    multi_era_utxo: MultiEraUtxo,
     protocol_params: Option<crate::protocol_params::ProtocolParameters>,
     deposit_pot: DepositPot,
     accounting: AccountingState,
@@ -2187,7 +2187,8 @@ impl LedgerState {
                     .unwrap_or_default();
                 crate::plutus_validation::validate_plutus_scripts(
                     evaluator, witness_bytes.as_deref(), &required_scripts,
-                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
+                    &staged,
+                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                 )?;
             }
             let withdrawal_total = apply_certificates_and_withdrawals(
@@ -2299,7 +2300,8 @@ impl LedgerState {
                     .unwrap_or_default();
                 crate::plutus_validation::validate_plutus_scripts(
                     evaluator, witness_bytes.as_deref(), &required_scripts,
-                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
+                    &staged,
+                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                 )?;
             }
             let withdrawal_total = apply_certificates_and_withdrawals(
@@ -2380,6 +2382,12 @@ impl LedgerState {
                     required.insert(*signer);
                 }
             }
+            if let Some(voting_procedures) = &body.voting_procedures {
+                crate::witnesses::required_vkey_hashes_from_voting_procedures(
+                    voting_procedures,
+                    &mut required,
+                );
+            }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // Native script validation (Conway)
             let mut required_scripts = HashSet::new();
@@ -2397,6 +2405,18 @@ impl LedgerState {
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
             }
+            if let Some(voting_procedures) = &body.voting_procedures {
+                crate::witnesses::required_script_hashes_from_voting_procedures(
+                    voting_procedures,
+                    &mut required_scripts,
+                );
+            }
+            if let Some(proposal_procedures) = &body.proposal_procedures {
+                crate::witnesses::required_script_hashes_from_proposal_procedures(
+                    proposal_procedures,
+                    &mut required_scripts,
+                );
+            }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
             // Plutus script validation (Conway)
             {
@@ -2409,9 +2429,32 @@ impl LedgerState {
                 let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
                     .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                     .unwrap_or_default();
+                let sorted_voters: Vec<crate::eras::conway::Voter> = body.voting_procedures.as_ref()
+                    .map(|v| v.procedures.keys().cloned().collect())
+                    .unwrap_or_default();
+                let proposal_slice = body.proposal_procedures.as_deref().unwrap_or(&[]);
                 crate::plutus_validation::validate_plutus_scripts(
                     evaluator, witness_bytes.as_deref(), &required_scripts,
+                    &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
+                    &sorted_voters, proposal_slice,
+                )?;
+            }
+            if let Some(proposal_procedures) = &body.proposal_procedures {
+                let stake_credentials_for_governance = conway_stake_credentials_after_certificates(
+                    &staged_pool_state,
+                    &staged_stake_credentials,
+                    &staged_committee_state,
+                    &staged_drep_state,
+                    &staged_reward_accounts,
+                    &staged_deposit_pot,
+                    kd,
+                    pd,
+                    body.certificates.as_deref(),
+                )?;
+                validate_conway_proposal_return_accounts(
+                    proposal_procedures,
+                    &stake_credentials_for_governance,
                 )?;
             }
             let withdrawal_total = apply_certificates_and_withdrawals(
@@ -2436,6 +2479,65 @@ impl LedgerState {
         self.deposit_pot = staged_deposit_pot;
         Ok(())
     }
+}
+
+fn conway_stake_credentials_after_certificates(
+    pool_state: &PoolState,
+    stake_credentials: &StakeCredentials,
+    committee_state: &CommitteeState,
+    drep_state: &DrepState,
+    reward_accounts: &RewardAccounts,
+    deposit_pot: &DepositPot,
+    key_deposit: u64,
+    pool_deposit: u64,
+    certificates: Option<&[DCert]>,
+) -> Result<StakeCredentials, LedgerError> {
+    let mut simulated_pool_state = pool_state.clone();
+    let mut simulated_stake_credentials = stake_credentials.clone();
+    let mut simulated_committee_state = committee_state.clone();
+    let mut simulated_drep_state = drep_state.clone();
+    let mut simulated_reward_accounts = reward_accounts.clone();
+    let mut simulated_deposit_pot = deposit_pot.clone();
+
+    apply_certificates_and_withdrawals(
+        &mut simulated_pool_state,
+        &mut simulated_stake_credentials,
+        &mut simulated_committee_state,
+        &mut simulated_drep_state,
+        &mut simulated_reward_accounts,
+        &mut simulated_deposit_pot,
+        key_deposit,
+        pool_deposit,
+        certificates,
+        None,
+    )?;
+
+    Ok(simulated_stake_credentials)
+}
+
+fn validate_conway_proposal_return_accounts(
+    proposal_procedures: &[crate::eras::conway::ProposalProcedure],
+    stake_credentials: &StakeCredentials,
+) -> Result<(), LedgerError> {
+    use crate::eras::conway::GovAction;
+
+    for proposal in proposal_procedures {
+        let reward_account = RewardAccount::from_bytes(&proposal.reward_account)
+            .ok_or_else(|| LedgerError::InvalidRewardAccountBytes(proposal.reward_account.clone()))?;
+        if !stake_credentials.is_registered(&reward_account.credential) {
+            return Err(LedgerError::RewardAccountNotRegistered(reward_account));
+        }
+
+        if let GovAction::TreasuryWithdrawals { withdrawals, .. } = &proposal.gov_action {
+            for reward_account in withdrawals.keys() {
+                if !stake_credentials.is_registered(&reward_account.credential) {
+                    return Err(LedgerError::RewardAccountNotRegistered(*reward_account));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

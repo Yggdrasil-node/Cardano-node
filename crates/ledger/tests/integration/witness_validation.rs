@@ -118,6 +118,21 @@ fn make_allegra_block_raw(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggd
     }
 }
 
+fn make_conway_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+    Block {
+        era: Era::Conway,
+        header: BlockHeader {
+            hash: HeaderHash([hash_seed; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(slot),
+            block_no: BlockNo(block_no),
+            issuer_vkey: [0x11; 32],
+        },
+        transactions: txs,
+        raw_cbor: None,
+    }
+}
+
 // ===========================================================================
 // VKey witness validation tests
 // ===========================================================================
@@ -277,6 +292,251 @@ fn shelley_block_rejects_empty_witness_set_for_keyhash_input() {
         matches!(err, LedgerError::MissingVKeyWitness { .. }),
         "expected MissingVKeyWitness, got: {err:?}"
     );
+}
+
+#[test]
+fn conway_block_rejects_missing_voter_vkey_witness() {
+    use std::collections::BTreeMap;
+
+    let voter_keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let mut votes = BTreeMap::new();
+    votes.insert(
+        GovActionId {
+            transaction_id: [0x22; 32],
+            gov_action_index: 0,
+        },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
+    );
+
+    let tx_body = ConwayTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: Some(VotingProcedures {
+            procedures: [(Voter::DRepKeyHash(voter_keyhash), votes)].into_iter().collect(),
+        }),
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let body_bytes = tx_body.to_cbor_bytes();
+    let tx_id_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let ws = witness_set_with_vkeys(vec![]);
+
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id_hash.0),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&ws)),
+    };
+
+    let mut state = LedgerState::new(Era::Conway);
+    let err = state
+        .apply_block(&make_conway_block(500, 1, 0xCC, vec![tx]))
+        .unwrap_err();
+
+    assert!(
+        matches!(err, LedgerError::MissingVKeyWitness { hash } if hash == voter_keyhash),
+        "expected MissingVKeyWitness for Conway voter, got: {err:?}"
+    );
+}
+
+#[test]
+fn conway_block_rejects_unregistered_proposal_return_account() {
+    let reward_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0x44; 28]),
+    };
+
+    let tx_body = ConwayTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(vec![ProposalProcedure {
+            deposit: 1,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor {
+                url: "https://example.invalid/proposal".to_owned(),
+                data_hash: [0x45; 32],
+            },
+        }]),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let body_bytes = tx_body.to_cbor_bytes();
+    let tx_id_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id_hash.0),
+        body: body_bytes,
+        witnesses: None,
+    };
+
+    let mut state = LedgerState::new(Era::Conway);
+    let err = state
+        .apply_block(&make_conway_block(500, 1, 0xCD, vec![tx]))
+        .unwrap_err();
+
+    assert_eq!(err, LedgerError::RewardAccountNotRegistered(reward_account));
+}
+
+#[test]
+fn conway_block_rejects_treasury_withdrawals_proposal_with_unregistered_target_account() {
+    use std::collections::BTreeMap;
+
+    let proposal_return_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0x46; 28]),
+    };
+    let treasury_target_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0x47; 28]),
+    };
+
+    let mut withdrawals = BTreeMap::new();
+    withdrawals.insert(treasury_target_account, 1);
+
+    let tx_body = ConwayTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(vec![ProposalProcedure {
+            deposit: 1,
+            reward_account: proposal_return_account.to_bytes().to_vec(),
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash: None,
+            },
+            anchor: Anchor {
+                url: "https://example.invalid/treasury".to_owned(),
+                data_hash: [0x48; 32],
+            },
+        }]),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let body_bytes = tx_body.to_cbor_bytes();
+    let tx_id_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id_hash.0),
+        body: body_bytes,
+        witnesses: None,
+    };
+
+    let mut state = LedgerState::new(Era::Conway);
+    state
+        .stake_credentials_mut()
+        .register(proposal_return_account.credential);
+    state
+        .reward_accounts_mut()
+        .insert(proposal_return_account, RewardAccountState::new(0, None));
+
+    let err = state
+        .apply_block(&make_conway_block(500, 1, 0xCE, vec![tx]))
+        .unwrap_err();
+
+    assert_eq!(err, LedgerError::RewardAccountNotRegistered(treasury_target_account));
+}
+
+#[test]
+fn conway_block_accepts_proposal_return_account_registered_by_same_tx_certificate() {
+    let credential = StakeCredential::AddrKeyHash([0x49; 28]);
+    let reward_account = RewardAccount {
+        network: 0,
+        credential,
+    };
+
+    let tx_body = ConwayTxBody {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        ttl: None,
+        certificates: Some(vec![DCert::AccountRegistrationDeposit(credential, 2_000_000)]),
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(vec![ProposalProcedure {
+            deposit: 1,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor {
+                url: "https://example.invalid/same-tx".to_owned(),
+                data_hash: [0x4A; 32],
+            },
+        }]),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let body_bytes = tx_body.to_cbor_bytes();
+    let tx_id_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id_hash.0),
+        body: body_bytes,
+        witnesses: None,
+    };
+
+    let mut state = LedgerState::new(Era::Conway);
+    let err = state
+        .apply_block(&make_conway_block(500, 1, 0xCF, vec![tx]))
+        .unwrap_err();
+
+    assert_eq!(err, LedgerError::NoInputs);
 }
 
 // ===========================================================================

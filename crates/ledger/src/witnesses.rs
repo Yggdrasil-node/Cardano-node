@@ -278,6 +278,76 @@ pub fn required_script_hashes_from_mint(
     }
 }
 
+/// Collects required VKey hashes from Conway voting procedures.
+pub fn required_vkey_hashes_from_voting_procedures(
+    voting_procedures: &crate::eras::conway::VotingProcedures,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for voter in voting_procedures.procedures.keys() {
+        match voter {
+            crate::eras::conway::Voter::CommitteeKeyHash(hash)
+            | crate::eras::conway::Voter::DRepKeyHash(hash)
+            | crate::eras::conway::Voter::StakePool(hash) => {
+                out.insert(*hash);
+            }
+            crate::eras::conway::Voter::CommitteeScript(_)
+            | crate::eras::conway::Voter::DRepScript(_) => {}
+        }
+    }
+}
+
+/// Collects required script hashes from Conway voting procedures.
+pub fn required_script_hashes_from_voting_procedures(
+    voting_procedures: &crate::eras::conway::VotingProcedures,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for voter in voting_procedures.procedures.keys() {
+        match voter {
+            crate::eras::conway::Voter::CommitteeScript(hash)
+            | crate::eras::conway::Voter::DRepScript(hash) => {
+                out.insert(*hash);
+            }
+            crate::eras::conway::Voter::CommitteeKeyHash(_)
+            | crate::eras::conway::Voter::DRepKeyHash(_)
+            | crate::eras::conway::Voter::StakePool(_) => {}
+        }
+    }
+}
+
+/// Collects required script hashes from Conway proposal procedures.
+pub fn required_script_hashes_from_proposal_procedures(
+    proposal_procedures: &[crate::eras::conway::ProposalProcedure],
+    out: &mut HashSet<[u8; 28]>,
+) {
+    use crate::eras::conway::GovAction;
+
+    for proposal in proposal_procedures {
+        match &proposal.gov_action {
+            GovAction::ParameterChange {
+                guardrails_script_hash,
+                ..
+            }
+            | GovAction::TreasuryWithdrawals {
+                guardrails_script_hash,
+                ..
+            } => {
+                if let Some(hash) = guardrails_script_hash {
+                    out.insert(*hash);
+                }
+            }
+            GovAction::NewConstitution { constitution, .. } => {
+                if let Some(hash) = constitution.guardrails_script_hash {
+                    out.insert(hash);
+                }
+            }
+            GovAction::HardForkInitiation { .. }
+            | GovAction::NoConfidence { .. }
+            | GovAction::UpdateCommittee { .. }
+            | GovAction::InfoAction => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +386,99 @@ mod tests {
         assert!(required.contains(&[1u8; 28]));
         assert!(required.contains(&[2u8; 28]));
         assert_eq!(required.len(), 2);
+    }
+
+    #[test]
+    fn collects_required_script_hashes_from_voting_procedures() {
+        let mut inner = std::collections::BTreeMap::new();
+        inner.insert(
+            crate::eras::conway::GovActionId {
+                transaction_id: [0xAA; 32],
+                gov_action_index: 0,
+            },
+            crate::eras::conway::VotingProcedure {
+                vote: crate::eras::conway::Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: [(crate::eras::conway::Voter::DRepScript([0xBB; 28]), inner)]
+                .into_iter()
+                .collect(),
+        };
+
+        let mut required = HashSet::new();
+        required_script_hashes_from_voting_procedures(&voting_procedures, &mut required);
+
+        assert!(required.contains(&[0xBB; 28]));
+        assert_eq!(required.len(), 1);
+    }
+
+    #[test]
+    fn collects_required_vkey_hashes_from_voting_procedures() {
+        let mut inner = std::collections::BTreeMap::new();
+        inner.insert(
+            crate::eras::conway::GovActionId {
+                transaction_id: [0xAA; 32],
+                gov_action_index: 0,
+            },
+            crate::eras::conway::VotingProcedure {
+                vote: crate::eras::conway::Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: [
+                (crate::eras::conway::Voter::CommitteeKeyHash([0xBB; 28]), inner.clone()),
+                (crate::eras::conway::Voter::DRepKeyHash([0xCC; 28]), inner.clone()),
+                (crate::eras::conway::Voter::StakePool([0xDD; 28]), inner.clone()),
+                (crate::eras::conway::Voter::CommitteeScript([0xEE; 28]), inner.clone()),
+                (crate::eras::conway::Voter::DRepScript([0xFF; 28]), inner),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let mut required = HashSet::new();
+        required_vkey_hashes_from_voting_procedures(&voting_procedures, &mut required);
+
+        assert!(required.contains(&[0xBB; 28]));
+        assert!(required.contains(&[0xCC; 28]));
+        assert!(required.contains(&[0xDD; 28]));
+        assert_eq!(required.len(), 3);
+    }
+
+    #[test]
+    fn collects_required_script_hashes_from_proposal_procedures() {
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 1,
+            reward_account: crate::types::RewardAccount {
+                network: 1,
+                credential: crate::types::StakeCredential::AddrKeyHash([0xCC; 28]),
+            }
+            .to_bytes()
+            .to_vec(),
+            gov_action: crate::eras::conway::GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: crate::eras::conway::Constitution {
+                    anchor: crate::types::Anchor {
+                        url: "https://example.invalid/constitution".to_string(),
+                        data_hash: [0xDD; 32],
+                    },
+                    guardrails_script_hash: Some([0xEE; 28]),
+                },
+            },
+            anchor: crate::types::Anchor {
+                url: "https://example.invalid/proposal".to_string(),
+                data_hash: [0xFF; 32],
+            },
+        };
+
+        let mut required = HashSet::new();
+        required_script_hashes_from_proposal_procedures(&[proposal], &mut required);
+
+        assert!(required.contains(&[0xEE; 28]));
+        assert_eq!(required.len(), 1);
     }
 
     #[test]

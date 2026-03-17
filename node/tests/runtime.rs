@@ -734,16 +734,13 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
 
     let outcome: ReconnectingSyncServiceOutcome = run_reconnecting_verified_sync_service(
         &mut store,
-        ReconnectingVerifiedSyncRequest {
-            node_config: &node_config,
-            fallback_peer_addrs: &[second_addr],
-            from_point: Point::Origin,
-            base_ledger_state: LedgerState::new(Era::Byron),
-            config: &service_config,
-            nonce_state: None,
-            use_ledger_peers: None,
-            peer_snapshot_path: None,
-        },
+        ReconnectingVerifiedSyncRequest::new(
+            &node_config,
+            &[second_addr],
+            Point::Origin,
+            LedgerState::new(Era::Byron),
+            &service_config,
+        ),
         async { let _ = shutdown_rx.await; },
     )
     .await
@@ -817,16 +814,13 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
 
     let outcome: ReconnectingSyncServiceOutcome = run_reconnecting_verified_sync_service_chaindb(
         &mut chain_db,
-        ReconnectingVerifiedSyncRequest {
-            node_config: &node_config,
-            fallback_peer_addrs: &[second_addr],
-            from_point: Point::Origin,
-            base_ledger_state: LedgerState::new(Era::Byron),
-            config: &service_config,
-            nonce_state: None,
-            use_ledger_peers: None,
-            peer_snapshot_path: None,
-        },
+        ReconnectingVerifiedSyncRequest::new(
+            &node_config,
+            &[second_addr],
+            Point::Origin,
+            LedgerState::new(Era::Byron),
+            &service_config,
+        ),
         async { let _ = shutdown_rx.await; },
     )
     .await
@@ -918,16 +912,12 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
 
     let outcome: ResumedSyncServiceOutcome = resume_reconnecting_verified_sync_service_chaindb(
         &mut chain_db,
-        ResumeReconnectingVerifiedSyncRequest {
-            node_config: &node_config,
-            fallback_peer_addrs: &[],
-            base_ledger_state: LedgerState::new(Era::Byron),
-            config: &service_config,
-            nonce_state: None,
-            use_ledger_peers: None,
-            peer_snapshot_path: None,
-            metrics: None,
-        },
+        ResumeReconnectingVerifiedSyncRequest::new(
+            &node_config,
+            &[],
+            LedgerState::new(Era::Byron),
+            &service_config,
+        ),
         async { let _ = shutdown_rx.await; },
     )
     .await
@@ -1019,18 +1009,16 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         let _ = shutdown_tx.send(());
     });
 
+    let request = ResumeReconnectingVerifiedSyncRequest::new(
+        &node_config,
+        &[],
+        LedgerState::new(Era::Byron),
+        &service_config,
+    )
+    .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)));
     let outcome: ResumedSyncServiceOutcome = resume_reconnecting_verified_sync_service_chaindb(
         &mut chain_db,
-        ResumeReconnectingVerifiedSyncRequest {
-            node_config: &node_config,
-            fallback_peer_addrs: &[],
-            base_ledger_state: LedgerState::new(Era::Byron),
-            config: &service_config,
-            nonce_state: None,
-            use_ledger_peers: Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)),
-            peer_snapshot_path: None,
-            metrics: None,
-        },
+        request,
         async { let _ = shutdown_rx.await; },
     )
     .await
@@ -1131,18 +1119,17 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         let _ = shutdown_tx.send(());
     });
 
+    let request = ResumeReconnectingVerifiedSyncRequest::new(
+        &node_config,
+        &[],
+        LedgerState::new(Era::Byron),
+        &service_config,
+    )
+    .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)))
+    .with_peer_snapshot_path(Some(snapshot_path.clone()));
     let outcome: ResumedSyncServiceOutcome = resume_reconnecting_verified_sync_service_chaindb(
         &mut chain_db,
-        ResumeReconnectingVerifiedSyncRequest {
-            node_config: &node_config,
-            fallback_peer_addrs: &[],
-            base_ledger_state: LedgerState::new(Era::Byron),
-            config: &service_config,
-            nonce_state: None,
-            use_ledger_peers: Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)),
-            peer_snapshot_path: Some(snapshot_path.clone()),
-            metrics: None,
-        },
+        request,
         async { let _ = shutdown_rx.await; },
     )
     .await

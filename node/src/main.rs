@@ -914,6 +914,7 @@ async fn run_node(
         let governor_registry = Arc::clone(&peer_registry);
         let governor_tracer = tracer.clone();
         let governor_topology = topology_config.clone();
+        let governor_base_ledger_state = base_ledger_state.clone();
         tokio::spawn(async move {
             let shutdown = async move {
                 if *governor_shutdown.borrow() {
@@ -933,6 +934,7 @@ async fn run_node(
                 GovernorState::default(),
                 governor_config,
                 governor_topology,
+                governor_base_ledger_state,
                 governor_tracer,
                 shutdown,
             ).await;
@@ -997,19 +999,21 @@ async fn run_node(
         None
     };
 
+    let request = ResumeReconnectingVerifiedSyncRequest::new(
+        &node_config,
+        &bootstrap_peers,
+        base_ledger_state,
+        &sync_config,
+    )
+    .with_nonce_state(nonce_state)
+    .with_use_ledger_peers(use_ledger_peers)
+    .with_peer_snapshot_path(peer_snapshot_path)
+    .with_metrics(Some(&metrics));
+
     let mut sync_shutdown = shutdown_rx.clone();
     let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb(
         &chain_db,
-        ResumeReconnectingVerifiedSyncRequest {
-            node_config: &node_config,
-            fallback_peer_addrs: &bootstrap_peers,
-            base_ledger_state,
-            config: &sync_config,
-            nonce_state,
-            use_ledger_peers,
-            peer_snapshot_path,
-            metrics: Some(&metrics),
-        },
+        request,
         async move {
             if *sync_shutdown.borrow() {
                 return;

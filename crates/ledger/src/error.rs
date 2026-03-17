@@ -83,6 +83,9 @@ pub enum LedgerError {
     #[error("reward account not registered: {0:?}")]
     RewardAccountNotRegistered(RewardAccount),
 
+    #[error("invalid reward account bytes: {0:02x?}")]
+    InvalidRewardAccountBytes(Vec<u8>),
+
     #[error(
         "withdrawal exceeds reward balance for {account:?}: requested {requested}, available {available}"
     )]
