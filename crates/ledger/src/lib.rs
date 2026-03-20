@@ -66,7 +66,8 @@ pub use error::LedgerError;
 /// Top-level ledger state wrapper.
 pub use state::{
     AccountingState, CommitteeAuthorization, CommitteeMemberState, CommitteeState,
-    DepositPot, DrepState, LedgerState,
+    DepositPot, DrepState, EnactOutcome, EnactState, LedgerState,
+    GovernanceActionState,
     LedgerStateCheckpoint, LedgerStateSnapshot, PoolRelayAccessPoint, PoolState,
     RegisteredDrep, RegisteredPool, RewardAccountState,
     RewardAccounts, StakeCredentialState, StakeCredentials,
@@ -96,7 +97,7 @@ pub use utxo::{MultiEraTxOut, MultiEraUtxo};
 // -- Stake distribution re-exports --------------------------------------------
 pub use stake::{
     Delegations, IndividualStake, PoolStakeDistribution, StakeSnapshot, StakeSnapshots,
-    compute_stake_snapshot,
+    compute_drep_stake_distribution, compute_stake_snapshot,
 };
 
 // -- Reward re-exports --------------------------------------------------------
@@ -112,7 +113,7 @@ pub use epoch_boundary::{
 };
 
 // -- Protocol params re-exports -----------------------------------------------
-pub use protocol_params::ProtocolParameters;
+pub use protocol_params::{DRepVotingThresholds, PoolVotingThresholds, ProtocolParameters};
 
 // -- Fee re-exports -----------------------------------------------------------
 pub use fees::{min_fee_linear, script_fee, total_min_fee, validate_fee, validate_tx_ex_units, validate_tx_size};

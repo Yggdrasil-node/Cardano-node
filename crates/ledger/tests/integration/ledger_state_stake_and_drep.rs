@@ -77,6 +77,7 @@ fn ledger_state_checkpoint_cbor_round_trip_preserves_state() {
 
     state.current_era = Era::Conway;
     state.tip = Point::BlockPoint(SlotNo(44), HeaderHash([0x44; 32]));
+    state.set_current_epoch(EpochNo(7));
     state.pool_state_mut().register(params.clone());
     state.stake_credentials_mut().register(credential);
     state.reward_accounts_mut().insert(
@@ -116,6 +117,16 @@ fn ledger_state_checkpoint_cbor_round_trip_preserves_state() {
 
     assert_eq!(decoded, checkpoint);
     assert_eq!(decoded.restore(), state);
+}
+
+#[test]
+fn ledger_state_snapshot_exposes_current_epoch() {
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_current_epoch(EpochNo(4));
+
+    let snapshot = state.snapshot();
+
+    assert_eq!(snapshot.current_epoch(), EpochNo(4));
 }
 
 #[test]

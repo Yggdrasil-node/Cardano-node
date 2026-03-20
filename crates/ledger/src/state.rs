@@ -6,7 +6,7 @@ use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
 use crate::types::{
     Address, Anchor, DCert, DRep, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount,
-    Relay, StakeCredential,
+    Relay, StakeCredential, UnitInterval,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
@@ -94,6 +94,29 @@ fn decode_optional_drep(dec: &mut Decoder<'_>) -> Result<Option<DRep>, LedgerErr
         Ok(None)
     } else {
         Ok(Some(DRep::decode_cbor(dec)?))
+    }
+}
+
+fn encode_optional_gov_action_id(
+    value: Option<&crate::eras::conway::GovActionId>,
+    enc: &mut Encoder,
+) {
+    match value {
+        Some(id) => id.encode_cbor(enc),
+        None => {
+            enc.null();
+        }
+    }
+}
+
+fn decode_optional_gov_action_id(
+    dec: &mut Decoder<'_>,
+) -> Result<Option<crate::eras::conway::GovActionId>, LedgerError> {
+    if dec.peek_major()? == 7 {
+        dec.null()?;
+        Ok(None)
+    } else {
+        Ok(Some(crate::eras::conway::GovActionId::decode_cbor(dec)?))
     }
 }
 
@@ -562,29 +585,51 @@ impl StakeCredentials {
 pub struct RegisteredDrep {
     anchor: Option<Anchor>,
     deposit: u64,
+    /// The most recent epoch in which this DRep was considered active
+    /// (registration, vote cast, or update).  `None` for legacy entries
+    /// that predate activity tracking.
+    last_active_epoch: Option<EpochNo>,
 }
 
 impl CborEncode for RegisteredDrep {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(2);
+        enc.array(3);
         encode_optional_anchor(self.anchor.as_ref(), enc);
         enc.unsigned(self.deposit);
+        match self.last_active_epoch {
+            Some(e) => enc.unsigned(e.0),
+            None => enc.null(),
+        };
     }
 }
 
 impl CborDecode for RegisteredDrep {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 2 {
+        if len != 2 && len != 3 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 2,
+                expected: 3,
                 actual: len as usize,
             });
         }
 
+        let anchor = decode_optional_anchor(dec)?;
+        let deposit = dec.unsigned()?;
+        let last_active_epoch = if len >= 3 {
+            if dec.peek_is_null() {
+                dec.null()?;
+                None
+            } else {
+                Some(EpochNo(dec.unsigned()?))
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
-            anchor: decode_optional_anchor(dec)?,
-            deposit: dec.unsigned()?,
+            anchor,
+            deposit,
+            last_active_epoch,
         })
     }
 }
@@ -592,7 +637,12 @@ impl CborDecode for RegisteredDrep {
 impl RegisteredDrep {
     /// Creates registered DRep state.
     pub fn new(deposit: u64, anchor: Option<Anchor>) -> Self {
-        Self { anchor, deposit }
+        Self { anchor, deposit, last_active_epoch: None }
+    }
+
+    /// Creates registered DRep state with an initial activity epoch.
+    pub fn new_active(deposit: u64, anchor: Option<Anchor>, epoch: EpochNo) -> Self {
+        Self { anchor, deposit, last_active_epoch: Some(epoch) }
     }
 
     /// Returns the current DRep anchor, if any.
@@ -603,6 +653,16 @@ impl RegisteredDrep {
     /// Returns the current DRep deposit value.
     pub fn deposit(&self) -> u64 {
         self.deposit
+    }
+
+    /// Returns the last epoch in which this DRep was active.
+    pub fn last_active_epoch(&self) -> Option<EpochNo> {
+        self.last_active_epoch
+    }
+
+    /// Records that this DRep was active in `epoch`.
+    pub fn touch_activity(&mut self, epoch: EpochNo) {
+        self.last_active_epoch = Some(epoch);
     }
 
     /// Replaces the current DRep anchor.
@@ -683,6 +743,36 @@ impl DrepState {
     /// Unregisters a DRep.
     pub fn unregister(&mut self, drep: &DRep) -> Option<RegisteredDrep> {
         self.entries.remove(drep)
+    }
+
+    /// Returns the number of registered DReps.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns the set of DReps that are inactive according to the
+    /// upstream Conway `drepExpiry` rule.
+    ///
+    /// A DRep is inactive if its `last_active_epoch + drep_activity < epoch`.
+    /// DReps without a recorded `last_active_epoch` (legacy entries) are
+    /// treated as active to avoid false expiry.
+    ///
+    /// Upstream reference: `Cardano.Ledger.Conway.Rules.Epoch` — the
+    /// `drepExpiry` function used when computing the active voting stake.
+    pub fn inactive_dreps(
+        &self,
+        epoch: EpochNo,
+        drep_activity: u64,
+    ) -> Vec<DRep> {
+        self.entries
+            .iter()
+            .filter(|(_, state)| {
+                state
+                    .last_active_epoch
+                    .is_some_and(|e| e.0.saturating_add(drep_activity) < epoch.0)
+            })
+            .map(|(drep, _)| drep.clone())
+            .collect()
     }
 }
 
@@ -796,7 +886,7 @@ impl CommitteeMemberState {
         )
     }
 
-    fn set_authorization(&mut self, authorization: Option<CommitteeAuthorization>) {
+    pub(crate) fn set_authorization(&mut self, authorization: Option<CommitteeAuthorization>) {
         self.authorization = authorization;
     }
 }
@@ -809,6 +899,130 @@ impl CommitteeMemberState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CommitteeState {
     entries: BTreeMap<StakeCredential, CommitteeMemberState>,
+}
+
+/// Stored Conway governance action state visible from the ledger.
+///
+/// This is a reduced local analogue of the upstream Conway `GovActionState`.
+/// It preserves the submitted proposal body plus the currently recorded votes
+/// keyed by Conway `Voter`, which is enough for proposal lookup and vote
+/// replacement semantics in this ledger slice.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceActionState {
+    proposal: crate::eras::conway::ProposalProcedure,
+    votes: BTreeMap<crate::eras::conway::Voter, crate::eras::conway::Vote>,
+    proposed_in: Option<EpochNo>,
+    expires_after: Option<EpochNo>,
+}
+
+impl CborEncode for GovernanceActionState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(4);
+        self.proposal.encode_cbor(enc);
+        enc.map(self.votes.len() as u64);
+        for (voter, vote) in &self.votes {
+            voter.encode_cbor(enc);
+            vote.encode_cbor(enc);
+        }
+        encode_optional_epoch_no(self.proposed_in, enc);
+        encode_optional_epoch_no(self.expires_after, enc);
+    }
+}
+
+impl CborDecode for GovernanceActionState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 && len != 4 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 4,
+                actual: len as usize,
+            });
+        }
+
+        let proposal = crate::eras::conway::ProposalProcedure::decode_cbor(dec)?;
+        let votes_len = dec.map()?;
+        let mut votes = BTreeMap::new();
+        for _ in 0..votes_len {
+            let voter = crate::eras::conway::Voter::decode_cbor(dec)?;
+            let vote = crate::eras::conway::Vote::decode_cbor(dec)?;
+            votes.insert(voter, vote);
+        }
+
+        let proposed_in = if len == 4 {
+            decode_optional_epoch_no(dec)?
+        } else {
+            None
+        };
+        let expires_after = if len == 4 {
+            decode_optional_epoch_no(dec)?
+        } else {
+            None
+        };
+
+        Ok(Self {
+            proposal,
+            votes,
+            proposed_in,
+            expires_after,
+        })
+    }
+}
+
+impl GovernanceActionState {
+    /// Creates stored governance action state for a newly submitted proposal.
+    pub fn new(proposal: crate::eras::conway::ProposalProcedure) -> Self {
+        Self {
+            proposal,
+            votes: BTreeMap::new(),
+            proposed_in: None,
+            expires_after: None,
+        }
+    }
+
+    pub(crate) fn new_with_lifetime(
+        proposal: crate::eras::conway::ProposalProcedure,
+        proposed_in: EpochNo,
+        gov_action_lifetime: Option<u64>,
+    ) -> Self {
+        Self {
+            proposal,
+            votes: BTreeMap::new(),
+            proposed_in: Some(proposed_in),
+            expires_after: gov_action_lifetime
+                .map(|lifetime| EpochNo(proposed_in.0.saturating_add(lifetime))),
+        }
+    }
+
+    /// Returns the submitted proposal procedure.
+    pub fn proposal(&self) -> &crate::eras::conway::ProposalProcedure {
+        &self.proposal
+    }
+
+    /// Returns the recorded votes keyed by voter.
+    pub fn votes(
+        &self,
+    ) -> &BTreeMap<crate::eras::conway::Voter, crate::eras::conway::Vote> {
+        &self.votes
+    }
+
+    /// Returns the epoch in which the proposal was introduced, when tracked.
+    pub fn proposed_in(&self) -> Option<EpochNo> {
+        self.proposed_in
+    }
+
+    /// Returns the last epoch in which votes are accepted, when tracked.
+    pub fn expires_after(&self) -> Option<EpochNo> {
+        self.expires_after
+    }
+
+    /// Records a vote from `voter`, replacing any previous vote.
+    pub fn record_vote(
+        &mut self,
+        voter: crate::eras::conway::Voter,
+        vote: crate::eras::conway::Vote,
+    ) {
+        self.votes.insert(voter, vote);
+    }
 }
 
 impl CborEncode for CommitteeState {
@@ -880,6 +1094,322 @@ impl CommitteeState {
     pub fn unregister(&mut self, credential: &StakeCredential) -> Option<CommitteeMemberState> {
         self.entries.remove(credential)
     }
+
+    /// Returns the number of known committee members.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Enacted governance state (Conway)
+// ---------------------------------------------------------------------------
+
+/// Enacted governance state tracking the current constitution, committee
+/// quorum, and the most recently enacted action ID per governance purpose
+/// group.
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Governance.EnactState`.
+///
+/// The purpose groups mirror the upstream `GovRelation`:
+/// * **PParamUpdate** — `ParameterChange` actions.
+/// * **HardFork** — `HardForkInitiation` actions.
+/// * **Committee** — `NoConfidence` and `UpdateCommittee` actions.
+/// * **Constitution** — `NewConstitution` actions.
+///
+/// `TreasuryWithdrawals` and `InfoAction` have no lineage tracking.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnactState {
+    /// The current enacted constitution.
+    pub constitution: crate::eras::conway::Constitution,
+    /// Committee quorum threshold (ratio of yes-votes needed).
+    pub committee_quorum: UnitInterval,
+    /// Most recently enacted `ParameterChange` action ID.
+    pub prev_pparams_update: Option<crate::eras::conway::GovActionId>,
+    /// Most recently enacted `HardForkInitiation` action ID.
+    pub prev_hard_fork: Option<crate::eras::conway::GovActionId>,
+    /// Most recently enacted `NoConfidence` or `UpdateCommittee` action ID.
+    pub prev_committee: Option<crate::eras::conway::GovActionId>,
+    /// Most recently enacted `NewConstitution` action ID.
+    pub prev_constitution: Option<crate::eras::conway::GovActionId>,
+}
+
+impl Default for EnactState {
+    fn default() -> Self {
+        Self {
+            constitution: crate::eras::conway::Constitution {
+                anchor: crate::types::Anchor {
+                    url: String::new(),
+                    data_hash: [0u8; 32],
+                },
+                guardrails_script_hash: None,
+            },
+            committee_quorum: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            prev_pparams_update: None,
+            prev_hard_fork: None,
+            prev_committee: None,
+            prev_constitution: None,
+        }
+    }
+}
+
+impl CborEncode for EnactState {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(6);
+        self.constitution.encode_cbor(enc);
+        self.committee_quorum.encode_cbor(enc);
+        encode_optional_gov_action_id(self.prev_pparams_update.as_ref(), enc);
+        encode_optional_gov_action_id(self.prev_hard_fork.as_ref(), enc);
+        encode_optional_gov_action_id(self.prev_committee.as_ref(), enc);
+        encode_optional_gov_action_id(self.prev_constitution.as_ref(), enc);
+    }
+}
+
+impl CborDecode for EnactState {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 6 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 6,
+                actual: len as usize,
+            });
+        }
+        let constitution = crate::eras::conway::Constitution::decode_cbor(dec)?;
+        let committee_quorum = UnitInterval::decode_cbor(dec)?;
+        let prev_pparams_update = decode_optional_gov_action_id(dec)?;
+        let prev_hard_fork = decode_optional_gov_action_id(dec)?;
+        let prev_committee = decode_optional_gov_action_id(dec)?;
+        let prev_constitution = decode_optional_gov_action_id(dec)?;
+        Ok(Self {
+            constitution,
+            committee_quorum,
+            prev_pparams_update,
+            prev_hard_fork,
+            prev_committee,
+            prev_constitution,
+        })
+    }
+}
+
+impl EnactState {
+    /// Creates a default `EnactState` with empty constitution and no lineage.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the currently enacted constitution.
+    pub fn constitution(&self) -> &crate::eras::conway::Constitution {
+        &self.constitution
+    }
+
+    /// Returns the current committee quorum threshold.
+    pub fn committee_quorum(&self) -> &UnitInterval {
+        &self.committee_quorum
+    }
+
+    /// Returns the most recently enacted action ID for each purpose group.
+    pub fn prev_pparams_update(&self) -> Option<&crate::eras::conway::GovActionId> {
+        self.prev_pparams_update.as_ref()
+    }
+
+    pub fn prev_hard_fork(&self) -> Option<&crate::eras::conway::GovActionId> {
+        self.prev_hard_fork.as_ref()
+    }
+
+    pub fn prev_committee(&self) -> Option<&crate::eras::conway::GovActionId> {
+        self.prev_committee.as_ref()
+    }
+
+    pub fn prev_constitution(&self) -> Option<&crate::eras::conway::GovActionId> {
+        self.prev_constitution.as_ref()
+    }
+
+    /// Returns the enacted root for the given governance purpose group.
+    ///
+    /// This is used during Conway proposal validation to check whether a
+    /// proposal's `prev_action_id` correctly references the most recently
+    /// enacted action of its purpose family.
+    ///
+    /// Upstream reference: `Cardano.Ledger.Conway.Governance.prevGovActionIds`.
+    pub(crate) fn enacted_root(
+        &self,
+        purpose: ConwayGovActionPurpose,
+    ) -> Option<&crate::eras::conway::GovActionId> {
+        match purpose {
+            ConwayGovActionPurpose::ParameterChange => self.prev_pparams_update.as_ref(),
+            ConwayGovActionPurpose::HardFork => self.prev_hard_fork.as_ref(),
+            ConwayGovActionPurpose::Committee => self.prev_committee.as_ref(),
+            ConwayGovActionPurpose::Constitution => self.prev_constitution.as_ref(),
+            // TreasuryWithdrawals and Info have no lineage.
+            ConwayGovActionPurpose::TreasuryWithdrawals
+            | ConwayGovActionPurpose::Info => None,
+        }
+    }
+}
+
+/// Outcome of enacting a single governance action.
+///
+/// Callers inspect this to determine what side-effects to apply to
+/// `LedgerState` (committee, treasury, protocol params, etc.).
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Enact`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EnactOutcome {
+    /// No on-chain effect (InfoAction).
+    NoEffect,
+    /// The constitution was updated.
+    ConstitutionUpdated,
+    /// All committee members were removed (no-confidence motion).
+    CommitteeRemoved,
+    /// Committee membership was updated and quorum changed.
+    CommitteeUpdated {
+        members_removed: usize,
+        members_added: usize,
+    },
+    /// A hard fork was enacted — the protocol version was updated.
+    HardForkEnacted {
+        new_version: (u64, u64),
+    },
+    /// Treasury withdrawals were enacted — lovelace credited to reward
+    /// accounts from the treasury.
+    TreasuryWithdrawn {
+        total_withdrawn: u64,
+    },
+    /// A parameter change was recorded. The opaque `protocol_param_update`
+    /// bytes are preserved in the enact state; applying them to
+    /// `ProtocolParameters` requires parsing the update map (future
+    /// milestone).
+    ParameterChangeRecorded,
+}
+
+/// Enacts a single ratified governance action, updating the `EnactState`
+/// lineage and applying side-effects to the mutable ledger components.
+///
+/// This function implements the Conway `ENACT` rule for each governance
+/// action variant. Side-effects are applied directly to the provided
+/// mutable references so callers do not need to interpret the outcome
+/// for state updates — the `EnactOutcome` is purely informational.
+///
+/// # Parameters
+///
+/// * `enact` — Enacted governance state (constitution, quorum, lineage).
+/// * `action_id` — The `GovActionId` of the action being enacted.
+/// * `action` — The `GovAction` body to enact.
+/// * `committee` — Mutable committee-member state.
+/// * `protocol_params` — Mutable protocol parameters (for hard-fork version).
+/// * `reward_accounts` — Mutable reward-account balances (for treasury withdrawal).
+/// * `accounting` — Mutable treasury/reserves accounting.
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Enact`.
+pub fn enact_gov_action(
+    enact: &mut EnactState,
+    action_id: crate::eras::conway::GovActionId,
+    action: &crate::eras::conway::GovAction,
+    committee: &mut CommitteeState,
+    protocol_params: &mut Option<crate::protocol_params::ProtocolParameters>,
+    reward_accounts: &mut RewardAccounts,
+    accounting: &mut AccountingState,
+) -> EnactOutcome {
+    use crate::eras::conway::GovAction;
+
+    match action {
+        GovAction::InfoAction => EnactOutcome::NoEffect,
+
+        GovAction::NewConstitution {
+            constitution, ..
+        } => {
+            enact.constitution = constitution.clone();
+            enact.prev_constitution = Some(action_id);
+            EnactOutcome::ConstitutionUpdated
+        }
+
+        GovAction::NoConfidence { .. } => {
+            // Remove all committee members — upstream ENACT removes
+            // the entire committee on no-confidence.
+            let count = committee.len();
+            *committee = CommitteeState::new();
+            enact.committee_quorum = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
+            enact.prev_committee = Some(action_id);
+            let _ = count; // suppress unused; count is informational
+            EnactOutcome::CommitteeRemoved
+        }
+
+        GovAction::UpdateCommittee {
+            members_to_remove,
+            members_to_add,
+            quorum,
+            ..
+        } => {
+            let mut removed = 0usize;
+            for cred in members_to_remove {
+                if committee.unregister(cred).is_some() {
+                    removed += 1;
+                }
+            }
+            let mut added = 0usize;
+            for (cred, _term_epoch) in members_to_add {
+                // Register the new member with no hot-key authorization.
+                // Term-limit epoch tracking is a future milestone.
+                if committee.register(cred.clone()) {
+                    added += 1;
+                }
+            }
+            enact.committee_quorum = *quorum;
+            enact.prev_committee = Some(action_id);
+            EnactOutcome::CommitteeUpdated {
+                members_removed: removed,
+                members_added: added,
+            }
+        }
+
+        GovAction::HardForkInitiation {
+            protocol_version, ..
+        } => {
+            if let Some(pp) = protocol_params.as_mut() {
+                pp.protocol_version = Some(*protocol_version);
+            }
+            enact.prev_hard_fork = Some(action_id);
+            EnactOutcome::HardForkEnacted {
+                new_version: *protocol_version,
+            }
+        }
+
+        GovAction::TreasuryWithdrawals {
+            withdrawals, ..
+        } => {
+            let mut total = 0u64;
+            for (ra, &amount) in withdrawals {
+                if amount == 0 {
+                    continue;
+                }
+                if let Some(ra_state) = reward_accounts.get_mut(ra) {
+                    // Only credit registered reward accounts.
+                    ra_state.set_balance(ra_state.balance().saturating_add(amount));
+                    accounting.treasury = accounting.treasury.saturating_sub(amount);
+                    total = total.saturating_add(amount);
+                }
+                // Unregistered reward accounts: withdrawal is lost (matching
+                // upstream behavior where uncredited amounts remain in treasury).
+            }
+            EnactOutcome::TreasuryWithdrawn {
+                total_withdrawn: total,
+            }
+        }
+
+        GovAction::ParameterChange { .. } => {
+            // Record the lineage. Applying the opaque protocol_param_update
+            // bytes to ProtocolParameters requires parsing the CBOR map of
+            // optional parameter delta fields — a future milestone.
+            enact.prev_pparams_update = Some(action_id);
+            EnactOutcome::ParameterChangeRecorded
+        }
+    }
 }
 
 /// Read-only snapshot of ledger-visible state.
@@ -893,6 +1423,9 @@ impl CommitteeState {
 pub struct LedgerStateSnapshot {
     current_era: Era,
     tip: Point,
+    current_epoch: EpochNo,
+    expected_network_id: Option<u8>,
+    governance_actions: BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
     pool_state: PoolState,
     stake_credentials: StakeCredentials,
     committee_state: CommitteeState,
@@ -903,6 +1436,7 @@ pub struct LedgerStateSnapshot {
     protocol_params: Option<crate::protocol_params::ProtocolParameters>,
     deposit_pot: DepositPot,
     accounting: AccountingState,
+    enact_state: EnactState,
 }
 
 impl LedgerStateSnapshot {
@@ -914,6 +1448,38 @@ impl LedgerStateSnapshot {
     /// Returns the chain tip captured in this snapshot.
     pub fn tip(&self) -> &Point {
         &self.tip
+    }
+
+    /// Returns the current epoch captured in this snapshot.
+    pub fn current_epoch(&self) -> EpochNo {
+        self.current_epoch
+    }
+
+    /// Returns the expected reward-account network id, if configured.
+    pub fn expected_network_id(&self) -> Option<u8> {
+        self.expected_network_id
+    }
+
+    /// Returns the stored governance action state for `id`, if present.
+    pub fn governance_action(
+        &self,
+        id: &crate::eras::conway::GovActionId,
+    ) -> Option<&GovernanceActionState> {
+        self.governance_actions.get(id)
+    }
+
+    /// Returns all stored governance actions keyed by governance action id.
+    pub fn governance_actions(
+        &self,
+    ) -> &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState> {
+        &self.governance_actions
+    }
+
+    /// Returns a mutable reference to stored governance actions.
+    pub fn governance_actions_mut(
+        &mut self,
+    ) -> &mut BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState> {
+        &mut self.governance_actions
     }
 
     /// Returns the registered stake-pool state captured in this snapshot.
@@ -1000,6 +1566,11 @@ impl LedgerStateSnapshot {
     /// Returns the treasury/reserves accounting captured in this snapshot.
     pub fn accounting(&self) -> &AccountingState {
         &self.accounting
+    }
+
+    /// Returns the Conway enactment state captured in this snapshot.
+    pub fn enact_state(&self) -> &EnactState {
+        &self.enact_state
     }
 
     /// Returns all UTxO entries paying to `address`.
@@ -1187,6 +1758,12 @@ pub struct LedgerState {
     pub current_era: Era,
     /// Chain tip as a point (slot + header hash).
     pub tip: Point,
+    /// Current epoch known to the ledger state.
+    pub current_epoch: EpochNo,
+    /// Expected network id for reward-account validation.
+    expected_network_id: Option<u8>,
+    /// Persisted Conway governance actions keyed by `GovActionId`.
+    governance_actions: BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
     /// Registered stake-pool state.
     pool_state: PoolState,
     /// Registered stake-credential state.
@@ -1207,6 +1784,8 @@ pub struct LedgerState {
     deposit_pot: DepositPot,
     /// Treasury and reserves accounting.
     accounting: AccountingState,
+    /// Conway governance enactment state (constitution, quorum, lineage).
+    enact_state: EnactState,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -1222,9 +1801,22 @@ pub struct LedgerStateCheckpoint {
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(12);
+        enc.array(16);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
+        match self.expected_network_id {
+            Some(network_id) => {
+                enc.unsigned(u64::from(network_id));
+            }
+            None => {
+                enc.null();
+            }
+        }
+        enc.map(self.governance_actions.len() as u64);
+        for (gov_action_id, state) in &self.governance_actions {
+            gov_action_id.encode_cbor(enc);
+            state.encode_cbor(enc);
+        }
         self.pool_state.encode_cbor(enc);
         self.stake_credentials.encode_cbor(enc);
         self.committee_state.encode_cbor(enc);
@@ -1239,22 +1831,46 @@ impl CborEncode for LedgerState {
         }
         self.deposit_pot.encode_cbor(enc);
         self.accounting.encode_cbor(enc);
+        self.current_epoch.encode_cbor(enc);
+        self.enact_state.encode_cbor(enc);
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept legacy 9/10-element arrays and current 12-element arrays.
-        if len != 9 && len != 10 && len != 12 {
+        // Accept legacy 9/10-element arrays and current 12/13/14/15/16-element arrays.
+        if len != 9 && len != 10 && len != 12 && len != 13 && len != 14 && len != 15 && len != 16 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 12,
+                expected: 15,
                 actual: len as usize,
             });
         }
 
         let current_era = Era::decode_cbor(dec)?;
         let tip = Point::decode_cbor(dec)?;
+        let expected_network_id = if len >= 13 {
+            if dec.peek_is_null() {
+                dec.skip()?;
+                None
+            } else {
+                Some(dec.unsigned()? as u8)
+            }
+        } else {
+            None
+        };
+        let governance_actions = if len >= 14 {
+            let map_len = dec.map()?;
+            let mut governance_actions = BTreeMap::new();
+            for _ in 0..map_len {
+                let gov_action_id = crate::eras::conway::GovActionId::decode_cbor(dec)?;
+                let state = GovernanceActionState::decode_cbor(dec)?;
+                governance_actions.insert(gov_action_id, state);
+            }
+            governance_actions
+        } else {
+            BTreeMap::new()
+        };
         let pool_state = PoolState::decode_cbor(dec)?;
         let stake_credentials = StakeCredentials::decode_cbor(dec)?;
         let committee_state = CommitteeState::decode_cbor(dec)?;
@@ -1286,9 +1902,24 @@ impl CborDecode for LedgerState {
             AccountingState::default()
         };
 
+        let current_epoch = if len >= 15 {
+            EpochNo::decode_cbor(dec)?
+        } else {
+            EpochNo(0)
+        };
+
+        let enact_state = if len >= 16 {
+            EnactState::decode_cbor(dec)?
+        } else {
+            EnactState::default()
+        };
+
         Ok(Self {
             current_era,
             tip,
+            current_epoch,
+            expected_network_id,
+            governance_actions,
             pool_state,
             stake_credentials,
             committee_state,
@@ -1299,6 +1930,7 @@ impl CborDecode for LedgerState {
             protocol_params,
             deposit_pot,
             accounting,
+            enact_state,
         })
     }
 }
@@ -1350,6 +1982,9 @@ impl LedgerState {
         Self {
             current_era,
             tip: Point::Origin,
+            current_epoch: EpochNo(0),
+            expected_network_id: None,
+            governance_actions: BTreeMap::new(),
             pool_state: PoolState::new(),
             stake_credentials: StakeCredentials::new(),
             committee_state: CommitteeState::new(),
@@ -1360,6 +1995,7 @@ impl LedgerState {
             protocol_params: None,
             deposit_pot: DepositPot::default(),
             accounting: AccountingState::default(),
+            enact_state: EnactState::default(),
         }
     }
 
@@ -1480,6 +2116,53 @@ impl LedgerState {
         self.protocol_params.as_ref()
     }
 
+    /// Returns a mutable reference to the protocol parameters slot.
+    pub fn protocol_params_mut(&mut self) -> &mut Option<crate::protocol_params::ProtocolParameters> {
+        &mut self.protocol_params
+    }
+
+    /// Returns the expected reward-account network id, if set.
+    pub fn expected_network_id(&self) -> Option<u8> {
+        self.expected_network_id
+    }
+
+    /// Returns the current epoch carried by the ledger state.
+    pub fn current_epoch(&self) -> EpochNo {
+        self.current_epoch
+    }
+
+    /// Returns stored governance action state for `id`, if present.
+    pub fn governance_action(
+        &self,
+        id: &crate::eras::conway::GovActionId,
+    ) -> Option<&GovernanceActionState> {
+        self.governance_actions.get(id)
+    }
+
+    /// Returns all stored governance actions keyed by `GovActionId`.
+    pub fn governance_actions(
+        &self,
+    ) -> &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState> {
+        &self.governance_actions
+    }
+
+    /// Returns a mutable reference to stored governance actions.
+    pub fn governance_actions_mut(
+        &mut self,
+    ) -> &mut BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState> {
+        &mut self.governance_actions
+    }
+
+    /// Sets the expected reward-account network id used by environment-based validation.
+    pub fn set_expected_network_id(&mut self, network_id: u8) {
+        self.expected_network_id = Some(network_id);
+    }
+
+    /// Sets the current epoch carried by the ledger state.
+    pub fn set_current_epoch(&mut self, current_epoch: EpochNo) {
+        self.current_epoch = current_epoch;
+    }
+
     /// Sets the protocol parameters governing validation.
     pub fn set_protocol_params(&mut self, params: crate::protocol_params::ProtocolParameters) {
         self.protocol_params = Some(params);
@@ -1505,11 +2188,46 @@ impl LedgerState {
         &mut self.accounting
     }
 
+    /// Returns a reference to the Conway enactment state.
+    pub fn enact_state(&self) -> &EnactState {
+        &self.enact_state
+    }
+
+    /// Returns a mutable reference to the Conway enactment state.
+    pub fn enact_state_mut(&mut self) -> &mut EnactState {
+        &mut self.enact_state
+    }
+
+    /// Enacts a single ratified governance action against this ledger state.
+    ///
+    /// This avoids split-borrow issues by calling [`enact_gov_action`]
+    /// with internal field references. The action is applied directly to
+    /// the enact state, committee state, protocol parameters, reward
+    /// accounts, and accounting.
+    pub fn enact_action(
+        &mut self,
+        action_id: crate::eras::conway::GovActionId,
+        action: &crate::eras::conway::GovAction,
+    ) -> EnactOutcome {
+        enact_gov_action(
+            &mut self.enact_state,
+            action_id,
+            action,
+            &mut self.committee_state,
+            &mut self.protocol_params,
+            &mut self.reward_accounts,
+            &mut self.accounting,
+        )
+    }
+
     /// Captures a read-only snapshot of the current ledger state.
     pub fn snapshot(&self) -> LedgerStateSnapshot {
         LedgerStateSnapshot {
             current_era: self.current_era,
             tip: self.tip,
+            current_epoch: self.current_epoch,
+            expected_network_id: self.expected_network_id,
+            governance_actions: self.governance_actions.clone(),
             pool_state: self.pool_state.clone(),
             stake_credentials: self.stake_credentials.clone(),
             committee_state: self.committee_state.clone(),
@@ -1520,6 +2238,7 @@ impl LedgerState {
             protocol_params: self.protocol_params.clone(),
             deposit_pot: self.deposit_pot.clone(),
             accounting: self.accounting.clone(),
+            enact_state: self.enact_state.clone(),
         }
     }
 
@@ -2353,6 +3072,8 @@ impl LedgerState {
         let mut staged_drep_state = self.drep_state.clone();
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
+        let mut staged_governance_actions = self.governance_actions.clone();
+        let current_treasury = self.accounting.treasury;
         let (kd, pd) = self.deposit_amounts();
         for (tx_id, tx_size, body, witness_bytes) in &decoded {
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
@@ -2365,6 +3086,7 @@ impl LedgerState {
                     body.collateral.as_deref(), total_eu.as_ref(),
                 )?;
             }
+            validate_conway_current_treasury_value(body.current_treasury_value, current_treasury)?;
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
                 &body.inputs, &staged, &mut required,
@@ -2440,8 +3162,20 @@ impl LedgerState {
                     &sorted_voters, proposal_slice,
                 )?;
             }
-            if let Some(proposal_procedures) = &body.proposal_procedures {
-                let stake_credentials_for_governance = conway_stake_credentials_after_certificates(
+            let unregistered_drep_voters = collect_conway_unregistered_drep_voters(
+                body.certificates.as_deref(),
+            );
+
+            if body.voting_procedures.is_some()
+                || body.proposal_procedures.is_some()
+                || !unregistered_drep_voters.is_empty()
+            {
+                let (
+                    governance_pool_state,
+                    governance_stake_credentials,
+                    governance_committee_state,
+                    governance_drep_state,
+                ) = conway_governance_state_after_certificates(
                     &staged_pool_state,
                     &staged_stake_credentials,
                     &staged_committee_state,
@@ -2452,10 +3186,65 @@ impl LedgerState {
                     pd,
                     body.certificates.as_deref(),
                 )?;
-                validate_conway_proposal_return_accounts(
-                    proposal_procedures,
-                    &stake_credentials_for_governance,
-                )?;
+
+                let mut governance_actions_for_tx = staged_governance_actions.clone();
+
+                if let Some(voting_procedures) = &body.voting_procedures {
+                    validate_conway_voters(
+                        voting_procedures,
+                        &governance_pool_state,
+                        &governance_committee_state,
+                        &governance_drep_state,
+                    )?;
+                }
+
+                if let Some(proposal_procedures) = &body.proposal_procedures {
+                    stage_conway_proposals(
+                        *tx_id,
+                        self.current_epoch,
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|params| params.gov_action_lifetime),
+                        proposal_procedures,
+                        &mut governance_actions_for_tx,
+                    );
+                    validate_conway_proposals(
+                        *tx_id,
+                        proposal_procedures,
+                        self.current_epoch,
+                        &governance_actions_for_tx,
+                        &governance_stake_credentials,
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|params| params.protocol_version),
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|params| params.gov_action_deposit),
+                        self.expected_network_id,
+                        &self.enact_state,
+                    )?;
+                }
+
+                if let Some(voting_procedures) = &body.voting_procedures {
+                    validate_conway_vote_targets(voting_procedures, &governance_actions_for_tx)?;
+                    validate_conway_voter_permissions(
+                        self.current_epoch,
+                        voting_procedures,
+                        &governance_actions_for_tx,
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|params| params.protocol_version),
+                    )?;
+                }
+
+                staged_governance_actions = governance_actions_for_tx;
+                if let Some(voting_procedures) = &body.voting_procedures {
+                    apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch);
+                }
+                remove_conway_drep_votes(
+                    &unregistered_drep_voters,
+                    &mut staged_governance_actions,
+                );
             }
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
@@ -2468,6 +3257,12 @@ impl LedgerState {
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
+            // Track DRep activity for registration and update certificates.
+            touch_drep_activity_for_certs(
+                body.certificates.as_deref(),
+                &mut staged_drep_state,
+                self.current_epoch,
+            );
             staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.multi_era_utxo = staged;
@@ -2477,11 +3272,12 @@ impl LedgerState {
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
+        self.governance_actions = staged_governance_actions;
         Ok(())
     }
 }
 
-fn conway_stake_credentials_after_certificates(
+fn conway_governance_state_after_certificates(
     pool_state: &PoolState,
     stake_credentials: &StakeCredentials,
     committee_state: &CommitteeState,
@@ -2491,7 +3287,7 @@ fn conway_stake_credentials_after_certificates(
     key_deposit: u64,
     pool_deposit: u64,
     certificates: Option<&[DCert]>,
-) -> Result<StakeCredentials, LedgerError> {
+) -> Result<(PoolState, StakeCredentials, CommitteeState, DrepState), LedgerError> {
     let mut simulated_pool_state = pool_state.clone();
     let mut simulated_stake_credentials = stake_credentials.clone();
     let mut simulated_committee_state = committee_state.clone();
@@ -2512,28 +3308,548 @@ fn conway_stake_credentials_after_certificates(
         None,
     )?;
 
-    Ok(simulated_stake_credentials)
+    Ok((
+        simulated_pool_state,
+        simulated_stake_credentials,
+        simulated_committee_state,
+        simulated_drep_state,
+    ))
 }
 
-fn validate_conway_proposal_return_accounts(
+fn validate_conway_voters(
+    voting_procedures: &crate::eras::conway::VotingProcedures,
+    pool_state: &PoolState,
+    committee_state: &CommitteeState,
+    drep_state: &DrepState,
+) -> Result<(), LedgerError> {
+    let unknown_voters: Vec<crate::eras::conway::Voter> = voting_procedures
+        .procedures
+        .keys()
+        .filter(|voter| !conway_voter_exists(voter, pool_state, committee_state, drep_state))
+        .cloned()
+        .collect();
+
+    if unknown_voters.is_empty() {
+        Ok(())
+    } else {
+        Err(LedgerError::VotersDoNotExist(unknown_voters))
+    }
+}
+
+fn validate_conway_vote_targets(
+    voting_procedures: &crate::eras::conway::VotingProcedures,
+    governance_actions: &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+) -> Result<(), LedgerError> {
+    let mut unknown_action_ids = Vec::new();
+
+    for votes in voting_procedures.procedures.values() {
+        for gov_action_id in votes.keys() {
+            if !governance_actions.contains_key(gov_action_id)
+                && !unknown_action_ids.contains(gov_action_id)
+            {
+                unknown_action_ids.push(gov_action_id.clone());
+            }
+        }
+    }
+
+    if unknown_action_ids.is_empty() {
+        Ok(())
+    } else {
+        Err(LedgerError::GovActionsDoNotExist(unknown_action_ids))
+    }
+}
+
+fn validate_conway_voter_permissions(
+    current_epoch: EpochNo,
+    voting_procedures: &crate::eras::conway::VotingProcedures,
+    governance_actions: &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+    protocol_version: Option<(u64, u64)>,
+) -> Result<(), LedgerError> {
+    let mut bootstrap_disallowed_votes = Vec::new();
+    let mut disallowed_votes = Vec::new();
+    let mut expired_votes = Vec::new();
+
+    for (voter, votes) in &voting_procedures.procedures {
+        for gov_action_id in votes.keys() {
+            let Some(governance_action) = governance_actions.get(gov_action_id) else {
+                continue;
+            };
+
+            if conway_bootstrap_phase(protocol_version)
+                && !conway_bootstrap_vote_is_allowed(voter, &governance_action.proposal.gov_action)
+            {
+                bootstrap_disallowed_votes.push((voter.clone(), gov_action_id.clone()));
+                continue;
+            }
+
+            if let Some(expires_after) = governance_action.expires_after() {
+                if current_epoch > expires_after {
+                    expired_votes.push((voter.clone(), gov_action_id.clone()));
+                    continue;
+                }
+            }
+
+            if !conway_voter_is_allowed_for_action(voter, &governance_action.proposal.gov_action) {
+                disallowed_votes.push((voter.clone(), gov_action_id.clone()));
+            }
+        }
+    }
+
+    if !bootstrap_disallowed_votes.is_empty() {
+        return Err(LedgerError::DisallowedVotesDuringBootstrap(
+            bootstrap_disallowed_votes,
+        ));
+    }
+
+    if !expired_votes.is_empty() {
+        return Err(LedgerError::VotingOnExpiredGovAction(expired_votes));
+    }
+
+    if disallowed_votes.is_empty() {
+        Ok(())
+    } else {
+        Err(LedgerError::DisallowedVoters(disallowed_votes))
+    }
+}
+
+fn conway_voter_is_allowed_for_action(
+    voter: &crate::eras::conway::Voter,
+    gov_action: &crate::eras::conway::GovAction,
+) -> bool {
+    match voter {
+        crate::eras::conway::Voter::CommitteeKeyHash(_)
+        | crate::eras::conway::Voter::CommitteeScript(_) => {
+            !matches!(
+                gov_action,
+                crate::eras::conway::GovAction::NoConfidence { .. }
+                    | crate::eras::conway::GovAction::UpdateCommittee { .. }
+            )
+        }
+        crate::eras::conway::Voter::DRepKeyHash(_)
+        | crate::eras::conway::Voter::DRepScript(_) => true,
+        crate::eras::conway::Voter::StakePool(_) => match gov_action {
+            crate::eras::conway::GovAction::NoConfidence { .. }
+            | crate::eras::conway::GovAction::UpdateCommittee { .. }
+            | crate::eras::conway::GovAction::HardForkInitiation { .. }
+            | crate::eras::conway::GovAction::InfoAction => true,
+            crate::eras::conway::GovAction::TreasuryWithdrawals { .. }
+            | crate::eras::conway::GovAction::NewConstitution { .. } => false,
+            crate::eras::conway::GovAction::ParameterChange { .. } => {
+                // Upstream stake-pool voting distinguishes security-relevant parameter
+                // updates, but this slice still stores Conway protocol_param_update as
+                // opaque CBOR bytes, so we intentionally avoid a false positive here.
+                true
+            }
+        },
+    }
+}
+
+fn conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {
+    matches!(protocol_version, Some((9, _)))
+}
+
+fn conway_bootstrap_action(gov_action: &crate::eras::conway::GovAction) -> bool {
+    matches!(
+        gov_action,
+        crate::eras::conway::GovAction::ParameterChange { .. }
+            | crate::eras::conway::GovAction::HardForkInitiation { .. }
+            | crate::eras::conway::GovAction::InfoAction
+    )
+}
+
+fn conway_bootstrap_vote_is_allowed(
+    voter: &crate::eras::conway::Voter,
+    gov_action: &crate::eras::conway::GovAction,
+) -> bool {
+    match voter {
+        crate::eras::conway::Voter::DRepKeyHash(_)
+        | crate::eras::conway::Voter::DRepScript(_) => {
+            matches!(gov_action, crate::eras::conway::GovAction::InfoAction)
+        }
+        crate::eras::conway::Voter::CommitteeKeyHash(_)
+        | crate::eras::conway::Voter::CommitteeScript(_)
+        | crate::eras::conway::Voter::StakePool(_) => conway_bootstrap_action(gov_action),
+    }
+}
+
+fn conway_pv_can_follow(previous: (u64, u64), new: (u64, u64)) -> bool {
+    (previous.0, previous.1.saturating_add(1)) == new
+        || previous
+            .0
+            .checked_add(1)
+            .is_some_and(|next_major| (next_major, 0) == new)
+}
+
+fn conway_expected_previous_hard_fork_version(
+    proposal: &crate::eras::conway::ProposalProcedure,
+    governance_actions: &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+    current_protocol_version: Option<(u64, u64)>,
+) -> Option<(Option<crate::eras::conway::GovActionId>, (u64, u64), (u64, u64))> {
+    use crate::eras::conway::GovAction;
+
+    match &proposal.gov_action {
+        GovAction::HardForkInitiation {
+            prev_action_id,
+            protocol_version,
+        } => {
+            let expected = match prev_action_id {
+                Some(action_id) => governance_actions.get(action_id).and_then(|action_state| {
+                    match &action_state.proposal().gov_action {
+                        GovAction::HardForkInitiation {
+                            protocol_version, ..
+                        } => Some(*protocol_version),
+                        _ => None,
+                    }
+                }),
+                None => current_protocol_version,
+            }?;
+            Some((prev_action_id.clone(), *protocol_version, expected))
+        }
+        _ => None,
+    }
+}
+
+fn stage_conway_proposals(
+    tx_id: crate::types::TxId,
+    current_epoch: EpochNo,
+    gov_action_lifetime: Option<u64>,
     proposal_procedures: &[crate::eras::conway::ProposalProcedure],
+    governance_actions: &mut BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+) {
+    for (index, proposal) in proposal_procedures.iter().enumerate() {
+        governance_actions.insert(
+            crate::eras::conway::GovActionId {
+                transaction_id: tx_id.0,
+                gov_action_index: index as u16,
+            },
+            GovernanceActionState::new_with_lifetime(
+                proposal.clone(),
+                current_epoch,
+                gov_action_lifetime,
+            ),
+        );
+    }
+}
+
+fn conway_proposal_prev_action_id(
+    gov_action: &crate::eras::conway::GovAction,
+) -> Option<&crate::eras::conway::GovActionId> {
+    use crate::eras::conway::GovAction;
+
+    match gov_action {
+        GovAction::ParameterChange { prev_action_id, .. }
+        | GovAction::HardForkInitiation { prev_action_id, .. }
+        | GovAction::NoConfidence { prev_action_id }
+        | GovAction::UpdateCommittee { prev_action_id, .. }
+        | GovAction::NewConstitution { prev_action_id, .. } => prev_action_id.as_ref(),
+        GovAction::TreasuryWithdrawals { .. } | GovAction::InfoAction => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConwayGovActionPurpose {
+    ParameterChange,
+    HardFork,
+    Committee,
+    Constitution,
+    TreasuryWithdrawals,
+    Info,
+}
+
+fn conway_gov_action_purpose(
+    gov_action: &crate::eras::conway::GovAction,
+) -> ConwayGovActionPurpose {
+    use crate::eras::conway::GovAction;
+
+    match gov_action {
+        GovAction::ParameterChange { .. } => ConwayGovActionPurpose::ParameterChange,
+        GovAction::HardForkInitiation { .. } => ConwayGovActionPurpose::HardFork,
+        GovAction::NoConfidence { .. } | GovAction::UpdateCommittee { .. } => {
+            ConwayGovActionPurpose::Committee
+        }
+        GovAction::NewConstitution { .. } => ConwayGovActionPurpose::Constitution,
+        GovAction::TreasuryWithdrawals { .. } => ConwayGovActionPurpose::TreasuryWithdrawals,
+        GovAction::InfoAction => ConwayGovActionPurpose::Info,
+    }
+}
+
+fn apply_conway_votes(
+    voting_procedures: &crate::eras::conway::VotingProcedures,
+    governance_actions: &mut BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+    drep_state: &mut DrepState,
+    current_epoch: EpochNo,
+) {
+    for (voter, votes) in &voting_procedures.procedures {
+        for (gov_action_id, voting_procedure) in votes {
+            if let Some(action_state) = governance_actions.get_mut(gov_action_id) {
+                action_state.votes.insert(voter.clone(), voting_procedure.vote);
+            }
+        }
+        // Mark DRep as active in the current epoch when it casts any vote.
+        if let Some(drep) = voter_to_drep(voter) {
+            if let Some(entry) = drep_state.get_mut(&drep) {
+                entry.touch_activity(current_epoch);
+            }
+        }
+    }
+}
+
+/// Extracts the DRep identity from a Voter, if applicable.
+fn voter_to_drep(voter: &crate::eras::conway::Voter) -> Option<DRep> {
+    match voter {
+        crate::eras::conway::Voter::DRepKeyHash(hash) => Some(DRep::KeyHash(*hash)),
+        crate::eras::conway::Voter::DRepScript(hash) => Some(DRep::ScriptHash(*hash)),
+        _ => None,
+    }
+}
+
+fn collect_conway_unregistered_drep_voters(
+    certificates: Option<&[DCert]>,
+) -> Vec<crate::eras::conway::Voter> {
+    let Some(certificates) = certificates else {
+        return Vec::new();
+    };
+
+    let mut unregistered = Vec::new();
+    for certificate in certificates {
+        if let DCert::DrepUnregistration(credential, _) = certificate {
+            let voter = match credential {
+                StakeCredential::AddrKeyHash(hash) => crate::eras::conway::Voter::DRepKeyHash(*hash),
+                StakeCredential::ScriptHash(hash) => crate::eras::conway::Voter::DRepScript(*hash),
+            };
+            if !unregistered.contains(&voter) {
+                unregistered.push(voter);
+            }
+        }
+    }
+
+    unregistered
+}
+
+fn remove_conway_drep_votes(
+    unregistered_drep_voters: &[crate::eras::conway::Voter],
+    governance_actions: &mut BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+) {
+    if unregistered_drep_voters.is_empty() {
+        return;
+    }
+
+    for governance_action in governance_actions.values_mut() {
+        governance_action
+            .votes
+            .retain(|voter, _| !unregistered_drep_voters.contains(voter));
+    }
+}
+
+fn conway_voter_exists(
+    voter: &crate::eras::conway::Voter,
+    pool_state: &PoolState,
+    committee_state: &CommitteeState,
+    drep_state: &DrepState,
+) -> bool {
+    use crate::eras::conway::Voter;
+
+    match voter {
+        Voter::CommitteeKeyHash(hash) => committee_hot_credential_exists(
+            committee_state,
+            StakeCredential::AddrKeyHash(*hash),
+        ),
+        Voter::CommitteeScript(hash) => committee_hot_credential_exists(
+            committee_state,
+            StakeCredential::ScriptHash(*hash),
+        ),
+        Voter::DRepKeyHash(hash) => drep_state.is_registered(&DRep::KeyHash(*hash)),
+        Voter::DRepScript(hash) => drep_state.is_registered(&DRep::ScriptHash(*hash)),
+        Voter::StakePool(hash) => pool_state.is_registered(hash),
+    }
+}
+
+fn committee_hot_credential_exists(
+    committee_state: &CommitteeState,
+    credential: StakeCredential,
+) -> bool {
+    committee_state
+        .iter()
+        .any(|(_, member_state)| member_state.hot_credential() == Some(credential))
+}
+
+fn validate_conway_proposals(
+    tx_id: crate::types::TxId,
+    proposal_procedures: &[crate::eras::conway::ProposalProcedure],
+    current_epoch: EpochNo,
+    governance_actions: &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
     stake_credentials: &StakeCredentials,
+    protocol_version: Option<(u64, u64)>,
+    gov_action_deposit: Option<u64>,
+    expected_network_id: Option<u8>,
+    enact_state: &EnactState,
 ) -> Result<(), LedgerError> {
     use crate::eras::conway::GovAction;
 
-    for proposal in proposal_procedures {
+    for (proposal_index, proposal) in proposal_procedures.iter().enumerate() {
+        if conway_bootstrap_phase(protocol_version)
+            && !conway_bootstrap_action(&proposal.gov_action)
+        {
+            return Err(LedgerError::DisallowedProposalDuringBootstrap(
+                proposal.clone(),
+            ));
+        }
+
+        if let GovAction::ParameterChange {
+            protocol_param_update,
+            ..
+        } = &proposal.gov_action
+        {
+            if protocol_param_update.as_slice() == [0xA0] {
+                return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
+            }
+        }
+
+        if let Some(prev_action_id) = conway_proposal_prev_action_id(&proposal.gov_action) {
+            if prev_action_id.transaction_id == tx_id.0
+                && usize::from(prev_action_id.gov_action_index) >= proposal_index
+            {
+                return Err(LedgerError::InvalidPrevGovActionId(proposal.clone()));
+            }
+
+            // Accept if prev_action_id matches the enacted root for this
+            // purpose group (upstream GovRelation lineage check).
+            let purpose = conway_gov_action_purpose(&proposal.gov_action);
+            let matches_enacted_root = enact_state.enacted_root(purpose) == Some(prev_action_id);
+
+            if !matches_enacted_root {
+                // Otherwise must reference a stored pending proposal with
+                // matching purpose.
+                let Some(prev_action) = governance_actions.get(prev_action_id) else {
+                    return Err(LedgerError::InvalidPrevGovActionId(proposal.clone()));
+                };
+
+                if conway_gov_action_purpose(&prev_action.proposal().gov_action) != purpose {
+                    return Err(LedgerError::InvalidPrevGovActionId(proposal.clone()));
+                }
+            }
+        } else {
+            // Actions with lineage and prev_action_id = None — valid only
+            // when the enacted root for this purpose is also None.
+            // TreasuryWithdrawals and InfoAction have no lineage concept
+            // and are always accepted here.
+            let purpose = conway_gov_action_purpose(&proposal.gov_action);
+            match purpose {
+                ConwayGovActionPurpose::ParameterChange
+                | ConwayGovActionPurpose::HardFork
+                | ConwayGovActionPurpose::Committee
+                | ConwayGovActionPurpose::Constitution => {
+                    if enact_state.enacted_root(purpose).is_some() {
+                        return Err(LedgerError::InvalidPrevGovActionId(proposal.clone()));
+                    }
+                }
+                ConwayGovActionPurpose::TreasuryWithdrawals
+                | ConwayGovActionPurpose::Info => { /* no lineage */ }
+            }
+        }
+
+        if let Some((prev_action_id, supplied, expected)) =
+            conway_expected_previous_hard_fork_version(
+                proposal,
+                governance_actions,
+                protocol_version,
+            )
+        {
+            if !conway_pv_can_follow(expected, supplied) {
+                return Err(LedgerError::ProposalCantFollow {
+                    prev_action_id,
+                    supplied,
+                    expected,
+                });
+            }
+        }
+
+        if let Some(expected_deposit) = gov_action_deposit {
+            if proposal.deposit != expected_deposit {
+                return Err(LedgerError::ProposalDepositIncorrect {
+                    supplied: proposal.deposit,
+                    expected: expected_deposit,
+                });
+            }
+        }
+
         let reward_account = RewardAccount::from_bytes(&proposal.reward_account)
             .ok_or_else(|| LedgerError::InvalidRewardAccountBytes(proposal.reward_account.clone()))?;
+        if let Some(expected_network) = expected_network_id {
+            if reward_account.network != expected_network {
+                return Err(LedgerError::ProposalProcedureNetworkIdMismatch {
+                    account: reward_account,
+                    expected_network,
+                });
+            }
+        }
         if !stake_credentials.is_registered(&reward_account.credential) {
             return Err(LedgerError::RewardAccountNotRegistered(reward_account));
         }
 
         if let GovAction::TreasuryWithdrawals { withdrawals, .. } = &proposal.gov_action {
             for reward_account in withdrawals.keys() {
+                if let Some(expected_network) = expected_network_id {
+                    if reward_account.network != expected_network {
+                        return Err(LedgerError::TreasuryWithdrawalsNetworkIdMismatch {
+                            account: *reward_account,
+                            expected_network,
+                        });
+                    }
+                }
                 if !stake_credentials.is_registered(&reward_account.credential) {
                     return Err(LedgerError::RewardAccountNotRegistered(*reward_account));
                 }
             }
+
+            if withdrawals.values().all(|amount| *amount == 0) {
+                return Err(LedgerError::ZeroTreasuryWithdrawals(
+                    proposal.gov_action.clone(),
+                ));
+            }
+        }
+
+        if let GovAction::UpdateCommittee {
+            members_to_remove,
+            members_to_add,
+            ..
+        } = &proposal.gov_action
+        {
+            let conflicting_members: Vec<_> = members_to_add
+                .keys()
+                .copied()
+                .filter(|member| members_to_remove.contains(member))
+                .collect();
+            if !conflicting_members.is_empty() {
+                return Err(LedgerError::ConflictingCommitteeUpdate(
+                    conflicting_members,
+                ));
+            }
+
+            let invalid_members: Vec<_> = members_to_add
+                .iter()
+                .filter(|(_, epoch)| **epoch <= current_epoch.0)
+                .map(|(member, epoch)| (*member, EpochNo(*epoch)))
+                .collect();
+            if !invalid_members.is_empty() {
+                return Err(LedgerError::ExpirationEpochTooSmall(invalid_members));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_conway_current_treasury_value(
+    submitted_treasury_value: Option<u64>,
+    actual_treasury_value: u64,
+) -> Result<(), LedgerError> {
+    if let Some(submitted) = submitted_treasury_value {
+        if submitted != actual_treasury_value {
+            return Err(LedgerError::CurrentTreasuryValueIncorrect {
+                supplied: submitted,
+                actual: actual_treasury_value,
+            });
         }
     }
 
@@ -2853,6 +4169,29 @@ fn drep_from_credential(credential: StakeCredential) -> DRep {
     }
 }
 
+/// Updates `last_active_epoch` for DReps that were registered or updated
+/// in the current batch of certificates.
+fn touch_drep_activity_for_certs(
+    certificates: Option<&[DCert]>,
+    drep_state: &mut DrepState,
+    current_epoch: EpochNo,
+) {
+    let Some(certs) = certificates else {
+        return;
+    };
+    for cert in certs {
+        let credential = match cert {
+            DCert::DrepRegistration(c, _, _)
+            | DCert::DrepUpdate(c, _) => *c,
+            _ => continue,
+        };
+        let drep = drep_from_credential(credential);
+        if let Some(entry) = drep_state.get_mut(&drep) {
+            entry.touch_activity(current_epoch);
+        }
+    }
+}
+
 fn is_builtin_drep(drep: DRep) -> bool {
     matches!(drep, DRep::AlwaysAbstain | DRep::AlwaysNoConfidence)
 }
@@ -3077,9 +4416,325 @@ fn relay_access_points_from_relays(relays: &[Relay]) -> Vec<PoolRelayAccessPoint
     access_points
 }
 
+// ---------------------------------------------------------------------------
+// Ratification tally engine (Conway RATIFY rule)
+// ---------------------------------------------------------------------------
+//
+// Reference: `Cardano.Ledger.Conway.Rules.Ratify` and
+// `Cardano.Ledger.Conway.Governance.DRepPulser`.
+//
+// The ratification functions below tally stored votes for each voter role
+// (constitutional committee, DReps, stake-pool operators) against the
+// per-action-type thresholds in `PoolVotingThresholds` /
+// `DRepVotingThresholds`. The combined predicate `ratify_action()`
+// determines whether a governance action has been accepted.
+//
+// Epoch-boundary hookup (iterating proposals, calling `enact_gov_action`,
+// and pruning enacted proposals) is a subsequent slice.
+
+use crate::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
+use crate::stake::PoolStakeDistribution;
+
+/// Tally result for one voter role.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoteTally {
+    /// Weighted "yes" votes.
+    pub yes: u64,
+    /// Weighted "no" votes (explicit only — abstentions excluded).
+    pub no: u64,
+    /// Weighted "abstain" votes.
+    pub abstain: u64,
+    /// Total eligible voting weight (yes + no + abstain + non-voting).
+    pub total: u64,
+}
+
+impl VoteTally {
+    /// Whether the "yes" fraction of **non-abstaining** weight meets `threshold`.
+    ///
+    /// Upstream semantics: `yes / (total - abstain) >= threshold`.
+    /// Avoids float arithmetic by cross-multiplying.
+    pub fn meets_threshold(&self, threshold: &UnitInterval) -> bool {
+        let active = self.total.saturating_sub(self.abstain);
+        if active == 0 {
+            // All eligible voters abstained — action is accepted per upstream
+            // convention (vacuous quorum).
+            return true;
+        }
+        // yes * denominator >= threshold_numerator * active
+        (self.yes as u128) * (threshold.denominator as u128)
+            >= (threshold.numerator as u128) * (active as u128)
+    }
+}
+
+/// Tally constitutional-committee votes for a governance action.
+///
+/// Each non-resigned committee member has equal weight (1).
+/// Resigned members are excluded from the total.
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `ccVotesSatisfied`.
+pub(crate) fn tally_committee_votes(
+    action: &GovernanceActionState,
+    committee_state: &CommitteeState,
+) -> VoteTally {
+    use crate::eras::conway::{Vote, Voter};
+
+    let mut yes: u64 = 0;
+    let mut no: u64 = 0;
+    let mut abstain: u64 = 0;
+    let mut eligible: u64 = 0;
+
+    for (cold_cred, member_state) in committee_state.iter() {
+        // Resigned members do not count.
+        if member_state.is_resigned() {
+            continue;
+        }
+        eligible += 1;
+
+        // Find whether this committee member voted.
+        // Votes are keyed by Voter; committee votes use cold-credential tags.
+        let voter = match cold_cred {
+            StakeCredential::AddrKeyHash(h) => Voter::CommitteeKeyHash(*h),
+            StakeCredential::ScriptHash(h) => Voter::CommitteeScript(*h),
+        };
+
+        match action.votes.get(&voter) {
+            Some(Vote::Yes) => yes += 1,
+            Some(Vote::No) => no += 1,
+            Some(Vote::Abstain) => abstain += 1,
+            None => {} // did not vote — counted in eligible but not tallied
+        }
+    }
+
+    VoteTally { yes, no, abstain, total: eligible }
+}
+
+/// Tally DRep votes for a governance action, weighted by delegated stake.
+///
+/// Only active DReps (not exceeding the `drep_activity` window) are
+/// counted. Inactive DReps are excluded from both the vote tally and the
+/// total eligible weight.
+///
+/// `drep_delegated_stake` maps each `DRep` to the total lovelace
+/// delegated to it. The caller is responsible for computing this from
+/// the stake distribution (see `compute_drep_stake_distribution`).
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `dRepVotesSatisfied`.
+pub(crate) fn tally_drep_votes(
+    action: &GovernanceActionState,
+    drep_state: &DrepState,
+    drep_delegated_stake: &BTreeMap<DRep, u64>,
+    current_epoch: EpochNo,
+    drep_activity: u64,
+) -> VoteTally {
+    use crate::eras::conway::{Vote, Voter};
+
+    let mut yes: u64 = 0;
+    let mut no: u64 = 0;
+    let mut abstain: u64 = 0;
+    let mut total: u64 = 0;
+
+    for (drep, stake) in drep_delegated_stake {
+        // Only active registered DReps count.
+        let Some(reg) = drep_state.get(drep) else {
+            continue;
+        };
+        // Check activity window.
+        if reg.last_active_epoch.is_some_and(|e| {
+            e.0.saturating_add(drep_activity) < current_epoch.0
+        }) {
+            continue; // inactive — excluded from quorum
+        }
+
+        total = total.saturating_add(*stake);
+
+        // Find vote keyed by DRep voter tag.
+        let voter = match drep {
+            DRep::KeyHash(h) => Voter::DRepKeyHash(*h),
+            DRep::ScriptHash(h) => Voter::DRepScript(*h),
+            DRep::AlwaysAbstain | DRep::AlwaysNoConfidence => continue,
+        };
+
+        match action.votes.get(&voter) {
+            Some(Vote::Yes) => yes = yes.saturating_add(*stake),
+            Some(Vote::No) => no = no.saturating_add(*stake),
+            Some(Vote::Abstain) => abstain = abstain.saturating_add(*stake),
+            None => {} // non-voting weight already in total
+        }
+    }
+
+    VoteTally { yes, no, abstain, total }
+}
+
+/// Tally stake-pool operator (SPO) votes for a governance action, weighted
+/// by delegated pool stake.
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `spoVotesSatisfied`.
+pub(crate) fn tally_spo_votes(
+    action: &GovernanceActionState,
+    pool_stake_dist: &PoolStakeDistribution,
+) -> VoteTally {
+    use crate::eras::conway::{Vote, Voter};
+
+    let mut yes: u64 = 0;
+    let mut no: u64 = 0;
+    let mut abstain: u64 = 0;
+
+    for (pool_hash, &pool_stake) in pool_stake_dist.iter() {
+        let voter = Voter::StakePool(*pool_hash);
+        match action.votes.get(&voter) {
+            Some(Vote::Yes) => yes = yes.saturating_add(pool_stake),
+            Some(Vote::No) => no = no.saturating_add(pool_stake),
+            Some(Vote::Abstain) => abstain = abstain.saturating_add(pool_stake),
+            None => {} // non-voting weight in total only
+        }
+    }
+
+    VoteTally {
+        yes,
+        no,
+        abstain,
+        total: pool_stake_dist.total_active_stake(),
+    }
+}
+
+/// Look up the required DRep voting threshold for a governance action type.
+///
+/// Returns `None` for action types where DRep votes are not required
+/// (InfoAction — always accepted, never enacted).
+pub(crate) fn drep_threshold_for_action(
+    purpose: ConwayGovActionPurpose,
+    thresholds: &DRepVotingThresholds,
+) -> Option<&UnitInterval> {
+    match purpose {
+        ConwayGovActionPurpose::ParameterChange => Some(&thresholds.pp_gov_group),
+        ConwayGovActionPurpose::HardFork => Some(&thresholds.hard_fork_initiation),
+        ConwayGovActionPurpose::Committee => Some(&thresholds.committee_normal),
+        ConwayGovActionPurpose::Constitution => Some(&thresholds.update_to_constitution),
+        ConwayGovActionPurpose::TreasuryWithdrawals => Some(&thresholds.treasury_withdrawal),
+        ConwayGovActionPurpose::Info => None,
+    }
+}
+
+/// Look up the required SPO voting threshold for a governance action type.
+///
+/// Returns `None` for action types where SPO votes are not required.
+pub(crate) fn spo_threshold_for_action(
+    purpose: ConwayGovActionPurpose,
+    thresholds: &PoolVotingThresholds,
+) -> Option<&UnitInterval> {
+    match purpose {
+        ConwayGovActionPurpose::ParameterChange => Some(&thresholds.pp_security_group),
+        ConwayGovActionPurpose::HardFork => Some(&thresholds.hard_fork_initiation),
+        ConwayGovActionPurpose::Committee => Some(&thresholds.committee_normal),
+        ConwayGovActionPurpose::Constitution | ConwayGovActionPurpose::TreasuryWithdrawals => None,
+        ConwayGovActionPurpose::Info => None,
+    }
+}
+
+/// Determines whether a governance action is accepted by the
+/// constitutional committee.
+///
+/// The committee must meet a quorum (`committee_quorum` threshold)
+/// with equal-weight per-member votes.
+///
+/// Returns `true` when:
+/// - The action type does not require CC approval (InfoAction), or
+/// - The CC tally meets the `committee_quorum` threshold.
+pub(crate) fn accepted_by_committee(
+    action: &GovernanceActionState,
+    committee_state: &CommitteeState,
+    committee_quorum: &UnitInterval,
+) -> bool {
+    let purpose = conway_gov_action_purpose(&action.proposal.gov_action);
+    if purpose == ConwayGovActionPurpose::Info {
+        return true;
+    }
+    let tally = tally_committee_votes(action, committee_state);
+    tally.meets_threshold(committee_quorum)
+}
+
+/// Determines whether a governance action is accepted by DReps.
+///
+/// Returns `true` when:
+/// - The action type does not require DRep approval, or
+/// - The stake-weighted DRep tally meets the per-type threshold.
+pub(crate) fn accepted_by_dreps(
+    action: &GovernanceActionState,
+    drep_state: &DrepState,
+    drep_delegated_stake: &BTreeMap<DRep, u64>,
+    current_epoch: EpochNo,
+    drep_activity: u64,
+    thresholds: &DRepVotingThresholds,
+) -> bool {
+    let purpose = conway_gov_action_purpose(&action.proposal.gov_action);
+    let Some(threshold) = drep_threshold_for_action(purpose, thresholds) else {
+        return true; // no DRep vote required for this action type
+    };
+    let tally = tally_drep_votes(
+        action,
+        drep_state,
+        drep_delegated_stake,
+        current_epoch,
+        drep_activity,
+    );
+    tally.meets_threshold(threshold)
+}
+
+/// Determines whether a governance action is accepted by stake-pool
+/// operators.
+///
+/// Returns `true` when:
+/// - The action type does not require SPO approval, or
+/// - The stake-weighted SPO tally meets the per-type threshold.
+pub(crate) fn accepted_by_spo(
+    action: &GovernanceActionState,
+    pool_stake_dist: &PoolStakeDistribution,
+    thresholds: &PoolVotingThresholds,
+) -> bool {
+    let purpose = conway_gov_action_purpose(&action.proposal.gov_action);
+    let Some(threshold) = spo_threshold_for_action(purpose, thresholds) else {
+        return true; // no SPO vote required for this action type
+    };
+    let tally = tally_spo_votes(action, pool_stake_dist);
+    tally.meets_threshold(threshold)
+}
+
+/// Combined ratification predicate: checks whether a governance action is
+/// accepted by **all** required voter roles (CC + DRep + SPO).
+///
+/// This implements the core of the Conway RATIFY rule acceptance test.
+/// InfoAction proposals are always accepted (they have no side effects).
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `ratifyTransition`.
+pub(crate) fn ratify_action(
+    action: &GovernanceActionState,
+    committee_state: &CommitteeState,
+    committee_quorum: &UnitInterval,
+    drep_state: &DrepState,
+    drep_delegated_stake: &BTreeMap<DRep, u64>,
+    current_epoch: EpochNo,
+    drep_activity: u64,
+    drep_thresholds: &DRepVotingThresholds,
+    pool_stake_dist: &PoolStakeDistribution,
+    pool_thresholds: &PoolVotingThresholds,
+) -> bool {
+    accepted_by_committee(action, committee_state, committee_quorum)
+        && accepted_by_dreps(
+            action,
+            drep_state,
+            drep_delegated_stake,
+            current_epoch,
+            drep_activity,
+            drep_thresholds,
+        )
+        && accepted_by_spo(action, pool_stake_dist, pool_thresholds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eras::conway::{GovAction, Vote, Voter};
+    use crate::protocol_params::ProtocolParameters;
     use crate::types::{Relay, RewardAccount, UnitInterval};
 
     fn sample_pool_params(relays: Vec<Relay>, operator: u8) -> PoolParams {
@@ -3160,5 +4815,1306 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn ledger_state_checkpoint_round_trips_governance_actions() {
+        let reward_account = RewardAccount {
+            network: 0,
+            credential: crate::StakeCredential::AddrKeyHash([0x22; 28]),
+        };
+        let gov_action_id = crate::eras::conway::GovActionId {
+            transaction_id: [0x11; 32],
+            gov_action_index: 0,
+        };
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: crate::Anchor {
+                url: "https://example.invalid/proposal".to_owned(),
+                data_hash: [0x33; 32],
+            },
+        };
+
+        let mut state = LedgerState::new(Era::Conway);
+        state.governance_actions.insert(
+            gov_action_id.clone(),
+            GovernanceActionState::new(proposal.clone()),
+        );
+
+        let checkpoint = state.checkpoint();
+        let restored = checkpoint.restore();
+        assert_eq!(restored.governance_action(&gov_action_id).unwrap().proposal(), &proposal);
+
+        let round_trip = LedgerStateCheckpoint::from_cbor_bytes(&checkpoint.to_cbor_bytes())
+            .expect("checkpoint round-trip");
+        assert_eq!(round_trip.restore(), state);
+    }
+
+    // -- RegisteredDrep activity tracking ---------------------------------
+
+    #[test]
+    fn test_registered_drep_new_has_no_activity() {
+        let drep = RegisteredDrep::new(500_000_000, None);
+        assert_eq!(drep.last_active_epoch(), None);
+    }
+
+    #[test]
+    fn test_registered_drep_new_active() {
+        let drep = RegisteredDrep::new_active(500_000_000, None, EpochNo(42));
+        assert_eq!(drep.last_active_epoch(), Some(EpochNo(42)));
+    }
+
+    #[test]
+    fn test_registered_drep_touch_activity() {
+        let mut drep = RegisteredDrep::new(500_000_000, None);
+        assert_eq!(drep.last_active_epoch(), None);
+        drep.touch_activity(EpochNo(10));
+        assert_eq!(drep.last_active_epoch(), Some(EpochNo(10)));
+        drep.touch_activity(EpochNo(20));
+        assert_eq!(drep.last_active_epoch(), Some(EpochNo(20)));
+    }
+
+    #[test]
+    fn test_registered_drep_cbor_round_trip_with_activity() {
+        let drep = RegisteredDrep::new_active(500_000_000, None, EpochNo(99));
+        let bytes = drep.to_cbor_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let restored = RegisteredDrep::decode_cbor(&mut dec).expect("decode");
+        assert_eq!(restored, drep);
+    }
+
+    #[test]
+    fn test_registered_drep_cbor_round_trip_without_activity() {
+        let drep = RegisteredDrep::new(500_000_000, None);
+        let bytes = drep.to_cbor_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let restored = RegisteredDrep::decode_cbor(&mut dec).expect("decode");
+        assert_eq!(restored, drep);
+        assert_eq!(restored.last_active_epoch(), None);
+    }
+
+    #[test]
+    fn test_registered_drep_cbor_backward_compat_2_element() {
+        // Simulate a legacy 2-element array (no last_active_epoch).
+        let mut enc = Encoder::new();
+        enc.array(2);
+        enc.null(); // no anchor
+        enc.unsigned(500_000_000);
+        let bytes = enc.into_bytes();
+
+        let mut dec = Decoder::new(&bytes);
+        let drep = RegisteredDrep::decode_cbor(&mut dec).expect("decode legacy");
+        assert_eq!(drep.deposit(), 500_000_000);
+        assert_eq!(drep.last_active_epoch(), None);
+    }
+
+    #[test]
+    fn test_drep_state_inactive_dreps() {
+        let mut ds = DrepState::new();
+        let d1 = DRep::KeyHash([0x01; 28]);
+        let d2 = DRep::KeyHash([0x02; 28]);
+        let d3 = DRep::ScriptHash([0x03; 28]);
+
+        // d1: active epoch 80
+        ds.register(d1.clone(), RegisteredDrep::new_active(1, None, EpochNo(80)));
+        // d2: active epoch 95
+        ds.register(d2.clone(), RegisteredDrep::new_active(1, None, EpochNo(95)));
+        // d3: no activity epoch (legacy)
+        ds.register(d3.clone(), RegisteredDrep::new(1, None));
+
+        // drep_activity=10, epoch=100: d1 (80+10=90 < 100) is expired, d2 (95+10=105 >= 100) active
+        let expired = ds.inactive_dreps(EpochNo(100), 10);
+        assert_eq!(expired.len(), 1);
+        assert!(expired.contains(&d1));
+    }
+
+    // ------------------------------------------------------------------
+    //  EnactState + enact_gov_action tests
+    // ------------------------------------------------------------------
+
+    fn sample_gov_action_id(tag: u8) -> crate::eras::conway::GovActionId {
+        crate::eras::conway::GovActionId {
+            transaction_id: [tag; 32],
+            gov_action_index: tag as u16,
+        }
+    }
+
+    fn sample_constitution(url: &str) -> crate::eras::conway::Constitution {
+        crate::eras::conway::Constitution {
+            anchor: crate::types::Anchor {
+                url: url.to_owned(),
+                data_hash: [0xAA; 32],
+            },
+            guardrails_script_hash: None,
+        }
+    }
+
+    fn sample_reward_account(id: u8) -> RewardAccount {
+        RewardAccount {
+            network: 1,
+            credential: crate::StakeCredential::AddrKeyHash([id; 28]),
+        }
+    }
+
+    #[test]
+    fn test_enact_state_default_and_roundtrip() {
+        let es = EnactState::default();
+        assert!(es.prev_pparams_update().is_none());
+        assert!(es.prev_hard_fork().is_none());
+        assert!(es.prev_committee().is_none());
+        assert!(es.prev_constitution().is_none());
+        assert_eq!(es.committee_quorum().numerator, 0);
+        assert_eq!(es.committee_quorum().denominator, 1);
+        // CBOR round-trip
+        let bytes = es.to_cbor_bytes();
+        let decoded = EnactState::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(es, decoded);
+    }
+
+    #[test]
+    fn test_enact_info_action_no_effect() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let outcome = enact_gov_action(
+            &mut es,
+            sample_gov_action_id(1),
+            &GovAction::InfoAction,
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::NoEffect);
+        // No lineage should be recorded.
+        assert!(es.prev_pparams_update().is_none());
+        assert!(es.prev_hard_fork().is_none());
+        assert!(es.prev_committee().is_none());
+        assert!(es.prev_constitution().is_none());
+    }
+
+    #[test]
+    fn test_enact_new_constitution() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(2);
+        let new_const = sample_constitution("https://example.com/constitution");
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: new_const.clone(),
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::ConstitutionUpdated);
+        assert_eq!(es.constitution(), &new_const);
+        assert_eq!(es.prev_constitution(), Some(&action_id));
+        // Other lineages untouched.
+        assert!(es.prev_pparams_update().is_none());
+    }
+
+    #[test]
+    fn test_enact_no_confidence() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0x11; 28]);
+        committee.register(cred.clone());
+        assert_eq!(committee.len(), 1);
+
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(3);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::NoConfidence {
+                prev_action_id: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::CommitteeRemoved);
+        assert_eq!(committee.len(), 0);
+        assert_eq!(es.prev_committee(), Some(&action_id));
+        // Quorum reset to 0/1.
+        assert_eq!(es.committee_quorum().numerator, 0);
+    }
+
+    #[test]
+    fn test_enact_update_committee() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let existing = crate::StakeCredential::AddrKeyHash([0x01; 28]);
+        let to_remove = crate::StakeCredential::AddrKeyHash([0x02; 28]);
+        let new_member = crate::StakeCredential::AddrKeyHash([0x03; 28]);
+        committee.register(existing.clone());
+        committee.register(to_remove.clone());
+        assert_eq!(committee.len(), 2);
+
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(4);
+
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(new_member.clone(), 500); // term epoch
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![to_remove.clone()],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 2,
+                    denominator: 3,
+                },
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(
+            outcome,
+            EnactOutcome::CommitteeUpdated {
+                members_removed: 1,
+                members_added: 1,
+            }
+        );
+        assert_eq!(committee.len(), 2); // existing + new_member
+        assert!(committee.is_member(&existing));
+        assert!(!committee.is_member(&to_remove));
+        assert!(committee.is_member(&new_member));
+        assert_eq!(es.committee_quorum().numerator, 2);
+        assert_eq!(es.committee_quorum().denominator, 3);
+        assert_eq!(es.prev_committee(), Some(&action_id));
+    }
+
+    #[test]
+    fn test_enact_hard_fork_initiation() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = Some(crate::protocol_params::ProtocolParameters::alonzo_defaults());
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(5);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(
+            outcome,
+            EnactOutcome::HardForkEnacted {
+                new_version: (10, 0),
+            }
+        );
+        assert_eq!(pp.unwrap().protocol_version, Some((10, 0)));
+        assert_eq!(es.prev_hard_fork(), Some(&action_id));
+    }
+
+    #[test]
+    fn test_enact_treasury_withdrawals() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let ra1 = sample_reward_account(1);
+        let ra2 = sample_reward_account(2);
+        let ra_unknown = sample_reward_account(99);
+        let mut ra = RewardAccounts::new();
+        ra.insert(ra1.clone(), RewardAccountState::new(1000, None));
+        ra.insert(ra2.clone(), RewardAccountState::new(500, None));
+        let mut acc = AccountingState {
+            treasury: 5000,
+            reserves: 100_000,
+        };
+        let action_id = sample_gov_action_id(6);
+
+        let mut withdrawals = std::collections::BTreeMap::new();
+        withdrawals.insert(ra1.clone(), 200);
+        withdrawals.insert(ra2.clone(), 100);
+        withdrawals.insert(ra_unknown.clone(), 50); // unregistered — should be ignored
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id,
+            &GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(
+            outcome,
+            EnactOutcome::TreasuryWithdrawn {
+                total_withdrawn: 300,
+            }
+        );
+        assert_eq!(ra.balance(&ra1), 1200); // 1000 + 200
+        assert_eq!(ra.balance(&ra2), 600); // 500 + 100
+        assert_eq!(acc.treasury, 4700); // 5000 - 300
+        // No lineage tracked for treasury withdrawals.
+        assert!(es.prev_pparams_update().is_none());
+    }
+
+    #[test]
+    fn test_enact_parameter_change_recorded() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(7);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: vec![0xA0], // empty CBOR map
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::ParameterChangeRecorded);
+        assert_eq!(es.prev_pparams_update(), Some(&action_id));
+    }
+
+    #[test]
+    fn test_enact_lineage_chaining() {
+        // Enact two constitutions in sequence — the second should
+        // reference the first as prev_constitution.
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let id1 = sample_gov_action_id(10);
+        let id2 = sample_gov_action_id(11);
+
+        enact_gov_action(
+            &mut es,
+            id1.clone(),
+            &GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("v1"),
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(es.prev_constitution(), Some(&id1));
+
+        enact_gov_action(
+            &mut es,
+            id2.clone(),
+            &GovAction::NewConstitution {
+                prev_action_id: Some(id1.clone()),
+                constitution: sample_constitution("v2"),
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(es.prev_constitution(), Some(&id2));
+        assert_eq!(es.constitution().anchor.url, "v2");
+    }
+
+    #[test]
+    fn test_enact_state_cbor_round_trip_with_lineage() {
+        let mut es = EnactState::new();
+        es.constitution = sample_constitution("https://example.com");
+        es.committee_quorum = UnitInterval {
+            numerator: 2,
+            denominator: 3,
+        };
+        es.prev_pparams_update = Some(sample_gov_action_id(1));
+        es.prev_hard_fork = Some(sample_gov_action_id(2));
+        es.prev_committee = None;
+        es.prev_constitution = Some(sample_gov_action_id(4));
+
+        let bytes = es.to_cbor_bytes();
+        let decoded = EnactState::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(es, decoded);
+    }
+
+    #[test]
+    fn test_ledger_state_16_element_round_trip() {
+        let mut ls = LedgerState::new(Era::Conway);
+        ls.enact_state_mut().constitution = sample_constitution("test");
+        ls.enact_state_mut().prev_hard_fork = Some(sample_gov_action_id(99));
+
+        let bytes = ls.to_cbor_bytes();
+        let restored = LedgerState::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(restored.enact_state().constitution().anchor.url, "test");
+        assert!(restored.enact_state().prev_hard_fork().is_some());
+    }
+
+    #[test]
+    fn test_ledger_state_15_element_backward_compat() {
+        // Build a 15-element encoded LedgerState (pre-EnactState era)
+        // and verify it decodes with default EnactState.
+        let ls = LedgerState::new(Era::Shelley);
+        // Encode with the old 15-element layout by manually encoding.
+        let mut enc = Encoder::new();
+        enc.array(15);
+        ls.current_era.encode_cbor(&mut enc);
+        ls.tip.encode_cbor(&mut enc);
+        match ls.expected_network_id {
+            Some(nid) => enc.unsigned(u64::from(nid)),
+            None => enc.null(),
+        };
+        enc.map(0); // no governance actions
+        ls.pool_state().encode_cbor(&mut enc);
+        ls.stake_credentials().encode_cbor(&mut enc);
+        ls.committee_state().encode_cbor(&mut enc);
+        ls.drep_state().encode_cbor(&mut enc);
+        ls.reward_accounts().encode_cbor(&mut enc);
+        ls.multi_era_utxo().encode_cbor(&mut enc);
+        ls.shelley_utxo.encode_cbor(&mut enc);
+        enc.null(); // no protocol params
+        ls.deposit_pot().encode_cbor(&mut enc);
+        ls.accounting().encode_cbor(&mut enc);
+        ls.current_epoch.encode_cbor(&mut enc);
+
+        let bytes = enc.into_bytes();
+        let decoded = LedgerState::from_cbor_bytes(&bytes).unwrap();
+        // EnactState should be default when decoded from 15-element array.
+        assert_eq!(decoded.enact_state(), &EnactState::default());
+    }
+
+    // ------------------------------------------------------------------
+    //  Enacted-root prev_action_id validation tests
+    // ------------------------------------------------------------------
+
+    fn sample_proposal(
+        gov_action: GovAction,
+        deposit: u64,
+        ra_id: u8,
+    ) -> crate::eras::conway::ProposalProcedure {
+        use crate::eras::conway::ProposalProcedure;
+        let ra = sample_reward_account(ra_id);
+        ProposalProcedure {
+            deposit,
+            reward_account: ra.to_bytes().to_vec(),
+            gov_action,
+            anchor: crate::types::Anchor {
+                url: "https://example.invalid".to_owned(),
+                data_hash: [0xCC; 32],
+            },
+        }
+    }
+
+    fn sample_governance_actions_with(
+        entries: Vec<(crate::eras::conway::GovActionId, GovAction)>,
+    ) -> BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState> {
+        let mut map = BTreeMap::new();
+        for (id, action) in entries {
+            let proposal = crate::eras::conway::ProposalProcedure {
+                deposit: 1,
+                reward_account: sample_reward_account(1).to_bytes().to_vec(),
+                gov_action: action,
+                anchor: crate::types::Anchor {
+                    url: "https://example.invalid/stored".to_owned(),
+                    data_hash: [0xDD; 32],
+                },
+            };
+            map.insert(
+                id,
+                GovernanceActionState::new(proposal),
+            );
+        }
+        map
+    }
+
+    fn empty_stake_creds_with(ra_id: u8) -> StakeCredentials {
+        let mut sc = StakeCredentials::new();
+        let ra = sample_reward_account(ra_id);
+        sc.register(ra.credential);
+        sc
+    }
+
+    #[test]
+    fn test_enacted_root_none_accepts_fresh_proposal_without_prev() {
+        // EnactState has no enacted root for Committee purpose.
+        // Proposal with prev_action_id = None should be accepted.
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::NoConfidence {
+                prev_action_id: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_enacted_root_some_rejects_fresh_proposal_without_prev() {
+        // EnactState has an enacted root for Committee purpose.
+        // Proposal with prev_action_id = None should be rejected.
+        let mut es = EnactState::default();
+        es.prev_committee = Some(sample_gov_action_id(10));
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::NoConfidence {
+                prev_action_id: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::InvalidPrevGovActionId(_))
+        ));
+    }
+
+    #[test]
+    fn test_enacted_root_matching_prev_accepted() {
+        // EnactState has an enacted root for Constitution purpose.
+        // Proposal that references the enacted root should be accepted.
+        let root_id = sample_gov_action_id(20);
+        let mut es = EnactState::default();
+        es.prev_constitution = Some(root_id.clone());
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::NewConstitution {
+                prev_action_id: Some(root_id.clone()),
+                constitution: sample_constitution("v3"),
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_enacted_root_wrong_purpose_prev_rejected() {
+        // EnactState has an enacted root for Constitution, but proposal
+        // is ParameterChange referencing it — wrong purpose.
+        let root_id = sample_gov_action_id(30);
+        let mut es = EnactState::default();
+        es.prev_constitution = Some(root_id.clone());
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: Some(root_id.clone()),
+                protocol_param_update: vec![0xA1, 0x00, 0x01],
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::InvalidPrevGovActionId(_))
+        ));
+    }
+
+    #[test]
+    fn test_enacted_root_pending_proposal_accepted() {
+        // EnactState has enacted root for HardFork != prev, but a stored
+        // pending proposal has the matching id and purpose.
+        let enacted_id = sample_gov_action_id(40);
+        let pending_id = sample_gov_action_id(41);
+        let mut es = EnactState::default();
+        es.prev_hard_fork = Some(enacted_id);
+        let stake_creds = empty_stake_creds_with(1);
+        let stored = sample_governance_actions_with(vec![(
+            pending_id.clone(),
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (9, 1),
+            },
+        )]);
+        let proposals = vec![sample_proposal(
+            GovAction::HardForkInitiation {
+                prev_action_id: Some(pending_id.clone()),
+                protocol_version: (10, 0),
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &stored,
+            &stake_creds,
+            Some((9, 0)),
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_enacted_root_unknown_prev_rejected() {
+        // prev_action_id matches neither enacted root nor stored proposals.
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let unknown_id = sample_gov_action_id(99);
+        let proposals = vec![sample_proposal(
+            GovAction::NewConstitution {
+                prev_action_id: Some(unknown_id),
+                constitution: sample_constitution("orphan"),
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::InvalidPrevGovActionId(_))
+        ));
+    }
+
+    #[test]
+    fn test_enacted_root_treasury_and_info_skip_lineage() {
+        // TreasuryWithdrawals and InfoAction have no lineage concept.
+        // They should be accepted regardless of EnactState.
+        let mut es = EnactState::default();
+        es.prev_pparams_update = Some(sample_gov_action_id(50));
+        es.prev_hard_fork = Some(sample_gov_action_id(51));
+        es.prev_committee = Some(sample_gov_action_id(52));
+        es.prev_constitution = Some(sample_gov_action_id(53));
+        let stake_creds = empty_stake_creds_with(1);
+        let mut withdrawals = std::collections::BTreeMap::new();
+        let ra = sample_reward_account(1);
+        withdrawals.insert(ra, 100);
+        let proposals = vec![
+            sample_proposal(
+                GovAction::TreasuryWithdrawals {
+                    withdrawals,
+                    guardrails_script_hash: None,
+                },
+                1,
+                1,
+            ),
+            sample_proposal(GovAction::InfoAction, 1, 1),
+        ];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_enacted_root_update_committee_shares_committee_purpose() {
+        // UpdateCommittee and NoConfidence share the Committee purpose.
+        // An enacted NoConfidence root should accept an UpdateCommittee
+        // referencing it.
+        let root_id = sample_gov_action_id(60);
+        let mut es = EnactState::default();
+        es.prev_committee = Some(root_id.clone());
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(
+            crate::StakeCredential::AddrKeyHash([0x33; 28]),
+            500, // term epoch
+        );
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: Some(root_id.clone()),
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 2,
+                    denominator: 3,
+                },
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification tally tests
+    // -----------------------------------------------------------------------
+
+    fn test_info_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::InfoAction,
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        })
+    }
+
+    fn test_hf_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        })
+    }
+
+    fn test_treasury_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals: BTreeMap::new(),
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        })
+    }
+
+    fn test_no_confidence_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::NoConfidence { prev_action_id: None },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        })
+    }
+
+    // -- VoteTally::meets_threshold ---
+
+    #[test]
+    fn tally_meets_threshold_exact() {
+        let tally = VoteTally { yes: 67, no: 33, abstain: 0, total: 100 };
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_below_threshold() {
+        let tally = VoteTally { yes: 66, no: 34, abstain: 0, total: 100 };
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        assert!(!tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_above_threshold() {
+        let tally = VoteTally { yes: 80, no: 20, abstain: 0, total: 100 };
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_vacuous_quorum_all_abstain() {
+        let tally = VoteTally { yes: 0, no: 0, abstain: 100, total: 100 };
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_with_abstentions_excluded() {
+        // 60 yes, 20 no, 20 abstain. Active = 80. 60/80 = 75% >= 67%.
+        let tally = VoteTally { yes: 60, no: 20, abstain: 20, total: 100 };
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_zero_total_is_vacuous() {
+        let tally = VoteTally { yes: 0, no: 0, abstain: 0, total: 0 };
+        let threshold = UnitInterval { numerator: 1, denominator: 2 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    // -- Committee tally ---
+
+    #[test]
+    fn committee_tally_unanimous_yes() {
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+
+        let cred_a = StakeCredential::AddrKeyHash([1; 28]);
+        let cred_b = StakeCredential::AddrKeyHash([2; 28]);
+        cs.register(cred_a);
+        cs.register(cred_b);
+
+        // Both vote yes.
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([2; 28]), Vote::Yes);
+
+        let tally = tally_committee_votes(&action, &cs);
+        assert_eq!(tally.yes, 2);
+        assert_eq!(tally.no, 0);
+        assert_eq!(tally.total, 2);
+        let quorum = UnitInterval { numerator: 2, denominator: 3 };
+        assert!(tally.meets_threshold(&quorum));
+    }
+
+    #[test]
+    fn committee_tally_resigned_excluded() {
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+
+        let cred_a = StakeCredential::AddrKeyHash([1; 28]);
+        let cred_b = StakeCredential::AddrKeyHash([2; 28]);
+        cs.register(cred_a);
+        cs.register(cred_b);
+        // Resign member B.
+        cs.get_mut(&cred_b).unwrap().set_authorization(Some(
+            CommitteeAuthorization::CommitteeMemberResigned(None),
+        ));
+
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+
+        let tally = tally_committee_votes(&action, &cs);
+        assert_eq!(tally.yes, 1);
+        assert_eq!(tally.total, 1); // resigned excluded
+    }
+
+    #[test]
+    fn committee_tally_no_votes_fails_threshold() {
+        let action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([1; 28]));
+        cs.register(StakeCredential::AddrKeyHash([2; 28]));
+
+        let tally = tally_committee_votes(&action, &cs);
+        assert_eq!(tally.yes, 0);
+        assert_eq!(tally.total, 2);
+        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        assert!(!tally.meets_threshold(&quorum));
+    }
+
+    // -- DRep tally ---
+
+    #[test]
+    fn drep_tally_weighted_by_stake() {
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep_a = DRep::KeyHash([1; 28]);
+        let drep_b = DRep::KeyHash([2; 28]);
+        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep_a.clone(), 700);
+        stake.insert(drep_b.clone(), 300);
+
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+        action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::No);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        assert_eq!(tally.yes, 700);
+        assert_eq!(tally.no, 300);
+        assert_eq!(tally.total, 1000);
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold)); // 700/1000 = 70% >= 67%
+    }
+
+    #[test]
+    fn drep_tally_excludes_inactive() {
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep_a = DRep::KeyHash([1; 28]);
+        let drep_b = DRep::KeyHash([2; 28]);
+        // A: active epoch 90. Activity window 10. At epoch 105: 90+10=100 < 105 → inactive.
+        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(90)));
+        // B: active epoch 100. 100+10=110 >= 105 → active.
+        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(100)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep_a.clone(), 500);
+        stake.insert(drep_b.clone(), 500);
+
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes); // inactive, excluded
+        action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::Yes);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(105), 10);
+        // Only DRep B counted (active). A is inactive and excluded.
+        assert_eq!(tally.yes, 500);
+        assert_eq!(tally.total, 500);
+        let threshold = UnitInterval { numerator: 1, denominator: 2 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn drep_tally_unregistered_drep_excluded() {
+        let action = test_hf_action();
+        let drep_state = DrepState::new(); // empty — no DReps registered
+
+        let mut stake = BTreeMap::new();
+        stake.insert(DRep::KeyHash([1; 28]), 1000);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        assert_eq!(tally.total, 0); // no registered DReps
+    }
+
+    // -- SPO tally ---
+
+    #[test]
+    fn spo_tally_weighted_by_pool_stake() {
+        let mut action = test_hf_action();
+
+        let pool_a = [1u8; 28];
+        let pool_b = [2u8; 28];
+
+        // Build pool stake distribution manually.
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert(pool_a, 600u64);
+        pool_stakes.insert(pool_b, 400u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        action.votes.insert(Voter::StakePool(pool_a), Vote::Yes);
+        action.votes.insert(Voter::StakePool(pool_b), Vote::No);
+
+        let tally = tally_spo_votes(&action, &pool_dist);
+        assert_eq!(tally.yes, 600);
+        assert_eq!(tally.no, 400);
+        assert_eq!(tally.total, 1000);
+        let threshold = UnitInterval { numerator: 51, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold)); // 600/1000 = 60% >= 51%
+    }
+
+    // -- Threshold dispatch ---
+
+    #[test]
+    fn drep_threshold_for_hard_fork() {
+        let thresholds = DRepVotingThresholds::default();
+        let t = drep_threshold_for_action(ConwayGovActionPurpose::HardFork, &thresholds);
+        assert_eq!(t, Some(&thresholds.hard_fork_initiation));
+    }
+
+    #[test]
+    fn drep_threshold_for_info_is_none() {
+        let thresholds = DRepVotingThresholds::default();
+        let t = drep_threshold_for_action(ConwayGovActionPurpose::Info, &thresholds);
+        assert!(t.is_none());
+    }
+
+    #[test]
+    fn spo_threshold_for_constitution_is_none() {
+        let thresholds = PoolVotingThresholds::default();
+        let t = spo_threshold_for_action(ConwayGovActionPurpose::Constitution, &thresholds);
+        assert!(t.is_none());
+    }
+
+    #[test]
+    fn spo_threshold_for_treasury_is_none() {
+        let thresholds = PoolVotingThresholds::default();
+        let t = spo_threshold_for_action(ConwayGovActionPurpose::TreasuryWithdrawals, &thresholds);
+        assert!(t.is_none());
+    }
+
+    // -- accepted_by_* predicates ---
+
+    #[test]
+    fn info_action_always_accepted() {
+        let action = test_info_action();
+        let cs = CommitteeState::default();
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(accepted_by_committee(&action, &cs, &quorum));
+    }
+
+    #[test]
+    fn accepted_by_committee_happy_path() {
+        let mut action = test_no_confidence_action();
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([1; 28]));
+        cs.register(StakeCredential::AddrKeyHash([2; 28]));
+        cs.register(StakeCredential::AddrKeyHash([3; 28]));
+
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([2; 28]), Vote::Yes);
+        // 3 does not vote.
+
+        let quorum = UnitInterval { numerator: 2, denominator: 3 };
+        assert!(accepted_by_committee(&action, &cs, &quorum)); // 2/3 >= 2/3
+    }
+
+    #[test]
+    fn accepted_by_committee_rejected() {
+        let mut action = test_no_confidence_action();
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([1; 28]));
+        cs.register(StakeCredential::AddrKeyHash([2; 28]));
+        cs.register(StakeCredential::AddrKeyHash([3; 28]));
+
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        // Only 1/3 yes.
+
+        let quorum = UnitInterval { numerator: 2, denominator: 3 };
+        assert!(!accepted_by_committee(&action, &cs, &quorum)); // 1/3 < 2/3
+    }
+
+    #[test]
+    fn accepted_by_dreps_treasury_action() {
+        let mut action = test_treasury_action();
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 1000);
+
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        let thresholds = DRepVotingThresholds::default();
+        assert!(accepted_by_dreps(
+            &action,
+            &drep_state,
+            &stake,
+            EpochNo(5),
+            100,
+            &thresholds,
+        )); // 100% yes >= 67%
+    }
+
+    // -- ratify_action combined ---
+
+    #[test]
+    fn ratify_info_action_always_passes() {
+        let action = test_info_action();
+        let cs = CommitteeState::default();
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let drep_state = DrepState::new();
+        let drep_stake = BTreeMap::new();
+        let dvt = DRepVotingThresholds::default();
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(1),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_hf_rejected_when_dreps_insufficient() {
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([1; 28]));
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep, 1000);
+        // DRep votes no.
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::No);
+
+        let dvt = DRepVotingThresholds::default();
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let pvt = PoolVotingThresholds::default();
+        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+
+        assert!(!ratify_action(
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_hf_accepted_when_all_roles_agree() {
+        let mut action = test_hf_action();
+        // CC: 1 member, votes yes.
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([1; 28]));
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+
+        // DRep: 1 drep, votes yes.
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([2; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::Yes);
+
+        // SPO: 1 pool, votes yes.
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([3u8; 28], 1000u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+        action.votes.insert(Voter::StakePool([3; 28]), Vote::Yes);
+
+        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+        ));
+    }
+
+    // -- Protocol params threshold round-trip ---
+
+    #[test]
+    fn pool_voting_thresholds_cbor_round_trip() {
+        let thresholds = PoolVotingThresholds::default();
+        let bytes = thresholds.to_cbor_bytes();
+        let decoded = PoolVotingThresholds::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(thresholds, decoded);
+    }
+
+    #[test]
+    fn drep_voting_thresholds_cbor_round_trip() {
+        let thresholds = DRepVotingThresholds::default();
+        let bytes = thresholds.to_cbor_bytes();
+        let decoded = DRepVotingThresholds::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(thresholds, decoded);
+    }
+
+    #[test]
+    fn protocol_params_with_voting_thresholds_round_trip() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.pool_voting_thresholds = Some(PoolVotingThresholds::default());
+        params.drep_voting_thresholds = Some(DRepVotingThresholds::default());
+        params.min_committee_size = Some(7);
+        params.committee_term_limit = Some(146);
+        let bytes = params.to_cbor_bytes();
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(params, decoded);
     }
 }

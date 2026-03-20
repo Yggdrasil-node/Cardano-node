@@ -24,6 +24,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use yggdrasil_ledger::ProtocolParameters;
+use yggdrasil_ledger::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::eras::alonzo::ExUnits;
 use yggdrasil_plutus::{CostModel, CostModelError};
@@ -141,6 +142,9 @@ pub struct ShelleyGenesisProtocolParams {
     /// Treasury growth rate `τ`.  Key 11.
     #[serde(default = "default_tau")]
     pub tau: GenesisRational,
+    /// Active ledger protocol version.
+    #[serde(default = "default_protocol_version")]
+    pub protocol_version: GenesisProtocolVersion,
     /// Minimum UTxO value (lovelace, Shelley–Mary).
     #[serde(default = "default_min_utxo_value", rename = "minUTxOValue")]
     pub min_utxo_value: u64,
@@ -158,6 +162,14 @@ pub struct ShelleyGenesisProtocolParams {
 pub struct GenesisRational {
     pub numerator: u64,
     pub denominator: u64,
+}
+
+/// Protocol version object used by Shelley genesis JSON.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GenesisProtocolVersion {
+    pub major: u64,
+    pub minor: u64,
 }
 
 impl GenesisRational {
@@ -295,6 +307,26 @@ pub struct AlonzoExecPrices {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConwayGenesis {
+    /// Pool voting thresholds per governance action type.
+    #[serde(default)]
+    pub pool_voting_thresholds: Option<GenesisPoolVotingThresholds>,
+
+    /// DRep voting thresholds per governance action type.
+    #[serde(default, rename = "dRepVotingThresholds")]
+    pub drep_voting_thresholds: Option<GenesisDRepVotingThresholds>,
+
+    /// Minimum number of active committee members.
+    #[serde(default)]
+    pub committee_min_size: Option<u64>,
+
+    /// Maximum term length for committee members in epochs.
+    #[serde(default)]
+    pub committee_max_term_length: Option<u64>,
+
+    /// Governance action lifetime in epochs.
+    #[serde(default)]
+    pub gov_action_lifetime: Option<u64>,
+
     /// Governance action deposit (lovelace).
     #[serde(default)]
     pub gov_action_deposit: Option<u64>,
@@ -310,6 +342,48 @@ pub struct ConwayGenesis {
     /// Minimum reference script cost per byte (Babbage+, lovelace).
     #[serde(default)]
     pub min_fee_ref_script_cost_per_byte: Option<u64>,
+}
+
+/// Pool voting thresholds as serialised in `conway-genesis.json`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenesisPoolVotingThresholds {
+    #[serde(default)]
+    pub motion_no_confidence: GenesisRational,
+    #[serde(default)]
+    pub committee_normal: GenesisRational,
+    #[serde(default)]
+    pub committee_no_confidence: GenesisRational,
+    #[serde(default)]
+    pub hard_fork_initiation: GenesisRational,
+    #[serde(default)]
+    pub pp_security_group: GenesisRational,
+}
+
+/// DRep voting thresholds as serialised in `conway-genesis.json`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenesisDRepVotingThresholds {
+    #[serde(default)]
+    pub motion_no_confidence: GenesisRational,
+    #[serde(default)]
+    pub committee_normal: GenesisRational,
+    #[serde(default)]
+    pub committee_no_confidence: GenesisRational,
+    #[serde(default)]
+    pub update_to_constitution: GenesisRational,
+    #[serde(default)]
+    pub hard_fork_initiation: GenesisRational,
+    #[serde(default)]
+    pub pp_network_group: GenesisRational,
+    #[serde(default)]
+    pub pp_economic_group: GenesisRational,
+    #[serde(default)]
+    pub pp_technical_group: GenesisRational,
+    #[serde(default)]
+    pub pp_gov_group: GenesisRational,
+    #[serde(default)]
+    pub treasury_withdrawal: GenesisRational,
 }
 
 // ---------------------------------------------------------------------------
@@ -338,9 +412,6 @@ pub fn build_protocol_parameters(
         .map(|v| v / 8)
         .or(Some(4_310)); // Babbage mainnet default
 
-    // Ignore conway-specific deposits for now (not part of ProtocolParameters struct yet).
-    let _ = conway;
-
     ProtocolParameters {
         min_fee_a: pp.min_fee_a,
         min_fee_b: pp.min_fee_b,
@@ -354,6 +425,7 @@ pub fn build_protocol_parameters(
         a0: pp.a0.to_unit_interval(),
         rho: pp.rho.to_unit_interval(),
         tau: pp.tau.to_unit_interval(),
+        protocol_version: Some((pp.protocol_version.major, pp.protocol_version.minor)),
         min_utxo_value: Some(pp.min_utxo_value),
         min_pool_cost: pp.min_pool_cost,
         // Alonzo and later: clear Shelley min_utxo_value, use coins_per_utxo_byte.
@@ -372,6 +444,35 @@ pub fn build_protocol_parameters(
         max_val_size: Some(alonzo.max_value_size),
         collateral_percentage: Some(alonzo.collateral_percentage),
         max_collateral_inputs: Some(alonzo.max_collateral_inputs),
+        gov_action_lifetime: conway.and_then(|params| params.gov_action_lifetime),
+        gov_action_deposit: conway.and_then(|params| params.gov_action_deposit),
+        drep_deposit: conway.and_then(|params| params.d_rep_deposit),
+        drep_activity: conway.and_then(|params| params.d_rep_activity),
+        pool_voting_thresholds: conway
+            .and_then(|c| c.pool_voting_thresholds.as_ref())
+            .map(|t| PoolVotingThresholds {
+                motion_no_confidence: t.motion_no_confidence.to_unit_interval(),
+                committee_normal: t.committee_normal.to_unit_interval(),
+                committee_no_confidence: t.committee_no_confidence.to_unit_interval(),
+                hard_fork_initiation: t.hard_fork_initiation.to_unit_interval(),
+                pp_security_group: t.pp_security_group.to_unit_interval(),
+            }),
+        drep_voting_thresholds: conway
+            .and_then(|c| c.drep_voting_thresholds.as_ref())
+            .map(|t| DRepVotingThresholds {
+                motion_no_confidence: t.motion_no_confidence.to_unit_interval(),
+                committee_normal: t.committee_normal.to_unit_interval(),
+                committee_no_confidence: t.committee_no_confidence.to_unit_interval(),
+                update_to_constitution: t.update_to_constitution.to_unit_interval(),
+                hard_fork_initiation: t.hard_fork_initiation.to_unit_interval(),
+                pp_network_group: t.pp_network_group.to_unit_interval(),
+                pp_economic_group: t.pp_economic_group.to_unit_interval(),
+                pp_technical_group: t.pp_technical_group.to_unit_interval(),
+                pp_gov_group: t.pp_gov_group.to_unit_interval(),
+                treasury_withdrawal: t.treasury_withdrawal.to_unit_interval(),
+            }),
+        min_committee_size: conway.and_then(|c| c.committee_min_size),
+        committee_term_limit: conway.and_then(|c| c.committee_max_term_length),
     }
 }
 
@@ -450,6 +551,7 @@ fn default_n_opt() -> u64 { 150 }
 fn default_a0() -> GenesisRational { GenesisRational { numerator: 3, denominator: 10 } }
 fn default_rho() -> GenesisRational { GenesisRational { numerator: 3, denominator: 1_000 } }
 fn default_tau() -> GenesisRational { GenesisRational { numerator: 2, denominator: 10 } }
+fn default_protocol_version() -> GenesisProtocolVersion { GenesisProtocolVersion { major: 2, minor: 0 } }
 fn default_min_utxo_value() -> u64 { 1_000_000 }
 fn default_min_pool_cost() -> u64 { 340_000_000 }
 fn default_max_value_size() -> u32 { 5_000 }
@@ -484,6 +586,7 @@ mod tests {
                 a0: GenesisRational { numerator: 3, denominator: 10 },
                 rho: GenesisRational { numerator: 3, denominator: 1_000 },
                 tau: GenesisRational { numerator: 2, denominator: 10 },
+                protocol_version: GenesisProtocolVersion { major: 2, minor: 0 },
                 min_utxo_value: 1_000_000,
                 min_pool_cost: 340_000_000,
             },
@@ -533,6 +636,37 @@ mod tests {
         }
     }
 
+    fn sample_conway() -> ConwayGenesis {
+        ConwayGenesis {
+            pool_voting_thresholds: Some(GenesisPoolVotingThresholds {
+                motion_no_confidence: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
+                committee_normal: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
+                committee_no_confidence: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
+                hard_fork_initiation: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
+                pp_security_group: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
+            }),
+            drep_voting_thresholds: Some(GenesisDRepVotingThresholds {
+                motion_no_confidence: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
+                committee_normal: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
+                committee_no_confidence: GenesisRational { numerator: 600_000, denominator: 1_000_000 },
+                update_to_constitution: GenesisRational { numerator: 750_000, denominator: 1_000_000 },
+                hard_fork_initiation: GenesisRational { numerator: 600_000, denominator: 1_000_000 },
+                pp_network_group: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
+                pp_economic_group: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
+                pp_technical_group: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
+                pp_gov_group: GenesisRational { numerator: 750_000, denominator: 1_000_000 },
+                treasury_withdrawal: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
+            }),
+            committee_min_size: Some(7),
+            committee_max_term_length: Some(146),
+            gov_action_lifetime: Some(6),
+            gov_action_deposit: Some(100_000_000_000),
+            d_rep_deposit: Some(500_000_000),
+            d_rep_activity: Some(20),
+            min_fee_ref_script_cost_per_byte: Some(15),
+        }
+    }
+
     #[test]
     fn build_protocol_parameters_shelley_fields() {
         let shelley = sample_shelley();
@@ -547,6 +681,7 @@ mod tests {
         assert_eq!(params.max_block_body_size, 65_536);
         assert_eq!(params.e_max, 18);
         assert_eq!(params.n_opt, 150);
+        assert_eq!(params.protocol_version, Some((2, 0)));
     }
 
     #[test]
@@ -573,6 +708,31 @@ mod tests {
         assert_eq!(params.collateral_percentage, Some(150));
         assert_eq!(params.max_collateral_inputs, Some(3));
         assert_eq!(params.max_val_size, Some(5_000));
+    }
+
+    #[test]
+    fn build_protocol_parameters_conway_fields() {
+        let shelley = sample_shelley();
+        let alonzo = sample_alonzo();
+        let conway = sample_conway();
+        let params = build_protocol_parameters(&shelley, &alonzo, Some(&conway));
+
+        assert_eq!(params.gov_action_lifetime, Some(6));
+        assert_eq!(params.gov_action_deposit, Some(100_000_000_000));
+        assert_eq!(params.min_committee_size, Some(7));
+        assert_eq!(params.committee_term_limit, Some(146));
+
+        // Pool voting thresholds.
+        let pvt = params.pool_voting_thresholds.as_ref().expect("pool_voting_thresholds");
+        assert_eq!(pvt.motion_no_confidence.numerator, 510_000);
+        assert_eq!(pvt.motion_no_confidence.denominator, 1_000_000);
+        assert_eq!(pvt.pp_security_group.numerator, 510_000);
+
+        // DRep voting thresholds.
+        let dvt = params.drep_voting_thresholds.as_ref().expect("drep_voting_thresholds");
+        assert_eq!(dvt.motion_no_confidence.numerator, 670_000);
+        assert_eq!(dvt.update_to_constitution.numerator, 750_000);
+        assert_eq!(dvt.treasury_withdrawal.numerator, 670_000);
     }
 
     #[test]
@@ -625,6 +785,7 @@ mod tests {
         let genesis = load_shelley_genesis(&path).expect("load shelley genesis");
         assert_eq!(genesis.protocol_params.min_fee_a, 44);
         assert_eq!(genesis.protocol_params.key_deposit, 2_000_000);
+        assert_eq!(genesis.protocol_params.protocol_version.major, 2);
         assert_eq!(genesis.security_param, 2_160);
     }
 
@@ -651,5 +812,13 @@ mod tests {
         let genesis = load_conway_genesis(&path).expect("load conway genesis");
         assert_eq!(genesis.gov_action_deposit, Some(100_000_000_000));
         assert_eq!(genesis.d_rep_deposit, Some(500_000_000));
+        assert_eq!(genesis.committee_min_size, Some(7));
+        assert_eq!(genesis.committee_max_term_length, Some(146));
+        // Verify voting thresholds parsed successfully.
+        let pvt = genesis.pool_voting_thresholds.as_ref().expect("poolVotingThresholds");
+        assert!(pvt.motion_no_confidence.numerator > 0);
+        let dvt = genesis.drep_voting_thresholds.as_ref().expect("dRepVotingThresholds");
+        assert!(dvt.motion_no_confidence.numerator > 0);
+        assert!(dvt.update_to_constitution.numerator > 0);
     }
 }

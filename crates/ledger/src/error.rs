@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::types::{DRep, PoolKeyHash, RewardAccount, StakeCredential};
+use crate::types::{DRep, EpochNo, PoolKeyHash, RewardAccount, StakeCredential};
 
 /// Errors returned by ledger-facing helpers.
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -85,6 +85,66 @@ pub enum LedgerError {
 
     #[error("invalid reward account bytes: {0:02x?}")]
     InvalidRewardAccountBytes(Vec<u8>),
+
+    #[error("proposal deposit incorrect: supplied {supplied}, expected {expected}")]
+    ProposalDepositIncorrect { supplied: u64, expected: u64 },
+
+    #[error("proposal return account has wrong network id: account {account:?}, expected network {expected_network}")]
+    ProposalProcedureNetworkIdMismatch {
+        account: RewardAccount,
+        expected_network: u8,
+    },
+
+    #[error("treasury withdrawal return account has wrong network id: account {account:?}, expected network {expected_network}")]
+    TreasuryWithdrawalsNetworkIdMismatch {
+        account: RewardAccount,
+        expected_network: u8,
+    },
+
+    #[error("treasury withdrawals proposal has zero total withdrawals: {0:?}")]
+    ZeroTreasuryWithdrawals(crate::eras::conway::GovAction),
+
+    #[error("current treasury value incorrect: supplied {supplied}, actual {actual}")]
+    CurrentTreasuryValueIncorrect { supplied: u64, actual: u64 },
+
+    #[error("governance voters do not exist: {0:?}")]
+    VotersDoNotExist(Vec<crate::eras::conway::Voter>),
+
+    #[error("governance actions do not exist: {0:?}")]
+    GovActionsDoNotExist(Vec<crate::eras::conway::GovActionId>),
+
+    #[error("malformed governance action proposal: {0:?}")]
+    MalformedProposal(crate::eras::conway::GovAction),
+
+    #[error("governance proposal is not allowed during Conway bootstrap: {0:?}")]
+    DisallowedProposalDuringBootstrap(crate::eras::conway::ProposalProcedure),
+
+    #[error("governance votes are not allowed during Conway bootstrap: {0:?}")]
+    DisallowedVotesDuringBootstrap(Vec<(crate::eras::conway::Voter, crate::eras::conway::GovActionId)>),
+
+    #[error("governance voters are not allowed to vote on these actions: {0:?}")]
+    DisallowedVoters(Vec<(crate::eras::conway::Voter, crate::eras::conway::GovActionId)>),
+
+    #[error("committee update proposal adds and removes the same members: {0:?}")]
+    ConflictingCommitteeUpdate(Vec<StakeCredential>),
+
+    #[error("committee update proposal uses expiration epochs that are not after the current epoch: {0:?}")]
+    ExpirationEpochTooSmall(Vec<(StakeCredential, EpochNo)>),
+
+    #[error("proposal references an invalid previous governance action: {0:?}")]
+    InvalidPrevGovActionId(crate::eras::conway::ProposalProcedure),
+
+    #[error("governance voters are voting on expired actions: {0:?}")]
+    VotingOnExpiredGovAction(Vec<(crate::eras::conway::Voter, crate::eras::conway::GovActionId)>),
+
+    #[error(
+        "hard-fork proposal does not follow the expected protocol-version progression: prev action {prev_action_id:?}, supplied {supplied:?}, expected predecessor {expected:?}"
+    )]
+    ProposalCantFollow {
+        prev_action_id: Option<crate::eras::conway::GovActionId>,
+        supplied: (u64, u64),
+        expected: (u64, u64),
+    },
 
     #[error(
         "withdrawal exceeds reward balance for {account:?}: requested {requested}, available {available}"

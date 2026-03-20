@@ -362,6 +362,7 @@ fn strict_base_ledger_state(
     config_base_dir: Option<&std::path::Path>,
 ) -> Result<LedgerState> {
     let mut state = LedgerState::new(Era::Byron);
+    state.set_expected_network_id(file_cfg.expected_network_id());
     if let Some(params) = file_cfg
         .load_genesis_protocol_params(config_base_dir)
         .wrap_err("failed to load genesis protocol parameters")?

@@ -227,6 +227,17 @@ fn default_max_ledger_snapshots() -> usize {
 }
 
 impl NodeConfigFile {
+    /// Returns the expected Cardano network id for reward-account validation.
+    ///
+    /// Mainnet uses network id `1`. Test networks use network id `0`.
+    pub fn expected_network_id(&self) -> u8 {
+        if self.network_magic == 764_824_073 {
+            1
+        } else {
+            0
+        }
+    }
+
     /// Rebuild the network-owned topology configuration from the node config.
     /// Load and build a [`ProtocolParameters`] from the configured genesis files.
     ///
@@ -1051,6 +1062,7 @@ mod tests {
         assert_eq!(cfg.use_ledger_after_slot, Some(177_724_800));
         assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
         assert_eq!(cfg.storage_dir, PathBuf::from("data/mainnet"));
+        assert_eq!(cfg.expected_network_id(), 1);
         assert_eq!(cfg.checkpoint_interval_slots, 2160);
         assert_eq!(cfg.max_ledger_snapshots, 8);
         assert_eq!(cfg.shelley_genesis_file.as_deref(), Some("shelley-genesis.json"));
@@ -1078,6 +1090,7 @@ mod tests {
     fn preprod_preset_matches_genesis() {
         let cfg = NetworkPreset::Preprod.to_config();
         assert_eq!(cfg.network_magic, 1);
+        assert_eq!(cfg.expected_network_id(), 0);
         assert_eq!(cfg.epoch_length, 432_000);
         assert_eq!(cfg.security_param_k, 2160);
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
@@ -1095,6 +1108,7 @@ mod tests {
     fn preview_preset_matches_genesis() {
         let cfg = NetworkPreset::Preview.to_config();
         assert_eq!(cfg.network_magic, 2);
+        assert_eq!(cfg.expected_network_id(), 0);
         assert_eq!(cfg.epoch_length, 86_400);
         assert_eq!(cfg.security_param_k, 432);
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
@@ -1512,5 +1526,6 @@ mod tests {
         assert_eq!(def.network_magic, mainnet.network_magic);
         assert_eq!(def.epoch_length, mainnet.epoch_length);
         assert_eq!(def.security_param_k, mainnet.security_param_k);
+        assert_eq!(def.expected_network_id(), 1);
     }
 }

@@ -16,6 +16,158 @@ use crate::eras::alonzo::ExUnits;
 use crate::error::LedgerError;
 use crate::types::UnitInterval;
 
+// ---------------------------------------------------------------------------
+// Pool voting thresholds (CDDL key 25)
+// ---------------------------------------------------------------------------
+
+/// Per-action-type acceptance thresholds for stake-pool operator (SPO)
+/// votes in Conway governance.
+///
+/// Encoded as a 5-element CBOR array of `unit_interval` values.
+///
+/// Reference: `pool_voting_thresholds` in the Conway CDDL and
+/// `PoolVotingThresholds` in `Cardano.Ledger.Conway.PParams`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolVotingThresholds {
+    /// Threshold for a motion of no-confidence.
+    pub motion_no_confidence: UnitInterval,
+    /// Threshold for a committee update under normal conditions.
+    pub committee_normal: UnitInterval,
+    /// Threshold for a committee update when in a state of no-confidence.
+    pub committee_no_confidence: UnitInterval,
+    /// Threshold for a hard-fork initiation.
+    pub hard_fork_initiation: UnitInterval,
+    /// Threshold for security-relevant parameter changes (`ppSecurityGroup`).
+    pub pp_security_group: UnitInterval,
+}
+
+impl Default for PoolVotingThresholds {
+    fn default() -> Self {
+        Self {
+            motion_no_confidence: UnitInterval { numerator: 51, denominator: 100 },
+            committee_normal: UnitInterval { numerator: 51, denominator: 100 },
+            committee_no_confidence: UnitInterval { numerator: 51, denominator: 100 },
+            hard_fork_initiation: UnitInterval { numerator: 51, denominator: 100 },
+            pp_security_group: UnitInterval { numerator: 51, denominator: 100 },
+        }
+    }
+}
+
+impl CborEncode for PoolVotingThresholds {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(5);
+        self.motion_no_confidence.encode_cbor(enc);
+        self.committee_normal.encode_cbor(enc);
+        self.committee_no_confidence.encode_cbor(enc);
+        self.hard_fork_initiation.encode_cbor(enc);
+        self.pp_security_group.encode_cbor(enc);
+    }
+}
+
+impl CborDecode for PoolVotingThresholds {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 5 {
+            return Err(LedgerError::CborInvalidLength { expected: 5, actual: len as usize });
+        }
+        Ok(Self {
+            motion_no_confidence: UnitInterval::decode_cbor(dec)?,
+            committee_normal: UnitInterval::decode_cbor(dec)?,
+            committee_no_confidence: UnitInterval::decode_cbor(dec)?,
+            hard_fork_initiation: UnitInterval::decode_cbor(dec)?,
+            pp_security_group: UnitInterval::decode_cbor(dec)?,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DRep voting thresholds (CDDL key 26)
+// ---------------------------------------------------------------------------
+
+/// Per-action-type acceptance thresholds for DRep votes in Conway governance.
+///
+/// Encoded as a 10-element CBOR array of `unit_interval` values.
+///
+/// Reference: `drep_voting_thresholds` in the Conway CDDL and
+/// `DRepVotingThresholds` in `Cardano.Ledger.Conway.PParams`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DRepVotingThresholds {
+    /// Threshold for a motion of no-confidence.
+    pub motion_no_confidence: UnitInterval,
+    /// Threshold for a committee update under normal conditions.
+    pub committee_normal: UnitInterval,
+    /// Threshold for a committee update when in a state of no-confidence.
+    pub committee_no_confidence: UnitInterval,
+    /// Threshold for a new-constitution / guardrails-script action.
+    pub update_to_constitution: UnitInterval,
+    /// Threshold for a hard-fork initiation.
+    pub hard_fork_initiation: UnitInterval,
+    /// Threshold for protocol-parameter changes in the network group.
+    pub pp_network_group: UnitInterval,
+    /// Threshold for protocol-parameter changes in the economic group.
+    pub pp_economic_group: UnitInterval,
+    /// Threshold for protocol-parameter changes in the technical group.
+    pub pp_technical_group: UnitInterval,
+    /// Threshold for protocol-parameter changes in the governance group.
+    pub pp_gov_group: UnitInterval,
+    /// Threshold for treasury withdrawals.
+    pub treasury_withdrawal: UnitInterval,
+}
+
+impl Default for DRepVotingThresholds {
+    fn default() -> Self {
+        Self {
+            motion_no_confidence: UnitInterval { numerator: 67, denominator: 100 },
+            committee_normal: UnitInterval { numerator: 67, denominator: 100 },
+            committee_no_confidence: UnitInterval { numerator: 60, denominator: 100 },
+            update_to_constitution: UnitInterval { numerator: 75, denominator: 100 },
+            hard_fork_initiation: UnitInterval { numerator: 60, denominator: 100 },
+            pp_network_group: UnitInterval { numerator: 67, denominator: 100 },
+            pp_economic_group: UnitInterval { numerator: 67, denominator: 100 },
+            pp_technical_group: UnitInterval { numerator: 67, denominator: 100 },
+            pp_gov_group: UnitInterval { numerator: 75, denominator: 100 },
+            treasury_withdrawal: UnitInterval { numerator: 67, denominator: 100 },
+        }
+    }
+}
+
+impl CborEncode for DRepVotingThresholds {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(10);
+        self.motion_no_confidence.encode_cbor(enc);
+        self.committee_normal.encode_cbor(enc);
+        self.committee_no_confidence.encode_cbor(enc);
+        self.update_to_constitution.encode_cbor(enc);
+        self.hard_fork_initiation.encode_cbor(enc);
+        self.pp_network_group.encode_cbor(enc);
+        self.pp_economic_group.encode_cbor(enc);
+        self.pp_technical_group.encode_cbor(enc);
+        self.pp_gov_group.encode_cbor(enc);
+        self.treasury_withdrawal.encode_cbor(enc);
+    }
+}
+
+impl CborDecode for DRepVotingThresholds {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 10 {
+            return Err(LedgerError::CborInvalidLength { expected: 10, actual: len as usize });
+        }
+        Ok(Self {
+            motion_no_confidence: UnitInterval::decode_cbor(dec)?,
+            committee_normal: UnitInterval::decode_cbor(dec)?,
+            committee_no_confidence: UnitInterval::decode_cbor(dec)?,
+            update_to_constitution: UnitInterval::decode_cbor(dec)?,
+            hard_fork_initiation: UnitInterval::decode_cbor(dec)?,
+            pp_network_group: UnitInterval::decode_cbor(dec)?,
+            pp_economic_group: UnitInterval::decode_cbor(dec)?,
+            pp_technical_group: UnitInterval::decode_cbor(dec)?,
+            pp_gov_group: UnitInterval::decode_cbor(dec)?,
+            treasury_withdrawal: UnitInterval::decode_cbor(dec)?,
+        })
+    }
+}
+
 /// Protocol parameters governing transaction and block validation.
 ///
 /// All fields are optional so that the struct can represent any era's
@@ -91,12 +243,20 @@ pub struct ProtocolParameters {
     /// CDDL key 11 — `tau`.
     pub tau: UnitInterval,
 
+    /// Current ledger protocol version `(major, minor)`.
+    ///
+    /// This tracks the active protocol version carried in protocol parameters
+    /// and is used by Conway governance bootstrap checks.
+    ///
+    /// CDDL key 14 — `protocol_version`.
+    pub protocol_version: Option<(u64, u64)>,
+
     // -- Min UTxO (Shelley–Mary) -------------------------------------------
 
     /// Minimum UTxO value (lovelace). Applied in Shelley through Mary.
     /// Replaced by `coins_per_utxo_byte` from Alonzo onward.
     ///
-    /// CDDL key 14 — `min_utxo_value`.
+    /// CDDL key 15 — `min_utxo_value`.
     pub min_utxo_value: Option<u64>,
 
     // -- Pool cost (Shelley+) ----------------------------------------------
@@ -145,6 +305,47 @@ pub struct ProtocolParameters {
     ///
     /// CDDL key 24 — `max_collateral_inputs`.
     pub max_collateral_inputs: Option<u32>,
+
+    /// Governance action lifetime in epochs for Conway proposal procedures.
+    ///
+    /// CDDL key 29 — `gov_action_lifetime`.
+    pub gov_action_lifetime: Option<u64>,
+
+    /// Governance action deposit required for Conway proposal procedures.
+    ///
+    /// CDDL key 30 — `gov_action_deposit`.
+    pub gov_action_deposit: Option<u64>,
+
+    /// DRep registration deposit (lovelace).
+    ///
+    /// CDDL key 31 — `drep_deposit`.
+    pub drep_deposit: Option<u64>,
+
+    /// Pool voting thresholds for Conway governance actions.
+    ///
+    /// CDDL key 25 — `pool_voting_thresholds`.
+    pub pool_voting_thresholds: Option<PoolVotingThresholds>,
+
+    /// DRep voting thresholds for Conway governance actions.
+    ///
+    /// CDDL key 26 — `drep_voting_thresholds`.
+    pub drep_voting_thresholds: Option<DRepVotingThresholds>,
+
+    /// Minimum number of active committee members required.
+    ///
+    /// CDDL key 27 — `min_committee_size`.
+    pub min_committee_size: Option<u64>,
+
+    /// Maximum term length for committee members in epochs.
+    ///
+    /// CDDL key 28 — `committee_term_limit`.
+    pub committee_term_limit: Option<u64>,
+
+    /// DRep activity period in epochs.  A DRep that has not voted or
+    /// updated for this many epochs is treated as inactive.
+    ///
+    /// CDDL key 32 — `drep_activity`.
+    pub drep_activity: Option<u64>,
 }
 
 impl Default for ProtocolParameters {
@@ -175,6 +376,7 @@ impl Default for ProtocolParameters {
                 numerator: 2,
                 denominator: 10,
             },
+            protocol_version: Some((2, 0)),
             min_utxo_value: Some(1_000_000),
             min_pool_cost: 340_000_000,
             coins_per_utxo_byte: None,
@@ -185,6 +387,14 @@ impl Default for ProtocolParameters {
             max_val_size: None,
             collateral_percentage: None,
             max_collateral_inputs: None,
+            gov_action_lifetime: None,
+            gov_action_deposit: None,
+            drep_deposit: None,
+            drep_activity: None,
+            pool_voting_thresholds: None,
+            drep_voting_thresholds: None,
+            min_committee_size: None,
+            committee_term_limit: None,
         }
     }
 }
@@ -194,6 +404,7 @@ impl ProtocolParameters {
     /// script-era parameters).
     pub fn alonzo_defaults() -> Self {
         Self {
+            protocol_version: Some((6, 0)),
             min_utxo_value: None,
             coins_per_utxo_byte: Some(4_310),
             price_mem: Some(UnitInterval {
@@ -249,6 +460,9 @@ impl CborEncode for ProtocolParameters {
         if self.min_utxo_value.is_some() {
             count += 1;
         }
+        if self.protocol_version.is_some() {
+            count += 1;
+        }
         if self.coins_per_utxo_byte.is_some() {
             count += 1;
         }
@@ -270,6 +484,30 @@ impl CborEncode for ProtocolParameters {
         if self.max_collateral_inputs.is_some() {
             count += 1;
         }
+        if self.gov_action_lifetime.is_some() {
+            count += 1;
+        }
+        if self.gov_action_deposit.is_some() {
+            count += 1;
+        }
+        if self.drep_deposit.is_some() {
+            count += 1;
+        }
+        if self.drep_activity.is_some() {
+            count += 1;
+        }
+        if self.pool_voting_thresholds.is_some() {
+            count += 1;
+        }
+        if self.drep_voting_thresholds.is_some() {
+            count += 1;
+        }
+        if self.min_committee_size.is_some() {
+            count += 1;
+        }
+        if self.committee_term_limit.is_some() {
+            count += 1;
+        }
 
         enc.map(count);
 
@@ -289,8 +527,12 @@ impl CborEncode for ProtocolParameters {
         enc.unsigned(11);
         self.tau.encode_cbor(enc);
 
+        if let Some((major, minor)) = self.protocol_version {
+            enc.unsigned(14).array(2).unsigned(major).unsigned(minor);
+        }
+
         if let Some(val) = self.min_utxo_value {
-            enc.unsigned(14).unsigned(val);
+            enc.unsigned(15).unsigned(val);
         }
 
         enc.unsigned(16).unsigned(self.min_pool_cost);
@@ -321,6 +563,32 @@ impl CborEncode for ProtocolParameters {
         if let Some(val) = self.max_collateral_inputs {
             enc.unsigned(24).unsigned(val as u64);
         }
+        if let Some(ref thresholds) = self.pool_voting_thresholds {
+            enc.unsigned(25);
+            thresholds.encode_cbor(enc);
+        }
+        if let Some(ref thresholds) = self.drep_voting_thresholds {
+            enc.unsigned(26);
+            thresholds.encode_cbor(enc);
+        }
+        if let Some(val) = self.min_committee_size {
+            enc.unsigned(27).unsigned(val);
+        }
+        if let Some(val) = self.committee_term_limit {
+            enc.unsigned(28).unsigned(val);
+        }
+        if let Some(val) = self.gov_action_lifetime {
+            enc.unsigned(29).unsigned(val);
+        }
+        if let Some(val) = self.gov_action_deposit {
+            enc.unsigned(30).unsigned(val);
+        }
+        if let Some(val) = self.drep_deposit {
+            enc.unsigned(31).unsigned(val);
+        }
+        if let Some(val) = self.drep_activity {
+            enc.unsigned(32).unsigned(val);
+        }
     }
 }
 
@@ -349,6 +617,7 @@ impl CborDecode for ProtocolParameters {
                 numerator: 0,
                 denominator: 1,
             },
+            protocol_version: None,
             min_utxo_value: None,
             min_pool_cost: 0,
             coins_per_utxo_byte: None,
@@ -359,6 +628,14 @@ impl CborDecode for ProtocolParameters {
             max_val_size: None,
             collateral_percentage: None,
             max_collateral_inputs: None,
+            gov_action_lifetime: None,
+            gov_action_deposit: None,
+            drep_deposit: None,
+            drep_activity: None,
+            pool_voting_thresholds: None,
+            drep_voting_thresholds: None,
+            min_committee_size: None,
+            committee_term_limit: None,
         };
 
         for _ in 0..map_len {
@@ -376,7 +653,24 @@ impl CborDecode for ProtocolParameters {
                 9 => params.a0 = UnitInterval::decode_cbor(dec)?,
                 10 => params.rho = UnitInterval::decode_cbor(dec)?,
                 11 => params.tau = UnitInterval::decode_cbor(dec)?,
-                14 => params.min_utxo_value = Some(dec.unsigned()?),
+                14 => {
+                    if dec.peek_major()? == 4 {
+                        let len = dec.array()?;
+                        if len != 2 {
+                            return Err(LedgerError::CborInvalidLength {
+                                expected: 2,
+                                actual: len as usize,
+                            });
+                        }
+                        params.protocol_version = Some((dec.unsigned()?, dec.unsigned()?));
+                    } else {
+                        // Backward compatibility for checkpoints written before
+                        // protocol_version was added, when min_utxo_value was
+                        // encoded at key 14.
+                        params.min_utxo_value = Some(dec.unsigned()?);
+                    }
+                }
+                15 => params.min_utxo_value = Some(dec.unsigned()?),
                 16 => params.min_pool_cost = dec.unsigned()?,
                 17 => params.coins_per_utxo_byte = Some(dec.unsigned()?),
                 18 => params.price_mem = Some(UnitInterval::decode_cbor(dec)?),
@@ -386,6 +680,14 @@ impl CborDecode for ProtocolParameters {
                 22 => params.max_val_size = Some(dec.unsigned()? as u32),
                 23 => params.collateral_percentage = Some(dec.unsigned()?),
                 24 => params.max_collateral_inputs = Some(dec.unsigned()? as u32),
+                25 => params.pool_voting_thresholds = Some(PoolVotingThresholds::decode_cbor(dec)?),
+                26 => params.drep_voting_thresholds = Some(DRepVotingThresholds::decode_cbor(dec)?),
+                27 => params.min_committee_size = Some(dec.unsigned()?),
+                28 => params.committee_term_limit = Some(dec.unsigned()?),
+                29 => params.gov_action_lifetime = Some(dec.unsigned()?),
+                30 => params.gov_action_deposit = Some(dec.unsigned()?),
+                31 => params.drep_deposit = Some(dec.unsigned()?),
+                32 => params.drep_activity = Some(dec.unsigned()?),
                 _ => {
                     // Skip unknown keys: consume one value.
                     dec.skip()?;
@@ -415,6 +717,41 @@ mod tests {
         let bytes = params.to_cbor_bytes();
         let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
         assert_eq!(params, decoded);
+    }
+
+    #[test]
+    fn conway_gov_action_deposit_round_trip() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.gov_action_deposit = Some(100_000_000_000);
+        let bytes = params.to_cbor_bytes();
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(params, decoded);
+    }
+
+    #[test]
+    fn conway_gov_action_lifetime_round_trip() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.gov_action_lifetime = Some(6);
+        let bytes = params.to_cbor_bytes();
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(params, decoded);
+    }
+
+    #[test]
+    fn protocol_version_round_trip() {
+        let mut params = ProtocolParameters::default();
+        params.protocol_version = Some((9, 0));
+        let bytes = params.to_cbor_bytes();
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(params, decoded);
+    }
+
+    #[test]
+    fn decode_legacy_min_utxo_value_at_key_14() {
+        let bytes = vec![0xA1, 0x0E, 0x1A, 0x00, 0x0F, 0x42, 0x40];
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("decode legacy");
+        assert_eq!(decoded.min_utxo_value, Some(1_000_000));
+        assert_eq!(decoded.protocol_version, None);
     }
 
     #[test]

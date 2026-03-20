@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::error::LedgerError;
 use crate::state::{PoolState, RewardAccounts, StakeCredentials};
-use crate::types::{Address, PoolKeyHash, PoolParams, StakeCredential};
+use crate::types::{Address, DRep, PoolKeyHash, PoolParams, StakeCredential};
 use crate::utxo::MultiEraUtxo;
 
 // ---------------------------------------------------------------------------
@@ -308,6 +308,11 @@ pub struct PoolStakeDistribution {
 }
 
 impl PoolStakeDistribution {
+    /// Constructs a distribution from pre-computed pool stakes and total.
+    pub fn from_raw(pool_stakes: BTreeMap<PoolKeyHash, u64>, total_stake: u64) -> Self {
+        Self { pool_stakes, total_stake }
+    }
+
     /// Returns the absolute stake for `pool`, defaulting to zero.
     pub fn pool_stake(&self, pool: &PoolKeyHash) -> u64 {
         self.pool_stakes.get(pool).copied().unwrap_or(0)
@@ -501,6 +506,38 @@ pub fn compute_stake_snapshot(
         delegations,
         pool_params: pool_params_map,
     }
+}
+
+// ---------------------------------------------------------------------------
+// DRep stake distribution
+// ---------------------------------------------------------------------------
+
+/// Computes the aggregate stake delegated to each DRep from the current
+/// UTxO set, reward account balances, and credential-level DRep delegations.
+///
+/// Only credentials whose `delegated_drep` is `Some` contribute.
+/// The `AlwaysAbstain` and `AlwaysNoConfidence` sentinels are included
+/// because the tally engine handles them generically.
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — the DRep
+/// stake-weighted tally uses a per-DRep aggregate derived from the
+/// current stake snapshot and credential-level DRep delegations.
+pub fn compute_drep_stake_distribution(
+    snapshot: &StakeSnapshot,
+    stake_creds: &StakeCredentials,
+) -> BTreeMap<DRep, u64> {
+    let mut drep_stakes: BTreeMap<DRep, u64> = BTreeMap::new();
+
+    for (cred, cred_state) in stake_creds.iter() {
+        if let Some(drep) = cred_state.delegated_drep() {
+            let amount = snapshot.stake.get(cred);
+            if amount > 0 {
+                *drep_stakes.entry(drep).or_insert(0) += amount;
+            }
+        }
+    }
+
+    drep_stakes
 }
 
 // ---------------------------------------------------------------------------
