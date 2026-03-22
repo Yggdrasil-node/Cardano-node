@@ -154,16 +154,90 @@ fn script_context_data(eval: &PlutusScriptEval) -> PlutusData {
     match eval.version {
         PlutusVersion::V1 | PlutusVersion::V2 => PlutusData::Constr(
             0,
-            vec![tx_info_placeholder_data(), script_purpose_data_v1v2(&eval.purpose)],
+            vec![build_tx_info(eval), script_purpose_data_v1v2(&eval.purpose)],
         ),
         PlutusVersion::V3 => PlutusData::Constr(
             0,
             vec![
-                tx_info_placeholder_data(),
+                build_tx_info(eval),
                 eval.redeemer.clone(),
                 script_info_data_v3(&eval.purpose, eval.datum.as_ref()),
             ],
         ),
+    }
+}
+
+/// Build a real Plutus TxInfo as PlutusData (stub for now; to be implemented).
+/// This will use all available transaction, UTxO, and witness data.
+fn build_tx_info(_eval: &PlutusScriptEval) -> PlutusData {
+    // TODO: Wire in real transaction context and UTxO for full population.
+    // For now, use example data for demonstration.
+    let example_inputs = vec![
+        plutus_input_data(
+            &yggdrasil_ledger::eras::shelley::ShelleyTxIn {
+                transaction_id: [0xAA; 32],
+                index: 0,
+            },
+            &yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(
+                yggdrasil_ledger::eras::shelley::ShelleyTxOut {
+                    address: vec![0x01; 28],
+                    amount: 42,
+                },
+            ),
+        ),
+    ];
+    let example_outputs = vec![
+        plutus_output_data(&yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(
+            yggdrasil_ledger::eras::shelley::ShelleyTxOut {
+                address: vec![0x01; 28],
+                amount: 42,
+            },
+        )),
+    ];
+    PlutusData::Constr(
+        0,
+        vec![
+            PlutusData::List(example_inputs), // inputs
+            PlutusData::List(example_outputs), // outputs
+            PlutusData::Integer(0),   // fee
+            PlutusData::Map(vec![]),  // mint
+            PlutusData::List(vec![]), // certs
+            PlutusData::Map(vec![]),  // withdrawals
+            PlutusData::List(vec![]), // valid_range
+            PlutusData::List(vec![]), // signatories
+            PlutusData::Map(vec![]),  // datums
+            PlutusData::List(vec![]), // reference_inputs (Babbage/Conway only)
+        ],
+    )
+}
+
+// Encode a TxInfo input as PlutusData: Constr(0, [txin, txout])
+fn plutus_input_data(txin: &yggdrasil_ledger::eras::shelley::ShelleyTxIn, txout: &yggdrasil_ledger::utxo::MultiEraTxOut) -> PlutusData {
+    PlutusData::Constr(0, vec![plutus_txin_data(txin), plutus_output_data(txout)])
+}
+
+// Encode a ShelleyTxIn as PlutusData: Constr(0, [tx_id, index])
+fn plutus_txin_data(txin: &yggdrasil_ledger::eras::shelley::ShelleyTxIn) -> PlutusData {
+    PlutusData::Constr(
+        0,
+        vec![
+            PlutusData::Bytes(txin.transaction_id.to_vec()),
+            PlutusData::Integer(txin.index as i128),
+        ],
+    )
+}
+
+// Encode a MultiEraTxOut as PlutusData (Shelley only for now)
+fn plutus_output_data(txout: &yggdrasil_ledger::utxo::MultiEraTxOut) -> PlutusData {
+    match txout {
+        yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(o) => PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Bytes(o.address.clone()),
+                PlutusData::Integer(o.amount as i128),
+            ],
+        ),
+        _ => PlutusData::Constr(1, vec![]), // TODO: handle other eras
     }
 }
 

@@ -173,6 +173,24 @@ impl CborDecode for MultiEraUtxo {
 }
 
 impl MultiEraUtxo {
+        /// Returns the consumed and produced UTxO entries for a transaction.
+        ///
+        /// - `inputs`: the set of inputs consumed by the transaction
+        /// - `outputs`: the set of outputs produced by the transaction (as (ShelleyTxIn, MultiEraTxOut) pairs)
+        ///
+        /// Returns a tuple: (consumed_utxos, produced_utxos)
+        pub fn utxo_delta_for_tx<'a>(
+            &'a self,
+            inputs: &[ShelleyTxIn],
+            outputs: &[(ShelleyTxIn, MultiEraTxOut)],
+        ) -> (Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>, Vec<(&ShelleyTxIn, &MultiEraTxOut)>) {
+            let consumed: Vec<_> = inputs
+                .iter()
+                .filter_map(|txin| self.entries.get_key_value(txin))
+                .collect();
+            let produced: Vec<_> = outputs.iter().collect();
+            (consumed, produced)
+        }
     /// Creates an empty UTxO set.
     pub fn new() -> Self {
         Self::default()
