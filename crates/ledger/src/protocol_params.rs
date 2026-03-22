@@ -699,6 +699,283 @@ impl CborDecode for ProtocolParameters {
     }
 }
 
+/// A typed protocol-parameter delta used by update proposals.
+///
+/// Unlike [`ProtocolParameters`], every field is optional so the value can
+/// represent a sparse update map that changes only the specified keys.
+///
+/// Reference: `protocol_param_update` / `PParamsUpdate` in the Shelley and
+/// Conway ledger rules.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProtocolParameterUpdate {
+    pub min_fee_a: Option<u64>,
+    pub min_fee_b: Option<u64>,
+    pub max_block_body_size: Option<u32>,
+    pub max_tx_size: Option<u32>,
+    pub max_block_header_size: Option<u16>,
+    pub key_deposit: Option<u64>,
+    pub pool_deposit: Option<u64>,
+    pub e_max: Option<u64>,
+    pub n_opt: Option<u64>,
+    pub a0: Option<UnitInterval>,
+    pub rho: Option<UnitInterval>,
+    pub tau: Option<UnitInterval>,
+    pub protocol_version: Option<(u64, u64)>,
+    pub min_utxo_value: Option<u64>,
+    pub min_pool_cost: Option<u64>,
+    pub coins_per_utxo_byte: Option<u64>,
+    pub price_mem: Option<UnitInterval>,
+    pub price_step: Option<UnitInterval>,
+    pub max_tx_ex_units: Option<ExUnits>,
+    pub max_block_ex_units: Option<ExUnits>,
+    pub max_val_size: Option<u32>,
+    pub collateral_percentage: Option<u64>,
+    pub max_collateral_inputs: Option<u32>,
+    pub pool_voting_thresholds: Option<PoolVotingThresholds>,
+    pub drep_voting_thresholds: Option<DRepVotingThresholds>,
+    pub min_committee_size: Option<u64>,
+    pub committee_term_limit: Option<u64>,
+    pub gov_action_lifetime: Option<u64>,
+    pub gov_action_deposit: Option<u64>,
+    pub drep_deposit: Option<u64>,
+    pub drep_activity: Option<u64>,
+}
+
+impl ProtocolParameterUpdate {
+    /// Returns `true` when the update carries no parameter changes.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+impl ProtocolParameters {
+    /// Applies a typed protocol-parameter update in place.
+    pub fn apply_update(&mut self, update: &ProtocolParameterUpdate) {
+        if let Some(value) = update.min_fee_a {
+            self.min_fee_a = value;
+        }
+        if let Some(value) = update.min_fee_b {
+            self.min_fee_b = value;
+        }
+        if let Some(value) = update.max_block_body_size {
+            self.max_block_body_size = value;
+        }
+        if let Some(value) = update.max_tx_size {
+            self.max_tx_size = value;
+        }
+        if let Some(value) = update.max_block_header_size {
+            self.max_block_header_size = value;
+        }
+        if let Some(value) = update.key_deposit {
+            self.key_deposit = value;
+        }
+        if let Some(value) = update.pool_deposit {
+            self.pool_deposit = value;
+        }
+        if let Some(value) = update.e_max {
+            self.e_max = value;
+        }
+        if let Some(value) = update.n_opt {
+            self.n_opt = value;
+        }
+        if let Some(ref value) = update.a0 {
+            self.a0 = value.clone();
+        }
+        if let Some(ref value) = update.rho {
+            self.rho = value.clone();
+        }
+        if let Some(ref value) = update.tau {
+            self.tau = value.clone();
+        }
+        if let Some(value) = update.protocol_version {
+            self.protocol_version = Some(value);
+        }
+        if let Some(value) = update.min_utxo_value {
+            self.min_utxo_value = Some(value);
+        }
+        if let Some(value) = update.min_pool_cost {
+            self.min_pool_cost = value;
+        }
+        if let Some(value) = update.coins_per_utxo_byte {
+            self.coins_per_utxo_byte = Some(value);
+        }
+        if let Some(ref value) = update.price_mem {
+            self.price_mem = Some(value.clone());
+        }
+        if let Some(ref value) = update.price_step {
+            self.price_step = Some(value.clone());
+        }
+        if let Some(ref value) = update.max_tx_ex_units {
+            self.max_tx_ex_units = Some(value.clone());
+        }
+        if let Some(ref value) = update.max_block_ex_units {
+            self.max_block_ex_units = Some(value.clone());
+        }
+        if let Some(value) = update.max_val_size {
+            self.max_val_size = Some(value);
+        }
+        if let Some(value) = update.collateral_percentage {
+            self.collateral_percentage = Some(value);
+        }
+        if let Some(value) = update.max_collateral_inputs {
+            self.max_collateral_inputs = Some(value);
+        }
+        if let Some(ref value) = update.pool_voting_thresholds {
+            self.pool_voting_thresholds = Some(value.clone());
+        }
+        if let Some(ref value) = update.drep_voting_thresholds {
+            self.drep_voting_thresholds = Some(value.clone());
+        }
+        if let Some(value) = update.min_committee_size {
+            self.min_committee_size = Some(value);
+        }
+        if let Some(value) = update.committee_term_limit {
+            self.committee_term_limit = Some(value);
+        }
+        if let Some(value) = update.gov_action_lifetime {
+            self.gov_action_lifetime = Some(value);
+        }
+        if let Some(value) = update.gov_action_deposit {
+            self.gov_action_deposit = Some(value);
+        }
+        if let Some(value) = update.drep_deposit {
+            self.drep_deposit = Some(value);
+        }
+        if let Some(value) = update.drep_activity {
+            self.drep_activity = Some(value);
+        }
+    }
+}
+
+impl CborEncode for ProtocolParameterUpdate {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        let mut count: u64 = 0;
+        if self.min_fee_a.is_some() { count += 1; }
+        if self.min_fee_b.is_some() { count += 1; }
+        if self.max_block_body_size.is_some() { count += 1; }
+        if self.max_tx_size.is_some() { count += 1; }
+        if self.max_block_header_size.is_some() { count += 1; }
+        if self.key_deposit.is_some() { count += 1; }
+        if self.pool_deposit.is_some() { count += 1; }
+        if self.e_max.is_some() { count += 1; }
+        if self.n_opt.is_some() { count += 1; }
+        if self.a0.is_some() { count += 1; }
+        if self.rho.is_some() { count += 1; }
+        if self.tau.is_some() { count += 1; }
+        if self.protocol_version.is_some() { count += 1; }
+        if self.min_utxo_value.is_some() { count += 1; }
+        if self.min_pool_cost.is_some() { count += 1; }
+        if self.coins_per_utxo_byte.is_some() { count += 1; }
+        if self.price_mem.is_some() { count += 1; }
+        if self.price_step.is_some() { count += 1; }
+        if self.max_tx_ex_units.is_some() { count += 1; }
+        if self.max_block_ex_units.is_some() { count += 1; }
+        if self.max_val_size.is_some() { count += 1; }
+        if self.collateral_percentage.is_some() { count += 1; }
+        if self.max_collateral_inputs.is_some() { count += 1; }
+        if self.pool_voting_thresholds.is_some() { count += 1; }
+        if self.drep_voting_thresholds.is_some() { count += 1; }
+        if self.min_committee_size.is_some() { count += 1; }
+        if self.committee_term_limit.is_some() { count += 1; }
+        if self.gov_action_lifetime.is_some() { count += 1; }
+        if self.gov_action_deposit.is_some() { count += 1; }
+        if self.drep_deposit.is_some() { count += 1; }
+        if self.drep_activity.is_some() { count += 1; }
+
+        enc.map(count);
+
+        if let Some(value) = self.min_fee_a { enc.unsigned(0).unsigned(value); }
+        if let Some(value) = self.min_fee_b { enc.unsigned(1).unsigned(value); }
+        if let Some(value) = self.max_block_body_size { enc.unsigned(2).unsigned(value as u64); }
+        if let Some(value) = self.max_tx_size { enc.unsigned(3).unsigned(value as u64); }
+        if let Some(value) = self.max_block_header_size { enc.unsigned(4).unsigned(value as u64); }
+        if let Some(value) = self.key_deposit { enc.unsigned(5).unsigned(value); }
+        if let Some(value) = self.pool_deposit { enc.unsigned(6).unsigned(value); }
+        if let Some(value) = self.e_max { enc.unsigned(7).unsigned(value); }
+        if let Some(value) = self.n_opt { enc.unsigned(8).unsigned(value); }
+        if let Some(ref value) = self.a0 { enc.unsigned(9); value.encode_cbor(enc); }
+        if let Some(ref value) = self.rho { enc.unsigned(10); value.encode_cbor(enc); }
+        if let Some(ref value) = self.tau { enc.unsigned(11); value.encode_cbor(enc); }
+        if let Some((major, minor)) = self.protocol_version {
+            enc.unsigned(14).array(2).unsigned(major).unsigned(minor);
+        }
+        if let Some(value) = self.min_utxo_value { enc.unsigned(15).unsigned(value); }
+        if let Some(value) = self.min_pool_cost { enc.unsigned(16).unsigned(value); }
+        if let Some(value) = self.coins_per_utxo_byte { enc.unsigned(17).unsigned(value); }
+        if let Some(ref value) = self.price_mem { enc.unsigned(18); value.encode_cbor(enc); }
+        if let Some(ref value) = self.price_step { enc.unsigned(19); value.encode_cbor(enc); }
+        if let Some(ref value) = self.max_tx_ex_units { enc.unsigned(20); value.encode_cbor(enc); }
+        if let Some(ref value) = self.max_block_ex_units { enc.unsigned(21); value.encode_cbor(enc); }
+        if let Some(value) = self.max_val_size { enc.unsigned(22).unsigned(value as u64); }
+        if let Some(value) = self.collateral_percentage { enc.unsigned(23).unsigned(value); }
+        if let Some(value) = self.max_collateral_inputs { enc.unsigned(24).unsigned(value as u64); }
+        if let Some(ref value) = self.pool_voting_thresholds { enc.unsigned(25); value.encode_cbor(enc); }
+        if let Some(ref value) = self.drep_voting_thresholds { enc.unsigned(26); value.encode_cbor(enc); }
+        if let Some(value) = self.min_committee_size { enc.unsigned(27).unsigned(value); }
+        if let Some(value) = self.committee_term_limit { enc.unsigned(28).unsigned(value); }
+        if let Some(value) = self.gov_action_lifetime { enc.unsigned(29).unsigned(value); }
+        if let Some(value) = self.gov_action_deposit { enc.unsigned(30).unsigned(value); }
+        if let Some(value) = self.drep_deposit { enc.unsigned(31).unsigned(value); }
+        if let Some(value) = self.drep_activity { enc.unsigned(32).unsigned(value); }
+    }
+}
+
+impl CborDecode for ProtocolParameterUpdate {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let map_len = dec.map()?;
+        let mut update = Self::default();
+
+        for _ in 0..map_len {
+            let key = dec.unsigned()?;
+            match key {
+                0 => update.min_fee_a = Some(dec.unsigned()?),
+                1 => update.min_fee_b = Some(dec.unsigned()?),
+                2 => update.max_block_body_size = Some(dec.unsigned()? as u32),
+                3 => update.max_tx_size = Some(dec.unsigned()? as u32),
+                4 => update.max_block_header_size = Some(dec.unsigned()? as u16),
+                5 => update.key_deposit = Some(dec.unsigned()?),
+                6 => update.pool_deposit = Some(dec.unsigned()?),
+                7 => update.e_max = Some(dec.unsigned()?),
+                8 => update.n_opt = Some(dec.unsigned()?),
+                9 => update.a0 = Some(UnitInterval::decode_cbor(dec)?),
+                10 => update.rho = Some(UnitInterval::decode_cbor(dec)?),
+                11 => update.tau = Some(UnitInterval::decode_cbor(dec)?),
+                14 => {
+                    let len = dec.array()?;
+                    if len != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: len as usize,
+                        });
+                    }
+                    update.protocol_version = Some((dec.unsigned()?, dec.unsigned()?));
+                }
+                15 => update.min_utxo_value = Some(dec.unsigned()?),
+                16 => update.min_pool_cost = Some(dec.unsigned()?),
+                17 => update.coins_per_utxo_byte = Some(dec.unsigned()?),
+                18 => update.price_mem = Some(UnitInterval::decode_cbor(dec)?),
+                19 => update.price_step = Some(UnitInterval::decode_cbor(dec)?),
+                20 => update.max_tx_ex_units = Some(ExUnits::decode_cbor(dec)?),
+                21 => update.max_block_ex_units = Some(ExUnits::decode_cbor(dec)?),
+                22 => update.max_val_size = Some(dec.unsigned()? as u32),
+                23 => update.collateral_percentage = Some(dec.unsigned()?),
+                24 => update.max_collateral_inputs = Some(dec.unsigned()? as u32),
+                25 => update.pool_voting_thresholds = Some(PoolVotingThresholds::decode_cbor(dec)?),
+                26 => update.drep_voting_thresholds = Some(DRepVotingThresholds::decode_cbor(dec)?),
+                27 => update.min_committee_size = Some(dec.unsigned()?),
+                28 => update.committee_term_limit = Some(dec.unsigned()?),
+                29 => update.gov_action_lifetime = Some(dec.unsigned()?),
+                30 => update.gov_action_deposit = Some(dec.unsigned()?),
+                31 => update.drep_deposit = Some(dec.unsigned()?),
+                32 => update.drep_activity = Some(dec.unsigned()?),
+                _ => dec.skip()?,
+            }
+        }
+
+        Ok(update)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,6 +1029,42 @@ mod tests {
         let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("decode legacy");
         assert_eq!(decoded.min_utxo_value, Some(1_000_000));
         assert_eq!(decoded.protocol_version, None);
+    }
+
+    #[test]
+    fn protocol_parameter_update_round_trip() {
+        let update = ProtocolParameterUpdate {
+            min_fee_a: Some(123),
+            max_tx_size: Some(16_999),
+            protocol_version: Some((10, 2)),
+            gov_action_lifetime: Some(6),
+            drep_activity: Some(20),
+            ..Default::default()
+        };
+
+        let bytes = update.to_cbor_bytes();
+        let decoded = ProtocolParameterUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(update, decoded);
+        assert!(!decoded.is_empty());
+    }
+
+    #[test]
+    fn apply_protocol_parameter_update() {
+        let mut params = ProtocolParameters::default();
+        let update = ProtocolParameterUpdate {
+            min_fee_a: Some(99),
+            protocol_version: Some((9, 0)),
+            coins_per_utxo_byte: Some(4310),
+            gov_action_deposit: Some(1000),
+            ..Default::default()
+        };
+
+        params.apply_update(&update);
+
+        assert_eq!(params.min_fee_a, 99);
+        assert_eq!(params.protocol_version, Some((9, 0)));
+        assert_eq!(params.coins_per_utxo_byte, Some(4310));
+        assert_eq!(params.gov_action_deposit, Some(1000));
     }
 
     #[test]

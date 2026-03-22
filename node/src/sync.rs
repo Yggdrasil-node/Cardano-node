@@ -185,6 +185,7 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -192,12 +193,13 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.transaction_metadata_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();
@@ -1543,6 +1545,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                         id: compute_tx_id(&raw),
                         body: raw,
                         witnesses: None,
+                        auxiliary_data: None,
                     }
                 })
                 .collect();
@@ -1571,6 +1574,7 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -1578,12 +1582,13 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();
@@ -1611,6 +1616,7 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -1618,12 +1624,13 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();
@@ -1651,6 +1658,7 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -1658,12 +1666,13 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();

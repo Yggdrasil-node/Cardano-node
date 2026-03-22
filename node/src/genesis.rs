@@ -23,7 +23,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use yggdrasil_ledger::ProtocolParameters;
+use yggdrasil_crypto::blake2b::hash_bytes_256;
+use yggdrasil_ledger::{
+    Address, AddrKeyHash, GenesisDelegateHash, GenesisHash, PoolKeyHash,
+    ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
+};
 use yggdrasil_ledger::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::eras::alonzo::ExUnits;
@@ -49,6 +53,13 @@ pub enum GenesisLoadError {
         path: std::path::PathBuf,
         #[source]
         source: serde_json::Error,
+    },
+    /// A genesis field contained an invalid encoded value.
+    #[error("invalid genesis field {field}: {message} ({value})")]
+    InvalidField {
+        field: &'static str,
+        value: String,
+        message: String,
     },
 }
 
@@ -97,9 +108,62 @@ pub struct ShelleyGenesis {
     #[serde(default = "default_security_param")]
     pub security_param: u64,
 
+    /// Network name from Shelley genesis (`Mainnet` or `Testnet`).
+    #[serde(default)]
+    pub network_id: Option<String>,
+
+    /// Network magic from Shelley genesis.
+    #[serde(default)]
+    pub network_magic: Option<u32>,
+
+    /// Genesis delegation map keyed by genesis key hash.
+    #[serde(default)]
+    pub gen_delegs: BTreeMap<String, ShelleyGenesisDelegation>,
+
+    /// Genesis initial funds keyed by raw address bytes encoded as hex.
+    #[serde(default)]
+    pub initial_funds: BTreeMap<String, u64>,
+
+    /// Static genesis staking map for pure Shelley networks.
+    #[serde(default)]
+    pub staking: ShelleyGenesisStaking,
+
     /// Initial Shelley protocol parameters embedded in the genesis file.
     #[serde(default)]
     pub protocol_params: ShelleyGenesisProtocolParams,
+}
+
+/// Genesis delegation entry from `genDelegs`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ShelleyGenesisDelegation {
+    pub delegate: String,
+    pub vrf: String,
+}
+
+/// Raw genesis staking section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ShelleyGenesisStaking {
+    #[serde(default)]
+    pub pools: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub stake: BTreeMap<String, String>,
+}
+
+/// Parsed bootstrap data required to activate Shelley genesis state during
+/// Byron-to-Shelley replay.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyGenesisBootstrap {
+    pub initial_funds: Vec<(ShelleyTxIn, ShelleyTxOut)>,
+    pub gen_delegs: BTreeMap<GenesisHash, ParsedShelleyGenesisDelegation>,
+    /// Static genesis stake delegations keyed by stake credential hash.
+    pub staking: BTreeMap<AddrKeyHash, PoolKeyHash>,
+}
+
+/// Parsed genesis delegation entry with fixed-width hashes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParsedShelleyGenesisDelegation {
+    pub delegate: GenesisDelegateHash,
+    pub vrf: VrfKeyHash,
 }
 
 /// The `protocolParams` object from `shelley-genesis.json`.
@@ -476,6 +540,55 @@ pub fn build_protocol_parameters(
     }
 }
 
+/// Build the Shelley bootstrap bundle used to activate genesis initial funds
+/// when replay first reaches a Shelley-family block.
+pub fn build_shelley_genesis_bootstrap(
+    shelley: &ShelleyGenesis,
+) -> Result<ShelleyGenesisBootstrap, GenesisLoadError> {
+    let mut initial_funds = Vec::with_capacity(shelley.initial_funds.len());
+    for (address_hex, amount) in &shelley.initial_funds {
+        let address = decode_hex_bytes(address_hex, "initialFunds")?;
+        Address::validate_bytes(&address).map_err(|error| GenesisLoadError::InvalidField {
+            field: "initialFunds",
+            value: address_hex.clone(),
+            message: error.to_string(),
+        })?;
+
+        initial_funds.push((
+            initial_funds_pseudo_txin(&address),
+            ShelleyTxOut {
+                address,
+                amount: *amount,
+            },
+        ));
+    }
+
+    let mut gen_delegs = BTreeMap::new();
+    for (genesis_hash, delegation) in &shelley.gen_delegs {
+        gen_delegs.insert(
+            decode_fixed_hash::<28>(genesis_hash, "genDelegs")?,
+            ParsedShelleyGenesisDelegation {
+                delegate: decode_fixed_hash::<28>(&delegation.delegate, "genDelegs.delegate")?,
+                vrf: decode_fixed_hash::<32>(&delegation.vrf, "genDelegs.vrf")?,
+            },
+        );
+    }
+
+    let mut staking = BTreeMap::new();
+    for (stake_hash, pool_hash) in &shelley.staking.stake {
+        staking.insert(
+            decode_fixed_hash::<28>(stake_hash, "staking.stake")?,
+            decode_fixed_hash::<28>(pool_hash, "staking.stake")?,
+        );
+    }
+
+    Ok(ShelleyGenesisBootstrap {
+        initial_funds,
+        gen_delegs,
+        staking,
+    })
+}
+
 /// Build the current simplified CEK [`CostModel`] from the Alonzo genesis
 /// named Plutus cost-model map.
 ///
@@ -520,6 +633,14 @@ pub fn load_shelley_genesis(path: &Path) -> Result<ShelleyGenesis, GenesisLoadEr
     load_json(path)
 }
 
+/// Load and parse the Shelley bootstrap bundle from a Shelley genesis file.
+pub fn load_shelley_genesis_bootstrap(
+    path: &Path,
+) -> Result<ShelleyGenesisBootstrap, GenesisLoadError> {
+    let genesis = load_shelley_genesis(path)?;
+    build_shelley_genesis_bootstrap(&genesis)
+}
+
 /// Load `alonzo-genesis.json` from the given path.
 pub fn load_alonzo_genesis(path: &Path) -> Result<AlonzoGenesis, GenesisLoadError> {
     load_json(path)
@@ -558,6 +679,64 @@ fn default_max_value_size() -> u32 { 5_000 }
 fn default_collateral_percentage() -> u64 { 150 }
 fn default_max_collateral_inputs() -> u32 { 3 }
 
+fn decode_hex_bytes(value: &str, field: &'static str) -> Result<Vec<u8>, GenesisLoadError> {
+    if value.len() % 2 != 0 {
+        return Err(GenesisLoadError::InvalidField {
+            field,
+            value: value.to_owned(),
+            message: "hex string must have even length".to_owned(),
+        });
+    }
+
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let raw = value.as_bytes();
+    let mut index = 0usize;
+    while index < raw.len() {
+        let hi = decode_hex_nibble(raw[index]).ok_or_else(|| GenesisLoadError::InvalidField {
+            field,
+            value: value.to_owned(),
+            message: "invalid hex digit".to_owned(),
+        })?;
+        let lo = decode_hex_nibble(raw[index + 1]).ok_or_else(|| GenesisLoadError::InvalidField {
+            field,
+            value: value.to_owned(),
+            message: "invalid hex digit".to_owned(),
+        })?;
+        bytes.push((hi << 4) | lo);
+        index += 2;
+    }
+    Ok(bytes)
+}
+
+fn decode_fixed_hash<const N: usize>(
+    value: &str,
+    field: &'static str,
+) -> Result<[u8; N], GenesisLoadError> {
+    let bytes = decode_hex_bytes(value, field)?;
+    bytes.try_into().map_err(|_: Vec<u8>| GenesisLoadError::InvalidField {
+        field,
+        value: value.to_owned(),
+        message: format!("expected {N} bytes"),
+    })
+}
+
+fn decode_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Compute the pseudo `TxIn` used for Shelley genesis initial funds.
+pub fn initial_funds_pseudo_txin(address: &[u8]) -> ShelleyTxIn {
+    ShelleyTxIn {
+        transaction_id: hash_bytes_256(address).0,
+        index: 0,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -573,6 +752,11 @@ mod tests {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
             security_param: 2_160,
+            network_id: Some("Testnet".to_owned()),
+            network_magic: Some(1),
+            gen_delegs: BTreeMap::new(),
+            initial_funds: BTreeMap::new(),
+            staking: ShelleyGenesisStaking::default(),
             protocol_params: ShelleyGenesisProtocolParams {
                 min_fee_a: 44,
                 min_fee_b: 155_381,
@@ -733,6 +917,44 @@ mod tests {
         assert_eq!(dvt.motion_no_confidence.numerator, 670_000);
         assert_eq!(dvt.update_to_constitution.numerator, 750_000);
         assert_eq!(dvt.treasury_withdrawal.numerator, 670_000);
+    }
+
+    #[test]
+    fn build_shelley_genesis_bootstrap_parses_initial_funds() {
+        let mut shelley = sample_shelley();
+        let mut address = vec![0x60];
+        address.extend_from_slice(&[0x11; 28]);
+        let address_hex = address.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        shelley.initial_funds.insert(address_hex, 123);
+
+        let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
+        assert_eq!(bootstrap.initial_funds.len(), 1);
+        let (txin, txout) = &bootstrap.initial_funds[0];
+        assert_eq!(txin, &initial_funds_pseudo_txin(&address));
+        assert_eq!(txout.address, address);
+        assert_eq!(txout.amount, 123);
+    }
+
+    #[test]
+    fn build_shelley_genesis_bootstrap_rejects_invalid_initial_fund_address() {
+        let mut shelley = sample_shelley();
+        shelley.initial_funds.insert("00".to_owned(), 1);
+
+        let error = build_shelley_genesis_bootstrap(&shelley).expect_err("invalid address");
+        match error {
+            GenesisLoadError::InvalidField { field, .. } => assert_eq!(field, "initialFunds"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_shelley_genesis_bootstrap_parses_stake_delegations() {
+        let mut shelley = sample_shelley();
+        shelley.staking.stake.insert("11".repeat(28), "22".repeat(28));
+
+        let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
+        assert_eq!(bootstrap.staking.len(), 1);
+        assert_eq!(bootstrap.staking.get(&[0x11; 28]), Some(&[0x22; 28]));
     }
 
     #[test]

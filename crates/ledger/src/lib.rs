@@ -113,7 +113,9 @@ pub use epoch_boundary::{
 };
 
 // -- Protocol params re-exports -----------------------------------------------
-pub use protocol_params::{DRepVotingThresholds, PoolVotingThresholds, ProtocolParameters};
+pub use protocol_params::{
+    DRepVotingThresholds, PoolVotingThresholds, ProtocolParameterUpdate, ProtocolParameters,
+};
 
 // -- Fee re-exports -----------------------------------------------------------
 pub use fees::{min_fee_linear, script_fee, total_min_fee, validate_fee, validate_tx_ex_units, validate_tx_size};

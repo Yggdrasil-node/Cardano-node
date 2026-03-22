@@ -66,11 +66,7 @@ fn shelley_tx_body_with_withdrawals_round_trip() {
 fn shelley_tx_body_with_update_round_trip() {
     use std::collections::BTreeMap;
     let mut proposed = BTreeMap::new();
-    let param_update = {
-        let mut enc = Encoder::new();
-        enc.map(0);
-        enc.into_bytes()
-    };
+    let param_update = ProtocolParameterUpdate::default();
     proposed.insert([0x01; 28], param_update);
     let update = ShelleyUpdate {
         proposed_protocol_parameter_updates: proposed,
@@ -105,11 +101,7 @@ fn shelley_tx_body_with_all_keys_4_6_round_trip() {
     wdrl.insert(sample_reward_account(), 1_000_000);
 
     let mut proposed = BTreeMap::new();
-    let param_update = {
-        let mut enc = Encoder::new();
-        enc.map(0);
-        enc.into_bytes()
-    };
+    let param_update = ProtocolParameterUpdate::default();
     proposed.insert([0x02; 28], param_update);
     let update = ShelleyUpdate {
         proposed_protocol_parameter_updates: proposed,
@@ -204,11 +196,7 @@ fn alonzo_tx_body_with_certs_and_withdrawals_round_trip() {
     wdrl.insert(sample_reward_account(), 4_000_000);
 
     let mut proposed = BTreeMap::new();
-    let param_update = {
-        let mut enc = Encoder::new();
-        enc.map(0);
-        enc.into_bytes()
-    };
+    let param_update = ProtocolParameterUpdate::default();
     proposed.insert([0x03; 28], param_update);
     let update = ShelleyUpdate {
         proposed_protocol_parameter_updates: proposed,
@@ -332,11 +320,7 @@ fn shelley_tx_body_map_count_includes_keys_4_5_6() {
     wdrl.insert(sample_reward_account(), 100);
 
     let mut proposed = BTreeMap::new();
-    let param_update = {
-        let mut enc = Encoder::new();
-        enc.map(0);
-        enc.into_bytes()
-    };
+    let param_update = ProtocolParameterUpdate::default();
     proposed.insert([0x04; 28], param_update);
     let update = ShelleyUpdate {
         proposed_protocol_parameter_updates: proposed,

@@ -10,6 +10,7 @@ use crate::eras::allegra::NativeScript;
 use crate::eras::alonzo::{ExUnits, Redeemer};
 use crate::error::LedgerError;
 use crate::plutus::PlutusData;
+use crate::protocol_params::ProtocolParameterUpdate;
 use crate::types::{DCert, RewardAccount};
 
 pub const SHELLEY_NAME: &str = "Shelley";
@@ -112,16 +113,11 @@ impl CborDecode for ShelleyTxOut {
 /// update = [ proposed_protocol_parameter_updates, epoch ]
 /// proposed_protocol_parameter_updates = { * genesis_hash => protocol_param_update }
 /// ```
-///
-/// The inner `protocol_param_update` values remain as opaque CBOR bytes
-/// since the map has 16+ optional keys with complex nested types.
-///
 /// Reference: `Cardano.Ledger.Shelley.PParams.Update`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShelleyUpdate {
-    /// Map from genesis delegate key hash to proposed parameter updates
-    /// (each value is opaque CBOR encoding of `protocol_param_update`).
-    pub proposed_protocol_parameter_updates: BTreeMap<[u8; 28], Vec<u8>>,
+    /// Map from genesis delegate key hash to typed parameter update deltas.
+    pub proposed_protocol_parameter_updates: BTreeMap<[u8; 28], ProtocolParameterUpdate>,
     /// Epoch in which the update takes effect.
     pub epoch: u64,
 }
@@ -132,7 +128,7 @@ impl CborEncode for ShelleyUpdate {
         enc.map(self.proposed_protocol_parameter_updates.len() as u64);
         for (hash, param_update) in &self.proposed_protocol_parameter_updates {
             enc.bytes(hash);
-            enc.raw(param_update);
+            param_update.encode_cbor(enc);
         }
         enc.unsigned(self.epoch);
     }
@@ -158,10 +154,7 @@ impl CborDecode for ShelleyUpdate {
                         expected: 28,
                         actual: raw_hash.len(),
                     })?;
-            let start = dec.position();
-            dec.skip()?;
-            let end = dec.position();
-            let param_update = dec.slice(start, end)?.to_vec();
+            let param_update = ProtocolParameterUpdate::decode_cbor(dec)?;
             proposed.insert(hash, param_update);
         }
         let epoch = dec.unsigned()?;

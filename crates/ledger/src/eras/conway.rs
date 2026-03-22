@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
+use crate::protocol_params::ProtocolParameterUpdate;
 use crate::eras::shelley::{PraosHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
 use crate::types::{Anchor, DCert, HeaderHash, RewardAccount, StakeCredential, UnitInterval};
@@ -297,10 +298,6 @@ impl CborDecode for Constitution {
 /// new_constitution = (5, gov_action_id / null, constitution)
 /// info_action = 6
 /// ```
-///
-/// `protocol_param_update` remains as opaque CBOR bytes since the full
-/// parameter map has 33+ optional fields with deeply nested types.
-///
 /// Reference: `Cardano.Ledger.Conway.Governance.Procedures.GovAction`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GovAction {
@@ -308,8 +305,8 @@ pub enum GovAction {
     ParameterChange {
         /// Previous governance action ID, or `None` for the first such action.
         prev_action_id: Option<GovActionId>,
-        /// Protocol parameter update as opaque CBOR bytes.
-        protocol_param_update: Vec<u8>,
+        /// Typed protocol parameter update delta.
+        protocol_param_update: ProtocolParameterUpdate,
         /// Optional guardrails (policy) script hash.
         guardrails_script_hash: Option<[u8; 28]>,
     },
@@ -416,7 +413,7 @@ impl CborEncode for GovAction {
                 enc.array(4);
                 enc.unsigned(0);
                 encode_optional_gov_action_id(enc, prev_action_id);
-                enc.raw(protocol_param_update);
+                protocol_param_update.encode_cbor(enc);
                 encode_optional_script_hash(enc, guardrails_script_hash);
             }
             Self::HardForkInitiation {
@@ -501,10 +498,7 @@ impl CborDecode for GovAction {
                     });
                 }
                 let prev_action_id = decode_optional_gov_action_id(dec)?;
-                let start = dec.position();
-                dec.skip()?;
-                let end = dec.position();
-                let protocol_param_update = dec.slice(start, end)?.to_vec();
+                let protocol_param_update = ProtocolParameterUpdate::decode_cbor(dec)?;
                 let guardrails_script_hash = decode_optional_script_hash(dec)?;
                 Ok(Self::ParameterChange {
                     prev_action_id,

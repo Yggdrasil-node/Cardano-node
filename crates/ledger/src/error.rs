@@ -86,6 +86,18 @@ pub enum LedgerError {
     #[error("invalid reward account bytes: {0:02x?}")]
     InvalidRewardAccountBytes(Vec<u8>),
 
+    #[error("invalid address bytes: {0:02x?}")]
+    InvalidAddressBytes(Vec<u8>),
+
+    #[error("invalid address network id: {0}")]
+    InvalidAddressNetworkId(u8),
+
+    #[error("invalid Byron address structure: {0:02x?}")]
+    InvalidByronAddressStructure(Vec<u8>),
+
+    #[error("invalid Byron address CRC32 checksum")]
+    InvalidByronAddressChecksum,
+
     #[error("proposal deposit incorrect: supplied {supplied}, expected {expected}")]
     ProposalDepositIncorrect { supplied: u64, expected: u64 },
 
@@ -262,6 +274,25 @@ pub enum LedgerError {
 
     #[error("VKey witness signature verification failed for hash {hash:02x?}")]
     InvalidVKeyWitnessSignature { hash: [u8; 28] },
+
+    #[error("bootstrap witness signature verification failed for hash {hash:02x?}")]
+    InvalidBootstrapWitnessSignature { hash: [u8; 28] },
+
+    #[error("bootstrap witness attributes are not valid CBOR map bytes: {0:02x?}")]
+    InvalidBootstrapWitnessAttributes(Vec<u8>),
+
+    // -- Auxiliary data validation errors ------------------------------------
+
+    #[error(
+        "auxiliary data hash mismatch: declared {declared:02x?}, computed {computed:02x?}"
+    )]
+    AuxiliaryDataHashMismatch {
+        declared: [u8; 32],
+        computed: [u8; 32],
+    },
+
+    #[error("auxiliary data hash declared but no auxiliary data present in block")]
+    AuxiliaryDataMissing,
 
     // -- Epoch boundary errors ----------------------------------------------
 

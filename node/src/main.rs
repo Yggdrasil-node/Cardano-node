@@ -24,7 +24,7 @@ use yggdrasil_node::{
     run_inbound_accept_loop,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
-use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint};
+use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     GovernorState, GovernorTargets,
@@ -363,6 +363,19 @@ fn strict_base_ledger_state(
 ) -> Result<LedgerState> {
     let mut state = LedgerState::new(Era::Byron);
     state.set_expected_network_id(file_cfg.expected_network_id());
+    if let Some(bootstrap) = file_cfg
+        .load_shelley_genesis_bootstrap(config_base_dir)
+        .wrap_err("failed to load Shelley genesis bootstrap")?
+    {
+        state.configure_pending_shelley_genesis_utxo(bootstrap.initial_funds);
+        state.configure_pending_shelley_genesis_stake(
+            bootstrap
+                .staking
+                .into_iter()
+                .map(|(credential, pool)| (StakeCredential::AddrKeyHash(credential), pool))
+                .collect(),
+        );
+    }
     if let Some(params) = file_cfg
         .load_genesis_protocol_params(config_base_dir)
         .wrap_err("failed to load genesis protocol parameters")?

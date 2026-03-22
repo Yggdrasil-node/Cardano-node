@@ -6,6 +6,9 @@
 
 use std::fmt;
 
+use crate::cbor::Decoder;
+use crate::error::LedgerError;
+
 // ---------------------------------------------------------------------------
 // Slot and block numbering
 // ---------------------------------------------------------------------------
@@ -286,6 +289,9 @@ impl RewardAccount {
         }
         let header = bytes[0];
         let network = header & 0x0f;
+        if !is_valid_network_id(network) {
+            return None;
+        }
         let addr_type = header >> 4;
         let hash: [u8; 28] = bytes[1..29].try_into().ok()?;
         let credential = match addr_type {
@@ -297,6 +303,14 @@ impl RewardAccount {
             network,
             credential,
         })
+    }
+
+    /// Validates the reward-account network id.
+    pub fn validate(&self) -> Result<(), LedgerError> {
+        if !is_valid_network_id(self.network) {
+            return Err(LedgerError::InvalidAddressNetworkId(self.network));
+        }
+        Ok(())
     }
 }
 
@@ -394,6 +408,9 @@ impl Address {
             // Base addresses: 0x0 = key/key, 0x1 = script/key,
             //                 0x2 = key/script, 0x3 = script/script
             0x0..=0x3 => {
+                    if !is_valid_network_id(network) {
+                        return None;
+                    }
                 if bytes.len() != 57 {
                     return None;
                 }
@@ -417,6 +434,9 @@ impl Address {
             }
             // Pointer addresses: 0x4 = key, 0x5 = script
             0x4..=0x5 => {
+                    if !is_valid_network_id(network) {
+                        return None;
+                    }
                 if bytes.len() < 30 {
                     return None;
                 }
@@ -430,6 +450,9 @@ impl Address {
                 let slot = decode_variable_nat(bytes, &mut pos)?;
                 let tx_index = decode_variable_nat(bytes, &mut pos)?;
                 let cert_index = decode_variable_nat(bytes, &mut pos)?;
+                    if pos != bytes.len() {
+                        return None;
+                    }
                 Some(Self::Pointer(PointerAddress {
                     network,
                     payment,
@@ -440,6 +463,9 @@ impl Address {
             }
             // Enterprise addresses: 0x6 = key, 0x7 = script
             0x6..=0x7 => {
+                    if !is_valid_network_id(network) {
+                        return None;
+                    }
                 if bytes.len() != 29 {
                     return None;
                 }
@@ -459,6 +485,25 @@ impl Address {
                 Some(Self::Reward(ra))
             }
             _ => None,
+        }
+    }
+
+    /// Parses and deeply validates an address from raw bytes.
+    pub fn validate_bytes(bytes: &[u8]) -> Result<Self, LedgerError> {
+        let address = Self::from_bytes(bytes)
+            .ok_or_else(|| LedgerError::InvalidAddressBytes(bytes.to_vec()))?;
+        address.validate()?;
+        Ok(address)
+    }
+
+    /// Runs additional validation checks that go beyond structural decoding.
+    pub fn validate(&self) -> Result<(), LedgerError> {
+        match self {
+            Self::Base(b) => validate_network_id(b.network),
+            Self::Enterprise(e) => validate_network_id(e.network),
+            Self::Pointer(p) => validate_network_id(p.network),
+            Self::Reward(r) => r.validate(),
+            Self::Byron(raw) => validate_byron_address_bytes(raw),
         }
     }
 
@@ -789,6 +834,51 @@ fn decode_variable_nat(bytes: &[u8], pos: &mut usize) -> Option<u64> {
             return Some(result);
         }
     }
+}
+
+fn is_valid_network_id(network: u8) -> bool {
+    matches!(network, 0 | 1)
+}
+
+fn validate_network_id(network: u8) -> Result<(), LedgerError> {
+    if is_valid_network_id(network) {
+        Ok(())
+    } else {
+        Err(LedgerError::InvalidAddressNetworkId(network))
+    }
+}
+
+fn validate_byron_address_bytes(raw: &[u8]) -> Result<(), LedgerError> {
+    let mut dec = Decoder::new(raw);
+    let len = dec.array().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
+    if len != 2 {
+        return Err(LedgerError::InvalidByronAddressStructure(raw.to_vec()));
+    }
+    let tag = dec.tag().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
+    if tag != 24 {
+        return Err(LedgerError::InvalidByronAddressStructure(raw.to_vec()));
+    }
+    let payload = dec.bytes().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
+    let checksum = dec.unsigned().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))? as u32;
+    if dec.position() != raw.len() {
+        return Err(LedgerError::InvalidByronAddressStructure(raw.to_vec()));
+    }
+    if crc32_ieee(payload) != checksum {
+        return Err(LedgerError::InvalidByronAddressChecksum);
+    }
+    Ok(())
+}
+
+fn crc32_ieee(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg() & 0xedb8_8320;
+            crc = (crc >> 1) ^ mask;
+        }
+    }
+    !crc
 }
 
 /// Encodes a natural number using variable-length encoding into `out`.

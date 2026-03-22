@@ -154,6 +154,13 @@ fn reward_account_from_bytes_invalid_type() {
 }
 
 #[test]
+fn reward_account_invalid_network_rejected() {
+    let mut bytes = [0u8; 29];
+    bytes[0] = 0xe2;
+    assert!(RewardAccount::from_bytes(&bytes).is_none());
+}
+
+#[test]
 fn reward_account_cbor_round_trip() {
     let ra = RewardAccount {
         network: 1,
@@ -301,15 +308,14 @@ fn reward_address_via_address_round_trip() {
 
 #[test]
 fn byron_address_passthrough() {
-    // Byron addresses start with type nibble 0x8
-    let mut raw = vec![0x82]; // 0x8 << 4 | 0x2 = 0x82
-    raw.extend_from_slice(&[0xaa; 56]);
+    let raw = make_valid_byron_address(&[0x01, 0x02, 0x03]);
     let addr = Address::from_bytes(&raw).expect("decode");
     match &addr {
         Address::Byron(b) => assert_eq!(b, &raw),
         other => panic!("expected Byron, got {other:?}"),
     }
     assert_eq!(addr.to_bytes(), raw);
+    assert!(Address::validate_bytes(&addr.to_bytes()).is_ok());
 }
 
 #[test]
@@ -374,6 +380,73 @@ fn pointer_address_zero_values() {
     assert_eq!(bytes.len(), 32);
     let decoded = Address::from_bytes(&bytes).expect("decode");
     assert_eq!(addr, decoded);
+}
+
+#[test]
+fn pointer_address_with_trailing_bytes_rejected() {
+    let addr = Address::Pointer(PointerAddress {
+        network: 1,
+        payment: StakeCredential::AddrKeyHash(sample_hash28()),
+        slot: 0,
+        tx_index: 1,
+        cert_index: 2,
+    });
+    let mut bytes = addr.to_bytes();
+    bytes.push(0);
+    assert!(Address::from_bytes(&bytes).is_none());
+}
+
+#[test]
+fn address_validate_rejects_invalid_network() {
+    let bytes = {
+        let mut bytes = vec![0x62];
+        bytes.extend_from_slice(&sample_hash28());
+        bytes
+    };
+    assert!(matches!(
+        Address::validate_bytes(&bytes),
+        Err(LedgerError::InvalidAddressBytes(_))
+    ));
+}
+
+#[test]
+fn byron_address_validate_rejects_bad_checksum() {
+    let mut raw = make_valid_byron_address(&[0x10, 0x20, 0x30]);
+    let last = raw.len() - 1;
+    raw[last] ^= 0x01;
+    assert!(matches!(
+        Address::validate_bytes(&raw),
+        Err(LedgerError::InvalidByronAddressChecksum)
+    ));
+}
+
+fn make_valid_byron_address(payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.push(0x82);
+    out.push(0xd8);
+    out.push(24);
+    out.push(0x40 + payload.len() as u8);
+    out.extend_from_slice(payload);
+    let crc = crc32_ieee(payload);
+    if crc <= 23 {
+        out.push(crc as u8);
+    } else {
+        out.push(0x1a);
+        out.extend_from_slice(&crc.to_be_bytes());
+    }
+    out
+}
+
+fn crc32_ieee(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg() & 0xedb8_8320;
+            crc = (crc >> 1) ^ mask;
+        }
+    }
+    !crc
 }
 
 // =========================================================================

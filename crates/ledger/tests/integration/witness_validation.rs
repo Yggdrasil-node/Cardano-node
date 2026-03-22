@@ -937,7 +937,7 @@ fn conway_block_rejects_malformed_empty_parameter_change_proposal() {
     };
     let malformed_action = GovAction::ParameterChange {
         prev_action_id: None,
-        protocol_param_update: vec![0xA0],
+        protocol_param_update: ProtocolParameterUpdate::default(),
         guardrails_script_hash: None,
     };
 
@@ -1122,7 +1122,10 @@ fn conway_block_rejects_drep_non_info_vote_during_bootstrap() {
             reward_account: reward_account.to_bytes().to_vec(),
             gov_action: GovAction::ParameterChange {
                 prev_action_id: None,
-                protocol_param_update: vec![0xA1, 0x00, 0x01],
+                protocol_param_update: ProtocolParameterUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
                 guardrails_script_hash: None,
             },
             anchor: Anchor {
@@ -1143,6 +1146,50 @@ fn conway_block_rejects_drep_non_info_vote_during_bootstrap() {
             gov_action_id,
         )])
     );
+}
+
+#[test]
+fn bootstrap_witness_signature_verifies() {
+    let tx_body_hash = [0x42; 32];
+    let witness = BootstrapWitness {
+        public_key: test_vkey(&TEST_SEED),
+        signature: test_sign(&TEST_SEED, &tx_body_hash),
+        chain_code: [0x11; 32],
+        attributes: vec![0xA0],
+    };
+
+    yggdrasil_ledger::witnesses::verify_bootstrap_witnesses(&tx_body_hash, &[witness])
+        .expect("valid bootstrap witness");
+}
+
+#[test]
+fn bootstrap_witness_rejects_bad_signature() {
+    let tx_body_hash = [0x43; 32];
+    let witness = BootstrapWitness {
+        public_key: test_vkey(&TEST_SEED),
+        signature: test_sign(&WRONG_SEED, &tx_body_hash),
+        chain_code: [0x22; 32],
+        attributes: vec![0xA0],
+    };
+
+    let err = yggdrasil_ledger::witnesses::verify_bootstrap_witnesses(&tx_body_hash, &[witness])
+        .unwrap_err();
+    assert!(matches!(err, LedgerError::InvalidBootstrapWitnessSignature { .. }));
+}
+
+#[test]
+fn bootstrap_witness_rejects_non_map_attributes() {
+    let tx_body_hash = [0x44; 32];
+    let witness = BootstrapWitness {
+        public_key: test_vkey(&TEST_SEED),
+        signature: test_sign(&TEST_SEED, &tx_body_hash),
+        chain_code: [0x33; 32],
+        attributes: vec![0x01],
+    };
+
+    let err = yggdrasil_ledger::witnesses::verify_bootstrap_witnesses(&tx_body_hash, &[witness])
+        .unwrap_err();
+    assert!(matches!(err, LedgerError::InvalidBootstrapWitnessAttributes(_)));
 }
 
 #[test]

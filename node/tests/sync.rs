@@ -9,7 +9,7 @@ use yggdrasil_ledger::{
     CborEncode, ConwayBlock, ConwayTxBody, Encoder, HeaderHash, LedgerState, Nonce, Point,
     PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
-    ShelleyWitnessSet, SlotNo, TxId,
+    ShelleyWitnessSet, SlotNo, StakeCredential, TxId,
     Era,
     compute_block_body_hash,
 };
@@ -32,6 +32,12 @@ use yggdrasil_node::{
 };
 use yggdrasil_consensus::{ChainState, SecurityParam};
 use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile, ImmutableStore, VolatileStore};
+
+fn test_shelley_initial_funds_address(seed: u8) -> Vec<u8> {
+    let mut address = vec![0x60];
+    address.extend_from_slice(&[seed; 28]);
+    address
+}
 
 fn test_store_block(hash_byte: u8, slot: u64) -> Block {
     Block {
@@ -3275,6 +3281,139 @@ fn recover_ledger_state_chaindb_replays_immutable_blocks_after_checkpoint() {
         recovered.point,
         Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
     );
+}
+
+#[test]
+fn recover_ledger_state_chaindb_bootstraps_initial_funds_on_first_shelley_block() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let address = test_shelley_initial_funds_address(0x44);
+    let txin = yggdrasil_node::genesis::initial_funds_pseudo_txin(&address);
+    let txout = yggdrasil_ledger::ShelleyTxOut {
+        address: address.clone(),
+        amount: 1_000,
+    };
+
+    let mut base_state = LedgerState::new(Era::Byron);
+    base_state.configure_pending_shelley_genesis_utxo(vec![(txin.clone(), txout.clone())]);
+
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
+            block: ByronBlock::MainBlock {
+                epoch: 0,
+                slot_in_epoch: 1,
+                chain_difficulty: 1,
+                prev_hash: [0; 32],
+                raw_header: vec![0xAA],
+                transactions: vec![],
+            },
+            era_tag: 1,
+        }))
+        .expect("append byron block");
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(
+            make_shelley_block_with_number(2, 10),
+        ))))
+        .expect("append shelley block");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
+        .expect("recover ledger state with Shelley bootstrap");
+
+    assert_eq!(recovered.ledger_state.current_era(), Era::Shelley);
+    assert_eq!(recovered.ledger_state.utxo().get(&txin), Some(&txout));
+    assert!(recovered.ledger_state.multi_era_utxo().get(&txin).is_some());
+}
+
+#[test]
+fn recover_ledger_state_chaindb_keeps_initial_funds_hidden_before_shelley() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let address = test_shelley_initial_funds_address(0x55);
+    let txin = yggdrasil_node::genesis::initial_funds_pseudo_txin(&address);
+
+    let mut base_state = LedgerState::new(Era::Byron);
+    base_state.configure_pending_shelley_genesis_utxo(vec![(
+        txin.clone(),
+        yggdrasil_ledger::ShelleyTxOut {
+            address,
+            amount: 2_000,
+        },
+    )]);
+
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
+            block: ByronBlock::MainBlock {
+                epoch: 0,
+                slot_in_epoch: 1,
+                chain_difficulty: 1,
+                prev_hash: [0; 32],
+                raw_header: vec![0xAA],
+                transactions: vec![],
+            },
+            era_tag: 1,
+        }))
+        .expect("append byron block");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
+        .expect("recover ledger state before Shelley");
+
+    assert_eq!(recovered.ledger_state.current_era(), Era::Byron);
+    assert!(recovered.ledger_state.utxo().get(&txin).is_none());
+    assert!(recovered.ledger_state.multi_era_utxo().get(&txin).is_none());
+}
+
+#[test]
+fn recover_ledger_state_chaindb_bootstraps_genesis_stake_on_first_shelley_block() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let credential = StakeCredential::AddrKeyHash([0x66; 28]);
+    let pool = [0x77; 28];
+
+    let mut base_state = LedgerState::new(Era::Byron);
+    base_state.configure_pending_shelley_genesis_stake(vec![(credential, pool)]);
+
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
+            block: ByronBlock::MainBlock {
+                epoch: 0,
+                slot_in_epoch: 1,
+                chain_difficulty: 1,
+                prev_hash: [0; 32],
+                raw_header: vec![0xAA],
+                transactions: vec![],
+            },
+            era_tag: 1,
+        }))
+        .expect("append byron block");
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(
+            make_shelley_block_with_number(2, 10),
+        ))))
+        .expect("append shelley block");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
+        .expect("recover ledger state with Shelley stake bootstrap");
+
+    assert_eq!(recovered.ledger_state.current_era(), Era::Shelley);
+    let registered = recovered
+        .ledger_state
+        .stake_credential_state(&credential)
+        .expect("stake credential should be bootstrapped");
+    assert_eq!(registered.delegated_pool(), Some(pool));
 }
 
 #[test]

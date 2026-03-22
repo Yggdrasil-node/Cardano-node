@@ -1,6 +1,7 @@
 use crate::eras::allegra::AllegraTxBody;
 use crate::eras::alonzo::AlonzoTxBody;
 use crate::eras::babbage::BabbageTxBody;
+use crate::eras::byron::ByronTx;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
@@ -1278,10 +1279,7 @@ pub enum EnactOutcome {
     TreasuryWithdrawn {
         total_withdrawn: u64,
     },
-    /// A parameter change was recorded. The opaque `protocol_param_update`
-    /// bytes are preserved in the enact state; applying them to
-    /// `ProtocolParameters` requires parsing the update map (future
-    /// milestone).
+    /// A parameter change was enacted and applied to protocol parameters.
     ParameterChangeRecorded,
 }
 
@@ -1402,10 +1400,12 @@ pub fn enact_gov_action(
             }
         }
 
-        GovAction::ParameterChange { .. } => {
-            // Record the lineage. Applying the opaque protocol_param_update
-            // bytes to ProtocolParameters requires parsing the CBOR map of
-            // optional parameter delta fields — a future milestone.
+        GovAction::ParameterChange {
+            protocol_param_update,
+            ..
+        } => {
+            let params = protocol_params.get_or_insert_with(Default::default);
+            params.apply_update(protocol_param_update);
             enact.prev_pparams_update = Some(action_id);
             EnactOutcome::ParameterChangeRecorded
         }
@@ -1786,6 +1786,12 @@ pub struct LedgerState {
     accounting: AccountingState,
     /// Conway governance enactment state (constitution, quorum, lineage).
     enact_state: EnactState,
+    /// Shelley genesis UTxO entries to activate when replay first reaches a
+    /// Shelley-family block.
+    pending_shelley_genesis_utxo: Option<Vec<(crate::eras::shelley::ShelleyTxIn, crate::eras::shelley::ShelleyTxOut)>>,
+    /// Shelley genesis stake delegations to activate when replay first
+    /// reaches a Shelley-family block.
+    pending_shelley_genesis_stake: Option<Vec<(StakeCredential, PoolKeyHash)>>,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -1931,6 +1937,8 @@ impl CborDecode for LedgerState {
             deposit_pot,
             accounting,
             enact_state,
+            pending_shelley_genesis_utxo: None,
+            pending_shelley_genesis_stake: None,
         })
     }
 }
@@ -1996,7 +2004,40 @@ impl LedgerState {
             deposit_pot: DepositPot::default(),
             accounting: AccountingState::default(),
             enact_state: EnactState::default(),
+            pending_shelley_genesis_utxo: None,
+            pending_shelley_genesis_stake: None,
         }
+    }
+
+    /// Returns the era currently active in this ledger state.
+    pub fn current_era(&self) -> Era {
+        self.current_era
+    }
+
+    /// Configures Shelley genesis UTxO entries that should become visible
+    /// only when replay first reaches a Shelley-family block.
+    pub fn configure_pending_shelley_genesis_utxo(
+        &mut self,
+        entries: Vec<(crate::eras::shelley::ShelleyTxIn, crate::eras::shelley::ShelleyTxOut)>,
+    ) {
+        self.pending_shelley_genesis_utxo = if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        };
+    }
+
+    /// Configures Shelley genesis stake delegations that should become
+    /// visible only when replay first reaches a Shelley-family block.
+    pub fn configure_pending_shelley_genesis_stake(
+        &mut self,
+        entries: Vec<(StakeCredential, PoolKeyHash)>,
+    ) {
+        self.pending_shelley_genesis_stake = if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        };
     }
 
     /// Returns a reference to registered stake-pool state.
@@ -2291,6 +2332,8 @@ impl LedgerState {
     ) -> Result<(), LedgerError> {
         let slot = block.header.slot_no.0;
 
+        self.maybe_activate_pending_shelley_genesis(block.era);
+
         // Block-level size validation when protocol parameters are available.
         if let Some(params) = &self.protocol_params {
             let body_size: usize = block.transactions.iter().map(|tx| tx.body.len()).sum();
@@ -2303,7 +2346,7 @@ impl LedgerState {
         }
 
         match block.era {
-            Era::Byron => {}
+            Era::Byron => self.apply_byron_block(block, slot)?,
             Era::Shelley => self.apply_shelley_block(block, slot)?,
             Era::Allegra => self.apply_allegra_block(block, slot)?,
             Era::Mary => self.apply_mary_block(block, slot)?,
@@ -2312,6 +2355,7 @@ impl LedgerState {
             Era::Conway => self.apply_conway_block(block, slot, evaluator)?,
         }
 
+        self.current_era = block.era;
         self.tip = Point::BlockPoint(block.header.slot_no, block.header.hash);
         Ok(())
     }
@@ -2363,6 +2407,7 @@ impl LedgerState {
                     withdrawal_total,
                 )?;
                 self.shelley_utxo = staged;
+                self.multi_era_utxo = MultiEraUtxo::from_shelley_utxo(&self.shelley_utxo);
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
                 self.committee_state = staged_committee_state;
@@ -2578,7 +2623,64 @@ impl LedgerState {
         }
     }
 
+    fn maybe_activate_pending_shelley_genesis(&mut self, next_era: Era) {
+        if self.current_era != Era::Byron || next_era == Era::Byron {
+            return;
+        }
+
+        let utxo_entries = self.pending_shelley_genesis_utxo.take();
+        let stake_entries = self.pending_shelley_genesis_stake.take();
+        if utxo_entries.is_none() && stake_entries.is_none() {
+            return;
+        }
+
+        if let Some(entries) = utxo_entries {
+            for (txin, txout) in entries {
+                self.shelley_utxo.insert(txin.clone(), txout.clone());
+                self.multi_era_utxo.insert_shelley(txin, txout);
+            }
+        }
+
+        if let Some(entries) = stake_entries {
+            for (credential, pool) in entries {
+                match self.stake_credentials.get_mut(&credential) {
+                    Some(state) => state.set_delegated_pool(Some(pool)),
+                    None => {
+                        self.stake_credentials
+                            .entries
+                            .insert(credential, StakeCredentialState::new(Some(pool), None));
+                    }
+                }
+            }
+        }
+    }
+
     // -- Private per-era apply helpers --------------------------------------
+
+    fn apply_byron_block(
+        &mut self,
+        block: &crate::tx::Block,
+        _slot: u64,
+    ) -> Result<(), LedgerError> {
+        if block.transactions.is_empty() {
+            return Ok(());
+        }
+
+        // Decode each Tx.body (which is CBOR-encoded ByronTx) back into typed form.
+        let decoded: Vec<ByronTx> = block
+            .transactions
+            .iter()
+            .map(|tx| ByronTx::from_cbor_bytes(&tx.body))
+            .collect::<Result<Vec<_>, LedgerError>>()?;
+
+        // Atomic: clone the multi-era UTxO, apply all txs, then commit.
+        let mut staged = self.multi_era_utxo.clone();
+        for byron_tx in &decoded {
+            staged.apply_byron_tx(byron_tx)?;
+        }
+        self.multi_era_utxo = staged;
+        Ok(())
+    }
 
     fn apply_shelley_block(
         &mut self,
@@ -2589,12 +2691,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, ShelleyTxBody, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, ShelleyTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = ShelleyTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2610,7 +2712,11 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+            validate_auxiliary_data(
+                body.auxiliary_data_hash.as_ref(),
+                aux_data.as_deref(),
+            )?;
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
@@ -2645,6 +2751,7 @@ impl LedgerState {
             staged.apply_tx_with_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
         }
         self.shelley_utxo = staged;
+        self.multi_era_utxo = MultiEraUtxo::from_shelley_utxo(&self.shelley_utxo);
         self.pool_state = staged_pool_state;
         self.stake_credentials = staged_stake_credentials;
         self.committee_state = staged_committee_state;
@@ -2663,12 +2770,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, AllegraTxBody, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, AllegraTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = AllegraTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2680,7 +2787,11 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+            validate_auxiliary_data(
+                body.auxiliary_data_hash.as_ref(),
+                aux_data.as_deref(),
+            )?;
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
@@ -2746,12 +2857,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, crate::eras::mary::MaryTxBody, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, crate::eras::mary::MaryTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = crate::eras::mary::MaryTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2763,7 +2874,11 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+            validate_auxiliary_data(
+                body.auxiliary_data_hash.as_ref(),
+                aux_data.as_deref(),
+            )?;
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Mary(o.clone()))
@@ -2830,12 +2945,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, AlonzoTxBody, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, AlonzoTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = AlonzoTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2847,7 +2962,11 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+            validate_auxiliary_data(
+                body.auxiliary_data_hash.as_ref(),
+                aux_data.as_deref(),
+            )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -2943,12 +3062,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, BabbageTxBody, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, BabbageTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = BabbageTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -2960,7 +3079,11 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+            validate_auxiliary_data(
+                body.auxiliary_data_hash.as_ref(),
+                aux_data.as_deref(),
+            )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -3056,12 +3179,12 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, ConwayTxBody, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, ConwayTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = ConwayTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -3075,7 +3198,11 @@ impl LedgerState {
         let mut staged_governance_actions = self.governance_actions.clone();
         let current_treasury = self.accounting.treasury;
         let (kd, pd) = self.deposit_amounts();
-        for (tx_id, tx_size, body, witness_bytes) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+            validate_auxiliary_data(
+                body.auxiliary_data_hash.as_ref(),
+                aux_data.as_deref(),
+            )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -3436,8 +3563,9 @@ fn conway_voter_is_allowed_for_action(
             | crate::eras::conway::GovAction::NewConstitution { .. } => false,
             crate::eras::conway::GovAction::ParameterChange { .. } => {
                 // Upstream stake-pool voting distinguishes security-relevant parameter
-                // updates, but this slice still stores Conway protocol_param_update as
-                // opaque CBOR bytes, so we intentionally avoid a false positive here.
+                // updates by parameter group, but this slice still lacks a
+                // dedicated classifier for the typed update payload, so we
+                // intentionally avoid a false negative here.
                 true
             }
         },
@@ -3700,7 +3828,7 @@ fn validate_conway_proposals(
             ..
         } = &proposal.gov_action
         {
-            if protocol_param_update.as_slice() == [0xA0] {
+            if protocol_param_update.is_empty() {
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
         }
@@ -4320,7 +4448,8 @@ fn validate_witnesses_if_present(
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
     let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
     crate::witnesses::validate_vkey_witnesses(required, &vkey_hashes)?;
-    crate::witnesses::verify_vkey_signatures(tx_body_hash, &ws.vkey_witnesses)
+    crate::witnesses::verify_vkey_signatures(tx_body_hash, &ws.vkey_witnesses)?;
+    crate::witnesses::verify_bootstrap_witnesses(tx_body_hash, &ws.bootstrap_witnesses)
 }
 
 /// Validates native scripts referenced by script-hash credentials.
@@ -4370,6 +4499,39 @@ fn validate_native_scripts_if_present(
     }
 
     Ok(())
+}
+
+/// Validates that a transaction's auxiliary data hash matches its auxiliary
+/// data content.
+///
+/// If the transaction body declares an `auxiliary_data_hash`, the
+/// corresponding raw CBOR auxiliary data must be present and its
+/// Blake2b-256 hash must match the declared value. If no hash is declared
+/// the data must be absent.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `validateAuxiliaryData`.
+fn validate_auxiliary_data(
+    declared_hash: Option<&[u8; 32]>,
+    auxiliary_data: Option<&[u8]>,
+) -> Result<(), LedgerError> {
+    match (declared_hash, auxiliary_data) {
+        (Some(declared), Some(data)) => {
+            let computed = yggdrasil_crypto::hash_bytes_256(data).0;
+            if *declared != computed {
+                Err(LedgerError::AuxiliaryDataHashMismatch {
+                    declared: *declared,
+                    computed,
+                })
+            } else {
+                Ok(())
+            }
+        }
+        (Some(_), None) => Err(LedgerError::AuxiliaryDataMissing),
+        // No hash declared — data absent or present-but-unclaimed is OK
+        // per upstream behaviour (some blocks carry auxiliary data without
+        // declaring the hash in the body, though this is rare).
+        (None, _) => Ok(()),
+    }
 }
 
 fn accumulate_multi_asset(total: &mut MultiAsset, assets: &MultiAsset) {
@@ -5202,7 +5364,10 @@ mod tests {
             action_id.clone(),
             &GovAction::ParameterChange {
                 prev_action_id: None,
-                protocol_param_update: vec![0xA0], // empty CBOR map
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(500),
+                    ..Default::default()
+                },
                 guardrails_script_hash: None,
             },
             &mut committee,
@@ -5212,6 +5377,7 @@ mod tests {
         );
         assert_eq!(outcome, EnactOutcome::ParameterChangeRecorded);
         assert_eq!(es.prev_pparams_update(), Some(&action_id));
+        assert_eq!(pp.as_ref().and_then(|p| Some(p.min_fee_a)), Some(500));
     }
 
     #[test]
@@ -5470,7 +5636,10 @@ mod tests {
         let proposals = vec![sample_proposal(
             GovAction::ParameterChange {
                 prev_action_id: Some(root_id.clone()),
-                protocol_param_update: vec![0xA1, 0x00, 0x01],
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
                 guardrails_script_hash: None,
             },
             1,

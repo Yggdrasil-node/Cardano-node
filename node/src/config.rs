@@ -299,6 +299,27 @@ impl NodeConfigFile {
         }
     }
 
+    /// Load the parsed Shelley bootstrap bundle from the configured genesis
+    /// file when one is present.
+    pub fn load_shelley_genesis_bootstrap(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<Option<crate::genesis::ShelleyGenesisBootstrap>, crate::genesis::GenesisLoadError> {
+        use crate::genesis::load_shelley_genesis_bootstrap;
+
+        let Some(path) = self.shelley_genesis_file.as_deref() else {
+            return Ok(None);
+        };
+
+        let path = if let Some(base) = config_base_dir {
+            base.join(Path::new(path))
+        } else {
+            Path::new(path).to_path_buf()
+        };
+
+        Ok(Some(load_shelley_genesis_bootstrap(&path)?))
+    }
+
     /// Load the simplified CEK [`CostModel`] from the configured Alonzo
     /// genesis file when a named Plutus cost-model map is available.
     pub fn load_plutus_cost_model(

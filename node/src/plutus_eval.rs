@@ -428,7 +428,7 @@ fn gov_action_data_v3(gov_action: &yggdrasil_ledger::GovAction) -> PlutusData {
             0,
             vec![
                 maybe_gov_action_id_data(prev_action_id.as_ref()),
-                PlutusData::Bytes(protocol_param_update.clone()),
+                PlutusData::Bytes(protocol_param_update.to_cbor_bytes()),
                 maybe_script_hash_data(*guardrails_script_hash),
             ],
         ),

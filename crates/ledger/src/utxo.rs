@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use crate::eras::allegra::AllegraTxBody;
 use crate::eras::alonzo::{AlonzoTxBody, AlonzoTxOut};
 use crate::eras::babbage::{BabbageTxBody, BabbageTxOut};
+use crate::eras::byron::ByronTx;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MaryTxBody, MaryTxOut, MintAsset, MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyTxOut};
@@ -168,6 +169,15 @@ impl MultiEraUtxo {
         Self::default()
     }
 
+    /// Rebuilds a multi-era UTxO set from a Shelley-only UTxO snapshot.
+    pub fn from_shelley_utxo(utxo: &ShelleyUtxo) -> Self {
+        let mut entries = HashMap::with_capacity(utxo.len());
+        for (txin, txout) in utxo.iter() {
+            entries.insert(txin.clone(), MultiEraTxOut::Shelley(txout.clone()));
+        }
+        Self { entries }
+    }
+
     /// Inserts a multi-era UTxO entry.
     pub fn insert(&mut self, txin: ShelleyTxIn, txout: MultiEraTxOut) {
         self.entries.insert(txin, txout);
@@ -199,6 +209,67 @@ impl MultiEraUtxo {
     }
 
     // -- Era-specific apply methods -----------------------------------------
+
+    /// Applies a Byron transaction to this UTxO set.
+    ///
+    /// Byron transactions have no TTL, no certificates, no withdrawals,
+    /// and no multi-asset values.  The fee is implicit: `consumed - produced`.
+    /// Validates: non-empty inputs/outputs, input existence, and
+    /// non-negative implicit fee (`consumed >= produced`).
+    ///
+    /// Byron `ByronTxIn` (u32 index) is converted to `ShelleyTxIn` (u16
+    /// index) for unified UTxO set storage.  Byron outputs are stored as
+    /// `MultiEraTxOut::Shelley` since their shape is identical.
+    ///
+    /// Reference: `Cardano.Chain.UTxO.TxValidation` from `cardano-ledger-byron`.
+    pub fn apply_byron_tx(
+        &mut self,
+        tx: &ByronTx,
+    ) -> Result<(), LedgerError> {
+        if tx.inputs.is_empty() {
+            return Err(LedgerError::NoInputs);
+        }
+        if tx.outputs.is_empty() {
+            return Err(LedgerError::NoOutputs);
+        }
+
+        // Convert Byron inputs to Shelley-compatible keys and validate existence.
+        let shelley_inputs: Vec<ShelleyTxIn> = tx.inputs.iter().map(|i| ShelleyTxIn {
+            transaction_id: i.txid,
+            index: i.index as u16,
+        }).collect();
+
+        let consumed = self.sum_consumed_coin(&shelley_inputs)?;
+        let produced: u64 = tx.outputs
+            .iter()
+            .map(|o| o.amount)
+            .fold(0u64, u64::saturating_add);
+
+        // Byron fee is implicit: consumed - produced.  Must be non-negative.
+        if consumed < produced {
+            return Err(LedgerError::ValueNotPreserved {
+                consumed,
+                produced,
+                fee: 0,
+            });
+        }
+
+        // State update: remove consumed inputs, insert produced outputs.
+        self.remove_inputs(&shelley_inputs);
+        let tx_id = tx.tx_id();
+        for (idx, output) in tx.outputs.iter().enumerate() {
+            let txin = ShelleyTxIn {
+                transaction_id: tx_id,
+                index: idx as u16,
+            };
+            self.entries.insert(txin, MultiEraTxOut::Shelley(ShelleyTxOut {
+                address: output.address.clone(),
+                amount: output.amount,
+            }));
+        }
+
+        Ok(())
+    }
 
     /// Applies a Shelley transaction body to this UTxO set.
     ///

@@ -34,6 +34,13 @@ pub struct Tx {
     /// witness sufficiency validation during block application.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witnesses: Option<Vec<u8>>,
+    /// Optional auxiliary data (metadata) carried by this transaction,
+    /// stored as raw CBOR bytes from the block-level auxiliary data map.
+    ///
+    /// Populated during block conversion from era-specific blocks.
+    /// Used by the ledger to validate `auxiliary_data_hash` integrity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary_data: Option<Vec<u8>>,
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:
