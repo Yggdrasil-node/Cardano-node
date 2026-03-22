@@ -498,8 +498,8 @@ pub trait CborDecode: Sized {
 
 use crate::eras::Era;
 use crate::types::{
-    Anchor, BlockNo, DCert, DRep, EpochNo, HeaderHash, Nonce, Point, PoolMetadata, PoolParams,
-    Relay, RewardAccount, SlotNo, StakeCredential, TxId, UnitInterval,
+    Anchor, BlockNo, DCert, DRep, EpochNo, HeaderHash, MirPot, MirTarget, Nonce, Point,
+    PoolMetadata, PoolParams, Relay, RewardAccount, SlotNo, StakeCredential, TxId, UnitInterval,
 };
 
 // -- Era -------------------------------------------------------------------
@@ -1253,6 +1253,23 @@ impl CborEncode for DCert {
                 enc.array(4).unsigned(5);
                 enc.bytes(genesis).bytes(deleg).bytes(vrf);
             }
+            Self::MoveInstantaneousReward(pot, target) => {
+                enc.array(2).unsigned(6);
+                // Inner: move_instantaneous_reward = [pot, target]
+                enc.array(2).unsigned(*pot as u64);
+                match target {
+                    MirTarget::StakeCredentials(map) => {
+                        enc.map(map.len() as u64);
+                        for (cred, delta) in map {
+                            cred.encode_cbor(enc);
+                            enc.integer(*delta);
+                        }
+                    }
+                    MirTarget::SendToOppositePot(coin) => {
+                        enc.unsigned(*coin);
+                    }
+                }
+            }
             Self::AccountRegistrationDeposit(cred, coin) => {
                 enc.array(3).unsigned(7);
                 cred.encode_cbor(enc);
@@ -1356,6 +1373,35 @@ impl CborDecode for DCert {
                 let deleg = decode_hash28(dec)?;
                 let vrf = decode_hash32(dec)?;
                 Ok(Self::GenesisDelegation(genesis, deleg, vrf))
+            }
+            6 => {
+                // move_instantaneous_rewards_cert = [6, move_instantaneous_reward]
+                // move_instantaneous_reward = [pot, { * stake_credential => delta_coin } / coin]
+                let _mir_len = dec.array()?;
+                let pot_raw = dec.unsigned()?;
+                let pot = match pot_raw {
+                    0 => MirPot::Reserves,
+                    1 => MirPot::Treasury,
+                    _ => {
+                        return Err(LedgerError::CborTypeMismatch {
+                            expected: 1,
+                            actual: pot_raw as u8,
+                        });
+                    }
+                };
+                let target = if dec.peek_major()? == MAJOR_MAP {
+                    let n = dec.map()?;
+                    let mut map = std::collections::BTreeMap::new();
+                    for _ in 0..n {
+                        let cred = StakeCredential::decode_cbor(dec)?;
+                        let delta = dec.integer()?;
+                        map.insert(cred, delta);
+                    }
+                    MirTarget::StakeCredentials(map)
+                } else {
+                    MirTarget::SendToOppositePot(dec.unsigned()?)
+                };
+                Ok(Self::MoveInstantaneousReward(pot, target))
             }
             // Conway tags 7–18
             7 => {

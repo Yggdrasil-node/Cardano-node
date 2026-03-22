@@ -24,7 +24,7 @@ use yggdrasil_node::{
     run_inbound_accept_loop,
 };
 use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
-use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
+use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     GovernorState, GovernorTargets,
@@ -373,6 +373,21 @@ fn strict_base_ledger_state(
                 .staking
                 .into_iter()
                 .map(|(credential, pool)| (StakeCredential::AddrKeyHash(credential), pool))
+                .collect(),
+        );
+        state.configure_pending_shelley_genesis_delegs(
+            bootstrap
+                .gen_delegs
+                .into_iter()
+                .map(|(genesis_hash, parsed)| {
+                    (
+                        genesis_hash,
+                        GenesisDelegationState {
+                            delegate: parsed.delegate,
+                            vrf: parsed.vrf,
+                        },
+                    )
+                })
                 .collect(),
         );
     }

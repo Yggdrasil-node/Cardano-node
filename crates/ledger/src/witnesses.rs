@@ -173,6 +173,8 @@ pub fn required_vkey_hashes_from_cert(
         // Simple registration does not require a witness in Shelley
         DCert::AccountRegistration(_)
         | DCert::AccountRegistrationDeposit(_, _) => {}
+        // MIR certs are signed by genesis delegates (not validated here)
+        DCert::MoveInstantaneousReward(_, _) => {}
     }
 }
 

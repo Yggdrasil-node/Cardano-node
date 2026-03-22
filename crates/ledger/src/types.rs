@@ -241,6 +241,34 @@ impl StakeCredential {
 }
 
 // ---------------------------------------------------------------------------
+// Move-instantaneous-reward (MIR) types
+// ---------------------------------------------------------------------------
+
+/// Which pot to draw from (or transfer to).
+///
+/// CDDL: `0 / 1`  — 0 = reserves, 1 = treasury.
+///
+/// Reference: `Cardano.Ledger.Shelley.TxCert` — `MIRPot`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MirPot {
+    Reserves = 0,
+    Treasury = 1,
+}
+
+/// The target of a MIR certificate.
+///
+/// CDDL: `{ * stake_credential => delta_coin } / coin`
+///
+/// Reference: `Cardano.Ledger.Shelley.TxCert` — `MIRTarget`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MirTarget {
+    /// Per-credential reward delta map.  `delta_coin = int` (signed).
+    StakeCredentials(std::collections::BTreeMap<StakeCredential, i64>),
+    /// Transfer a fixed amount to the opposite pot.
+    SendToOppositePot(u64),
+}
+
+// ---------------------------------------------------------------------------
 // Reward account
 // ---------------------------------------------------------------------------
 
@@ -784,6 +812,13 @@ pub enum DCert {
     PoolRetirement(PoolKeyHash, EpochNo),
     /// Tag 5: Genesis delegation (`genesis_delegation_cert`).
     GenesisDelegation(GenesisHash, GenesisDelegateHash, VrfKeyHash),
+    /// Tag 6: Move instantaneous rewards (`move_instantaneous_rewards_cert`).
+    ///
+    /// Transfers ada between reserves/treasury and reward accounts or between
+    /// pots.  Used in Shelley through Babbage; not supported in Conway.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.TxCert` — `MIRCert`.
+    MoveInstantaneousReward(MirPot, MirTarget),
 
     // -- Conway (tags 7–18) --------------------------------------------------
 

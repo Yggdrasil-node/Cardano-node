@@ -16,6 +16,7 @@ use crate::eras::byron::ByronTx;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MaryTxBody, MaryTxOut, MintAsset, MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyTxOut};
+use crate::plutus::ScriptRef;
 use crate::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::error::LedgerError;
 
@@ -110,6 +111,14 @@ impl MultiEraTxOut {
             Self::Mary(o) => &o.address,
             Self::Alonzo(o) => &o.address,
             Self::Babbage(o) => &o.address,
+        }
+    }
+
+    /// Returns the inline reference script, if present (Babbage+ only).
+    pub fn script_ref(&self) -> Option<&ScriptRef> {
+        match self {
+            Self::Babbage(o) => o.script_ref.as_ref(),
+            _ => None,
         }
     }
 }
@@ -677,6 +686,23 @@ impl MultiEraUtxo {
         for input in inputs {
             self.entries.remove(input);
         }
+    }
+
+    /// Validates that every reference input exists in the UTxO set.
+    ///
+    /// Reference inputs (CIP-31, Babbage+) are read but never consumed.
+    /// This check mirrors the upstream UTXO rule: all referenced inputs must
+    /// be present in the UTxO.
+    pub fn validate_reference_inputs(
+        &self,
+        ref_inputs: &[ShelleyTxIn],
+    ) -> Result<(), LedgerError> {
+        for input in ref_inputs {
+            if !self.entries.contains_key(input) {
+                return Err(LedgerError::ReferenceInputNotInUtxo);
+            }
+        }
+        Ok(())
     }
 }
 

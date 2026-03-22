@@ -451,7 +451,8 @@ fn certifying_script_hash_from_cert(cert: &DCert) -> Option<[u8; 28]> {
                 _ => None,
             })
         }
-        DCert::PoolRegistration(_) | DCert::PoolRetirement(_, _) | DCert::GenesisDelegation(_, _, _) => None,
+        DCert::PoolRegistration(_) | DCert::PoolRetirement(_, _)
+        | DCert::GenesisDelegation(_, _, _) | DCert::MoveInstantaneousReward(_, _) => None,
     }
 }
 

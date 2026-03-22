@@ -27,11 +27,17 @@ pub enum LedgerError {
 
     // -- UTxO validation errors ---------------------------------------------
 
+    #[error("block slot {block_slot} does not advance past current tip slot {tip_slot}")]
+    SlotNotIncreasing { tip_slot: u64, block_slot: u64 },
+
     #[error("transaction expired: TTL {ttl} < current slot {slot}")]
     TxExpired { ttl: u64, slot: u64 },
 
     #[error("input not found in UTxO set")]
     InputNotInUtxo,
+
+    #[error("reference input not found in UTxO set")]
+    ReferenceInputNotInUtxo,
 
     #[error(
         "value not preserved: consumed {consumed} lovelace != produced {produced} + fee {fee}"
@@ -53,6 +59,26 @@ pub enum LedgerError {
 
     #[error("stake pool not registered: {0:02x?}")]
     PoolNotRegistered(PoolKeyHash),
+
+    #[error("pool cost {cost} is below minPoolCost {min_pool_cost}")]
+    PoolCostTooLow { cost: u64, min_pool_cost: u64 },
+
+    #[error("pool margin numerator {numerator} exceeds denominator {denominator}")]
+    PoolMarginInvalid { numerator: u64, denominator: u64 },
+
+    #[error("pool reward account network {actual} does not match expected {expected}")]
+    PoolRewardAccountNetworkMismatch { actual: u8, expected: u8 },
+
+    #[error("pool metadata URL too long: {length} bytes (max 64)")]
+    PoolMetadataUrlTooLong { length: usize },
+
+    #[error("pool retirement epoch {retirement_epoch} exceeds maximum {max_epoch} (current {current_epoch} + eMax {e_max})")]
+    PoolRetirementTooFar {
+        retirement_epoch: u64,
+        current_epoch: u64,
+        e_max: u32,
+        max_epoch: u64,
+    },
 
     #[error("stake credential already registered: {0:?}")]
     StakeCredentialAlreadyRegistered(StakeCredential),

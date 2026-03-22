@@ -66,7 +66,7 @@ pub use error::LedgerError;
 /// Top-level ledger state wrapper.
 pub use state::{
     AccountingState, CommitteeAuthorization, CommitteeMemberState, CommitteeState,
-    DepositPot, DrepState, EnactOutcome, EnactState, LedgerState,
+    DepositPot, DrepState, EnactOutcome, EnactState, GenesisDelegationState, LedgerState,
     GovernanceActionState,
     LedgerStateCheckpoint, LedgerStateSnapshot, PoolRelayAccessPoint, PoolState,
     RegisteredDrep, RegisteredPool, RewardAccountState,
@@ -83,9 +83,9 @@ pub use tx::{
 // -- Type re-exports ----------------------------------------------------------
 pub use types::{
     AddrKeyHash, Address, Anchor, BaseAddress, BlockNo, DCert, DRep, EnterpriseAddress, EpochNo,
-    GenesisDelegateHash, GenesisHash, HeaderHash, Nonce, Point, PointerAddress, PoolKeyHash,
-    PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash, SlotNo, StakeCredential, TxId,
-    UnitInterval, VrfKeyHash,
+    GenesisDelegateHash, GenesisHash, HeaderHash, MirPot, MirTarget, Nonce, Point,
+    PointerAddress, PoolKeyHash, PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash,
+    SlotNo, StakeCredential, TxId, UnitInterval, VrfKeyHash,
 };
 
 // -- Plutus re-exports --------------------------------------------------------
