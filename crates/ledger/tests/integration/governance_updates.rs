@@ -46,14 +46,9 @@ fn gov_action_hard_fork_round_trip() {
 
 #[test]
 fn gov_action_parameter_change_round_trip() {
-    let param_update = {
-        let mut enc = Encoder::new();
-        enc.map(0);
-        enc.into_bytes()
-    };
     let ga = GovAction::ParameterChange {
         prev_action_id: None,
-        protocol_param_update: param_update,
+        protocol_param_update: yggdrasil_ledger::ProtocolParamUpdate::default(),
         guardrails_script_hash: Some([0xFF; 28]),
     };
     let bytes = ga.to_cbor_bytes();
@@ -63,17 +58,15 @@ fn gov_action_parameter_change_round_trip() {
 
 #[test]
 fn gov_action_parameter_change_no_guardrails_round_trip() {
-    let param_update = {
-        let mut enc = Encoder::new();
-        enc.map(1).unsigned(0).unsigned(500);
-        enc.into_bytes()
-    };
     let ga = GovAction::ParameterChange {
         prev_action_id: Some(GovActionId {
             transaction_id: [0xBB; 32],
             gov_action_index: 1,
         }),
-        protocol_param_update: param_update,
+        protocol_param_update: yggdrasil_ledger::ProtocolParamUpdate {
+            min_fee_a: Some(500),
+            ..Default::default()
+        },
         guardrails_script_hash: None,
     };
     let bytes = ga.to_cbor_bytes();

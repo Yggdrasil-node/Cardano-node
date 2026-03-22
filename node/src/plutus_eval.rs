@@ -31,6 +31,7 @@
 //! Reference: <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/PlutusScripts.hs>
 
 use yggdrasil_ledger::{
+    CborEncode,
     DCert,
     LedgerError,
     plutus::PlutusData,
@@ -428,7 +429,10 @@ fn gov_action_data_v3(gov_action: &yggdrasil_ledger::GovAction) -> PlutusData {
             0,
             vec![
                 maybe_gov_action_id_data(prev_action_id.as_ref()),
-                PlutusData::Bytes(protocol_param_update.clone()),
+                // Serialize the typed update back to CBOR bytes as a
+                // placeholder until full ChangedParameters → PlutusData
+                // conversion is implemented.
+                PlutusData::Bytes(protocol_param_update.to_cbor_bytes()),
                 maybe_script_hash_data(*guardrails_script_hash),
             ],
         ),

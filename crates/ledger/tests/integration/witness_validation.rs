@@ -937,7 +937,7 @@ fn conway_block_rejects_malformed_empty_parameter_change_proposal() {
     };
     let malformed_action = GovAction::ParameterChange {
         prev_action_id: None,
-        protocol_param_update: vec![0xA0],
+        protocol_param_update: yggdrasil_ledger::ProtocolParamUpdate::default(),
         guardrails_script_hash: None,
     };
 
@@ -1122,7 +1122,10 @@ fn conway_block_rejects_drep_non_info_vote_during_bootstrap() {
             reward_account: reward_account.to_bytes().to_vec(),
             gov_action: GovAction::ParameterChange {
                 prev_action_id: None,
-                protocol_param_update: vec![0xA1, 0x00, 0x01],
+                protocol_param_update: yggdrasil_ledger::ProtocolParamUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
                 guardrails_script_hash: None,
             },
             anchor: Anchor {

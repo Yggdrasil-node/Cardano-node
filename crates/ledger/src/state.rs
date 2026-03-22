@@ -3,7 +3,8 @@ use crate::eras::alonzo::AlonzoTxBody;
 use crate::eras::babbage::BabbageTxBody;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
-use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
+use crate::eras::shelley::{ShelleyTxBody, ShelleyUpdate, ShelleyUtxo};
+use crate::protocol_params::ProtocolParamUpdate;
 use crate::types::{
     Address, Anchor, DCert, DRep, EpochNo, Point, PoolKeyHash, PoolParams, RewardAccount,
     Relay, StakeCredential, UnitInterval,
@@ -1283,6 +1284,9 @@ pub enum EnactOutcome {
     /// `ProtocolParameters` requires parsing the update map (future
     /// milestone).
     ParameterChangeRecorded,
+    /// A typed parameter change was enacted — live protocol parameters
+    /// were updated with the delta fields from the `ProtocolParamUpdate`.
+    ParameterChangeApplied,
 }
 
 /// Enacts a single ratified governance action, updating the `EnactState`
@@ -1402,12 +1406,15 @@ pub fn enact_gov_action(
             }
         }
 
-        GovAction::ParameterChange { .. } => {
-            // Record the lineage. Applying the opaque protocol_param_update
-            // bytes to ProtocolParameters requires parsing the CBOR map of
-            // optional parameter delta fields — a future milestone.
+        GovAction::ParameterChange { protocol_param_update, .. } => {
             enact.prev_pparams_update = Some(action_id);
-            EnactOutcome::ParameterChangeRecorded
+            if let Some(pp) = protocol_params.as_mut() {
+                pp.apply_update(protocol_param_update);
+                EnactOutcome::ParameterChangeApplied
+            } else {
+                // No protocol parameters — record lineage only.
+                EnactOutcome::ParameterChangeRecorded
+            }
         }
     }
 }
@@ -1786,6 +1793,18 @@ pub struct LedgerState {
     accounting: AccountingState,
     /// Conway governance enactment state (constitution, quorum, lineage).
     enact_state: EnactState,
+    /// Pending protocol-parameter update proposals (Shelley→Babbage PPUP rule).
+    ///
+    /// Maps genesis-delegate key hash → proposed `ProtocolParamUpdate`.
+    /// Accumulated during block processing when a transaction body carries
+    /// an `update` field.  Resolved at the next epoch boundary if the
+    /// proposal epoch matches.  Not persisted in CBOR — reconstructed
+    /// from block replay after checkpoint restore.
+    #[doc(hidden)]
+    pending_ppup: BTreeMap<[u8; 28], ProtocolParamUpdate>,
+    /// The epoch targeted by the pending PPUP proposals.
+    #[doc(hidden)]
+    pending_ppup_epoch: Option<EpochNo>,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -1931,6 +1950,8 @@ impl CborDecode for LedgerState {
             deposit_pot,
             accounting,
             enact_state,
+            pending_ppup: BTreeMap::new(),
+            pending_ppup_epoch: None,
         })
     }
 }
@@ -1996,6 +2017,8 @@ impl LedgerState {
             deposit_pot: DepositPot::default(),
             accounting: AccountingState::default(),
             enact_state: EnactState::default(),
+            pending_ppup: BTreeMap::new(),
+            pending_ppup_epoch: None,
         }
     }
 
@@ -3435,9 +3458,9 @@ fn conway_voter_is_allowed_for_action(
             crate::eras::conway::GovAction::TreasuryWithdrawals { .. }
             | crate::eras::conway::GovAction::NewConstitution { .. } => false,
             crate::eras::conway::GovAction::ParameterChange { .. } => {
-                // Upstream stake-pool voting distinguishes security-relevant parameter
-                // updates, but this slice still stores Conway protocol_param_update as
-                // opaque CBOR bytes, so we intentionally avoid a false positive here.
+                // SPOs can vote on ParameterChange actions. Upstream distinguishes
+                // security-relevant vs non-security-relevant updates for threshold
+                // selection, but the vote eligibility itself is unconditional.
                 true
             }
         },
@@ -3700,7 +3723,7 @@ fn validate_conway_proposals(
             ..
         } = &proposal.gov_action
         {
-            if protocol_param_update.as_slice() == [0xA0] {
+            if protocol_param_update.is_empty() {
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
         }
@@ -5202,7 +5225,10 @@ mod tests {
             action_id.clone(),
             &GovAction::ParameterChange {
                 prev_action_id: None,
-                protocol_param_update: vec![0xA0], // empty CBOR map
+                protocol_param_update: crate::protocol_params::ProtocolParamUpdate {
+                    min_fee_a: Some(55),
+                    ..Default::default()
+                },
                 guardrails_script_hash: None,
             },
             &mut committee,
@@ -5210,8 +5236,46 @@ mod tests {
             &mut ra,
             &mut acc,
         );
+        // No ProtocolParameters set → lineage only.
         assert_eq!(outcome, EnactOutcome::ParameterChangeRecorded);
         assert_eq!(es.prev_pparams_update(), Some(&action_id));
+    }
+
+    #[test]
+    fn test_enact_parameter_change_applied() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = Some(crate::protocol_params::ProtocolParameters::default());
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(7);
+
+        assert_eq!(pp.as_ref().unwrap().min_fee_a, 44);
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParamUpdate {
+                    min_fee_a: Some(55),
+                    max_tx_size: Some(32_768),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::ParameterChangeApplied);
+        assert_eq!(es.prev_pparams_update(), Some(&action_id));
+        // Verify the update was applied.
+        let updated = pp.as_ref().unwrap();
+        assert_eq!(updated.min_fee_a, 55);
+        assert_eq!(updated.max_tx_size, 32_768);
+        // Unset fields remain unchanged from default.
+        assert_eq!(updated.min_fee_b, 155_381);
     }
 
     #[test]
@@ -5470,7 +5534,10 @@ mod tests {
         let proposals = vec![sample_proposal(
             GovAction::ParameterChange {
                 prev_action_id: Some(root_id.clone()),
-                protocol_param_update: vec![0xA1, 0x00, 0x01],
+                protocol_param_update: crate::protocol_params::ProtocolParamUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
                 guardrails_script_hash: None,
             },
             1,

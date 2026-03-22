@@ -1114,7 +1114,7 @@ mod tests {
 
     use crate::eras::conway::{Constitution, Vote, Voter};
     use crate::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
-    use crate::state::{CommitteeAuthorization, EnactOutcome, CommitteeState};
+    use crate::state::{CommitteeAuthorization, EnactOutcome};
 
     fn test_protocol_params_with_governance() -> ProtocolParameters {
         let mut pp = test_protocol_params();

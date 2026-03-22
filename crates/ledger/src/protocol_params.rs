@@ -14,7 +14,7 @@
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::alonzo::ExUnits;
 use crate::error::LedgerError;
-use crate::types::UnitInterval;
+use crate::types::{Nonce, UnitInterval};
 
 // ---------------------------------------------------------------------------
 // Pool voting thresholds (CDDL key 25)
@@ -699,6 +699,335 @@ impl CborDecode for ProtocolParameters {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ProtocolParamUpdate (delta / update proposal)
+// ---------------------------------------------------------------------------
+
+/// A protocol parameter update delta, where every field is optional.
+///
+/// Used both in Conway governance actions (`GovAction::ParameterChange`)
+/// and in pre-Conway PPUP proposals (`ShelleyUpdate`). When applied to
+/// a live `ProtocolParameters`, only the `Some` fields overwrite the
+/// corresponding parameter.
+///
+/// CDDL reference: `protocol_param_update` (keys 0–33).
+///
+/// Reference: `Cardano.Ledger.Conway.PParams.PParamsUpdate` and
+/// `Cardano.Ledger.Shelley.PParams.ProposedPPUpdates`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProtocolParamUpdate {
+    /// CDDL key 0 — linear fee coefficient (lovelace per byte).
+    pub min_fee_a: Option<u64>,
+    /// CDDL key 1 — constant fee addend (lovelace).
+    pub min_fee_b: Option<u64>,
+    /// CDDL key 2 — maximum block body size in bytes.
+    pub max_block_body_size: Option<u32>,
+    /// CDDL key 3 — maximum transaction size in bytes.
+    pub max_tx_size: Option<u32>,
+    /// CDDL key 4 — maximum block header size in bytes.
+    pub max_block_header_size: Option<u16>,
+    /// CDDL key 5 — key deposit (lovelace).
+    pub key_deposit: Option<u64>,
+    /// CDDL key 6 — pool deposit (lovelace).
+    pub pool_deposit: Option<u64>,
+    /// CDDL key 7 — maximum epoch for pool retirement.
+    pub e_max: Option<u64>,
+    /// CDDL key 8 — desired number of stake pools (n_opt).
+    pub n_opt: Option<u64>,
+    /// CDDL key 9 — pool pledge influence (a0).
+    pub a0: Option<UnitInterval>,
+    /// CDDL key 10 — monetary expansion (rho).
+    pub rho: Option<UnitInterval>,
+    /// CDDL key 11 — treasury growth rate (tau).
+    pub tau: Option<UnitInterval>,
+    /// CDDL key 12 — decentralization parameter (Shelley–Babbage; removed in Conway).
+    pub d: Option<UnitInterval>,
+    /// CDDL key 13 — extra entropy (Shelley–Babbage; removed in Conway).
+    pub extra_entropy: Option<Nonce>,
+    /// CDDL key 14 — protocol version (Shelley–Babbage; Conway uses HardFork action).
+    pub protocol_version: Option<(u64, u64)>,
+    /// CDDL key 15 — minimum UTxO value (Shelley–Mary; replaced by key 17 in Alonzo).
+    pub min_utxo_value: Option<u64>,
+    /// CDDL key 16 — minimum pool cost (lovelace per epoch).
+    pub min_pool_cost: Option<u64>,
+    /// CDDL key 17 — coins per UTxO byte (Alonzo+).
+    pub coins_per_utxo_byte: Option<u64>,
+    /// CDDL key 18 — cost models for script languages (opaque CBOR).
+    ///
+    /// Full per-builtin parameterized cost model support is a future
+    /// milestone; for now the raw CBOR map bytes are preserved for
+    /// round-trip fidelity.
+    pub cost_models: Option<Vec<u8>>,
+    /// CDDL key 19 — execution unit prices `[mem_price, step_price]`.
+    pub prices: Option<(UnitInterval, UnitInterval)>,
+    /// CDDL key 20 — maximum execution units per transaction.
+    pub max_tx_ex_units: Option<ExUnits>,
+    /// CDDL key 21 — maximum execution units per block.
+    pub max_block_ex_units: Option<ExUnits>,
+    /// CDDL key 22 — maximum value size (serialized bytes).
+    pub max_val_size: Option<u32>,
+    /// CDDL key 23 — collateral percentage (e.g. 150 = 150%).
+    pub collateral_percentage: Option<u64>,
+    /// CDDL key 24 — maximum number of collateral inputs.
+    pub max_collateral_inputs: Option<u32>,
+    /// CDDL key 25 — pool voting thresholds (Conway).
+    pub pool_voting_thresholds: Option<PoolVotingThresholds>,
+    /// CDDL key 26 — DRep voting thresholds (Conway).
+    pub drep_voting_thresholds: Option<DRepVotingThresholds>,
+    /// CDDL key 27 — minimum committee size (Conway).
+    pub min_committee_size: Option<u64>,
+    /// CDDL key 28 — committee term limit in epochs (Conway).
+    pub committee_term_limit: Option<u64>,
+    /// CDDL key 29 — governance action lifetime in epochs (Conway).
+    pub gov_action_lifetime: Option<u64>,
+    /// CDDL key 30 — governance action deposit (Conway).
+    pub gov_action_deposit: Option<u64>,
+    /// CDDL key 31 — DRep deposit (Conway).
+    pub drep_deposit: Option<u64>,
+    /// CDDL key 32 — DRep activity period in epochs (Conway).
+    pub drep_activity: Option<u64>,
+    /// CDDL key 33 — minimum fee per reference-script byte (Conway).
+    pub min_fee_ref_script_cost_per_byte: Option<UnitInterval>,
+}
+
+impl CborEncode for ProtocolParamUpdate {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        let mut count: u64 = 0;
+        if self.min_fee_a.is_some() { count += 1; }
+        if self.min_fee_b.is_some() { count += 1; }
+        if self.max_block_body_size.is_some() { count += 1; }
+        if self.max_tx_size.is_some() { count += 1; }
+        if self.max_block_header_size.is_some() { count += 1; }
+        if self.key_deposit.is_some() { count += 1; }
+        if self.pool_deposit.is_some() { count += 1; }
+        if self.e_max.is_some() { count += 1; }
+        if self.n_opt.is_some() { count += 1; }
+        if self.a0.is_some() { count += 1; }
+        if self.rho.is_some() { count += 1; }
+        if self.tau.is_some() { count += 1; }
+        if self.d.is_some() { count += 1; }
+        if self.extra_entropy.is_some() { count += 1; }
+        if self.protocol_version.is_some() { count += 1; }
+        if self.min_utxo_value.is_some() { count += 1; }
+        if self.min_pool_cost.is_some() { count += 1; }
+        if self.coins_per_utxo_byte.is_some() { count += 1; }
+        if self.cost_models.is_some() { count += 1; }
+        if self.prices.is_some() { count += 1; }
+        if self.max_tx_ex_units.is_some() { count += 1; }
+        if self.max_block_ex_units.is_some() { count += 1; }
+        if self.max_val_size.is_some() { count += 1; }
+        if self.collateral_percentage.is_some() { count += 1; }
+        if self.max_collateral_inputs.is_some() { count += 1; }
+        if self.pool_voting_thresholds.is_some() { count += 1; }
+        if self.drep_voting_thresholds.is_some() { count += 1; }
+        if self.min_committee_size.is_some() { count += 1; }
+        if self.committee_term_limit.is_some() { count += 1; }
+        if self.gov_action_lifetime.is_some() { count += 1; }
+        if self.gov_action_deposit.is_some() { count += 1; }
+        if self.drep_deposit.is_some() { count += 1; }
+        if self.drep_activity.is_some() { count += 1; }
+        if self.min_fee_ref_script_cost_per_byte.is_some() { count += 1; }
+        enc.map(count);
+
+        if let Some(v) = self.min_fee_a { enc.unsigned(0).unsigned(v); }
+        if let Some(v) = self.min_fee_b { enc.unsigned(1).unsigned(v); }
+        if let Some(v) = self.max_block_body_size { enc.unsigned(2).unsigned(v as u64); }
+        if let Some(v) = self.max_tx_size { enc.unsigned(3).unsigned(v as u64); }
+        if let Some(v) = self.max_block_header_size { enc.unsigned(4).unsigned(v as u64); }
+        if let Some(v) = self.key_deposit { enc.unsigned(5).unsigned(v); }
+        if let Some(v) = self.pool_deposit { enc.unsigned(6).unsigned(v); }
+        if let Some(v) = self.e_max { enc.unsigned(7).unsigned(v); }
+        if let Some(v) = self.n_opt { enc.unsigned(8).unsigned(v); }
+        if let Some(ref v) = self.a0 { enc.unsigned(9); v.encode_cbor(enc); }
+        if let Some(ref v) = self.rho { enc.unsigned(10); v.encode_cbor(enc); }
+        if let Some(ref v) = self.tau { enc.unsigned(11); v.encode_cbor(enc); }
+        if let Some(ref v) = self.d { enc.unsigned(12); v.encode_cbor(enc); }
+        if let Some(ref v) = self.extra_entropy {
+            enc.unsigned(13);
+            match v {
+                Nonce::Neutral => { enc.array(1).unsigned(0); }
+                Nonce::Hash(h) => { enc.array(2).unsigned(1).bytes(h); }
+            }
+        }
+        if let Some((major, minor)) = self.protocol_version {
+            enc.unsigned(14).array(2).unsigned(major).unsigned(minor);
+        }
+        if let Some(v) = self.min_utxo_value { enc.unsigned(15).unsigned(v); }
+        if let Some(v) = self.min_pool_cost { enc.unsigned(16).unsigned(v); }
+        if let Some(v) = self.coins_per_utxo_byte { enc.unsigned(17).unsigned(v); }
+        if let Some(ref v) = self.cost_models { enc.unsigned(18); enc.raw(v); }
+        if let Some((ref mem, ref step)) = self.prices {
+            enc.unsigned(19).array(2);
+            mem.encode_cbor(enc);
+            step.encode_cbor(enc);
+        }
+        if let Some(ref v) = self.max_tx_ex_units { enc.unsigned(20); v.encode_cbor(enc); }
+        if let Some(ref v) = self.max_block_ex_units { enc.unsigned(21); v.encode_cbor(enc); }
+        if let Some(v) = self.max_val_size { enc.unsigned(22).unsigned(v as u64); }
+        if let Some(v) = self.collateral_percentage { enc.unsigned(23).unsigned(v); }
+        if let Some(v) = self.max_collateral_inputs { enc.unsigned(24).unsigned(v as u64); }
+        if let Some(ref v) = self.pool_voting_thresholds { enc.unsigned(25); v.encode_cbor(enc); }
+        if let Some(ref v) = self.drep_voting_thresholds { enc.unsigned(26); v.encode_cbor(enc); }
+        if let Some(v) = self.min_committee_size { enc.unsigned(27).unsigned(v); }
+        if let Some(v) = self.committee_term_limit { enc.unsigned(28).unsigned(v); }
+        if let Some(v) = self.gov_action_lifetime { enc.unsigned(29).unsigned(v); }
+        if let Some(v) = self.gov_action_deposit { enc.unsigned(30).unsigned(v); }
+        if let Some(v) = self.drep_deposit { enc.unsigned(31).unsigned(v); }
+        if let Some(v) = self.drep_activity { enc.unsigned(32).unsigned(v); }
+        if let Some(ref v) = self.min_fee_ref_script_cost_per_byte { enc.unsigned(33); v.encode_cbor(enc); }
+    }
+}
+
+impl CborDecode for ProtocolParamUpdate {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let map_len = dec.map()?;
+        let mut upd = ProtocolParamUpdate::default();
+
+        for _ in 0..map_len {
+            let key = dec.unsigned()?;
+            match key {
+                0 => upd.min_fee_a = Some(dec.unsigned()?),
+                1 => upd.min_fee_b = Some(dec.unsigned()?),
+                2 => upd.max_block_body_size = Some(dec.unsigned()? as u32),
+                3 => upd.max_tx_size = Some(dec.unsigned()? as u32),
+                4 => upd.max_block_header_size = Some(dec.unsigned()? as u16),
+                5 => upd.key_deposit = Some(dec.unsigned()?),
+                6 => upd.pool_deposit = Some(dec.unsigned()?),
+                7 => upd.e_max = Some(dec.unsigned()?),
+                8 => upd.n_opt = Some(dec.unsigned()?),
+                9 => upd.a0 = Some(UnitInterval::decode_cbor(dec)?),
+                10 => upd.rho = Some(UnitInterval::decode_cbor(dec)?),
+                11 => upd.tau = Some(UnitInterval::decode_cbor(dec)?),
+                12 => upd.d = Some(UnitInterval::decode_cbor(dec)?),
+                13 => {
+                    // extra_entropy = [ 0 ] / [ 1, bytes .size 32 ]
+                    let arr_len = dec.array()?;
+                    let tag = dec.unsigned()?;
+                    if tag == 0 {
+                        upd.extra_entropy = Some(Nonce::Neutral);
+                    } else {
+                        let raw = dec.bytes()?;
+                        let hash: [u8; 32] = raw.try_into().map_err(|_| {
+                            LedgerError::CborInvalidLength { expected: 32, actual: 0 }
+                        })?;
+                        upd.extra_entropy = Some(Nonce::Hash(hash));
+                    }
+                    // Consume remaining items if arr_len > elements consumed.
+                    let consumed = if tag == 0 { 1 } else { 2 };
+                    for _ in consumed..arr_len {
+                        dec.skip()?;
+                    }
+                }
+                14 => {
+                    let arr_len = dec.array()?;
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength { expected: 2, actual: arr_len as usize });
+                    }
+                    upd.protocol_version = Some((dec.unsigned()?, dec.unsigned()?));
+                }
+                15 => upd.min_utxo_value = Some(dec.unsigned()?),
+                16 => upd.min_pool_cost = Some(dec.unsigned()?),
+                17 => upd.coins_per_utxo_byte = Some(dec.unsigned()?),
+                18 => {
+                    // cost_models: capture raw CBOR for round-trip.
+                    let start = dec.position();
+                    dec.skip()?;
+                    let end = dec.position();
+                    upd.cost_models = Some(dec.slice(start, end)?.to_vec());
+                }
+                19 => {
+                    // ex_unit_prices = [ mem_price, step_price ]
+                    let arr_len = dec.array()?;
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength { expected: 2, actual: arr_len as usize });
+                    }
+                    let mem = UnitInterval::decode_cbor(dec)?;
+                    let step = UnitInterval::decode_cbor(dec)?;
+                    upd.prices = Some((mem, step));
+                }
+                20 => upd.max_tx_ex_units = Some(ExUnits::decode_cbor(dec)?),
+                21 => upd.max_block_ex_units = Some(ExUnits::decode_cbor(dec)?),
+                22 => upd.max_val_size = Some(dec.unsigned()? as u32),
+                23 => upd.collateral_percentage = Some(dec.unsigned()?),
+                24 => upd.max_collateral_inputs = Some(dec.unsigned()? as u32),
+                25 => upd.pool_voting_thresholds = Some(PoolVotingThresholds::decode_cbor(dec)?),
+                26 => upd.drep_voting_thresholds = Some(DRepVotingThresholds::decode_cbor(dec)?),
+                27 => upd.min_committee_size = Some(dec.unsigned()?),
+                28 => upd.committee_term_limit = Some(dec.unsigned()?),
+                29 => upd.gov_action_lifetime = Some(dec.unsigned()?),
+                30 => upd.gov_action_deposit = Some(dec.unsigned()?),
+                31 => upd.drep_deposit = Some(dec.unsigned()?),
+                32 => upd.drep_activity = Some(dec.unsigned()?),
+                33 => upd.min_fee_ref_script_cost_per_byte = Some(UnitInterval::decode_cbor(dec)?),
+                _ => { dec.skip()?; }
+            }
+        }
+
+        Ok(upd)
+    }
+}
+
+impl ProtocolParamUpdate {
+    /// Returns `true` when no fields are set.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl ProtocolParameters {
+    /// Merges a parameter update delta into this parameter set.
+    ///
+    /// Each `Some` field in the update overwrites the corresponding field
+    /// in `self`. `None` fields are left unchanged.
+    ///
+    /// Cost models (key 18) are stored but not yet applied to a typed
+    /// cost model registry — that is a future milestone.
+    ///
+    /// Reference: `applyPPUpdates` in `Cardano.Ledger.Shelley.PParams`.
+    pub fn apply_update(&mut self, upd: &ProtocolParamUpdate) {
+        if let Some(v) = upd.min_fee_a { self.min_fee_a = v; }
+        if let Some(v) = upd.min_fee_b { self.min_fee_b = v; }
+        if let Some(v) = upd.max_block_body_size { self.max_block_body_size = v; }
+        if let Some(v) = upd.max_tx_size { self.max_tx_size = v; }
+        if let Some(v) = upd.max_block_header_size { self.max_block_header_size = v; }
+        if let Some(v) = upd.key_deposit { self.key_deposit = v; }
+        if let Some(v) = upd.pool_deposit { self.pool_deposit = v; }
+        if let Some(v) = upd.e_max { self.e_max = v; }
+        if let Some(v) = upd.n_opt { self.n_opt = v; }
+        if let Some(ref v) = upd.a0 { self.a0 = v.clone(); }
+        if let Some(ref v) = upd.rho { self.rho = v.clone(); }
+        if let Some(ref v) = upd.tau { self.tau = v.clone(); }
+        // Keys 12 (d) and 13 (extra_entropy) are not stored in
+        // ProtocolParameters (removed post-Babbage).
+        if let Some(v) = upd.protocol_version { self.protocol_version = Some(v); }
+        if let Some(v) = upd.min_utxo_value { self.min_utxo_value = Some(v); }
+        if let Some(v) = upd.min_pool_cost { self.min_pool_cost = v; }
+        if let Some(v) = upd.coins_per_utxo_byte { self.coins_per_utxo_byte = Some(v); }
+        // cost_models (key 18): stored in update but not yet applied to
+        // ProtocolParameters — per-builtin cost model support is a future
+        // milestone.
+        if let Some((ref mem, ref step)) = upd.prices {
+            self.price_mem = Some(mem.clone());
+            self.price_step = Some(step.clone());
+        }
+        if let Some(ref v) = upd.max_tx_ex_units { self.max_tx_ex_units = Some(v.clone()); }
+        if let Some(ref v) = upd.max_block_ex_units { self.max_block_ex_units = Some(v.clone()); }
+        if let Some(v) = upd.max_val_size { self.max_val_size = Some(v); }
+        if let Some(v) = upd.collateral_percentage { self.collateral_percentage = Some(v); }
+        if let Some(v) = upd.max_collateral_inputs { self.max_collateral_inputs = Some(v); }
+        if let Some(ref v) = upd.pool_voting_thresholds { self.pool_voting_thresholds = Some(v.clone()); }
+        if let Some(ref v) = upd.drep_voting_thresholds { self.drep_voting_thresholds = Some(v.clone()); }
+        if let Some(v) = upd.min_committee_size { self.min_committee_size = Some(v); }
+        if let Some(v) = upd.committee_term_limit { self.committee_term_limit = Some(v); }
+        if let Some(v) = upd.gov_action_lifetime { self.gov_action_lifetime = Some(v); }
+        if let Some(v) = upd.gov_action_deposit { self.gov_action_deposit = Some(v); }
+        if let Some(v) = upd.drep_deposit { self.drep_deposit = Some(v); }
+        if let Some(v) = upd.drep_activity { self.drep_activity = Some(v); }
+        // min_fee_ref_script_cost_per_byte (key 33): not yet in
+        // ProtocolParameters — tracked in the update for Conway parity.
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -765,5 +1094,179 @@ mod tests {
         let params = ProtocolParameters::alonzo_defaults();
         // 4310 * (100 + 160) = 1_120_600
         assert_eq!(params.min_lovelace_for_utxo(100), Some(1_120_600));
+    }
+
+    // -- ProtocolParamUpdate tests ------------------------------------------
+
+    #[test]
+    fn empty_update_round_trip() {
+        let upd = ProtocolParamUpdate::default();
+        assert!(upd.is_empty());
+        let bytes = upd.to_cbor_bytes();
+        let decoded = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(upd, decoded);
+    }
+
+    #[test]
+    fn single_field_update_round_trip() {
+        let upd = ProtocolParamUpdate {
+            min_fee_a: Some(55),
+            ..Default::default()
+        };
+        let bytes = upd.to_cbor_bytes();
+        let decoded = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(upd, decoded);
+    }
+
+    #[test]
+    fn shelley_era_fields_round_trip() {
+        use crate::types::Nonce;
+        let upd = ProtocolParamUpdate {
+            min_fee_a: Some(44),
+            min_fee_b: Some(155_381),
+            max_block_body_size: Some(65_536),
+            d: Some(UnitInterval { numerator: 1, denominator: 2 }),
+            extra_entropy: Some(Nonce::Hash([0xAB; 32])),
+            protocol_version: Some((3, 0)),
+            min_utxo_value: Some(1_000_000),
+            ..Default::default()
+        };
+        let bytes = upd.to_cbor_bytes();
+        let decoded = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(upd, decoded);
+    }
+
+    #[test]
+    fn extra_entropy_neutral_round_trip() {
+        use crate::types::Nonce;
+        let upd = ProtocolParamUpdate {
+            extra_entropy: Some(Nonce::Neutral),
+            ..Default::default()
+        };
+        let bytes = upd.to_cbor_bytes();
+        let decoded = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(upd, decoded);
+    }
+
+    #[test]
+    fn alonzo_era_fields_round_trip() {
+        let upd = ProtocolParamUpdate {
+            coins_per_utxo_byte: Some(4_310),
+            prices: Some((
+                UnitInterval { numerator: 577, denominator: 10_000 },
+                UnitInterval { numerator: 721, denominator: 10_000_000 },
+            )),
+            max_tx_ex_units: Some(ExUnits { mem: 10_000_000_000, steps: 10_000_000_000_000 }),
+            max_block_ex_units: Some(ExUnits { mem: 50_000_000_000, steps: 40_000_000_000_000 }),
+            max_val_size: Some(5000),
+            collateral_percentage: Some(150),
+            max_collateral_inputs: Some(3),
+            ..Default::default()
+        };
+        let bytes = upd.to_cbor_bytes();
+        let decoded = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(upd, decoded);
+    }
+
+    #[test]
+    fn conway_governance_fields_round_trip() {
+        let upd = ProtocolParamUpdate {
+            pool_voting_thresholds: Some(PoolVotingThresholds::default()),
+            drep_voting_thresholds: Some(DRepVotingThresholds::default()),
+            min_committee_size: Some(7),
+            committee_term_limit: Some(146),
+            gov_action_lifetime: Some(6),
+            gov_action_deposit: Some(100_000_000_000),
+            drep_deposit: Some(500_000_000),
+            drep_activity: Some(20),
+            min_fee_ref_script_cost_per_byte: Some(UnitInterval { numerator: 15, denominator: 1 }),
+            ..Default::default()
+        };
+        let bytes = upd.to_cbor_bytes();
+        let decoded = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(upd, decoded);
+    }
+
+    #[test]
+    fn cost_models_opaque_round_trip() {
+        // Minimal cost_models: map(0) — empty cost model map.
+        let upd = ProtocolParamUpdate {
+            cost_models: Some(vec![0xA0]), // CBOR map(0)
+            ..Default::default()
+        };
+        let bytes = upd.to_cbor_bytes();
+        let decoded = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(upd, decoded);
+    }
+
+    #[test]
+    fn apply_update_overwrites_set_fields() {
+        let mut pp = ProtocolParameters::default();
+        assert_eq!(pp.min_fee_a, 44);
+        assert_eq!(pp.max_tx_size, 16_384);
+        let upd = ProtocolParamUpdate {
+            min_fee_a: Some(55),
+            max_tx_size: Some(32_768),
+            ..Default::default()
+        };
+        pp.apply_update(&upd);
+        assert_eq!(pp.min_fee_a, 55);
+        assert_eq!(pp.max_tx_size, 32_768);
+        // Unset fields are unchanged.
+        assert_eq!(pp.min_fee_b, 155_381);
+    }
+
+    #[test]
+    fn apply_update_prices_sets_both() {
+        let mut pp = ProtocolParameters::default();
+        assert!(pp.price_mem.is_none());
+        let upd = ProtocolParamUpdate {
+            prices: Some((
+                UnitInterval { numerator: 1, denominator: 100 },
+                UnitInterval { numerator: 2, denominator: 100 },
+            )),
+            ..Default::default()
+        };
+        pp.apply_update(&upd);
+        assert_eq!(pp.price_mem, Some(UnitInterval { numerator: 1, denominator: 100 }));
+        assert_eq!(pp.price_step, Some(UnitInterval { numerator: 2, denominator: 100 }));
+    }
+
+    #[test]
+    fn apply_update_conway_governance_fields() {
+        let mut pp = ProtocolParameters::alonzo_defaults();
+        assert!(pp.drep_deposit.is_none());
+        let upd = ProtocolParamUpdate {
+            drep_deposit: Some(500_000_000),
+            drep_activity: Some(20),
+            gov_action_lifetime: Some(6),
+            min_committee_size: Some(7),
+            ..Default::default()
+        };
+        pp.apply_update(&upd);
+        assert_eq!(pp.drep_deposit, Some(500_000_000));
+        assert_eq!(pp.drep_activity, Some(20));
+        assert_eq!(pp.gov_action_lifetime, Some(6));
+        assert_eq!(pp.min_committee_size, Some(7));
+    }
+
+    #[test]
+    fn apply_update_empty_is_noop() {
+        let pp_before = ProtocolParameters::default();
+        let mut pp = pp_before.clone();
+        pp.apply_update(&ProtocolParamUpdate::default());
+        assert_eq!(pp, pp_before);
+    }
+
+    #[test]
+    fn unknown_keys_are_skipped() {
+        // Build a map with key 0 = 55 and unknown key 99 = 42.
+        let mut enc = Encoder::new();
+        enc.map(2);
+        enc.unsigned(0).unsigned(55);
+        enc.unsigned(99).unsigned(42);
+        let bytes = enc.into_bytes();
+        let upd = ProtocolParamUpdate::from_cbor_bytes(&bytes).expect("decode");
+        assert_eq!(upd.min_fee_a, Some(55));
     }
 }
