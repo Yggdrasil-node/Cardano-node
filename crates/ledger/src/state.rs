@@ -3173,10 +3173,24 @@ impl LedgerState {
                 let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
                     .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                     .unwrap_or_default();
+                let tx_ctx = crate::plutus_validation::TxContext {
+                    tx_hash: tx_id.0,
+                    fee: body.fee,
+                    outputs: body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Alonzo(o.clone()))
+                        .collect(),
+                    validity_start: body.validity_interval_start,
+                    ttl: body.ttl,
+                    required_signers: body.required_signers.clone().unwrap_or_default(),
+                    mint: body.mint.clone().unwrap_or_default(),
+                    withdrawals: body.withdrawals.clone().unwrap_or_default(),
+                    ..Default::default()
+                };
                 crate::plutus_validation::validate_plutus_scripts(
                     evaluator, witness_bytes.as_deref(), &required_scripts,
                     &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
+                    &tx_ctx,
                 )?;
             }
             let withdrawal_total = apply_certificates_and_withdrawals(
@@ -3296,10 +3310,25 @@ impl LedgerState {
                 let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
                     .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                     .unwrap_or_default();
+                let tx_ctx = crate::plutus_validation::TxContext {
+                    tx_hash: tx_id.0,
+                    fee: body.fee,
+                    outputs: body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                        .collect(),
+                    validity_start: body.validity_interval_start,
+                    ttl: body.ttl,
+                    required_signers: body.required_signers.clone().unwrap_or_default(),
+                    mint: body.mint.clone().unwrap_or_default(),
+                    withdrawals: body.withdrawals.clone().unwrap_or_default(),
+                    reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
+                    ..Default::default()
+                };
                 crate::plutus_validation::validate_plutus_scripts(
                     evaluator, witness_bytes.as_deref(), &required_scripts,
                     &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
+                    &tx_ctx,
                 )?;
             }
             let withdrawal_total = apply_certificates_and_withdrawals(
@@ -3444,11 +3473,28 @@ impl LedgerState {
                     .map(|v| v.procedures.keys().cloned().collect())
                     .unwrap_or_default();
                 let proposal_slice = body.proposal_procedures.as_deref().unwrap_or(&[]);
+                let tx_ctx = crate::plutus_validation::TxContext {
+                    tx_hash: tx_id.0,
+                    fee: body.fee,
+                    outputs: body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                        .collect(),
+                    validity_start: body.validity_interval_start,
+                    ttl: body.ttl,
+                    required_signers: body.required_signers.clone().unwrap_or_default(),
+                    mint: body.mint.clone().unwrap_or_default(),
+                    withdrawals: body.withdrawals.clone().unwrap_or_default(),
+                    reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
+                    current_treasury_value: body.current_treasury_value,
+                    treasury_donation: body.treasury_donation,
+                    ..Default::default()
+                };
                 crate::plutus_validation::validate_plutus_scripts(
                     evaluator, witness_bytes.as_deref(), &required_scripts,
                     &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
                     &sorted_voters, proposal_slice,
+                    &tx_ctx,
                 )?;
             }
             let unregistered_drep_voters = collect_conway_unregistered_drep_voters(

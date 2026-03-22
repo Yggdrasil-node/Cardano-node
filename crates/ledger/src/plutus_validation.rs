@@ -15,13 +15,15 @@
 //!
 //! Reference: `Cardano.Ledger.Alonzo.PlutusScriptApi`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::cbor::CborDecode;
 use crate::eras::conway::{ProposalProcedure, Voter};
 use crate::error::LedgerError;
 use crate::eras::alonzo::{ExUnits, Redeemer};
 use crate::eras::babbage::DatumOption;
+use crate::eras::mary::MintAsset;
+use crate::eras::shelley::ShelleyTxIn;
 use crate::plutus::PlutusData;
 use crate::types::{Address, DCert, RewardAccount, StakeCredential};
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
@@ -105,6 +107,41 @@ pub struct PlutusScriptEval {
 }
 
 // ---------------------------------------------------------------------------
+// Transaction context for TxInfo construction
+// ---------------------------------------------------------------------------
+
+/// Normalised transaction body data needed by the CEK evaluator to build
+/// the Plutus `TxInfo` / `ScriptContext`.
+///
+/// This is era-independent: the per-era `apply_*_block` functions populate
+/// it from the concrete tx body and pass it through to the evaluator.
+#[derive(Clone, Debug, Default)]
+pub struct TxContext {
+    /// Blake2b-256 hash of the serialised transaction body.
+    pub tx_hash: [u8; 32],
+    /// Transaction fee in lovelace.
+    pub fee: u64,
+    /// Transaction outputs.
+    pub outputs: Vec<MultiEraTxOut>,
+    /// Slot of the lower bound of the validity interval (`None` = -∞).
+    pub validity_start: Option<u64>,
+    /// Slot of the upper bound / TTL (`None` = +∞).
+    pub ttl: Option<u64>,
+    /// Required signer key hashes.
+    pub required_signers: Vec<[u8; 28]>,
+    /// Mint / burn map (policy → asset_name → quantity).
+    pub mint: BTreeMap<[u8; 28], BTreeMap<Vec<u8>, i64>>,
+    /// Withdrawals (reward_account → lovelace).
+    pub withdrawals: BTreeMap<RewardAccount, u64>,
+    /// Reference inputs (Babbage+ only).
+    pub reference_inputs: Vec<ShelleyTxIn>,
+    /// Current treasury value (Conway only).
+    pub current_treasury_value: Option<u64>,
+    /// Treasury donation (Conway only).
+    pub treasury_donation: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
 // PlutusEvaluator trait
 // ---------------------------------------------------------------------------
 
@@ -121,7 +158,7 @@ pub trait PlutusEvaluator {
     ///    `ScriptContext` as arguments to the decoded program.
     /// 3. Evaluate within `eval.ex_units` budget.
     /// 4. Return `Ok(())` on success, or a `LedgerError` on failure.
-    fn evaluate(&self, eval: &PlutusScriptEval) -> Result<(), LedgerError>;
+    fn evaluate(&self, eval: &PlutusScriptEval, tx_ctx: &TxContext) -> Result<(), LedgerError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,18 +329,8 @@ pub fn resolve_script_purpose(
 // Orchestrated Plutus validation
 // ---------------------------------------------------------------------------
 
-/// Validates all Plutus scripts referenced by a transaction.
-///
-/// This is the main entry point called from per-era `apply_block()` functions.
-/// When `evaluator` is `None`, Plutus scripts are silently skipped (allowing
-/// sync without a CEK machine configured). When required scripts are not
-/// found in the witness set, an error is returned regardless of the
-/// evaluator.
-///
-/// `required_scripts` is the set of script hashes that need either native
-/// or Plutus satisfaction. Scripts already satisfied by native evaluation
-/// should be removed before calling this function.
-pub fn collect_plutus_scripts(
+/// Collects all Plutus scripts from a witness set and from reference input UTxOs.
+fn collect_all_plutus_scripts(
     ws: &crate::eras::shelley::ShelleyWitnessSet,
     utxo: &crate::utxo::MultiEraUtxo,
     reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
@@ -348,6 +375,32 @@ pub fn collect_plutus_scripts(
     }
     scripts
 }
+
+/// Validates all Plutus scripts referenced by a transaction.
+///
+/// This is the main entry point called from per-era `apply_block()` functions.
+/// When `evaluator` is `None`, Plutus scripts are silently skipped (allowing
+/// sync without a CEK machine configured). When required scripts are not
+/// found in the witness set, an error is returned regardless of the
+/// evaluator.
+///
+/// `required_scripts` is the set of script hashes that need either native
+/// or Plutus satisfaction. Scripts already satisfied by native evaluation
+/// should be removed before calling this function.
+pub fn validate_plutus_scripts(
+    evaluator: Option<&dyn PlutusEvaluator>,
+    witness_bytes: Option<&[u8]>,
+    required_script_hashes: &std::collections::HashSet<[u8; 28]>,
+    spending_utxo: &MultiEraUtxo,
+    sorted_inputs: &[crate::eras::shelley::ShelleyTxIn],
+    sorted_policy_ids: &[[u8; 28]],
+    certificates: &[DCert],
+    sorted_reward_accounts: &[Vec<u8>],
+    sorted_voters: &[Voter],
+    proposal_procedures: &[ProposalProcedure],
+    tx_ctx: &TxContext,
+) -> Result<(), LedgerError> {
+    let wb = match witness_bytes {
         Some(wb) => wb,
         None => return Ok(()), // soft-skip like witness validation
     };
@@ -355,9 +408,9 @@ pub fn collect_plutus_scripts(
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
 
     // Collect available Plutus scripts and datum map.
-    let plutus_scripts = collect_plutus_scripts(
+    let plutus_scripts = collect_all_plutus_scripts(
         &ws,
-        utxo,
+        spending_utxo,
         if !sorted_inputs.is_empty() { Some(sorted_inputs) } else { None },
     );
     let datum_map = collect_datum_map(&ws);
@@ -442,7 +495,7 @@ pub fn collect_plutus_scripts(
                     ex_units: redeemer.ex_units,
                 };
 
-                evaluator.evaluate(&eval_target)?;
+                evaluator.evaluate(&eval_target, tx_ctx)?;
             }
         }
     }
@@ -756,7 +809,7 @@ mod tests {
     struct AlwaysSucceeds;
 
     impl PlutusEvaluator for AlwaysSucceeds {
-        fn evaluate(&self, _eval: &PlutusScriptEval) -> Result<(), LedgerError> {
+        fn evaluate(&self, _eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
             Ok(())
         }
     }
@@ -765,7 +818,7 @@ mod tests {
     struct AlwaysFails;
 
     impl PlutusEvaluator for AlwaysFails {
-        fn evaluate(&self, eval: &PlutusScriptEval) -> Result<(), LedgerError> {
+        fn evaluate(&self, eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
             Err(LedgerError::PlutusScriptFailed {
                 hash: eval.script_hash,
                 reason: "always fails".to_string(),
@@ -776,7 +829,7 @@ mod tests {
     struct ExpectDatum(pub PlutusData);
 
     impl PlutusEvaluator for ExpectDatum {
-        fn evaluate(&self, eval: &PlutusScriptEval) -> Result<(), LedgerError> {
+        fn evaluate(&self, eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
             assert_eq!(eval.datum, Some(self.0.clone()));
             Ok(())
         }
@@ -802,6 +855,7 @@ mod tests {
         let utxo = MultiEraUtxo::new();
         let result = validate_plutus_scripts(
             None, Some(&wb), &required, &utxo, &[], &[], &[], &[], &[], &[],
+            &TxContext::default(),
         );
         assert!(result.is_ok());
     }
@@ -841,6 +895,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &TxContext::default(),
         );
         assert!(result.is_ok());
     }
@@ -880,6 +935,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &TxContext::default(),
         );
         assert!(matches!(
             result.unwrap_err(),
@@ -893,6 +949,7 @@ mod tests {
         let utxo = MultiEraUtxo::new();
         let result = validate_plutus_scripts(
             Some(&AlwaysSucceeds), None, &required, &utxo, &[], &[], &[], &[], &[], &[],
+            &TxContext::default(),
         );
         assert!(result.is_ok());
     }
@@ -954,6 +1011,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &TxContext::default(),
         );
 
         assert!(result.is_ok());
@@ -1016,6 +1074,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &TxContext::default(),
         );
 
         assert!(result.is_ok());
@@ -1076,6 +1135,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &TxContext::default(),
         );
 
         assert!(matches!(
@@ -1122,6 +1182,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &TxContext::default(),
         );
 
         assert!(result.is_ok());
@@ -1165,6 +1226,7 @@ mod tests {
             &[reward_account.to_bytes().to_vec()],
             &[],
             &[],
+            &TxContext::default(),
         );
 
         assert!(result.is_ok());
@@ -1205,6 +1267,7 @@ mod tests {
             &[],
             &voters,
             &[],
+            &TxContext::default(),
         );
 
         assert!(result.is_ok());

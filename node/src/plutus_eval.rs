@@ -34,7 +34,7 @@ use yggdrasil_ledger::{
     DCert,
     LedgerError,
     plutus::PlutusData,
-    plutus_validation::{PlutusEvaluator, PlutusScriptEval, PlutusVersion, ScriptPurpose},
+    plutus_validation::{PlutusEvaluator, PlutusScriptEval, PlutusVersion, ScriptPurpose, TxContext},
     StakeCredential,
 };
 use yggdrasil_plutus::{
@@ -71,7 +71,7 @@ impl CekPlutusEvaluator {
 }
 
 impl PlutusEvaluator for CekPlutusEvaluator {
-    fn evaluate(&self, eval: &PlutusScriptEval) -> Result<(), LedgerError> {
+    fn evaluate(&self, eval: &PlutusScriptEval, tx_ctx: &TxContext) -> Result<(), LedgerError> {
         // 1. Decode the on-chain script bytes (Flat / CBOR-unwrap).
         let program = decode_script_bytes(&eval.script_bytes).map_err(|e| {
             LedgerError::PlutusScriptDecodeError {
@@ -85,7 +85,7 @@ impl PlutusEvaluator for CekPlutusEvaluator {
         // Placeholder context: Constr(0, [tx_info_placeholder, purpose_data]).
         // This still does not encode a real TxInfo, but it preserves the
         // outer ScriptContext shape and the resolved purpose payload.
-        let context_term = Term::Constant(Constant::Data(script_context_data(eval)));
+        let context_term = Term::Constant(Constant::Data(script_context_data(eval, tx_ctx)));
 
         // 3. Apply arguments in the order specified by the Plutus script ABI.
         //    spending validator: script datum redeemer context
@@ -150,16 +150,16 @@ fn data_term(data: PlutusData) -> Term {
     Term::Constant(Constant::Data(data))
 }
 
-fn script_context_data(eval: &PlutusScriptEval) -> PlutusData {
+fn script_context_data(eval: &PlutusScriptEval, tx_ctx: &TxContext) -> PlutusData {
     match eval.version {
         PlutusVersion::V1 | PlutusVersion::V2 => PlutusData::Constr(
             0,
-            vec![build_tx_info(eval), script_purpose_data_v1v2(&eval.purpose)],
+            vec![build_tx_info(eval, tx_ctx), script_purpose_data_v1v2(&eval.purpose)],
         ),
         PlutusVersion::V3 => PlutusData::Constr(
             0,
             vec![
-                build_tx_info(eval),
+                build_tx_info(eval, tx_ctx),
                 eval.redeemer.clone(),
                 script_info_data_v3(&eval.purpose, eval.datum.as_ref()),
             ],
@@ -167,82 +167,236 @@ fn script_context_data(eval: &PlutusScriptEval) -> PlutusData {
     }
 }
 
-/// Build a real Plutus TxInfo as PlutusData (stub for now; to be implemented).
-/// This will use all available transaction, UTxO, and witness data.
-fn build_tx_info(_eval: &PlutusScriptEval) -> PlutusData {
-    // TODO: Wire in real transaction context and UTxO for full population.
-    // For now, use example data for demonstration.
-    let example_inputs = vec![
-        plutus_input_data(
-            &yggdrasil_ledger::eras::shelley::ShelleyTxIn {
-                transaction_id: [0xAA; 32],
-                index: 0,
-            },
-            &yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(
-                yggdrasil_ledger::eras::shelley::ShelleyTxOut {
-                    address: vec![0x01; 28],
-                    amount: 42,
-                },
-            ),
-        ),
-    ];
-    let example_outputs = vec![
-        plutus_output_data(&yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(
-            yggdrasil_ledger::eras::shelley::ShelleyTxOut {
-                address: vec![0x01; 28],
-                amount: 42,
-            },
-        )),
-    ];
+/// Build a Plutus TxInfo as PlutusData from the transaction context.
+///
+/// The field layout follows the upstream Haskell TxInfo constructors:
+///   V1/V2: Constr(0, [inputs, outputs, fee, mint, certs, withdrawals,
+///           valid_range, signatories, datums, id])
+///   V2 adds: reference_inputs as an 11th field
+///   V3 extends further with votes, proposals, treasury.
+fn build_tx_info(_eval: &PlutusScriptEval, tx_ctx: &TxContext) -> PlutusData {
+    // -- Outputs --
+    let outputs: Vec<PlutusData> = tx_ctx
+        .outputs
+        .iter()
+        .map(|o| plutus_output_data(o))
+        .collect();
+
+    // -- Fee as Value (Constr(0, [Map[], lovelace])) for V1/V2,
+    //    or just integer for V3; here we use the simple integer form. --
+    let fee = PlutusData::Map(vec![
+        (PlutusData::Bytes(vec![]), PlutusData::Integer(tx_ctx.fee as i128)),
+    ]);
+
+    // -- Mint --
+    let mint_entries: Vec<(PlutusData, PlutusData)> = tx_ctx
+        .mint
+        .iter()
+        .map(|(policy, assets)| {
+            let asset_map: Vec<(PlutusData, PlutusData)> = assets
+                .iter()
+                .map(|(name, qty)| {
+                    (PlutusData::Bytes(name.clone()), PlutusData::Integer(*qty as i128))
+                })
+                .collect();
+            (PlutusData::Bytes(policy.to_vec()), PlutusData::Map(asset_map))
+        })
+        .collect();
+
+    // -- Withdrawals --
+    let wdrl_entries: Vec<(PlutusData, PlutusData)> = tx_ctx
+        .withdrawals
+        .iter()
+        .map(|(ra, amt)| {
+            (
+                staking_credential_data(&ra.credential),
+                PlutusData::Integer(*amt as i128),
+            )
+        })
+        .collect();
+
+    // -- Validity range as POSIXTimeRange --
+    let valid_range = posix_time_range(tx_ctx.validity_start, tx_ctx.ttl);
+
+    // -- Required signers --
+    let signatories: Vec<PlutusData> = tx_ctx
+        .required_signers
+        .iter()
+        .map(|h| PlutusData::Bytes(h.to_vec()))
+        .collect();
+
+    // -- Tx hash / id --
+    let tx_id = PlutusData::Constr(0, vec![PlutusData::Bytes(tx_ctx.tx_hash.to_vec())]);
+
     PlutusData::Constr(
         0,
         vec![
-            PlutusData::List(example_inputs), // inputs
-            PlutusData::List(example_outputs), // outputs
-            PlutusData::Integer(0),   // fee
-            PlutusData::Map(vec![]),  // mint
-            PlutusData::List(vec![]), // certs
-            PlutusData::Map(vec![]),  // withdrawals
-            PlutusData::List(vec![]), // valid_range
-            PlutusData::List(vec![]), // signatories
-            PlutusData::Map(vec![]),  // datums
-            PlutusData::List(vec![]), // reference_inputs (Babbage/Conway only)
+            PlutusData::List(vec![]),            // inputs  (TODO: need UTxO resolution)
+            PlutusData::List(outputs),           // outputs
+            fee,                                 // fee (as Value map)
+            PlutusData::Map(mint_entries),        // mint
+            PlutusData::List(vec![]),            // dcert   (TODO: wire from sorted certs)
+            PlutusData::Map(wdrl_entries),        // withdrawals
+            valid_range,                         // validRange
+            PlutusData::List(signatories),        // signatories
+            PlutusData::Map(vec![]),             // datums  (TODO: witness datum map)
+            tx_id,                               // txInfoId
         ],
     )
 }
 
-// Encode a TxInfo input as PlutusData: Constr(0, [txin, txout])
+/// Encode a POSIXTimeRange as PlutusData.
+///
+/// `Interval (LowerBound lb inclusive) (UpperBound ub inclusive)`
+/// layout: Constr(0, [lower_bound, upper_bound])
+fn posix_time_range(start: Option<u64>, end: Option<u64>) -> PlutusData {
+    let lower = match start {
+        Some(s) => PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Constr(1, vec![PlutusData::Integer(s as i128)]), // Finite
+                PlutusData::Constr(1, vec![]),                              // True (inclusive)
+            ],
+        ),
+        None => PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Constr(0, vec![]), // NegInf
+                PlutusData::Constr(1, vec![]), // True
+            ],
+        ),
+    };
+    let upper = match end {
+        Some(e) => PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Constr(1, vec![PlutusData::Integer(e as i128)]), // Finite
+                PlutusData::Constr(1, vec![]),                              // True (inclusive)
+            ],
+        ),
+        None => PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Constr(2, vec![]), // PosInf
+                PlutusData::Constr(1, vec![]), // True
+            ],
+        ),
+    };
+    PlutusData::Constr(0, vec![lower, upper])
+}
+
+/// Encode a TxInInfo as PlutusData: Constr(0, [txOutRef, txOut]).
 fn plutus_input_data(txin: &yggdrasil_ledger::eras::shelley::ShelleyTxIn, txout: &yggdrasil_ledger::utxo::MultiEraTxOut) -> PlutusData {
     PlutusData::Constr(0, vec![plutus_txin_data(txin), plutus_output_data(txout)])
 }
 
-// Encode a ShelleyTxIn as PlutusData: Constr(0, [tx_id, index])
+/// Encode a TxOutRef as PlutusData: Constr(0, [Constr(0, [tx_hash]), index]).
 fn plutus_txin_data(txin: &yggdrasil_ledger::eras::shelley::ShelleyTxIn) -> PlutusData {
     PlutusData::Constr(
         0,
         vec![
-            PlutusData::Bytes(txin.transaction_id.to_vec()),
+            PlutusData::Constr(0, vec![PlutusData::Bytes(txin.transaction_id.to_vec())]),
             PlutusData::Integer(txin.index as i128),
         ],
     )
 }
 
-// Encode a MultiEraTxOut as PlutusData (Shelley only for now)
+/// Encode a MultiEraTxOut as PlutusData.
+///
+/// V1/V2 TxOut: Constr(0, [address, value, datum_hash_option])
+/// where address = Constr(0, [credential, maybe_staking_credential])
+///       value   = Map[(policy, Map[(asset, qty)])]  or just lovelace
 fn plutus_output_data(txout: &yggdrasil_ledger::utxo::MultiEraTxOut) -> PlutusData {
     match txout {
         yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(o) => PlutusData::Constr(
             0,
             vec![
                 PlutusData::Bytes(o.address.clone()),
-                PlutusData::Integer(o.amount as i128),
+                plutus_value_data(&yggdrasil_ledger::eras::mary::Value::Coin(o.amount)),
+                PlutusData::Constr(1, vec![]), // Nothing (no datum hash)
             ],
         ),
-        _ => PlutusData::Constr(1, vec![]), // TODO: handle other eras
+        yggdrasil_ledger::utxo::MultiEraTxOut::Mary(o) => PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Bytes(o.address.clone()),
+                plutus_value_data(&o.amount),
+                PlutusData::Constr(1, vec![]), // Nothing
+            ],
+        ),
+        yggdrasil_ledger::utxo::MultiEraTxOut::Alonzo(o) => {
+            let datum_opt = match &o.datum_hash {
+                Some(h) => PlutusData::Constr(0, vec![PlutusData::Bytes(h.to_vec())]),
+                None => PlutusData::Constr(1, vec![]),
+            };
+            PlutusData::Constr(
+                0,
+                vec![
+                    PlutusData::Bytes(o.address.clone()),
+                    plutus_value_data(&o.amount),
+                    datum_opt,
+                ],
+            )
+        }
+        yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(o) => {
+            let datum_field = match &o.datum_option {
+                Some(yggdrasil_ledger::eras::babbage::DatumOption::Hash(h)) => {
+                    PlutusData::Constr(1, vec![PlutusData::Bytes(h.to_vec())])
+                }
+                Some(yggdrasil_ledger::eras::babbage::DatumOption::Inline(d)) => {
+                    PlutusData::Constr(2, vec![d.clone()])
+                }
+                None => PlutusData::Constr(0, vec![]),
+            };
+            // For V2 TxOut shape: Constr(0, [address, value, datum_option, script_ref_option])
+            let script_ref_field = match &o.script_ref {
+                Some(_sref) => PlutusData::Constr(0, vec![PlutusData::Integer(0)]), // placeholder script hash
+                None => PlutusData::Constr(1, vec![]),
+            };
+            PlutusData::Constr(
+                0,
+                vec![
+                    PlutusData::Bytes(o.address.clone()),
+                    plutus_value_data(&o.amount),
+                    datum_field,
+                    script_ref_field,
+                ],
+            )
+        }
     }
 }
 
-fn tx_info_placeholder_data() -> PlutusData {
-    PlutusData::Constr(0, vec![])
+/// Encode a ledger Value as PlutusData.
+///
+/// Plutus V1/V2 Value = Map [CurrencySymbol -> Map [TokenName -> Integer]]
+/// The ADA entry uses empty-bytes as the currency symbol and token name.
+fn plutus_value_data(value: &yggdrasil_ledger::eras::mary::Value) -> PlutusData {
+    let mut entries: Vec<(PlutusData, PlutusData)> = Vec::new();
+    // ADA entry: "" -> ("" -> coin)
+    let coin = value.coin();
+    entries.push((
+        PlutusData::Bytes(vec![]),
+        PlutusData::Map(vec![(
+            PlutusData::Bytes(vec![]),
+            PlutusData::Integer(coin as i128),
+        )]),
+    ));
+    // Multi-asset entries
+    if let Some(ma) = value.multi_asset() {
+        for (policy, assets) in ma {
+            let asset_entries: Vec<(PlutusData, PlutusData)> = assets
+                .iter()
+                .map(|(name, qty)| {
+                    (PlutusData::Bytes(name.clone()), PlutusData::Integer(*qty as i128))
+                })
+                .collect();
+            entries.push((
+                PlutusData::Bytes(policy.to_vec()),
+                PlutusData::Map(asset_entries),
+            ));
+        }
+    }
+    PlutusData::Map(entries)
 }
 
 fn script_purpose_data_v1v2(purpose: &ScriptPurpose) -> PlutusData {
@@ -736,7 +890,7 @@ fn map_machine_error(hash: &[u8; 28], err: MachineError) -> LedgerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yggdrasil_ledger::plutus_validation::{PlutusScriptEval, PlutusVersion, ScriptPurpose};
+    use yggdrasil_ledger::plutus_validation::{PlutusScriptEval, PlutusVersion, ScriptPurpose, TxContext};
     use yggdrasil_ledger::{
         RewardAccount, StakeCredential,
         types::Anchor,
@@ -746,6 +900,13 @@ mod tests {
 
     fn dummy_hash() -> [u8; 28] {
         [0xab; 28]
+    }
+
+    fn test_tx_ctx() -> TxContext {
+        TxContext {
+            tx_hash: [0x01; 32],
+            ..Default::default()
+        }
     }
 
     fn test_eval(
@@ -793,7 +954,7 @@ mod tests {
             script_bytes: vec![],
             ..mint_eval(vec![], PlutusVersion::V1)
         };
-        let result = evaluator.evaluate(&eval);
+        let result = evaluator.evaluate(&eval, &test_tx_ctx());
         assert!(
             result.is_err(),
             "empty script bytes must produce a decode error"
@@ -809,7 +970,7 @@ mod tests {
     fn decode_error_on_garbage_bytes() {
         let evaluator = CekPlutusEvaluator::new();
         let eval = mint_eval(vec![0xff, 0xfe, 0xfd, 0xfc], PlutusVersion::V1);
-        let result = evaluator.evaluate(&eval);
+        let result = evaluator.evaluate(&eval, &test_tx_ctx());
         assert!(
             result.is_err(),
             "garbage bytes must produce a decode or evaluation error"
@@ -826,7 +987,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(0),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -861,7 +1022,7 @@ mod tests {
             ScriptPurpose::Rewarding { reward_account },
             None,
             PlutusData::Integer(0),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -893,7 +1054,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(0),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -917,7 +1078,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(0),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -957,7 +1118,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(0),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -983,7 +1144,7 @@ mod tests {
             },
             Some(datum.clone()),
             redeemer.clone(),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -1023,7 +1184,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(77),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -1059,7 +1220,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(88),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
@@ -1110,7 +1271,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(101),
-        ));
+        ), &test_tx_ctx());
 
         assert_eq!(
             data,
