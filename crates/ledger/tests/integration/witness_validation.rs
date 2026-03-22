@@ -177,6 +177,7 @@ fn shelley_block_accepts_valid_vkey_witness() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_shelley_block(500, 1, 0xAA, vec![tx]);
@@ -215,6 +216,7 @@ fn shelley_block_rejects_missing_vkey_witness() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_shelley_block(500, 1, 0xAA, vec![tx]);
@@ -255,6 +257,7 @@ fn shelley_block_skips_witness_check_when_no_witness_bytes() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let block = make_shelley_block(500, 1, 0xAA, vec![tx]);
@@ -293,6 +296,7 @@ fn shelley_block_rejects_empty_witness_set_for_keyhash_input() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_shelley_block(500, 1, 0xAA, vec![tx]);
@@ -353,6 +357,7 @@ fn conway_block_rejects_missing_voter_vkey_witness() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -410,6 +415,7 @@ fn conway_block_rejects_unregistered_proposal_return_account() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -476,6 +482,7 @@ fn conway_block_rejects_treasury_withdrawals_proposal_with_unregistered_target_a
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -538,6 +545,7 @@ fn conway_block_accepts_proposal_return_account_registered_by_same_tx_certificat
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -592,6 +600,7 @@ fn conway_block_rejects_incorrect_proposal_deposit() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -665,6 +674,7 @@ fn conway_block_accepts_matching_proposal_deposit() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -748,6 +758,7 @@ fn conway_block_rejects_same_tx_forward_prev_governance_action_reference() {
         id: tx_id,
         body: tx_body.to_cbor_bytes(),
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -808,6 +819,7 @@ fn conway_block_rejects_first_hard_fork_that_cannot_follow_current_protocol_vers
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -887,6 +899,7 @@ fn conway_block_rejects_chained_hard_fork_that_cannot_follow_previous_proposal()
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -976,6 +989,7 @@ fn conway_block_rejects_malformed_empty_parameter_change_proposal() {
         id: TxId([0x55; 32]),
         body: tx_body.to_cbor_bytes(),
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1040,6 +1054,7 @@ fn conway_block_rejects_non_bootstrap_proposal_during_bootstrap() {
         id: TxId([0x59; 32]),
         body: tx_body.to_cbor_bytes(),
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1107,6 +1122,7 @@ fn conway_block_rejects_drep_non_info_vote_during_bootstrap() {
         id: TxId([0x5D; 32]),
         body: tx_body.to_cbor_bytes(),
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1248,6 +1264,7 @@ fn conway_block_rejects_committee_vote_on_non_bootstrap_action_during_bootstrap(
         id: TxId([0x63; 32]),
         body: tx_body.to_cbor_bytes(),
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1342,6 +1359,7 @@ fn conway_block_rejects_missing_cross_tx_prev_governance_action_reference() {
         id: TxId([0x58; 32]),
         body: tx_body.to_cbor_bytes(),
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1403,6 +1421,7 @@ fn conway_block_rejects_cross_tx_prev_governance_action_with_wrong_purpose() {
         id: TxId([0x5C; 32]),
         body: tx_body.to_cbor_bytes(),
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1480,6 +1499,7 @@ fn conway_block_rejects_proposal_return_account_with_wrong_network_id() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1555,6 +1575,7 @@ fn conway_block_rejects_treasury_withdrawals_target_with_wrong_network_id() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1625,6 +1646,7 @@ fn conway_block_rejects_empty_treasury_withdrawals_proposal() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1701,6 +1723,7 @@ fn conway_block_rejects_all_zero_treasury_withdrawals_proposal() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1779,6 +1802,7 @@ fn conway_block_rejects_conflicting_committee_update_proposal() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1849,6 +1873,7 @@ fn conway_block_rejects_committee_update_with_expired_member_epoch() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1896,6 +1921,7 @@ fn conway_block_rejects_mismatched_current_treasury_value() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -1945,6 +1971,7 @@ fn conway_block_accepts_matching_current_treasury_value() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2006,6 +2033,7 @@ fn conway_block_rejects_unknown_drep_voter() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2065,6 +2093,7 @@ fn conway_block_rejects_unknown_stake_pool_voter() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2129,6 +2158,7 @@ fn conway_block_accepts_same_tx_registered_drep_voter() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2210,6 +2240,7 @@ fn conway_block_accepts_same_tx_committee_hot_authorization_for_voter() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2289,6 +2320,7 @@ fn conway_block_rejects_vote_for_unknown_governance_action() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2549,6 +2581,7 @@ fn conway_block_rejects_committee_votes_for_disallowed_actions() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2673,6 +2706,7 @@ fn conway_block_rejects_stake_pool_votes_for_disallowed_actions() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: None,
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -3174,6 +3208,7 @@ fn allegra_block_validates_native_script_success() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_allegra_block_raw(500, 1, 0xBB, vec![tx]);
@@ -3216,6 +3251,7 @@ fn allegra_block_rejects_native_script_failure() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     // Block slot is 500, but script requires slot >= 1000 → should fail.
@@ -3262,6 +3298,7 @@ fn allegra_block_accepts_native_script_timelock_in_range() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     // Block slot 500 >= 100 → script should evaluate true.
@@ -3304,6 +3341,7 @@ fn allegra_block_rejects_native_script_hereafter_exceeded() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     // Block slot 500 >= 200 → InvalidHereafter fails.
@@ -3362,6 +3400,7 @@ fn allegra_block_validates_multisig_all_script() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_allegra_block_raw(500, 1, 0xA1, vec![tx]);
@@ -3411,6 +3450,7 @@ fn allegra_block_rejects_multisig_all_missing_one_vkey() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_allegra_block_raw(500, 1, 0xA2, vec![tx]);
@@ -3461,6 +3501,7 @@ fn shelley_block_rejects_forged_signature() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_shelley_block(500, 1, 0xAA, vec![tx]);
@@ -3509,6 +3550,7 @@ fn shelley_block_rejects_signature_on_wrong_body() {
         id: TxId(tx_id_hash.0),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
 
     let block = make_shelley_block(500, 1, 0xAA, vec![tx]);

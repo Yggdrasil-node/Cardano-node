@@ -15,6 +15,7 @@ pub(super) fn make_shelley_block_with_txs(
                 id: TxId(id_hash.0),
                 body: raw,
                 witnesses: None,
+                auxiliary_data: None,
             }
         })
         .collect();

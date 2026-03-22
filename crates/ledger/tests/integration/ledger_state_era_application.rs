@@ -10,6 +10,7 @@ fn make_allegra_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<AllegraT
                 id: TxId(id_hash.0),
                 body: raw,
                 witnesses: None,
+                auxiliary_data: None,
             }
         })
         .collect();
@@ -38,6 +39,7 @@ fn make_mary_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<MaryTxBody>
                 id: TxId(id_hash.0),
                 body: raw,
                 witnesses: None,
+                auxiliary_data: None,
             }
         })
         .collect();
@@ -260,6 +262,7 @@ fn make_byron_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<ByronTx>) 
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: None,
+                auxiliary_data: None,
             }
         })
         .collect();
