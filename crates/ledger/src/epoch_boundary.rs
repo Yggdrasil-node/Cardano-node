@@ -71,6 +71,8 @@ pub struct EpochBoundaryEvent {
     pub enacted_gov_action_ids: Vec<GovActionId>,
     /// Outcomes of each enacted governance action.
     pub enact_outcomes: Vec<EnactOutcome>,
+    /// Whether a Shelley-era PPUP was resolved and applied at this boundary.
+    pub ppup_applied: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +106,14 @@ pub fn apply_epoch_boundary(
     pool_performance: &BTreeMap<PoolKeyHash, UnitInterval>,
 ) -> Result<EpochBoundaryEvent, LedgerError> {
     ledger.set_current_epoch(new_epoch);
+
+    // -----------------------------------------------------------------------
+    // 0. PPUP — resolve pending protocol-parameter update proposals
+    //    (Shelley→Babbage).  Must happen before extracting params so
+    //    that updated values are used for reward calculation etc.
+    //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` (NEWPP).
+    // -----------------------------------------------------------------------
+    let ppup_applied = resolve_pending_ppup(ledger, new_epoch);
 
     let params = ledger
         .protocol_params()
@@ -208,6 +218,7 @@ pub fn apply_epoch_boundary(
         governance_actions_enacted,
         enacted_gov_action_ids,
         enact_outcomes,
+        ppup_applied,
     })
 }
 
@@ -414,6 +425,67 @@ pub fn retire_pools_with_refunds(
     }
 
     (retired_keys, total_refunded)
+}
+
+/// Resolves pending Shelley-era PPUP proposals at the epoch boundary.
+///
+/// If pending proposals target `new_epoch`, the update with the most
+/// supporting genesis delegates is applied to the protocol parameters
+/// (majority-wins rule).  On a tie the lexicographically smaller CBOR
+/// serialization wins for determinism.
+///
+/// Returns `true` if a parameter update was applied.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` (NEWPP sub-rule).
+fn resolve_pending_ppup(ledger: &mut LedgerState, new_epoch: EpochNo) -> bool {
+    // Clone data out to avoid borrow conflicts.
+    let (proposals, target_epoch) = ledger.pending_ppup();
+    let target_epoch = match target_epoch {
+        Some(e) if e == new_epoch => e,
+        _ => {
+            ledger.clear_pending_ppup();
+            return false;
+        }
+    };
+    let _ = target_epoch;
+
+    if proposals.is_empty() {
+        ledger.clear_pending_ppup();
+        return false;
+    }
+
+    // Clone proposals for processing — releases the borrow.
+    let proposals: Vec<crate::protocol_params::ProtocolParamUpdate> =
+        proposals.values().cloned().collect();
+    ledger.clear_pending_ppup();
+
+    // Group proposals by identical update and count supporters.
+    let mut vote_groups: Vec<(crate::protocol_params::ProtocolParamUpdate, usize)> = Vec::new();
+    for update in &proposals {
+        if let Some(entry) = vote_groups.iter_mut().find(|(u, _)| u == update) {
+            entry.1 += 1;
+        } else {
+            vote_groups.push((update.clone(), 1));
+        }
+    }
+
+    // Find the update with the most supporters.
+    let winner = vote_groups
+        .into_iter()
+        .max_by_key(|&(_, count)| count)
+        .map(|(update, _count)| update);
+
+    if let Some(update) = winner {
+        if update.is_empty() {
+            return false;
+        }
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.apply_update(&update);
+            return true;
+        }
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,5 +1514,204 @@ mod tests {
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(event.enacted_gov_action_ids.is_empty());
         assert!(event.enact_outcomes.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // PPUP (protocol-parameter update proposal) tests
+    // -----------------------------------------------------------------------
+
+    use crate::eras::shelley::ShelleyUpdate;
+    use crate::protocol_params::ProtocolParamUpdate;
+    use crate::CborEncode;
+
+    fn make_ppup_update(key_byte: u8, ppu: &ProtocolParamUpdate, epoch: u64) -> ShelleyUpdate {
+        let mut proposed = BTreeMap::new();
+        proposed.insert([key_byte; 28], ppu.to_cbor_bytes());
+        ShelleyUpdate {
+            proposed_protocol_parameter_updates: proposed,
+            epoch,
+        }
+    }
+
+    #[test]
+    fn ppup_applied_at_matching_epoch() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        // Propose min_fee_a = 55 for epoch 2.
+        let ppu = ProtocolParamUpdate {
+            min_fee_a: Some(55),
+            ..Default::default()
+        };
+        let update = make_ppup_update(0xAA, &ppu, 2);
+        ledger.accumulate_ppup(&update);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 2 should apply the update.
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+        assert!(event.ppup_applied);
+        assert_eq!(ledger.protocol_params().unwrap().min_fee_a, 55);
+    }
+
+    #[test]
+    fn ppup_not_applied_wrong_epoch() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        let ppu = ProtocolParamUpdate {
+            min_fee_a: Some(99),
+            ..Default::default()
+        };
+        let update = make_ppup_update(0xBB, &ppu, 5);
+        ledger.accumulate_ppup(&update);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 2 does not match the proposal epoch 5.
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+        assert!(!event.ppup_applied);
+        // min_fee_a should be unchanged from genesis (44).
+        assert_eq!(ledger.protocol_params().unwrap().min_fee_a, 44);
+    }
+
+    #[test]
+    fn ppup_majority_wins() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        let ppu_a = ProtocolParamUpdate {
+            min_fee_a: Some(77),
+            ..Default::default()
+        };
+        let ppu_b = ProtocolParamUpdate {
+            min_fee_a: Some(88),
+            ..Default::default()
+        };
+
+        // Three delegates: two vote for ppu_a, one for ppu_b.
+        let update_a1 = make_ppup_update(0x01, &ppu_a, 3);
+        let update_a2 = make_ppup_update(0x02, &ppu_a, 3);
+        let update_b = make_ppup_update(0x03, &ppu_b, 3);
+        ledger.accumulate_ppup(&update_a1);
+        ledger.accumulate_ppup(&update_a2);
+        ledger.accumulate_ppup(&update_b);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf)
+            .expect("epoch 3");
+        assert!(event.ppup_applied);
+        // ppu_a should win (min_fee_a = 77).
+        assert_eq!(ledger.protocol_params().unwrap().min_fee_a, 77);
+    }
+
+    #[test]
+    fn ppup_empty_update_is_noop() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        let mut pp = test_protocol_params();
+        pp.min_fee_a = 44;
+        ledger.set_protocol_params(pp);
+
+        let ppu = ProtocolParamUpdate::default(); // empty
+        let update = make_ppup_update(0xCC, &ppu, 2);
+        ledger.accumulate_ppup(&update);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+        assert!(!event.ppup_applied);
+        assert_eq!(ledger.protocol_params().unwrap().min_fee_a, 44);
+    }
+
+    #[test]
+    fn ppup_cleared_after_resolution() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        let ppu = ProtocolParamUpdate {
+            min_fee_b: Some(999),
+            ..Default::default()
+        };
+        let update = make_ppup_update(0xDD, &ppu, 2);
+        ledger.accumulate_ppup(&update);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // After resolution, pending state should be empty.
+        let (proposals, epoch) = ledger.pending_ppup();
+        assert!(proposals.is_empty());
+        assert!(epoch.is_none());
+    }
+
+    #[test]
+    fn ppup_replaces_on_different_epoch() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        // First propose for epoch 2.
+        let ppu_old = ProtocolParamUpdate {
+            min_fee_a: Some(11),
+            ..Default::default()
+        };
+        let update_old = make_ppup_update(0xEE, &ppu_old, 2);
+        ledger.accumulate_ppup(&update_old);
+
+        // Then propose for epoch 3 — should replace epoch 2 proposals.
+        let ppu_new = ProtocolParamUpdate {
+            min_fee_a: Some(22),
+            ..Default::default()
+        };
+        let update_new = make_ppup_update(0xFF, &ppu_new, 3);
+        ledger.accumulate_ppup(&update_new);
+
+        let (_, epoch) = ledger.pending_ppup();
+        assert_eq!(epoch, Some(EpochNo(3)));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 2 should not find proposals (replaced by epoch 3 set).
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+        assert!(!event.ppup_applied);
+    }
+
+    #[test]
+    fn ppup_multiple_fields_applied() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        let mut pp = test_protocol_params();
+        pp.min_fee_a = 44;
+        pp.max_tx_size = 16384;
+        ledger.set_protocol_params(pp);
+
+        let ppu = ProtocolParamUpdate {
+            min_fee_a: Some(55),
+            max_tx_size: Some(32768),
+            ..Default::default()
+        };
+        let update = make_ppup_update(0xAA, &ppu, 2);
+        ledger.accumulate_ppup(&update);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+        assert!(event.ppup_applied);
+        let pp = ledger.protocol_params().unwrap();
+        assert_eq!(pp.min_fee_a, 55);
+        assert_eq!(pp.max_tx_size, 32768);
     }
 }

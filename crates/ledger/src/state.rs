@@ -2191,6 +2191,37 @@ impl LedgerState {
         self.protocol_params = Some(params);
     }
 
+    /// Accumulates a Shelley-era protocol-parameter update proposal (PPUP).
+    ///
+    /// If the targeted epoch differs from the currently accumulated set,
+    /// the old set is replaced.  Each genesis-delegate key hash either
+    /// overwrites or adds its proposal entry.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Ppup`.
+    pub fn accumulate_ppup(&mut self, update: &ShelleyUpdate) {
+        let target = EpochNo(update.epoch);
+        if self.pending_ppup_epoch != Some(target) {
+            self.pending_ppup.clear();
+            self.pending_ppup_epoch = Some(target);
+        }
+        for (hash, raw) in &update.proposed_protocol_parameter_updates {
+            if let Ok(ppu) = ProtocolParamUpdate::from_cbor_bytes(raw) {
+                self.pending_ppup.insert(*hash, ppu);
+            }
+        }
+    }
+
+    /// Returns the currently accumulated PPUP proposals and their target epoch.
+    pub fn pending_ppup(&self) -> (&BTreeMap<[u8; 28], ProtocolParamUpdate>, Option<EpochNo>) {
+        (&self.pending_ppup, self.pending_ppup_epoch)
+    }
+
+    /// Clears the pending PPUP proposals (called after epoch-boundary resolution).
+    pub fn clear_pending_ppup(&mut self) {
+        self.pending_ppup.clear();
+        self.pending_ppup_epoch = None;
+    }
+
     /// Returns a reference to the deposit pot tracking key/pool/drep deposits.
     pub fn deposit_pot(&self) -> &DepositPot {
         &self.deposit_pot
@@ -2674,6 +2705,12 @@ impl LedgerState {
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
+        // PPUP accumulation: collect protocol-parameter update proposals.
+        for (_, _, body, _) in &decoded {
+            if let Some(ref update) = body.update {
+                self.accumulate_ppup(update);
+            }
+        }
         Ok(())
     }
 
@@ -2757,6 +2794,12 @@ impl LedgerState {
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
+        // PPUP accumulation: collect protocol-parameter update proposals.
+        for (_, _, body, _) in &decoded {
+            if let Some(ref update) = body.update {
+                self.accumulate_ppup(update);
+            }
+        }
         Ok(())
     }
 
@@ -2840,6 +2883,12 @@ impl LedgerState {
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
+        // PPUP accumulation: collect protocol-parameter update proposals.
+        for (_, _, body, _) in &decoded {
+            if let Some(ref update) = body.update {
+                self.accumulate_ppup(update);
+            }
+        }
         Ok(())
     }
 
@@ -2953,6 +3002,12 @@ impl LedgerState {
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
+        // PPUP accumulation: collect protocol-parameter update proposals.
+        for (_, _, body, _) in &decoded {
+            if let Some(ref update) = body.update {
+                self.accumulate_ppup(update);
+            }
+        }
         Ok(())
     }
 
@@ -3066,6 +3121,12 @@ impl LedgerState {
         self.drep_state = staged_drep_state;
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
+        // PPUP accumulation: collect protocol-parameter update proposals.
+        for (_, _, body, _) in &decoded {
+            if let Some(ref update) = body.update {
+                self.accumulate_ppup(update);
+            }
+        }
         Ok(())
     }
 
