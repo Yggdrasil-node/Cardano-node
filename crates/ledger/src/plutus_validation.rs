@@ -303,24 +303,51 @@ pub fn resolve_script_purpose(
 /// `required_scripts` is the set of script hashes that need either native
 /// or Plutus satisfaction. Scripts already satisfied by native evaluation
 /// should be removed before calling this function.
-pub fn validate_plutus_scripts(
-    evaluator: Option<&dyn PlutusEvaluator>,
-    witness_bytes: Option<&[u8]>,
-    required_script_hashes: &std::collections::HashSet<[u8; 28]>,
-    spending_utxo: &MultiEraUtxo,
-    sorted_inputs: &[crate::eras::shelley::ShelleyTxIn],
-    sorted_policy_ids: &[[u8; 28]],
-    certificates: &[crate::types::DCert],
-    sorted_reward_accounts: &[Vec<u8>],
-    sorted_voters: &[Voter],
-    proposal_procedures: &[ProposalProcedure],
-) -> Result<(), LedgerError> {
-    // If no required scripts, nothing to do.
-    if required_script_hashes.is_empty() {
-        return Ok(());
+pub fn collect_plutus_scripts(
+    ws: &crate::eras::shelley::ShelleyWitnessSet,
+    utxo: &crate::utxo::MultiEraUtxo,
+    reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+) -> HashMap<[u8; 28], (PlutusVersion, Vec<u8>)> {
+    let mut scripts = HashMap::new();
+    // Collect from witness set
+    for s in &ws.plutus_v1_scripts {
+        let hash = plutus_script_hash(PlutusVersion::V1, s);
+        scripts.insert(hash, (PlutusVersion::V1, s.clone()));
     }
-
-    let wb = match witness_bytes {
+    for s in &ws.plutus_v2_scripts {
+        let hash = plutus_script_hash(PlutusVersion::V2, s);
+        scripts.insert(hash, (PlutusVersion::V2, s.clone()));
+    }
+    for s in &ws.plutus_v3_scripts {
+        let hash = plutus_script_hash(PlutusVersion::V3, s);
+        scripts.insert(hash, (PlutusVersion::V3, s.clone()));
+    }
+    // Collect from reference inputs' UTxO entries
+    if let Some(ref_inputs) = reference_inputs {
+        for txin in ref_inputs {
+            if let Some(txout) = utxo.get(txin) {
+                if let Some(sref) = txout.script_ref() {
+                    match &sref.0 {
+                        crate::plutus::Script::PlutusV1(bytes) => {
+                            let hash = plutus_script_hash(PlutusVersion::V1, bytes);
+                            scripts.insert(hash, (PlutusVersion::V1, bytes.clone()));
+                        }
+                        crate::plutus::Script::PlutusV2(bytes) => {
+                            let hash = plutus_script_hash(PlutusVersion::V2, bytes);
+                            scripts.insert(hash, (PlutusVersion::V2, bytes.clone()));
+                        }
+                        crate::plutus::Script::PlutusV3(bytes) => {
+                            let hash = plutus_script_hash(PlutusVersion::V3, bytes);
+                            scripts.insert(hash, (PlutusVersion::V3, bytes.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    scripts
+}
         Some(wb) => wb,
         None => return Ok(()), // soft-skip like witness validation
     };
@@ -328,7 +355,11 @@ pub fn validate_plutus_scripts(
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
 
     // Collect available Plutus scripts and datum map.
-    let plutus_scripts = collect_plutus_scripts(&ws);
+    let plutus_scripts = collect_plutus_scripts(
+        &ws,
+        utxo,
+        if !sorted_inputs.is_empty() { Some(sorted_inputs) } else { None },
+    );
     let datum_map = collect_datum_map(&ws);
 
     // Determine which required script hashes need Plutus evaluation
