@@ -1608,6 +1608,63 @@ struct ReconnectingRunState {
     last_connected_peer_addr: Option<SocketAddr>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RollbackReAdmissionStats {
+    re_admitted: usize,
+    duplicate: usize,
+    expired: usize,
+    conflicting: usize,
+    capacity_exceeded: usize,
+    missing_cache_entry: usize,
+}
+
+fn cache_confirmed_entries(
+    mempool: &SharedMempool,
+    confirmed_ids: &[TxId],
+    recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
+) -> usize {
+    if confirmed_ids.is_empty() {
+        return 0;
+    }
+
+    let snapshot = mempool.snapshot();
+    let mut cached = 0usize;
+    for tx_id in confirmed_ids {
+        if recently_confirmed.contains_key(tx_id) {
+            continue;
+        }
+        if let Some(entry) = snapshot.mempool_lookup_tx_by_id(tx_id) {
+            recently_confirmed.insert(*tx_id, entry.clone());
+            cached += 1;
+        }
+    }
+    cached
+}
+
+fn re_admit_rolled_back_tx_ids(
+    mempool: &SharedMempool,
+    rolled_back_tx_ids: &[TxId],
+    current_slot: SlotNo,
+    recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
+) -> RollbackReAdmissionStats {
+    let mut stats = RollbackReAdmissionStats::default();
+    for tx_id in rolled_back_tx_ids {
+        let Some(entry) = recently_confirmed.remove(tx_id) else {
+            stats.missing_cache_entry += 1;
+            continue;
+        };
+
+        match mempool.insert_checked(entry, current_slot) {
+            Ok(()) => stats.re_admitted += 1,
+            Err(MempoolError::Duplicate(_)) => stats.duplicate += 1,
+            Err(MempoolError::TtlExpired { .. }) => stats.expired += 1,
+            Err(MempoolError::ConflictingInputs(_)) => stats.conflicting += 1,
+            Err(MempoolError::CapacityExceeded { .. }) => stats.capacity_exceeded += 1,
+        }
+    }
+    stats
+}
+
 impl ReconnectingRunState {
     fn new() -> Self {
         Self {
@@ -2103,6 +2160,7 @@ where
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
     let mut preferred_peer = None;
+    let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
 
     loop {
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
@@ -2223,6 +2281,29 @@ where
                                         ("txCount", json!(applied.rolled_back_tx_ids.len())),
                                     ]),
                                 );
+
+                                if let Some(ref mempool) = mempool {
+                                    let stats = re_admit_rolled_back_tx_ids(
+                                        mempool,
+                                        &applied.rolled_back_tx_ids,
+                                        progress.current_point.slot().unwrap_or(SlotNo(0)),
+                                        &mut recently_confirmed,
+                                    );
+                                    tracer.trace_runtime(
+                                        "Mempool.RollbackReadmission",
+                                        "Info",
+                                        "processed rolled-back transaction re-admission",
+                                        trace_fields([
+                                            ("rolledBackTxCount", json!(applied.rolled_back_tx_ids.len())),
+                                            ("reAdmitted", json!(stats.re_admitted)),
+                                            ("duplicate", json!(stats.duplicate)),
+                                            ("expired", json!(stats.expired)),
+                                            ("conflicting", json!(stats.conflicting)),
+                                            ("capacityExceeded", json!(stats.capacity_exceeded)),
+                                            ("missingCacheEntry", json!(stats.missing_cache_entry)),
+                                        ]),
+                                    );
+                                }
                             }
 
                             if let Some(ref mempool) = mempool {
@@ -2233,15 +2314,21 @@ where
                                             .flat_map(extract_tx_ids)
                                             .collect();
                                         if !confirmed_ids.is_empty() {
+                                            let cached = cache_confirmed_entries(
+                                                mempool,
+                                                &confirmed_ids,
+                                                &mut recently_confirmed,
+                                            );
                                             let removed = mempool.remove_confirmed(&confirmed_ids);
                                             let tip_slot = tip.slot().unwrap_or(SlotNo(0));
                                             let purged = mempool.purge_expired(tip_slot);
-                                            if removed + purged > 0 {
+                                            if removed + purged + cached > 0 {
                                                 tracer.trace_runtime(
                                                     "Mempool.Eviction",
                                                     "Info",
                                                     "evicted confirmed/expired txs from mempool",
                                                     trace_fields([
+                                                        ("cachedForRollback", json!(cached)),
                                                         ("confirmed", json!(removed)),
                                                         ("expired", json!(purged)),
                                                     ]),
@@ -2346,6 +2433,7 @@ where
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
     let mut preferred_peer = None;
+    let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
 
     loop {
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
@@ -2469,6 +2557,29 @@ where
                                         ("txCount", json!(applied.rolled_back_tx_ids.len())),
                                     ]),
                                 );
+
+                                if let Some(ref mempool) = mempool {
+                                    let stats = re_admit_rolled_back_tx_ids(
+                                        mempool,
+                                        &applied.rolled_back_tx_ids,
+                                        progress.current_point.slot().unwrap_or(SlotNo(0)),
+                                        &mut recently_confirmed,
+                                    );
+                                    tracer.trace_runtime(
+                                        "Mempool.RollbackReadmission",
+                                        "Info",
+                                        "processed rolled-back transaction re-admission",
+                                        trace_fields([
+                                            ("rolledBackTxCount", json!(applied.rolled_back_tx_ids.len())),
+                                            ("reAdmitted", json!(stats.re_admitted)),
+                                            ("duplicate", json!(stats.duplicate)),
+                                            ("expired", json!(stats.expired)),
+                                            ("conflicting", json!(stats.conflicting)),
+                                            ("capacityExceeded", json!(stats.capacity_exceeded)),
+                                            ("missingCacheEntry", json!(stats.missing_cache_entry)),
+                                        ]),
+                                    );
+                                }
                             }
 
                             // Evict confirmed txs from mempool on roll-forward.
@@ -2480,15 +2591,21 @@ where
                                             .flat_map(extract_tx_ids)
                                             .collect();
                                         if !confirmed_ids.is_empty() {
+                                            let cached = cache_confirmed_entries(
+                                                mempool,
+                                                &confirmed_ids,
+                                                &mut recently_confirmed,
+                                            );
                                             let removed = mempool.remove_confirmed(&confirmed_ids);
                                             let tip_slot = tip.slot().unwrap_or(SlotNo(0));
                                             let purged = mempool.purge_expired(tip_slot);
-                                            if removed + purged > 0 {
+                                            if removed + purged + cached > 0 {
                                                 tracer.trace_runtime(
                                                     "Mempool.Eviction",
                                                     "Info",
                                                     "evicted confirmed/expired txs from mempool",
                                                     trace_fields([
+                                                        ("cachedForRollback", json!(cached)),
                                                         ("confirmed", json!(removed)),
                                                         ("expired", json!(purged)),
                                                     ]),
@@ -3151,6 +3268,7 @@ mod tests {
     use crate::tracer::NodeTracer;
     use crate::sync::LedgerCheckpointPolicy;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::sync::{Arc, RwLock};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
@@ -3170,6 +3288,19 @@ mod tests {
 
     fn local_addr(port: u16) -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    }
+
+    fn sample_mempool_entry(seed: u8, fee: u64, ttl: u64) -> yggdrasil_mempool::MempoolEntry {
+        yggdrasil_mempool::MempoolEntry {
+            era: yggdrasil_ledger::Era::Shelley,
+            tx_id: yggdrasil_ledger::TxId([seed; 32]),
+            fee,
+            body: vec![seed],
+            raw_tx: vec![seed, seed.wrapping_add(1)],
+            size_bytes: 2,
+            ttl: SlotNo(ttl),
+            inputs: vec![],
+        }
     }
 
     fn sample_node_config() -> NodeConfig {
@@ -3386,6 +3517,52 @@ mod tests {
             &cfg,
         );
         assert!(req2.mempool.is_none());
+    }
+
+    #[test]
+    fn re_admit_rolled_back_tx_ids_reinserts_cached_entries() {
+        let mempool = SharedMempool::with_capacity(1024);
+        let entry = sample_mempool_entry(42, 100, 1000);
+        let tx_id = entry.tx_id;
+        mempool.insert(entry.clone()).expect("insert entry");
+
+        let mut recently_confirmed = BTreeMap::new();
+        let cached = super::cache_confirmed_entries(&mempool, &[tx_id], &mut recently_confirmed);
+        assert_eq!(cached, 1);
+
+        let removed = mempool.remove_confirmed(&[tx_id]);
+        assert_eq!(removed, 1);
+        assert!(!mempool.contains(&tx_id));
+
+        let stats = super::re_admit_rolled_back_tx_ids(
+            &mempool,
+            &[tx_id],
+            SlotNo(10),
+            &mut recently_confirmed,
+        );
+
+        assert_eq!(stats.re_admitted, 1);
+        assert_eq!(stats.missing_cache_entry, 0);
+        assert!(mempool.contains(&tx_id));
+        assert!(!recently_confirmed.contains_key(&tx_id));
+    }
+
+    #[test]
+    fn re_admit_rolled_back_tx_ids_counts_missing_cache_entries() {
+        let mempool = SharedMempool::with_capacity(1024);
+        let tx_id = yggdrasil_ledger::TxId([7; 32]);
+        let mut recently_confirmed = BTreeMap::new();
+
+        let stats = super::re_admit_rolled_back_tx_ids(
+            &mempool,
+            &[tx_id],
+            SlotNo(10),
+            &mut recently_confirmed,
+        );
+
+        assert_eq!(stats.re_admitted, 0);
+        assert_eq!(stats.missing_cache_entry, 1);
+        assert!(!mempool.contains(&tx_id));
     }
 
     #[test]
