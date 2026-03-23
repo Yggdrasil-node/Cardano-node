@@ -1323,6 +1323,28 @@ pub fn enact_gov_action(
     reward_accounts: &mut RewardAccounts,
     accounting: &mut AccountingState,
 ) -> EnactOutcome {
+    enact_gov_action_at_epoch(
+        enact,
+        EpochNo(0),
+        action_id,
+        action,
+        committee,
+        protocol_params,
+        reward_accounts,
+        accounting,
+    )
+}
+
+fn enact_gov_action_at_epoch(
+    enact: &mut EnactState,
+    current_epoch: EpochNo,
+    action_id: crate::eras::conway::GovActionId,
+    action: &crate::eras::conway::GovAction,
+    committee: &mut CommitteeState,
+    protocol_params: &mut Option<crate::protocol_params::ProtocolParameters>,
+    reward_accounts: &mut RewardAccounts,
+    accounting: &mut AccountingState,
+) -> EnactOutcome {
     use crate::eras::conway::GovAction;
 
     match action {
@@ -1356,6 +1378,11 @@ pub fn enact_gov_action(
             quorum,
             ..
         } => {
+            let max_term_epoch = protocol_params
+                .as_ref()
+                .and_then(|pp| pp.committee_term_limit)
+                .map(|limit| current_epoch.0.saturating_add(limit));
+
             let mut removed = 0usize;
             for cred in members_to_remove {
                 if committee.unregister(cred).is_some() {
@@ -1363,9 +1390,14 @@ pub fn enact_gov_action(
                 }
             }
             let mut added = 0usize;
-            for (cred, _term_epoch) in members_to_add {
+            for (cred, term_epoch) in members_to_add {
+                if *term_epoch <= current_epoch.0 {
+                    continue;
+                }
+                if max_term_epoch.is_some_and(|max_epoch| *term_epoch > max_epoch) {
+                    continue;
+                }
                 // Register the new member with no hot-key authorization.
-                // Term-limit epoch tracking is a future milestone.
                 if committee.register(cred.clone()) {
                     added += 1;
                 }
@@ -1381,9 +1413,8 @@ pub fn enact_gov_action(
         GovAction::HardForkInitiation {
             protocol_version, ..
         } => {
-            if let Some(pp) = protocol_params.as_mut() {
-                pp.protocol_version = Some(*protocol_version);
-            }
+            let params = protocol_params.get_or_insert_with(Default::default);
+            params.protocol_version = Some(*protocol_version);
             enact.prev_hard_fork = Some(action_id);
             EnactOutcome::HardForkEnacted {
                 new_version: *protocol_version,
@@ -2481,8 +2512,9 @@ impl LedgerState {
         action_id: crate::eras::conway::GovActionId,
         action: &crate::eras::conway::GovAction,
     ) -> EnactOutcome {
-        enact_gov_action(
+        enact_gov_action_at_epoch(
             &mut self.enact_state,
+            self.current_epoch,
             action_id,
             action,
             &mut self.committee_state,
@@ -4608,6 +4640,21 @@ fn validate_conway_proposals(
             if !invalid_members.is_empty() {
                 return Err(LedgerError::ExpirationEpochTooSmall(invalid_members));
             }
+
+            if let Some(term_limit) = protocol_params.and_then(|pp| pp.committee_term_limit) {
+                let max_epoch = EpochNo(current_epoch.0.saturating_add(term_limit));
+                let invalid_members: Vec<_> = members_to_add
+                    .iter()
+                    .filter(|(_, epoch)| **epoch > max_epoch.0)
+                    .map(|(member, epoch)| (*member, EpochNo(*epoch)))
+                    .collect();
+                if !invalid_members.is_empty() {
+                    return Err(LedgerError::ExpirationEpochTooLarge {
+                        members: invalid_members,
+                        max_epoch,
+                    });
+                }
+            }
         }
     }
 
@@ -5449,8 +5496,11 @@ pub(crate) fn tally_spo_votes(
 /// (InfoAction — always accepted, never enacted).
 pub(crate) fn drep_threshold_for_action(
     action: &crate::eras::conway::GovAction,
+    committee_state: &CommitteeState,
     thresholds: &DRepVotingThresholds,
 ) -> Option<UnitInterval> {
+    let committee_is_elected = conway_committee_is_elected(committee_state);
+
     match action {
         crate::eras::conway::GovAction::ParameterChange {
             protocol_param_update,
@@ -5459,9 +5509,15 @@ pub(crate) fn drep_threshold_for_action(
         crate::eras::conway::GovAction::HardForkInitiation { .. } => {
             Some(thresholds.hard_fork_initiation)
         }
-        crate::eras::conway::GovAction::NoConfidence { .. }
-        | crate::eras::conway::GovAction::UpdateCommittee { .. } => {
-            Some(thresholds.committee_normal)
+        crate::eras::conway::GovAction::NoConfidence { .. } => {
+            Some(thresholds.motion_no_confidence)
+        }
+        crate::eras::conway::GovAction::UpdateCommittee { .. } => {
+            Some(if committee_is_elected {
+                thresholds.committee_normal
+            } else {
+                thresholds.committee_no_confidence
+            })
         }
         crate::eras::conway::GovAction::NewConstitution { .. } => {
             Some(thresholds.update_to_constitution)
@@ -5478,8 +5534,11 @@ pub(crate) fn drep_threshold_for_action(
 /// Returns `None` for actions where SPO votes are not required.
 pub(crate) fn spo_threshold_for_action(
     action: &crate::eras::conway::GovAction,
+    committee_state: &CommitteeState,
     thresholds: &PoolVotingThresholds,
 ) -> Option<UnitInterval> {
+    let committee_is_elected = conway_committee_is_elected(committee_state);
+
     match action {
         crate::eras::conway::GovAction::ParameterChange {
             protocol_param_update,
@@ -5489,14 +5548,26 @@ pub(crate) fn spo_threshold_for_action(
         crate::eras::conway::GovAction::HardForkInitiation { .. } => {
             Some(thresholds.hard_fork_initiation)
         }
-        crate::eras::conway::GovAction::NoConfidence { .. }
-        | crate::eras::conway::GovAction::UpdateCommittee { .. } => {
-            Some(thresholds.committee_normal)
+        crate::eras::conway::GovAction::NoConfidence { .. } => {
+            Some(thresholds.motion_no_confidence)
+        }
+        crate::eras::conway::GovAction::UpdateCommittee { .. } => {
+            Some(if committee_is_elected {
+                thresholds.committee_normal
+            } else {
+                thresholds.committee_no_confidence
+            })
         }
         crate::eras::conway::GovAction::NewConstitution { .. }
         | crate::eras::conway::GovAction::TreasuryWithdrawals { .. }
         | crate::eras::conway::GovAction::InfoAction => None,
     }
+}
+
+fn conway_committee_is_elected(committee_state: &CommitteeState) -> bool {
+    committee_state
+        .iter()
+        .any(|(_, member_state)| !member_state.is_resigned())
 }
 
 /// Determines whether a governance action is accepted by the
@@ -5528,13 +5599,18 @@ pub(crate) fn accepted_by_committee(
 /// - The stake-weighted DRep tally meets the per-type threshold.
 pub(crate) fn accepted_by_dreps(
     action: &GovernanceActionState,
+    committee_state: &CommitteeState,
     drep_state: &DrepState,
     drep_delegated_stake: &BTreeMap<DRep, u64>,
     current_epoch: EpochNo,
     drep_activity: u64,
     thresholds: &DRepVotingThresholds,
 ) -> bool {
-    let Some(threshold) = drep_threshold_for_action(&action.proposal.gov_action, thresholds) else {
+    let Some(threshold) = drep_threshold_for_action(
+        &action.proposal.gov_action,
+        committee_state,
+        thresholds,
+    ) else {
         return true; // no DRep vote required for this action type
     };
     let tally = tally_drep_votes(
@@ -5555,10 +5631,15 @@ pub(crate) fn accepted_by_dreps(
 /// - The stake-weighted SPO tally meets the per-type threshold.
 pub(crate) fn accepted_by_spo(
     action: &GovernanceActionState,
+    committee_state: &CommitteeState,
     pool_stake_dist: &PoolStakeDistribution,
     thresholds: &PoolVotingThresholds,
 ) -> bool {
-    let Some(threshold) = spo_threshold_for_action(&action.proposal.gov_action, thresholds) else {
+    let Some(threshold) = spo_threshold_for_action(
+        &action.proposal.gov_action,
+        committee_state,
+        thresholds,
+    ) else {
         return true; // no SPO vote required for this action type
     };
     let tally = tally_spo_votes(action, pool_stake_dist);
@@ -5587,13 +5668,14 @@ pub(crate) fn ratify_action(
     accepted_by_committee(action, committee_state, committee_quorum)
         && accepted_by_dreps(
             action,
+            committee_state,
             drep_state,
             drep_delegated_stake,
             current_epoch,
             drep_activity,
             drep_thresholds,
         )
-        && accepted_by_spo(action, pool_stake_dist, pool_thresholds)
+        && accepted_by_spo(action, committee_state, pool_stake_dist, pool_thresholds)
 }
 
 #[cfg(test)]
@@ -5977,6 +6059,106 @@ mod tests {
     }
 
     #[test]
+    fn test_enact_update_committee_ignores_non_future_member_expirations() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let existing = crate::StakeCredential::AddrKeyHash([0x21; 28]);
+        let add_past = crate::StakeCredential::AddrKeyHash([0x22; 28]);
+        let add_now = crate::StakeCredential::AddrKeyHash([0x23; 28]);
+        let add_future = crate::StakeCredential::AddrKeyHash([0x24; 28]);
+        committee.register(existing);
+
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(add_past, 9);
+        members_to_add.insert(add_now, 10);
+        members_to_add.insert(add_future, 11);
+
+        let outcome = enact_gov_action_at_epoch(
+            &mut es,
+            EpochNo(10),
+            sample_gov_action_id(41),
+            &GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+
+        assert_eq!(
+            outcome,
+            EnactOutcome::CommitteeUpdated {
+                members_removed: 0,
+                members_added: 1,
+            }
+        );
+        assert!(!committee.is_member(&add_past));
+        assert!(!committee.is_member(&add_now));
+        assert!(committee.is_member(&add_future));
+    }
+
+    #[test]
+    fn test_enact_update_committee_ignores_member_expirations_beyond_term_limit() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let existing = crate::StakeCredential::AddrKeyHash([0x31; 28]);
+        let add_within_limit = crate::StakeCredential::AddrKeyHash([0x32; 28]);
+        let add_beyond_limit = crate::StakeCredential::AddrKeyHash([0x33; 28]);
+        committee.register(existing);
+
+        let mut pp = Some(crate::protocol_params::ProtocolParameters {
+            committee_term_limit: Some(2),
+            ..Default::default()
+        });
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(add_within_limit, 12); // epoch 10 + 2 => accepted
+        members_to_add.insert(add_beyond_limit, 13); // beyond term limit => ignored
+
+        let outcome = enact_gov_action_at_epoch(
+            &mut es,
+            EpochNo(10),
+            sample_gov_action_id(43),
+            &GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+
+        assert_eq!(
+            outcome,
+            EnactOutcome::CommitteeUpdated {
+                members_removed: 0,
+                members_added: 1,
+            }
+        );
+        assert!(committee.is_member(&add_within_limit));
+        assert!(!committee.is_member(&add_beyond_limit));
+    }
+
+    #[test]
     fn test_enact_hard_fork_initiation() {
         let mut es = EnactState::new();
         let mut committee = CommitteeState::new();
@@ -6004,6 +6186,37 @@ mod tests {
             }
         );
         assert_eq!(pp.unwrap().protocol_version, Some((10, 0)));
+        assert_eq!(es.prev_hard_fork(), Some(&action_id));
+    }
+
+    #[test]
+    fn test_enact_hard_fork_initializes_protocol_params_when_missing() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(42);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(
+            outcome,
+            EnactOutcome::HardForkEnacted {
+                new_version: (10, 0),
+            }
+        );
+        assert_eq!(pp.and_then(|p| p.protocol_version), Some((10, 0)));
         assert_eq!(es.prev_hard_fork(), Some(&action_id));
     }
 
@@ -6523,6 +6736,93 @@ mod tests {
     }
 
     #[test]
+    fn test_update_committee_rejects_expiration_epoch_beyond_term_limit() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(
+            crate::StakeCredential::AddrKeyHash([0x44; 28]),
+            13,
+        );
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            1,
+            1,
+        )];
+        let protocol_params = crate::protocol_params::ProtocolParameters {
+            committee_term_limit: Some(2),
+            ..Default::default()
+        };
+
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(10),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            Some(&protocol_params),
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::ExpirationEpochTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn test_update_committee_accepts_expiration_epoch_at_term_limit() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(
+            crate::StakeCredential::AddrKeyHash([0x55; 28]),
+            12,
+        );
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            1,
+            1,
+        )];
+        let protocol_params = crate::protocol_params::ProtocolParameters {
+            committee_term_limit: Some(2),
+            ..Default::default()
+        };
+
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(10),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            Some(&protocol_params),
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_parameter_change_rejects_malformed_unit_interval() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
@@ -6969,11 +7269,13 @@ mod tests {
     #[test]
     fn drep_threshold_for_hard_fork() {
         let thresholds = DRepVotingThresholds::default();
+        let committee_state = CommitteeState::default();
         let t = drep_threshold_for_action(
             &GovAction::HardForkInitiation {
                 prev_action_id: None,
                 protocol_version: (10, 0),
             },
+            &committee_state,
             &thresholds,
         );
         assert_eq!(t, Some(thresholds.hard_fork_initiation));
@@ -6982,18 +7284,21 @@ mod tests {
     #[test]
     fn drep_threshold_for_info_is_none() {
         let thresholds = DRepVotingThresholds::default();
-        let t = drep_threshold_for_action(&GovAction::InfoAction, &thresholds);
+        let committee_state = CommitteeState::default();
+        let t = drep_threshold_for_action(&GovAction::InfoAction, &committee_state, &thresholds);
         assert!(t.is_none());
     }
 
     #[test]
     fn spo_threshold_for_constitution_is_none() {
         let thresholds = PoolVotingThresholds::default();
+        let committee_state = CommitteeState::default();
         let t = spo_threshold_for_action(
             &GovAction::NewConstitution {
                 prev_action_id: None,
                 constitution: sample_constitution("c1"),
             },
+            &committee_state,
             &thresholds,
         );
         assert!(t.is_none());
@@ -7002,19 +7307,50 @@ mod tests {
     #[test]
     fn spo_threshold_for_treasury_is_none() {
         let thresholds = PoolVotingThresholds::default();
+        let committee_state = CommitteeState::default();
         let t = spo_threshold_for_action(
             &GovAction::TreasuryWithdrawals {
                 withdrawals: BTreeMap::new(),
                 guardrails_script_hash: None,
             },
+            &committee_state,
             &thresholds,
         );
         assert!(t.is_none());
     }
 
     #[test]
+    fn drep_threshold_for_no_confidence_uses_motion_threshold() {
+        let thresholds = DRepVotingThresholds::default();
+        let committee_state = CommitteeState::default();
+        let t = drep_threshold_for_action(
+            &GovAction::NoConfidence {
+                prev_action_id: None,
+            },
+            &committee_state,
+            &thresholds,
+        );
+        assert_eq!(t, Some(thresholds.motion_no_confidence));
+    }
+
+    #[test]
+    fn spo_threshold_for_no_confidence_uses_motion_threshold() {
+        let thresholds = PoolVotingThresholds::default();
+        let committee_state = CommitteeState::default();
+        let t = spo_threshold_for_action(
+            &GovAction::NoConfidence {
+                prev_action_id: None,
+            },
+            &committee_state,
+            &thresholds,
+        );
+        assert_eq!(t, Some(thresholds.motion_no_confidence));
+    }
+
+    #[test]
     fn spo_threshold_for_parameter_change_requires_security_group() {
         let thresholds = PoolVotingThresholds::default();
+        let committee_state = CommitteeState::default();
         let non_security = GovAction::ParameterChange {
             prev_action_id: None,
             protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
@@ -7032,9 +7368,9 @@ mod tests {
             guardrails_script_hash: None,
         };
 
-        assert!(spo_threshold_for_action(&non_security, &thresholds).is_none());
+        assert!(spo_threshold_for_action(&non_security, &committee_state, &thresholds).is_none());
         assert_eq!(
-            spo_threshold_for_action(&security, &thresholds),
+            spo_threshold_for_action(&security, &committee_state, &thresholds),
             Some(thresholds.pp_security_group)
         );
     }
@@ -7070,9 +7406,88 @@ mod tests {
             },
             guardrails_script_hash: None,
         };
+        let committee_state = CommitteeState::default();
 
-        let selected = drep_threshold_for_action(&action, &thresholds);
+        let selected = drep_threshold_for_action(&action, &committee_state, &thresholds);
         assert_eq!(selected, Some(thresholds.pp_gov_group));
+    }
+
+    #[test]
+    fn drep_threshold_for_update_committee_depends_on_committee_state() {
+        let thresholds = DRepVotingThresholds::default();
+        let action = GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add: BTreeMap::new(),
+            quorum: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
+        };
+
+        let empty_committee = CommitteeState::default();
+        let mut elected_committee = CommitteeState::default();
+        elected_committee.register(StakeCredential::AddrKeyHash([0x11; 28]));
+
+        assert_eq!(
+            drep_threshold_for_action(&action, &empty_committee, &thresholds),
+            Some(thresholds.committee_no_confidence)
+        );
+        assert_eq!(
+            drep_threshold_for_action(&action, &elected_committee, &thresholds),
+            Some(thresholds.committee_normal)
+        );
+
+        let mut resigned_only_committee = CommitteeState::default();
+        let resigned = StakeCredential::AddrKeyHash([0x33; 28]);
+        resigned_only_committee.register(resigned);
+        resigned_only_committee
+            .get_mut(&resigned)
+            .expect("registered committee member")
+            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
+        assert_eq!(
+            drep_threshold_for_action(&action, &resigned_only_committee, &thresholds),
+            Some(thresholds.committee_no_confidence)
+        );
+    }
+
+    #[test]
+    fn spo_threshold_for_update_committee_depends_on_committee_state() {
+        let thresholds = PoolVotingThresholds::default();
+        let action = GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add: BTreeMap::new(),
+            quorum: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
+        };
+
+        let empty_committee = CommitteeState::default();
+        let mut elected_committee = CommitteeState::default();
+        elected_committee.register(StakeCredential::AddrKeyHash([0x22; 28]));
+
+        assert_eq!(
+            spo_threshold_for_action(&action, &empty_committee, &thresholds),
+            Some(thresholds.committee_no_confidence)
+        );
+        assert_eq!(
+            spo_threshold_for_action(&action, &elected_committee, &thresholds),
+            Some(thresholds.committee_normal)
+        );
+
+        let mut resigned_only_committee = CommitteeState::default();
+        let resigned = StakeCredential::AddrKeyHash([0x44; 28]);
+        resigned_only_committee.register(resigned);
+        resigned_only_committee
+            .get_mut(&resigned)
+            .expect("registered committee member")
+            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
+        assert_eq!(
+            spo_threshold_for_action(&action, &resigned_only_committee, &thresholds),
+            Some(thresholds.committee_no_confidence)
+        );
     }
 
     #[test]
@@ -7146,6 +7561,7 @@ mod tests {
     #[test]
     fn accepted_by_dreps_treasury_action() {
         let mut action = test_treasury_action();
+        let committee_state = CommitteeState::default();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
         drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
@@ -7158,6 +7574,7 @@ mod tests {
         let thresholds = DRepVotingThresholds::default();
         assert!(accepted_by_dreps(
             &action,
+            &committee_state,
             &drep_state,
             &stake,
             EpochNo(5),

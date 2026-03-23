@@ -172,6 +172,14 @@ pub enum LedgerError {
     #[error("committee update proposal uses expiration epochs that are not after the current epoch: {0:?}")]
     ExpirationEpochTooSmall(Vec<(StakeCredential, EpochNo)>),
 
+    #[error(
+        "committee update proposal uses expiration epochs beyond the committee term limit (max {max_epoch:?}): {members:?}"
+    )]
+    ExpirationEpochTooLarge {
+        members: Vec<(StakeCredential, EpochNo)>,
+        max_epoch: EpochNo,
+    },
+
     #[error("proposal references an invalid previous governance action: {0:?}")]
     InvalidPrevGovActionId(crate::eras::conway::ProposalProcedure),
 

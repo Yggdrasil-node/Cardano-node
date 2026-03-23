@@ -22,7 +22,7 @@
 //! Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch`,
 //! `Cardano.Ledger.Shelley.Rules.Epoch`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::LedgerError;
 use crate::rewards::{compute_epoch_rewards, EpochRewardDistribution, RewardParams};
@@ -325,10 +325,11 @@ fn ratify_and_enact(
     // Extract thresholds from protocol params. When Conway-specific threshold
     // fields are absent, fall back to the built-in Conway defaults rather than
     // silently skipping ratification.
-    let (pool_thresholds, drep_thresholds) = match ledger.protocol_params() {
+    let (pool_thresholds, drep_thresholds, min_committee_size) = match ledger.protocol_params() {
         Some(pp) => (
             pp.pool_voting_thresholds.clone().unwrap_or_default(),
             pp.drep_voting_thresholds.clone().unwrap_or_default(),
+            pp.min_committee_size,
         ),
         None => return (Vec::new(), Vec::new()),
     };
@@ -348,6 +349,14 @@ fn ratify_and_enact(
         .governance_actions()
         .iter()
         .filter(|(_, action_state)| {
+            if !committee_update_meets_min_size(
+                action_state,
+                ledger.committee_state(),
+                min_committee_size,
+            ) {
+                return false;
+            }
+
             ratify_action(
                 action_state,
                 ledger.committee_state(),
@@ -379,6 +388,35 @@ fn ratify_and_enact(
     }
 
     (ratified_ids, outcomes)
+}
+
+fn committee_update_meets_min_size(
+    action_state: &crate::state::GovernanceActionState,
+    committee_state: &crate::state::CommitteeState,
+    min_committee_size: Option<u64>,
+) -> bool {
+    let Some(minimum) = min_committee_size else {
+        return true;
+    };
+
+    let crate::eras::conway::GovAction::UpdateCommittee {
+        members_to_remove,
+        members_to_add,
+        ..
+    } = &action_state.proposal().gov_action
+    else {
+        return true;
+    };
+
+    let mut members: BTreeSet<_> = committee_state.iter().map(|(credential, _)| *credential).collect();
+    for member in members_to_remove {
+        members.remove(member);
+    }
+    for member in members_to_add.keys() {
+        members.insert(*member);
+    }
+
+    (members.len() as u64) >= minimum
 }
 
 /// Retires pools whose `retiring_epoch` ≤ `epoch`, refunds their deposits,
@@ -1251,6 +1289,26 @@ mod tests {
         }
     }
 
+    fn test_update_committee_proposal() -> crate::eras::conway::ProposalProcedure {
+        crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        }
+    }
+
     #[test]
     fn test_info_action_always_ratified_at_epoch_boundary() {
         let mut ledger = make_governance_ledger();
@@ -1456,6 +1514,238 @@ mod tests {
             .expect("epoch 3");
 
         assert_eq!(event.governance_actions_expired, 1);
+        assert!(ledger.governance_actions().is_empty());
+    }
+
+    #[test]
+    fn test_update_committee_ratifies_with_resigned_only_committee() {
+        let mut ledger = make_governance_ledger();
+
+        // Differentiate elected vs non-elected committee paths.
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.committee_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.committee_normal = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        let mut pool_thresholds = PoolVotingThresholds::default();
+        pool_thresholds.committee_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        pool_thresholds.committee_normal = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+            pp.pool_voting_thresholds = Some(pool_thresholds);
+        }
+
+        // Make the committee resign-only (no elected non-resigned members).
+        let cc_cred = test_cred(0xC0);
+        ledger
+            .committee_state_mut()
+            .get_mut(&cc_cred)
+            .expect("committee member present")
+            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
+
+        let gai = test_gov_action_id(0xFA, 0);
+        let gas = GovernanceActionState::new(test_update_committee_proposal());
+        ledger.governance_actions_mut().insert(gai.clone(), gas);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1 boundary");
+        if ledger.governance_actions().is_empty() {
+            return;
+        }
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2 boundary");
+
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_gov_action_ids, vec![gai]);
+        assert!(ledger.governance_actions().is_empty());
+    }
+
+    #[test]
+    fn test_update_committee_not_ratified_with_elected_committee_and_no_votes() {
+        let mut ledger = make_governance_ledger();
+
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.committee_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.committee_normal = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        let mut pool_thresholds = PoolVotingThresholds::default();
+        pool_thresholds.committee_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        pool_thresholds.committee_normal = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+            pp.pool_voting_thresholds = Some(pool_thresholds);
+        }
+
+        // Keep committee elected (default governance ledger has one active member).
+        let gai = test_gov_action_id(0xFB, 0);
+        let gas = GovernanceActionState::new(test_update_committee_proposal());
+        ledger.governance_actions_mut().insert(gai.clone(), gas);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1 boundary");
+        if ledger.governance_actions().is_empty() {
+            panic!("unexpected enactment at epoch 1 with elected committee and no votes");
+        }
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2 boundary");
+
+        assert_eq!(event.governance_actions_enacted, 0);
+        assert!(event.enacted_gov_action_ids.is_empty());
+        assert!(ledger.governance_actions().contains_key(&gai));
+    }
+
+    #[test]
+    fn test_update_committee_rejected_when_result_below_min_committee_size() {
+        let mut ledger = make_governance_ledger();
+
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.committee_normal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        let mut pool_thresholds = PoolVotingThresholds::default();
+        pool_thresholds.committee_normal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+            pp.pool_voting_thresholds = Some(pool_thresholds);
+            pp.min_committee_size = Some(2);
+        }
+
+        // Default governance ledger starts with one active committee member;
+        // removing it would produce committee size 0, below min size 2.
+        let cc_cred = test_cred(0xC0);
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![cc_cred],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0xFC, 0);
+        ledger
+            .governance_actions_mut()
+            .insert(gai.clone(), GovernanceActionState::new(proposal));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1 boundary");
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2 boundary");
+
+        assert_eq!(event.governance_actions_enacted, 0);
+        assert!(event.enacted_gov_action_ids.is_empty());
+        assert!(ledger.governance_actions().contains_key(&gai));
+    }
+
+    #[test]
+    fn test_update_committee_enacted_when_result_meets_min_committee_size() {
+        let mut ledger = make_governance_ledger();
+        let cc_cold_cred = test_cred(0xC0);
+
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.committee_normal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        let mut pool_thresholds = PoolVotingThresholds::default();
+        pool_thresholds.committee_normal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+            pp.pool_voting_thresholds = Some(pool_thresholds);
+            pp.min_committee_size = Some(2);
+        }
+
+        let added = test_cred(0xC2);
+        let mut members_to_add = BTreeMap::new();
+        members_to_add.insert(added, 10);
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0xFD, 0);
+        let mut gas = GovernanceActionState::new(proposal);
+        gas.record_vote(
+            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Vote::Yes,
+        );
+        ledger
+            .governance_actions_mut()
+            .insert(gai.clone(), gas);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1 boundary");
+        if ledger.governance_actions().is_empty() {
+            return;
+        }
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2 boundary");
+
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_gov_action_ids, vec![gai]);
         assert!(ledger.governance_actions().is_empty());
     }
 
