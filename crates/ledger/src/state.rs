@@ -3750,6 +3750,7 @@ impl LedgerState {
                             .as_ref()
                             .and_then(|params| params.gov_action_deposit),
                         self.expected_network_id,
+                        self.protocol_params.as_ref(),
                         &self.enact_state,
                     )?;
                 }
@@ -4206,6 +4207,105 @@ fn committee_hot_credential_exists(
         .any(|(_, member_state)| member_state.hot_credential() == Some(credential))
 }
 
+fn conway_unit_interval_well_formed(value: &UnitInterval) -> bool {
+    value.denominator != 0 && value.numerator <= value.denominator
+}
+
+fn conway_protocol_param_update_well_formed(
+    update: &crate::protocol_params::ProtocolParameterUpdate,
+    protocol_params: Option<&crate::protocol_params::ProtocolParameters>,
+) -> bool {
+    let unit_interval_fields = [
+        update.a0.as_ref(),
+        update.rho.as_ref(),
+        update.tau.as_ref(),
+        update.price_mem.as_ref(),
+        update.price_step.as_ref(),
+    ];
+    if unit_interval_fields
+        .iter()
+        .flatten()
+        .any(|value| !conway_unit_interval_well_formed(value))
+    {
+        return false;
+    }
+
+    if let Some(thresholds) = &update.pool_voting_thresholds {
+        let values = [
+            &thresholds.motion_no_confidence,
+            &thresholds.committee_normal,
+            &thresholds.committee_no_confidence,
+            &thresholds.hard_fork_initiation,
+            &thresholds.pp_security_group,
+        ];
+        if values
+            .iter()
+            .any(|value| !conway_unit_interval_well_formed(value))
+        {
+            return false;
+        }
+    }
+
+    if let Some(thresholds) = &update.drep_voting_thresholds {
+        let values = [
+            &thresholds.motion_no_confidence,
+            &thresholds.committee_normal,
+            &thresholds.committee_no_confidence,
+            &thresholds.update_to_constitution,
+            &thresholds.hard_fork_initiation,
+            &thresholds.pp_network_group,
+            &thresholds.pp_economic_group,
+            &thresholds.pp_technical_group,
+            &thresholds.pp_gov_group,
+            &thresholds.treasury_withdrawal,
+        ];
+        if values
+            .iter()
+            .any(|value| !conway_unit_interval_well_formed(value))
+        {
+            return false;
+        }
+    }
+
+    if let Some((major, _)) = update.protocol_version {
+        if major == 0 {
+            return false;
+        }
+    }
+
+    if update.max_block_header_size == Some(0)
+        || update.max_collateral_inputs == Some(0)
+        || update.collateral_percentage == Some(0)
+        || update.min_committee_size == Some(0)
+        || update.committee_term_limit == Some(0)
+        || update.gov_action_lifetime == Some(0)
+        || update.drep_activity == Some(0)
+    {
+        return false;
+    }
+
+    let effective_max_block_body_size = update
+        .max_block_body_size
+        .or_else(|| protocol_params.map(|params| params.max_block_body_size));
+    let effective_max_tx_size = update
+        .max_tx_size
+        .or_else(|| protocol_params.map(|params| params.max_tx_size));
+
+    if effective_max_block_body_size == Some(0) || effective_max_tx_size == Some(0) {
+        return false;
+    }
+
+    if let (Some(max_tx_size), Some(max_block_body_size)) =
+        (effective_max_tx_size, effective_max_block_body_size)
+    {
+        if max_tx_size > max_block_body_size {
+            return false;
+        }
+    }
+
+    true
+}
+
 fn validate_conway_proposals(
     tx_id: crate::types::TxId,
     proposal_procedures: &[crate::eras::conway::ProposalProcedure],
@@ -4215,6 +4315,7 @@ fn validate_conway_proposals(
     protocol_version: Option<(u64, u64)>,
     gov_action_deposit: Option<u64>,
     expected_network_id: Option<u8>,
+    protocol_params: Option<&crate::protocol_params::ProtocolParameters>,
     enact_state: &EnactState,
 ) -> Result<(), LedgerError> {
     use crate::eras::conway::GovAction;
@@ -4234,6 +4335,10 @@ fn validate_conway_proposals(
         } = &proposal.gov_action
         {
             if protocol_param_update.is_empty() {
+                return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
+            }
+
+            if !conway_protocol_param_update_well_formed(protocol_param_update, protocol_params) {
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
         }
@@ -6002,6 +6107,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &es,
         );
         assert!(result.is_ok());
@@ -6027,6 +6133,7 @@ mod tests {
             EpochNo(0),
             &BTreeMap::new(),
             &stake_creds,
+            None,
             None,
             None,
             None,
@@ -6063,6 +6170,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &es,
         );
         assert!(result.is_ok());
@@ -6094,6 +6202,7 @@ mod tests {
             EpochNo(0),
             &BTreeMap::new(),
             &stake_creds,
+            None,
             None,
             None,
             None,
@@ -6138,6 +6247,7 @@ mod tests {
             Some((9, 0)),
             None,
             None,
+            None,
             &es,
         );
         assert!(result.is_ok());
@@ -6163,6 +6273,7 @@ mod tests {
             EpochNo(0),
             &BTreeMap::new(),
             &stake_creds,
+            None,
             None,
             None,
             None,
@@ -6207,6 +6318,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &es,
         );
         assert!(result.is_ok());
@@ -6248,9 +6360,111 @@ mod tests {
             None,
             None,
             None,
+            None,
             &es,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parameter_change_rejects_malformed_unit_interval() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    price_mem: Some(UnitInterval {
+                        numerator: 2,
+                        denominator: 1,
+                    }),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn test_parameter_change_rejects_tx_size_larger_than_block_body_size() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    max_block_body_size: Some(100),
+                    max_tx_size: Some(101),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn test_parameter_change_rejects_tx_size_larger_than_current_block_body_size() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    max_tx_size: Some(501),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let protocol_params = crate::protocol_params::ProtocolParameters {
+            max_block_body_size: 500,
+            ..Default::default()
+        };
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            Some(&protocol_params),
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
 
     // -----------------------------------------------------------------------

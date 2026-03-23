@@ -1051,13 +1051,13 @@ fn add_tx_with<F>(
     mut insert_entry: F,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError>
 where
-    F: FnMut(MempoolEntry) -> Result<(), MempoolError>,
+    F: FnMut(MempoolEntry, Option<&yggdrasil_ledger::ProtocolParameters>) -> Result<(), MempoolError>,
 {
     let tx_id = tx.tx_id();
     let mut staged_ledger = ledger.clone();
     match staged_ledger.apply_submitted_tx(&tx, current_slot) {
         Ok(()) => {
-            insert_entry(admitted_entry(tx))?;
+            insert_entry(admitted_entry(tx), staged_ledger.protocol_params())?;
             *ledger = staged_ledger;
             Ok(MempoolAddTxResult::MempoolTxAdded(tx_id))
         }
@@ -1078,8 +1078,8 @@ pub fn add_tx_to_mempool(
     tx: MultiEraSubmittedTx,
     current_slot: SlotNo,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, |entry| {
-        mempool.insert_checked(entry, current_slot)
+    add_tx_with(ledger, tx, current_slot, |entry, protocol_params| {
+        mempool.insert_checked(entry, current_slot, protocol_params)
     })
 }
 
@@ -1094,8 +1094,8 @@ pub fn add_tx_to_shared_mempool(
     tx: MultiEraSubmittedTx,
     current_slot: SlotNo,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, |entry| {
-        mempool.insert_checked(entry, current_slot)
+    add_tx_with(ledger, tx, current_slot, |entry, protocol_params| {
+        mempool.insert_checked(entry, current_slot, protocol_params)
     })
 }
 
@@ -1637,6 +1637,7 @@ struct RollbackReAdmissionStats {
     expired: usize,
     conflicting: usize,
     capacity_exceeded: usize,
+    protocol_rejected: usize,
     missing_cache_entry: usize,
 }
 
@@ -1676,12 +1677,15 @@ fn re_admit_rolled_back_tx_ids(
             continue;
         };
 
-        match mempool.insert_checked(entry, current_slot) {
+        match mempool.insert_checked(entry, current_slot, None) {
             Ok(()) => stats.re_admitted += 1,
             Err(MempoolError::Duplicate(_)) => stats.duplicate += 1,
             Err(MempoolError::TtlExpired { .. }) => stats.expired += 1,
             Err(MempoolError::ConflictingInputs(_)) => stats.conflicting += 1,
             Err(MempoolError::CapacityExceeded { .. }) => stats.capacity_exceeded += 1,
+            Err(MempoolError::FeeTooSmall { .. })
+            | Err(MempoolError::TxTooLarge { .. })
+            | Err(MempoolError::ProtocolParamValidation(_)) => stats.protocol_rejected += 1,
         }
     }
     stats
@@ -2322,6 +2326,7 @@ where
                                             ("expired", json!(stats.expired)),
                                             ("conflicting", json!(stats.conflicting)),
                                             ("capacityExceeded", json!(stats.capacity_exceeded)),
+                                            ("protocolRejected", json!(stats.protocol_rejected)),
                                             ("missingCacheEntry", json!(stats.missing_cache_entry)),
                                         ]),
                                     );
@@ -2616,6 +2621,7 @@ where
                                             ("expired", json!(stats.expired)),
                                             ("conflicting", json!(stats.conflicting)),
                                             ("capacityExceeded", json!(stats.capacity_exceeded)),
+                                            ("protocolRejected", json!(stats.protocol_rejected)),
                                             ("missingCacheEntry", json!(stats.missing_cache_entry)),
                                         ]),
                                     );

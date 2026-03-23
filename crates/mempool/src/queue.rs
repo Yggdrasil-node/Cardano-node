@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use yggdrasil_ledger::{Era, LedgerError, MultiEraSubmittedTx, ShelleyTxIn, SlotNo, TxId};
+use yggdrasil_ledger::{
+    Era, LedgerError, MultiEraSubmittedTx, ProtocolParameters, ShelleyTxIn,
+    SlotNo, TxId, validate_fee, validate_tx_size,
+};
 
 /// Monotonic transaction index used by TxSubmission mempool snapshots.
 pub type MempoolIdx = i64;
@@ -136,6 +139,28 @@ pub enum MempoolError {
         /// The current slot at admission time.
         current_slot: SlotNo,
     },
+
+    /// The transaction fee is lower than the configured minimum fee.
+    #[error("fee too small for configured protocol parameters: minimum {minimum}, declared {declared}")]
+    FeeTooSmall {
+        /// Minimum required fee for this transaction size.
+        minimum: u64,
+        /// Fee declared by the submitted transaction.
+        declared: u64,
+    },
+
+    /// The transaction body exceeds the configured maximum transaction size.
+    #[error("transaction too large for configured protocol parameters: {actual} > {max}")]
+    TxTooLarge {
+        /// Actual transaction body size in bytes.
+        actual: usize,
+        /// Maximum allowed transaction body size in bytes.
+        max: usize,
+    },
+
+    /// Unexpected protocol-parameter validation failure.
+    #[error("protocol-parameter validation failed: {0}")]
+    ProtocolParamValidation(String),
 
     /// The transaction conflicts with an existing mempool transaction because
     /// both spend the same UTxO input (double-spend attempt).
@@ -410,12 +435,25 @@ impl Mempool {
         &mut self,
         entry: MempoolEntry,
         current_slot: SlotNo,
+        protocol_params: Option<&ProtocolParameters>,
     ) -> Result<(), MempoolError> {
         if current_slot > entry.ttl {
             return Err(MempoolError::TtlExpired {
                 ttl: entry.ttl,
                 current_slot,
             });
+        }
+        if let Some(params) = protocol_params {
+            validate_tx_size(params, entry.body.len()).map_err(|err| match err {
+                LedgerError::TxTooLarge { actual, max } => MempoolError::TxTooLarge { actual, max },
+                other => MempoolError::ProtocolParamValidation(other.to_string()),
+            })?;
+            validate_fee(params, entry.body.len(), None, entry.fee).map_err(|err| match err {
+                LedgerError::FeeTooSmall { minimum, declared } => {
+                    MempoolError::FeeTooSmall { minimum, declared }
+                }
+                other => MempoolError::ProtocolParamValidation(other.to_string()),
+            })?;
         }
         self.insert(entry)
     }
@@ -477,11 +515,12 @@ impl SharedMempool {
         &self,
         entry: MempoolEntry,
         current_slot: SlotNo,
+        protocol_params: Option<&ProtocolParameters>,
     ) -> Result<(), MempoolError> {
         self.inner
             .write()
             .expect("shared mempool poisoned")
-            .insert_checked(entry, current_slot)
+            .insert_checked(entry, current_slot, protocol_params)
     }
 
     /// Remove and return the highest-fee entry, if any.

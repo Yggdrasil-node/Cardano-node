@@ -1,5 +1,6 @@
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Era, MultiEraSubmittedTx,
+    ProtocolParameters,
     ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
     ShelleyWitnessSet, SlotNo, TxId, Value,
 };
@@ -263,7 +264,7 @@ fn insert_checked_accepts_valid_ttl() {
     let mut mempool = Mempool::default();
     let entry = make_entry_with_ttl(0x01, 5, 100, 1000);
     mempool
-        .insert_checked(entry, SlotNo(500))
+        .insert_checked(entry, SlotNo(500), None)
         .expect("valid TTL should be accepted");
     assert_eq!(mempool.len(), 1);
 }
@@ -273,7 +274,7 @@ fn insert_checked_accepts_at_exact_ttl() {
     let mut mempool = Mempool::default();
     let entry = make_entry_with_ttl(0x01, 5, 100, 500);
     mempool
-        .insert_checked(entry, SlotNo(500))
+        .insert_checked(entry, SlotNo(500), None)
         .expect("TTL == current_slot should be accepted");
     assert_eq!(mempool.len(), 1);
 }
@@ -283,7 +284,7 @@ fn insert_checked_rejects_expired_ttl() {
     let mut mempool = Mempool::default();
     let entry = make_entry_with_ttl(0x01, 5, 100, 499);
     let err = mempool
-        .insert_checked(entry, SlotNo(500))
+        .insert_checked(entry, SlotNo(500), None)
         .expect_err("expired TTL");
     assert!(
         matches!(
@@ -341,6 +342,30 @@ fn purge_expired_removes_nothing_when_all_valid() {
     let removed = mempool.purge_expired(SlotNo(500));
     assert_eq!(removed, 0);
     assert_eq!(mempool.len(), 2);
+}
+
+#[test]
+fn insert_checked_rejects_below_min_fee_with_protocol_params() {
+    let mut mempool = Mempool::default();
+    let params = ProtocolParameters::default();
+    let entry = make_entry_with_ttl(0x10, 1, 200, 1000);
+
+    let err = mempool
+        .insert_checked(entry, SlotNo(10), Some(&params))
+        .expect_err("fee should be too small");
+    assert!(matches!(err, MempoolError::FeeTooSmall { .. }));
+}
+
+#[test]
+fn insert_checked_rejects_oversized_tx_with_protocol_params() {
+    let mut mempool = Mempool::default();
+    let params = ProtocolParameters::default();
+    let entry = make_entry_with_ttl(0x11, 9_999_999, 20_000, 1000);
+
+    let err = mempool
+        .insert_checked(entry, SlotNo(10), Some(&params))
+        .expect_err("tx size should exceed max");
+    assert!(matches!(err, MempoolError::TxTooLarge { .. }));
 }
 
 // ---------------------------------------------------------------------------
