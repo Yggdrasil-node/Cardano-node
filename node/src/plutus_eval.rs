@@ -1189,8 +1189,10 @@ mod tests {
     use yggdrasil_ledger::plutus_validation::{
         PlutusScriptEval, PlutusVersion, ScriptPurpose, TxContext,
     };
+    use std::collections::BTreeMap;
     use yggdrasil_ledger::{
         Address,
+        AlonzoTxOut,
         BaseAddress,
         BabbageTxOut,
         Constitution,
@@ -1200,9 +1202,12 @@ mod tests {
         EpochNo,
         GovAction,
         GovActionId,
+        MaryTxOut,
         PointerAddress,
         PoolParams,
+        ProtocolParameterUpdate,
         Relay,
+        ShelleyTxOut,
         UnitInterval,
         Vote,
         Voter,
@@ -3620,5 +3625,290 @@ mod tests {
         assert_eq!(fields.len(), 2);
         // First field is the txin encoding
         assert_eq!(fields[0], plutus_txin_data(&txin));
+    }
+
+    // -- script_info_data_v3 encoding ----------------------------------------
+    // Key difference from script_purpose_data_v3: Spending carries maybe_data(datum).
+
+    #[test]
+    fn script_info_v3_spending_with_datum_includes_just() {
+        let datum = PlutusData::Integer(99);
+        let purpose = ScriptPurpose::Spending { tx_id: [0xAA; 32], index: 3 };
+        let result = script_info_data_v3(&purpose, Some(&datum)).unwrap();
+        let PlutusData::Constr(1, fields) = result else { panic!("Spending must be Constr(1, ...)") };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0], tx_out_ref_data(&[0xAA; 32], 3));
+        // datum wrapped in Just
+        assert_eq!(fields[1], PlutusData::Constr(0, vec![PlutusData::Integer(99)]));
+    }
+
+    #[test]
+    fn script_info_v3_spending_without_datum_includes_nothing() {
+        let purpose = ScriptPurpose::Spending { tx_id: [0xBB; 32], index: 0 };
+        let result = script_info_data_v3(&purpose, None).unwrap();
+        let PlutusData::Constr(1, fields) = result else { panic!("Spending must be Constr(1, ...)") };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[1], PlutusData::Constr(1, vec![])); // Nothing
+    }
+
+    #[test]
+    fn script_info_v3_minting_matches_script_purpose_v3() {
+        let purpose = ScriptPurpose::Minting { policy_id: [0xCC; 28] };
+        let info = script_info_data_v3(&purpose, None).unwrap();
+        let sp = script_purpose_data_v3(&purpose).unwrap();
+        assert_eq!(info, sp, "Minting ScriptInfo and ScriptPurpose should be identical for V3");
+    }
+
+    // -- certifying_purpose_data encoding ------------------------------------
+    // V1/V2 Certifying wraps legacy_dcert_data in Constr(3, [cert]) — no cert_index.
+
+    #[test]
+    fn certifying_purpose_data_wraps_legacy_cert() {
+        let cert = DCert::AccountRegistration(StakeCredential::AddrKeyHash([0xDD; 28]));
+        let result = certifying_purpose_data(42, &cert).unwrap();
+        let PlutusData::Constr(3, fields) = result else { panic!("Expected Constr(3, ...)") };
+        // V1/V2 certifying does NOT include cert_index in the output
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0], legacy_dcert_data(&cert).unwrap());
+    }
+
+    #[test]
+    fn certifying_purpose_data_rejects_conway_certs() {
+        let cert = DCert::DrepRegistration(StakeCredential::AddrKeyHash([0x11; 28]), 0, None);
+        assert!(certifying_purpose_data(0, &cert).is_err());
+    }
+
+    // -- constitution_data_v3 encoding ---------------------------------------
+
+    #[test]
+    fn constitution_data_v3_with_guardrails() {
+        let c = Constitution { guardrails_script_hash: Some([0xEE; 28]) };
+        let result = constitution_data_v3(&c);
+        assert_eq!(
+            result,
+            PlutusData::Constr(0, vec![
+                PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xEE; 28])])
+            ])
+        );
+    }
+
+    #[test]
+    fn constitution_data_v3_without_guardrails() {
+        let c = Constitution { guardrails_script_hash: None };
+        let result = constitution_data_v3(&c);
+        assert_eq!(
+            result,
+            PlutusData::Constr(0, vec![PlutusData::Constr(1, vec![])])
+        );
+    }
+
+    // -- plutus_output_data per-era encoding ----------------------------------
+
+    #[test]
+    fn plutus_output_data_shelley_has_3_fields_with_no_datum() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0x11; 28]),
+        });
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: addr.to_bytes(),
+            amount: 2_000_000,
+        });
+        let result = plutus_output_data(&txout).expect("Shelley should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 3, "Shelley TxOut must have 3 fields");
+        assert_eq!(fields[2], PlutusData::Constr(1, vec![]), "Datum must be Nothing");
+    }
+
+    #[test]
+    fn plutus_output_data_mary_has_3_fields() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0x22; 28]),
+        });
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Mary(MaryTxOut {
+            address: addr.to_bytes(),
+            amount: Value::Coin(3_000_000),
+        });
+        let result = plutus_output_data(&txout).expect("Mary should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 3, "Mary TxOut must have 3 fields");
+        assert_eq!(fields[2], PlutusData::Constr(1, vec![]), "Datum must be Nothing");
+    }
+
+    #[test]
+    fn plutus_output_data_alonzo_with_datum_hash() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0x33; 28]),
+        });
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: addr.to_bytes(),
+            amount: Value::Coin(4_000_000),
+            datum_hash: Some([0x44; 32]),
+        });
+        let result = plutus_output_data(&txout).expect("Alonzo should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 3, "Alonzo TxOut must have 3 fields");
+        assert_eq!(
+            fields[2],
+            PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x44; 32])]),
+            "Datum hash must be Just(hash)"
+        );
+    }
+
+    #[test]
+    fn plutus_output_data_alonzo_without_datum_hash() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0x55; 28]),
+        });
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: addr.to_bytes(),
+            amount: Value::Coin(1_000_000),
+            datum_hash: None,
+        });
+        let result = plutus_output_data(&txout).expect("Alonzo should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields[2], PlutusData::Constr(1, vec![]), "Datum must be Nothing");
+    }
+
+    #[test]
+    fn plutus_output_data_babbage_inline_datum() {
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+            address: Address::Enterprise(EnterpriseAddress {
+                network: 1,
+                payment: StakeCredential::AddrKeyHash([0x66; 28]),
+            }),
+            value: Value::Coin(2_000_000),
+            datum_option: Some(DatumOption::Inline(PlutusData::Integer(777))),
+            script_ref: None,
+        });
+        let result = plutus_output_data(&txout).expect("Babbage should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 4, "Babbage TxOut must have 4 fields");
+        // Inline datum → Constr(2, [data])
+        assert_eq!(fields[2], PlutusData::Constr(2, vec![PlutusData::Integer(777)]));
+        // No script ref → Nothing
+        assert_eq!(fields[3], PlutusData::Constr(1, vec![]));
+    }
+
+    #[test]
+    fn plutus_output_data_babbage_datum_hash() {
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+            address: Address::Enterprise(EnterpriseAddress {
+                network: 1,
+                payment: StakeCredential::AddrKeyHash([0x77; 28]),
+            }),
+            value: Value::Coin(1_000_000),
+            datum_option: Some(DatumOption::Hash([0x88; 32])),
+            script_ref: None,
+        });
+        let result = plutus_output_data(&txout).expect("Babbage should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        // Datum hash → Constr(1, [Bytes(hash)])
+        assert_eq!(fields[2], PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x88; 32])]));
+    }
+
+    #[test]
+    fn plutus_output_data_babbage_no_datum() {
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+            address: Address::Enterprise(EnterpriseAddress {
+                network: 1,
+                payment: StakeCredential::AddrKeyHash([0x99; 28]),
+            }),
+            value: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        });
+        let result = plutus_output_data(&txout).expect("Babbage should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        // No datum → Constr(0, []) i.e. NoDatum
+        assert_eq!(fields[2], PlutusData::Constr(0, vec![]));
+    }
+
+    // -- gov_action_data_v3 remaining variants --------------------------------
+
+    #[test]
+    fn gov_action_data_v3_encodes_parameter_change() {
+        let ga = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: ProtocolParameterUpdate::default(),
+            guardrails_script_hash: Some([0xAA; 28]),
+        };
+        let result = gov_action_data_v3(&ga);
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 3);
+        // prev_action_id: Nothing
+        assert_eq!(fields[0], PlutusData::Constr(1, vec![]));
+        // protocol_param_update: CBOR-serialized bytes
+        let PlutusData::Bytes(_) = &fields[1] else { panic!("Expected Bytes for param update") };
+        // guardrails: Just(hash)
+        assert_eq!(fields[2], PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xAA; 28])]));
+    }
+
+    #[test]
+    fn gov_action_data_v3_encodes_treasury_withdrawals() {
+        let mut withdrawals = BTreeMap::new();
+        withdrawals.insert(
+            RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xBB; 28]) },
+            5_000_000u64,
+        );
+        let ga = GovAction::TreasuryWithdrawals {
+            withdrawals,
+            guardrails_script_hash: None,
+        };
+        let result = gov_action_data_v3(&ga);
+        let PlutusData::Constr(2, fields) = result else { panic!("Expected Constr(2, ...)") };
+        assert_eq!(fields.len(), 2);
+        // withdrawals map
+        let PlutusData::Map(entries) = &fields[0] else { panic!("Expected Map") };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, PlutusData::Integer(5_000_000));
+        // guardrails: Nothing
+        assert_eq!(fields[1], PlutusData::Constr(1, vec![]));
+    }
+
+    #[test]
+    fn gov_action_data_v3_encodes_update_committee() {
+        let remove = vec![StakeCredential::AddrKeyHash([0xCC; 28])];
+        let mut add = BTreeMap::new();
+        add.insert(StakeCredential::ScriptHash([0xDD; 28]), 100u64);
+        let ga = GovAction::UpdateCommittee {
+            prev_action_id: Some(GovActionId { transaction_id: [0xEE; 32], gov_action_index: 1 }),
+            members_to_remove: remove,
+            members_to_add: add,
+            quorum: UnitInterval { numerator: 2, denominator: 3 },
+        };
+        let result = gov_action_data_v3(&ga);
+        let PlutusData::Constr(4, fields) = result else { panic!("Expected Constr(4, ...)") };
+        assert_eq!(fields.len(), 4);
+        // prev: Just(gov_action_id)
+        let PlutusData::Constr(0, _) = &fields[0] else { panic!("Expected Just for prev") };
+        // members_to_remove: List of committee_credential_data
+        let PlutusData::List(removed) = &fields[1] else { panic!("Expected List") };
+        assert_eq!(removed.len(), 1);
+        // members_to_add: Map of (committee_credential_data -> epoch)
+        let PlutusData::Map(added) = &fields[2] else { panic!("Expected Map") };
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].1, PlutusData::Integer(100));
+        // quorum: [2, 3]
+        assert_eq!(fields[3], PlutusData::List(vec![PlutusData::Integer(2), PlutusData::Integer(3)]));
+    }
+
+    // -- map_machine_error encoding ------------------------------------------
+
+    #[test]
+    fn map_machine_error_produces_plutus_script_failed() {
+        let hash = [0xFF; 28];
+        let err = MachineError::OutOfBudget("cpu exceeded".into());
+        let result = map_machine_error(&hash, err);
+        match result {
+            LedgerError::PlutusScriptFailed { hash: h, reason } => {
+                assert_eq!(h, [0xFF; 28]);
+                assert!(reason.contains("cpu exceeded"));
+            }
+            other => panic!("Expected PlutusScriptFailed, got {:?}", other),
+        }
     }
 }
