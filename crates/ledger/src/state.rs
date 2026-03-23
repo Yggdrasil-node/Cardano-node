@@ -4397,15 +4397,21 @@ fn conway_protocol_param_update_well_formed(
         }
     }
 
-    if let Some((major, _)) = update.protocol_version {
-        if major == 0 {
-            return false;
-        }
+    // In Conway, protocol version is advanced via HardForkInitiation,
+    // not via protocol-parameter updates.
+    if update.protocol_version.is_some() {
+        return false;
     }
 
-    if update.max_block_header_size == Some(0)
+    if update.max_block_body_size == Some(0)
+        || update.max_tx_size == Some(0)
+        || update.max_block_header_size == Some(0)
+        || update.max_val_size == Some(0)
         || update.max_collateral_inputs == Some(0)
         || update.collateral_percentage == Some(0)
+        || update.pool_deposit == Some(0)
+        || update.gov_action_deposit == Some(0)
+        || update.drep_deposit == Some(0)
         || update.min_committee_size == Some(0)
         || update.committee_term_limit == Some(0)
         || update.gov_action_lifetime == Some(0)
@@ -6615,6 +6621,95 @@ mod tests {
             &es,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn test_parameter_change_rejects_protocol_version_update() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    protocol_version: Some((10, 0)),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn test_parameter_change_rejects_zero_pool_and_gov_deposits() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let pool_zero = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    pool_deposit: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let gov_zero = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    gov_action_deposit: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+
+        let pool_result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &pool_zero,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(pool_result, Err(LedgerError::MalformedProposal(_))));
+
+        let gov_result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &gov_zero,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(gov_result, Err(LedgerError::MalformedProposal(_))));
     }
 
     // -----------------------------------------------------------------------
