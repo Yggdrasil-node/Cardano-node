@@ -3248,4 +3248,377 @@ mod tests {
             PlutusData::Constr(0, vec![inner])
         );
     }
+
+    // -- drep_data encoding --------------------------------------------------
+
+    #[test]
+    fn drep_data_encodes_key_hash() {
+        let hash = [0xAA; 28];
+        let result = drep_data(&DRep::KeyHash(hash));
+        // DRep::KeyHash → Constr(0, [drep_credential_data(AddrKeyHash)])
+        // drep_credential_data → Constr(0, [credential_data(AddrKeyHash)])
+        // credential_data(AddrKeyHash) → Constr(0, [Bytes(hash)])
+        assert_eq!(
+            result,
+            PlutusData::Constr(0, vec![
+                PlutusData::Constr(0, vec![
+                    PlutusData::Constr(0, vec![PlutusData::Bytes(hash.to_vec())])
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn drep_data_encodes_script_hash() {
+        let hash = [0xBB; 28];
+        let result = drep_data(&DRep::ScriptHash(hash));
+        assert_eq!(
+            result,
+            PlutusData::Constr(0, vec![
+                PlutusData::Constr(0, vec![
+                    PlutusData::Constr(1, vec![PlutusData::Bytes(hash.to_vec())])
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn drep_data_encodes_always_abstain() {
+        assert_eq!(drep_data(&DRep::AlwaysAbstain), PlutusData::Constr(1, vec![]));
+    }
+
+    #[test]
+    fn drep_data_encodes_always_no_confidence() {
+        assert_eq!(drep_data(&DRep::AlwaysNoConfidence), PlutusData::Constr(2, vec![]));
+    }
+
+    // -- delegatee encoding --------------------------------------------------
+
+    #[test]
+    fn delegatee_stake_data_wraps_pool_hash() {
+        let pool = [0xCC; 28];
+        assert_eq!(
+            delegatee_stake_data(&pool),
+            PlutusData::Constr(0, vec![PlutusData::Bytes(pool.to_vec())])
+        );
+    }
+
+    #[test]
+    fn delegatee_vote_data_wraps_drep() {
+        let result = delegatee_vote_data(&DRep::AlwaysAbstain);
+        assert_eq!(
+            result,
+            PlutusData::Constr(1, vec![PlutusData::Constr(1, vec![])])
+        );
+    }
+
+    #[test]
+    fn delegatee_stake_vote_data_combines_pool_and_drep() {
+        let pool = [0xDD; 28];
+        let result = delegatee_stake_vote_data(&pool, &DRep::AlwaysNoConfidence);
+        assert_eq!(
+            result,
+            PlutusData::Constr(2, vec![
+                PlutusData::Bytes(pool.to_vec()),
+                PlutusData::Constr(2, vec![]),
+            ])
+        );
+    }
+
+    // -- maybe_lovelace encoding ---------------------------------------------
+
+    #[test]
+    fn maybe_lovelace_some_encodes_just() {
+        assert_eq!(
+            maybe_lovelace(Some(1_000_000)),
+            PlutusData::Constr(0, vec![PlutusData::Integer(1_000_000)])
+        );
+    }
+
+    #[test]
+    fn maybe_lovelace_none_encodes_nothing() {
+        assert_eq!(maybe_lovelace(None), PlutusData::Constr(1, vec![]));
+    }
+
+    // -- credential wrapper helpers ------------------------------------------
+
+    #[test]
+    fn drep_credential_data_wraps_credential() {
+        let hash = [0xEE; 28];
+        assert_eq!(
+            drep_credential_data(&StakeCredential::AddrKeyHash(hash)),
+            PlutusData::Constr(0, vec![
+                PlutusData::Constr(0, vec![PlutusData::Bytes(hash.to_vec())])
+            ])
+        );
+    }
+
+    #[test]
+    fn committee_credential_data_wraps_credential() {
+        let hash = [0xFF; 28];
+        assert_eq!(
+            committee_credential_data(&StakeCredential::ScriptHash(hash)),
+            PlutusData::Constr(0, vec![
+                PlutusData::Constr(1, vec![PlutusData::Bytes(hash.to_vec())])
+            ])
+        );
+    }
+
+    // -- protocol_version_data encoding --------------------------------------
+
+    #[test]
+    fn protocol_version_data_encodes_major_minor() {
+        assert_eq!(
+            protocol_version_data((9, 1)),
+            PlutusData::Constr(0, vec![
+                PlutusData::Integer(9),
+                PlutusData::Integer(1),
+            ])
+        );
+    }
+
+    // -- unit_interval_data encoding -----------------------------------------
+
+    #[test]
+    fn unit_interval_data_encodes_fraction() {
+        let ui = UnitInterval { numerator: 1, denominator: 5 };
+        assert_eq!(
+            unit_interval_data(&ui),
+            PlutusData::List(vec![PlutusData::Integer(1), PlutusData::Integer(5)])
+        );
+    }
+
+    // -- maybe_script_hash_data encoding -------------------------------------
+
+    #[test]
+    fn maybe_script_hash_data_some() {
+        let hash = [0x11; 28];
+        assert_eq!(
+            maybe_script_hash_data(Some(hash)),
+            PlutusData::Constr(0, vec![PlutusData::Bytes(hash.to_vec())])
+        );
+    }
+
+    #[test]
+    fn maybe_script_hash_data_none() {
+        assert_eq!(maybe_script_hash_data(None), PlutusData::Constr(1, vec![]));
+    }
+
+    // -- maybe_gov_action_id_data encoding -----------------------------------
+
+    #[test]
+    fn maybe_gov_action_id_data_some() {
+        let gid = GovActionId { transaction_id: [0x22; 32], gov_action_index: 3 };
+        assert_eq!(
+            maybe_gov_action_id_data(Some(&gid)),
+            PlutusData::Constr(0, vec![
+                PlutusData::Constr(0, vec![
+                    PlutusData::Bytes(vec![0x22; 32]),
+                    PlutusData::Integer(3),
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn maybe_gov_action_id_data_none() {
+        assert_eq!(maybe_gov_action_id_data(None), PlutusData::Constr(1, vec![]));
+    }
+
+    // -- gov_action_id_data encoding -----------------------------------------
+
+    #[test]
+    fn gov_action_id_data_encodes_tx_hash_and_index() {
+        let gid = GovActionId { transaction_id: [0x44; 32], gov_action_index: 7 };
+        assert_eq!(
+            gov_action_id_data(&gid),
+            PlutusData::Constr(0, vec![
+                PlutusData::Bytes(vec![0x44; 32]),
+                PlutusData::Integer(7),
+            ])
+        );
+    }
+
+    // -- tx_out_ref_data encoding --------------------------------------------
+
+    #[test]
+    fn tx_out_ref_data_encodes_hash_and_index() {
+        let tx_id = [0x55; 32];
+        assert_eq!(
+            tx_out_ref_data(&tx_id, 42),
+            PlutusData::Constr(0, vec![
+                PlutusData::Bytes(tx_id.to_vec()),
+                PlutusData::Integer(42),
+            ])
+        );
+    }
+
+    // -- V3 script_purpose_data encoding -------------------------------------
+    // Key difference from V1/V2: Rewarding uses credential_data (not staking_credential_data).
+    // V3 also supports Voting (Constr 4) and Proposing (Constr 5) natively.
+
+    #[test]
+    fn script_purpose_v3_minting_uses_constr_0() {
+        let purpose = ScriptPurpose::Minting { policy_id: [0x66; 28] };
+        let result = script_purpose_data_v3(&purpose).unwrap();
+        assert_eq!(
+            result,
+            PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x66; 28])])
+        );
+    }
+
+    #[test]
+    fn script_purpose_v3_spending_uses_constr_1() {
+        let purpose = ScriptPurpose::Spending { tx_id: [0x77; 32], index: 5 };
+        let result = script_purpose_data_v3(&purpose).unwrap();
+        assert_eq!(
+            result,
+            PlutusData::Constr(1, vec![tx_out_ref_data(&[0x77; 32], 5)])
+        );
+    }
+
+    #[test]
+    fn script_purpose_v3_rewarding_uses_plain_credential() {
+        // V3 Rewarding uses credential_data (Constr(0, [hash])), NOT staking_credential_data
+        let cred = StakeCredential::ScriptHash([0x88; 28]);
+        let purpose = ScriptPurpose::Rewarding {
+            reward_account: RewardAccount { network: 1, credential: cred },
+        };
+        let result = script_purpose_data_v3(&purpose).unwrap();
+        // credential_data(ScriptHash) → Constr(1, [Bytes])
+        assert_eq!(
+            result,
+            PlutusData::Constr(2, vec![
+                PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x88; 28])])
+            ])
+        );
+    }
+
+    #[test]
+    fn script_purpose_v1v2_rewarding_uses_staking_credential() {
+        // V1/V2 Rewarding uses staking_credential_data which wraps in extra Constr(0, [...])
+        let cred = StakeCredential::ScriptHash([0x88; 28]);
+        let purpose = ScriptPurpose::Rewarding {
+            reward_account: RewardAccount { network: 1, credential: cred },
+        };
+        let result = script_purpose_data_v1v2(&purpose).unwrap();
+        // staking_credential_data → Constr(0, [credential_data])
+        assert_eq!(
+            result,
+            PlutusData::Constr(2, vec![
+                PlutusData::Constr(0, vec![
+                    PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x88; 28])])
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn script_purpose_v3_voting_uses_constr_4() {
+        let purpose = ScriptPurpose::Voting {
+            voter: Voter::StakePool([0x99; 28]),
+        };
+        let result = script_purpose_data_v3(&purpose).unwrap();
+        assert_eq!(
+            result,
+            PlutusData::Constr(4, vec![
+                PlutusData::Constr(2, vec![PlutusData::Bytes(vec![0x99; 28])])
+            ])
+        );
+    }
+
+    #[test]
+    fn script_purpose_v3_proposing_uses_constr_5() {
+        let purpose = ScriptPurpose::Proposing {
+            proposal_index: 0,
+            proposal: yggdrasil_ledger::ProposalProcedure {
+                deposit: 1_000_000,
+                reward_account: RewardAccount {
+                    network: 1,
+                    credential: StakeCredential::AddrKeyHash([0xAA; 28]),
+                },
+                gov_action: GovAction::InfoAction,
+                anchor: Anchor { url: String::new(), data_hash: [0; 32] },
+            },
+        };
+        let result = script_purpose_data_v3(&purpose).unwrap();
+        let PlutusData::Constr(5, fields) = result else { panic!("Expected Constr(5, ...)") };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0], PlutusData::Integer(0));
+    }
+
+    // -- plutus_address_data encoding ----------------------------------------
+
+    #[test]
+    fn plutus_address_data_base_address_has_staking() {
+        let addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xBB; 28]),
+            staking: StakeCredential::ScriptHash([0xCC; 28]),
+        });
+        let bytes = addr.to_bytes();
+        let result = plutus_address_data(&bytes).expect("Base address should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 2);
+        // payment credential
+        assert_eq!(fields[0], PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xBB; 28])]));
+        // staking: Just(StakingHash(credential))
+        assert_eq!(
+            fields[1],
+            PlutusData::Constr(0, vec![
+                PlutusData::Constr(0, vec![
+                    PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0xCC; 28])])
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn plutus_address_data_enterprise_has_no_staking() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xDD; 28]),
+        });
+        let bytes = addr.to_bytes();
+        let result = plutus_address_data(&bytes).expect("Enterprise address should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0], PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xDD; 28])]));
+        // Nothing (no staking)
+        assert_eq!(fields[1], PlutusData::Constr(1, vec![]));
+    }
+
+    #[test]
+    fn plutus_address_data_reward_returns_none() {
+        let addr = Address::Reward(RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xEE; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert!(plutus_address_data(&bytes).is_none());
+    }
+
+    // -- plutus_input_data encoding ------------------------------------------
+
+    #[test]
+    fn plutus_input_data_combines_txin_and_output() {
+        let txin = yggdrasil_ledger::eras::shelley::ShelleyTxIn {
+            transaction_id: [0xFF; 32],
+            index: 2,
+        };
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+            address: Address::Enterprise(EnterpriseAddress {
+                network: 1,
+                payment: StakeCredential::AddrKeyHash([0x11; 28]),
+            }),
+            value: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        });
+        let result = plutus_input_data(&txin, &txout).expect("Should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 2);
+        // First field is the txin encoding
+        assert_eq!(fields[0], plutus_txin_data(&txin));
+    }
 }
