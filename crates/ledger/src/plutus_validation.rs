@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::cbor::CborDecode;
-use crate::eras::conway::{ProposalProcedure, Voter};
+use crate::eras::conway::{ProposalProcedure, Voter, VotingProcedures};
 use crate::error::LedgerError;
 use crate::eras::alonzo::{ExUnits, Redeemer};
 use crate::eras::babbage::DatumOption;
@@ -130,7 +130,7 @@ pub struct TxContext {
     /// Required signer key hashes.
     pub required_signers: Vec<[u8; 28]>,
     /// Mint / burn map (policy → asset_name → quantity).
-    pub mint: BTreeMap<[u8; 28], BTreeMap<Vec<u8>, i64>>,
+    pub mint: MintAsset,
     /// Withdrawals (reward_account → lovelace).
     pub withdrawals: BTreeMap<RewardAccount, u64>,
     /// Reference inputs (Babbage+ only).
@@ -139,6 +139,25 @@ pub struct TxContext {
     pub current_treasury_value: Option<u64>,
     /// Treasury donation (Conway only).
     pub treasury_donation: Option<u64>,
+    /// Resolved spending inputs: (txin, resolved txout) sorted by txin.
+    /// Populated in `validate_plutus_scripts` from the live UTxO set.
+    pub inputs: Vec<(ShelleyTxIn, MultiEraTxOut)>,
+    /// Certificates in transaction order (verbatim from the tx body).
+    /// Used to build the `dcert` field of `TxInfo`.
+    pub certificates: Vec<DCert>,
+    /// Witness-set datum map: Blake2b-256(cbor(datum)) → PlutusData.
+    /// Populated in `validate_plutus_scripts` from the ShelleyWitnessSet.
+    pub witness_datums: HashMap<[u8; 32], PlutusData>,
+    /// Resolved reference inputs: (txin, resolved txout) sorted by txin.
+    /// Populated in `validate_plutus_scripts` from the live UTxO set.
+    pub resolved_reference_inputs: Vec<(ShelleyTxIn, MultiEraTxOut)>,
+    /// All redeemers resolved to their concrete Plutus script purposes.
+    /// Populated in `validate_plutus_scripts` after ledger-side pointer resolution.
+    pub redeemers: Vec<(ScriptPurpose, PlutusData)>,
+    /// Conway voting procedures carried by the transaction body.
+    pub voting_procedures: Option<VotingProcedures>,
+    /// Conway proposal procedures carried by the transaction body.
+    pub proposal_procedures: Vec<ProposalProcedure>,
 }
 
 // ---------------------------------------------------------------------------
@@ -411,9 +430,66 @@ pub fn validate_plutus_scripts(
     let plutus_scripts = collect_all_plutus_scripts(
         &ws,
         spending_utxo,
-        if !sorted_inputs.is_empty() { Some(sorted_inputs) } else { None },
+        if tx_ctx.reference_inputs.is_empty() {
+            None
+        } else {
+            Some(&tx_ctx.reference_inputs)
+        },
     );
     let datum_map = collect_datum_map(&ws);
+    let resolved_redeemers: Vec<(ScriptPurpose, PlutusData)> = ws
+        .redeemers
+        .iter()
+        .map(|redeemer| {
+            Ok((
+                resolve_script_purpose(
+                    redeemer,
+                    sorted_inputs,
+                    sorted_policy_ids,
+                    certificates,
+                    sorted_reward_accounts,
+                    sorted_voters,
+                    proposal_procedures,
+                )?,
+                redeemer.data.clone(),
+            ))
+        })
+        .collect::<Result<_, LedgerError>>()?;
+
+    // Build an augmented TxContext with the fields that require access to the
+    // witness set and spending UTxO (inputs, certificates, witness_datums).
+    // These are not available at the call-sites in state.rs so we populate
+    // them here, where all the raw data is in scope.
+    let resolved_inputs: Vec<(ShelleyTxIn, MultiEraTxOut)> = sorted_inputs
+        .iter()
+        .filter_map(|txin| spending_utxo.get(txin).map(|txout| (txin.clone(), txout.clone())))
+        .collect();
+    let resolved_reference_inputs: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx_ctx
+        .reference_inputs
+        .iter()
+        .filter_map(|txin| spending_utxo.get(txin).map(|txout| (txin.clone(), txout.clone())))
+        .collect();
+    let augmented_tx_ctx = TxContext {
+        inputs: resolved_inputs,
+        certificates: certificates.to_vec(),
+        witness_datums: datum_map.clone(),
+        resolved_reference_inputs,
+        // Clone all other fields from the caller-supplied context.
+        tx_hash: tx_ctx.tx_hash,
+        fee: tx_ctx.fee,
+        outputs: tx_ctx.outputs.clone(),
+        validity_start: tx_ctx.validity_start,
+        ttl: tx_ctx.ttl,
+        required_signers: tx_ctx.required_signers.clone(),
+        mint: tx_ctx.mint.clone(),
+        withdrawals: tx_ctx.withdrawals.clone(),
+        reference_inputs: tx_ctx.reference_inputs.clone(),
+        current_treasury_value: tx_ctx.current_treasury_value,
+        treasury_donation: tx_ctx.treasury_donation,
+        redeemers: resolved_redeemers.clone(),
+        voting_procedures: tx_ctx.voting_procedures.clone(),
+        proposal_procedures: tx_ctx.proposal_procedures.clone(),
+    };
 
     // Determine which required script hashes need Plutus evaluation
     // (those that are in the Plutus scripts collection).
@@ -435,16 +511,8 @@ pub fn validate_plutus_scripts(
 
     // For each redeemer, resolve its purpose, find its script, find datum,
     // and build an evaluation target.
-    for redeemer in &ws.redeemers {
-        let purpose = resolve_script_purpose(
-            redeemer,
-            sorted_inputs,
-            sorted_policy_ids,
-            certificates,
-            sorted_reward_accounts,
-            sorted_voters,
-            proposal_procedures,
-        )?;
+    for (redeemer, (purpose, redeemer_data)) in ws.redeemers.iter().zip(&resolved_redeemers) {
+        let purpose = purpose.clone();
 
         // Determine which script hash this redeemer targets.
         let target_hash = match &purpose {
@@ -491,11 +559,11 @@ pub fn validate_plutus_scripts(
                     script_bytes: script_bytes.clone(),
                     purpose,
                     datum,
-                    redeemer: redeemer.data.clone(),
+                    redeemer: redeemer_data.clone(),
                     ex_units: redeemer.ex_units,
                 };
 
-                evaluator.evaluate(&eval_target, tx_ctx)?;
+                evaluator.evaluate(&eval_target, &augmented_tx_ctx)?;
             }
         }
     }

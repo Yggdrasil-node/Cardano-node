@@ -406,6 +406,13 @@ pub struct ConwayGenesis {
     /// Minimum reference script cost per byte (Babbage+, lovelace).
     #[serde(default)]
     pub min_fee_ref_script_cost_per_byte: Option<u64>,
+
+    /// Conway Plutus V3 cost model in ordered-array form.
+    ///
+    /// Upstream Conway genesis serialises this as an array (`plutusV3CostModel`)
+    /// rather than the named map used by Alonzo genesis.
+    #[serde(default, rename = "plutusV3CostModel")]
+    pub plutus_v3_cost_model: Option<Vec<i64>>,
 }
 
 /// Pool voting thresholds as serialised in `conway-genesis.json`.
@@ -598,6 +605,7 @@ pub fn build_shelley_genesis_bootstrap(
 /// expose it with stable upstream key names.
 pub fn build_plutus_cost_model(
     alonzo: &AlonzoGenesis,
+    conway: Option<&ConwayGenesis>,
 ) -> Result<Option<CostModel>, CostModelError> {
     let named_params = alonzo
         .cost_models
@@ -606,8 +614,287 @@ pub fn build_plutus_cost_model(
 
     match named_params {
         Some(params) => Ok(Some(CostModel::from_alonzo_genesis_params(params)?)),
-        None => Ok(None),
+        None => {
+            let Some(v3_array) = conway.and_then(|c| c.plutus_v3_cost_model.as_ref()) else {
+                return Ok(None);
+            };
+
+            let named = conway_v3_named_params(v3_array);
+            if named.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(CostModel::from_alonzo_genesis_params(&named)?))
+        }
     }
+}
+
+/// Ordered Conway `plutusV3CostModel` parameter names currently present in the
+/// vendored network genesis files.
+///
+/// The live mainnet/preprod/preview Conway configs expose 251 parameters,
+/// ending at `byteStringToInteger-memory-arguments-slope`. Later Plutus V3+
+/// names exist upstream but are not yet present in these genesis arrays.
+const CONWAY_V3_PARAM_NAMES: &[&str] = &[
+    "addInteger-cpu-arguments-intercept",
+    "addInteger-cpu-arguments-slope",
+    "addInteger-memory-arguments-intercept",
+    "addInteger-memory-arguments-slope",
+    "appendByteString-cpu-arguments-intercept",
+    "appendByteString-cpu-arguments-slope",
+    "appendByteString-memory-arguments-intercept",
+    "appendByteString-memory-arguments-slope",
+    "appendString-cpu-arguments-intercept",
+    "appendString-cpu-arguments-slope",
+    "appendString-memory-arguments-intercept",
+    "appendString-memory-arguments-slope",
+    "bData-cpu-arguments",
+    "bData-memory-arguments",
+    "blake2b_256-cpu-arguments-intercept",
+    "blake2b_256-cpu-arguments-slope",
+    "blake2b_256-memory-arguments",
+    "cekApplyCost-exBudgetCPU",
+    "cekApplyCost-exBudgetMemory",
+    "cekBuiltinCost-exBudgetCPU",
+    "cekBuiltinCost-exBudgetMemory",
+    "cekConstCost-exBudgetCPU",
+    "cekConstCost-exBudgetMemory",
+    "cekDelayCost-exBudgetCPU",
+    "cekDelayCost-exBudgetMemory",
+    "cekForceCost-exBudgetCPU",
+    "cekForceCost-exBudgetMemory",
+    "cekLamCost-exBudgetCPU",
+    "cekLamCost-exBudgetMemory",
+    "cekStartupCost-exBudgetCPU",
+    "cekStartupCost-exBudgetMemory",
+    "cekVarCost-exBudgetCPU",
+    "cekVarCost-exBudgetMemory",
+    "chooseData-cpu-arguments",
+    "chooseData-memory-arguments",
+    "chooseList-cpu-arguments",
+    "chooseList-memory-arguments",
+    "chooseUnit-cpu-arguments",
+    "chooseUnit-memory-arguments",
+    "consByteString-cpu-arguments-intercept",
+    "consByteString-cpu-arguments-slope",
+    "consByteString-memory-arguments-intercept",
+    "consByteString-memory-arguments-slope",
+    "constrData-cpu-arguments",
+    "constrData-memory-arguments",
+    "decodeUtf8-cpu-arguments-intercept",
+    "decodeUtf8-cpu-arguments-slope",
+    "decodeUtf8-memory-arguments-intercept",
+    "decodeUtf8-memory-arguments-slope",
+    "divideInteger-cpu-arguments-constant",
+    "divideInteger-cpu-arguments-model-arguments-c00",
+    "divideInteger-cpu-arguments-model-arguments-c01",
+    "divideInteger-cpu-arguments-model-arguments-c02",
+    "divideInteger-cpu-arguments-model-arguments-c10",
+    "divideInteger-cpu-arguments-model-arguments-c11",
+    "divideInteger-cpu-arguments-model-arguments-c20",
+    "divideInteger-cpu-arguments-model-arguments-minimum",
+    "divideInteger-memory-arguments-intercept",
+    "divideInteger-memory-arguments-minimum",
+    "divideInteger-memory-arguments-slope",
+    "encodeUtf8-cpu-arguments-intercept",
+    "encodeUtf8-cpu-arguments-slope",
+    "encodeUtf8-memory-arguments-intercept",
+    "encodeUtf8-memory-arguments-slope",
+    "equalsByteString-cpu-arguments-constant",
+    "equalsByteString-cpu-arguments-intercept",
+    "equalsByteString-cpu-arguments-slope",
+    "equalsByteString-memory-arguments",
+    "equalsData-cpu-arguments-intercept",
+    "equalsData-cpu-arguments-slope",
+    "equalsData-memory-arguments",
+    "equalsInteger-cpu-arguments-intercept",
+    "equalsInteger-cpu-arguments-slope",
+    "equalsInteger-memory-arguments",
+    "equalsString-cpu-arguments-constant",
+    "equalsString-cpu-arguments-intercept",
+    "equalsString-cpu-arguments-slope",
+    "equalsString-memory-arguments",
+    "fstPair-cpu-arguments",
+    "fstPair-memory-arguments",
+    "headList-cpu-arguments",
+    "headList-memory-arguments",
+    "iData-cpu-arguments",
+    "iData-memory-arguments",
+    "ifThenElse-cpu-arguments",
+    "ifThenElse-memory-arguments",
+    "indexByteString-cpu-arguments",
+    "indexByteString-memory-arguments",
+    "lengthOfByteString-cpu-arguments",
+    "lengthOfByteString-memory-arguments",
+    "lessThanByteString-cpu-arguments-intercept",
+    "lessThanByteString-cpu-arguments-slope",
+    "lessThanByteString-memory-arguments",
+    "lessThanEqualsByteString-cpu-arguments-intercept",
+    "lessThanEqualsByteString-cpu-arguments-slope",
+    "lessThanEqualsByteString-memory-arguments",
+    "lessThanEqualsInteger-cpu-arguments-intercept",
+    "lessThanEqualsInteger-cpu-arguments-slope",
+    "lessThanEqualsInteger-memory-arguments",
+    "lessThanInteger-cpu-arguments-intercept",
+    "lessThanInteger-cpu-arguments-slope",
+    "lessThanInteger-memory-arguments",
+    "listData-cpu-arguments",
+    "listData-memory-arguments",
+    "mapData-cpu-arguments",
+    "mapData-memory-arguments",
+    "mkCons-cpu-arguments",
+    "mkCons-memory-arguments",
+    "mkNilData-cpu-arguments",
+    "mkNilData-memory-arguments",
+    "mkNilPairData-cpu-arguments",
+    "mkNilPairData-memory-arguments",
+    "mkPairData-cpu-arguments",
+    "mkPairData-memory-arguments",
+    "modInteger-cpu-arguments-constant",
+    "modInteger-cpu-arguments-model-arguments-c00",
+    "modInteger-cpu-arguments-model-arguments-c01",
+    "modInteger-cpu-arguments-model-arguments-c02",
+    "modInteger-cpu-arguments-model-arguments-c10",
+    "modInteger-cpu-arguments-model-arguments-c11",
+    "modInteger-cpu-arguments-model-arguments-c20",
+    "modInteger-cpu-arguments-model-arguments-minimum",
+    "modInteger-memory-arguments-intercept",
+    "modInteger-memory-arguments-slope",
+    "multiplyInteger-cpu-arguments-intercept",
+    "multiplyInteger-cpu-arguments-slope",
+    "multiplyInteger-memory-arguments-intercept",
+    "multiplyInteger-memory-arguments-slope",
+    "nullList-cpu-arguments",
+    "nullList-memory-arguments",
+    "quotientInteger-cpu-arguments-constant",
+    "quotientInteger-cpu-arguments-model-arguments-c00",
+    "quotientInteger-cpu-arguments-model-arguments-c01",
+    "quotientInteger-cpu-arguments-model-arguments-c02",
+    "quotientInteger-cpu-arguments-model-arguments-c10",
+    "quotientInteger-cpu-arguments-model-arguments-c11",
+    "quotientInteger-cpu-arguments-model-arguments-c20",
+    "quotientInteger-cpu-arguments-model-arguments-minimum",
+    "quotientInteger-memory-arguments-intercept",
+    "quotientInteger-memory-arguments-minimum",
+    "quotientInteger-memory-arguments-slope",
+    "remainderInteger-cpu-arguments-constant",
+    "remainderInteger-cpu-arguments-model-arguments-c00",
+    "remainderInteger-cpu-arguments-model-arguments-c01",
+    "remainderInteger-cpu-arguments-model-arguments-c02",
+    "remainderInteger-cpu-arguments-model-arguments-c10",
+    "remainderInteger-cpu-arguments-model-arguments-c11",
+    "remainderInteger-cpu-arguments-model-arguments-c20",
+    "remainderInteger-cpu-arguments-model-arguments-minimum",
+    "remainderInteger-memory-arguments-intercept",
+    "remainderInteger-memory-arguments-slope",
+    "serialiseData-cpu-arguments-intercept",
+    "serialiseData-cpu-arguments-slope",
+    "serialiseData-memory-arguments-intercept",
+    "serialiseData-memory-arguments-slope",
+    "sha2_256-cpu-arguments-intercept",
+    "sha2_256-cpu-arguments-slope",
+    "sha2_256-memory-arguments",
+    "sha3_256-cpu-arguments-intercept",
+    "sha3_256-cpu-arguments-slope",
+    "sha3_256-memory-arguments",
+    "sliceByteString-cpu-arguments-intercept",
+    "sliceByteString-cpu-arguments-slope",
+    "sliceByteString-memory-arguments-intercept",
+    "sliceByteString-memory-arguments-slope",
+    "sndPair-cpu-arguments",
+    "sndPair-memory-arguments",
+    "subtractInteger-cpu-arguments-intercept",
+    "subtractInteger-cpu-arguments-slope",
+    "subtractInteger-memory-arguments-intercept",
+    "subtractInteger-memory-arguments-slope",
+    "tailList-cpu-arguments",
+    "tailList-memory-arguments",
+    "trace-cpu-arguments",
+    "trace-memory-arguments",
+    "unBData-cpu-arguments",
+    "unBData-memory-arguments",
+    "unConstrData-cpu-arguments",
+    "unConstrData-memory-arguments",
+    "unIData-cpu-arguments",
+    "unIData-memory-arguments",
+    "unListData-cpu-arguments",
+    "unListData-memory-arguments",
+    "unMapData-cpu-arguments",
+    "unMapData-memory-arguments",
+    "verifyEcdsaSecp256k1Signature-cpu-arguments",
+    "verifyEcdsaSecp256k1Signature-memory-arguments",
+    "verifyEd25519Signature-cpu-arguments-intercept",
+    "verifyEd25519Signature-cpu-arguments-slope",
+    "verifyEd25519Signature-memory-arguments",
+    "verifySchnorrSecp256k1Signature-cpu-arguments-intercept",
+    "verifySchnorrSecp256k1Signature-cpu-arguments-slope",
+    "verifySchnorrSecp256k1Signature-memory-arguments",
+    "cekConstrCost-exBudgetCPU",
+    "cekConstrCost-exBudgetMemory",
+    "cekCaseCost-exBudgetCPU",
+    "cekCaseCost-exBudgetMemory",
+    "bls12_381_G1_add-cpu-arguments",
+    "bls12_381_G1_add-memory-arguments",
+    "bls12_381_G1_compress-cpu-arguments",
+    "bls12_381_G1_compress-memory-arguments",
+    "bls12_381_G1_equal-cpu-arguments",
+    "bls12_381_G1_equal-memory-arguments",
+    "bls12_381_G1_hashToGroup-cpu-arguments-intercept",
+    "bls12_381_G1_hashToGroup-cpu-arguments-slope",
+    "bls12_381_G1_hashToGroup-memory-arguments",
+    "bls12_381_G1_neg-cpu-arguments",
+    "bls12_381_G1_neg-memory-arguments",
+    "bls12_381_G1_scalarMul-cpu-arguments-intercept",
+    "bls12_381_G1_scalarMul-cpu-arguments-slope",
+    "bls12_381_G1_scalarMul-memory-arguments",
+    "bls12_381_G1_uncompress-cpu-arguments",
+    "bls12_381_G1_uncompress-memory-arguments",
+    "bls12_381_G2_add-cpu-arguments",
+    "bls12_381_G2_add-memory-arguments",
+    "bls12_381_G2_compress-cpu-arguments",
+    "bls12_381_G2_compress-memory-arguments",
+    "bls12_381_G2_equal-cpu-arguments",
+    "bls12_381_G2_equal-memory-arguments",
+    "bls12_381_G2_hashToGroup-cpu-arguments-intercept",
+    "bls12_381_G2_hashToGroup-cpu-arguments-slope",
+    "bls12_381_G2_hashToGroup-memory-arguments",
+    "bls12_381_G2_neg-cpu-arguments",
+    "bls12_381_G2_neg-memory-arguments",
+    "bls12_381_G2_scalarMul-cpu-arguments-intercept",
+    "bls12_381_G2_scalarMul-cpu-arguments-slope",
+    "bls12_381_G2_scalarMul-memory-arguments",
+    "bls12_381_G2_uncompress-cpu-arguments",
+    "bls12_381_G2_uncompress-memory-arguments",
+    "bls12_381_finalVerify-cpu-arguments",
+    "bls12_381_finalVerify-memory-arguments",
+    "bls12_381_millerLoop-cpu-arguments",
+    "bls12_381_millerLoop-memory-arguments",
+    "bls12_381_mulMlResult-cpu-arguments",
+    "bls12_381_mulMlResult-memory-arguments",
+    "keccak_256-cpu-arguments-intercept",
+    "keccak_256-cpu-arguments-slope",
+    "keccak_256-memory-arguments",
+    "blake2b_224-cpu-arguments-intercept",
+    "blake2b_224-cpu-arguments-slope",
+    "blake2b_224-memory-arguments",
+    "integerToByteString-cpu-arguments-c0",
+    "integerToByteString-cpu-arguments-c1",
+    "integerToByteString-cpu-arguments-c2",
+    "integerToByteString-memory-arguments-intercept",
+    "integerToByteString-memory-arguments-slope",
+    "byteStringToInteger-cpu-arguments-c0",
+    "byteStringToInteger-cpu-arguments-c1",
+    "byteStringToInteger-cpu-arguments-c2",
+    "byteStringToInteger-memory-arguments-intercept",
+    "byteStringToInteger-memory-arguments-slope",
+];
+
+/// Build a named-parameter map from Conway `plutusV3CostModel` array values.
+fn conway_v3_named_params(values: &[i64]) -> BTreeMap<String, i64> {
+    CONWAY_V3_PARAM_NAMES
+        .iter()
+        .zip(values.iter())
+        .map(|(name, value)| ((*name).to_owned(), *value))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -848,6 +1135,7 @@ mod tests {
             d_rep_deposit: Some(500_000_000),
             d_rep_activity: Some(20),
             min_fee_ref_script_cost_per_byte: Some(15),
+            plutus_v3_cost_model: None,
         }
     }
 
@@ -960,13 +1248,39 @@ mod tests {
     #[test]
     fn build_plutus_cost_model_from_alonzo_named_params() {
         let alonzo = sample_alonzo();
-        let model = build_plutus_cost_model(&alonzo)
+        let model = build_plutus_cost_model(&alonzo, None)
             .expect("build cost model")
             .expect("plutus v1 cost model");
         assert_eq!(model.step_cpu, 29_773);
         assert_eq!(model.step_mem, 100);
         assert_eq!(model.builtin_cpu, 29_773);
         assert_eq!(model.builtin_mem, 100);
+    }
+
+    #[test]
+    fn build_plutus_cost_model_from_conway_v3_array_fallback() {
+        let mut alonzo = sample_alonzo();
+        alonzo.cost_models.clear();
+
+        let named = conway_v3_named_params(&(0..251).map(|n| n as i64).collect::<Vec<_>>());
+        assert_eq!(CONWAY_V3_PARAM_NAMES.len(), 251);
+        assert_eq!(named.get("addInteger-cpu-arguments-intercept"), Some(&0));
+        assert_eq!(named.get("cekApplyCost-exBudgetCPU"), Some(&17));
+        assert_eq!(named.get("byteStringToInteger-memory-arguments-slope"), Some(&250));
+
+        let mut conway = sample_conway();
+        conway.plutus_v3_cost_model = Some((0..251).map(|n| n as i64).collect());
+
+        let model = build_plutus_cost_model(&alonzo, Some(&conway))
+            .expect("build cost model")
+            .expect("v3 fallback cost model");
+
+        // step_cpu/step_mem include constructor/case costs when present.
+        assert_eq!(model.step_cpu, 195);
+        assert_eq!(model.step_mem, 196);
+        assert_eq!(model.builtin_cpu, 19);
+        assert_eq!(model.builtin_mem, 20);
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::VerifySchnorrSecp256k1Signature));
     }
 
     #[test]

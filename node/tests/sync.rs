@@ -1959,6 +1959,7 @@ fn evict_confirmed_removes_matching_mempool_entries() {
         raw_tx: body.to_cbor_bytes(),
         size_bytes: 100,
         ttl: SlotNo(10_000),
+        inputs: vec![],
     };
     mempool.insert(entry).expect("insert");
     assert_eq!(mempool.len(), 1);
@@ -2001,6 +2002,7 @@ fn evict_confirmed_also_purges_expired() {
         raw_tx: body1.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(5),
+        inputs: vec![],
     }).expect("insert body1");
     mempool.insert(MempoolEntry {
         era: Era::Shelley,
@@ -2010,6 +2012,7 @@ fn evict_confirmed_also_purges_expired() {
         raw_tx: body2.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(10_000),
+        inputs: vec![],
     }).expect("insert body2");
     assert_eq!(mempool.len(), 2);
 
@@ -2050,6 +2053,7 @@ fn evict_confirmed_rollback_does_nothing() {
         raw_tx: body.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(10_000),
+        inputs: vec![],
     }).expect("insert");
     assert_eq!(mempool.len(), 1);
 

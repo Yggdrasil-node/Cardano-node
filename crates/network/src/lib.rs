@@ -59,6 +59,14 @@ pub mod peersharing_client;
 /// PeerSharing server driver — typed, state-machine-correct responder loop.
 pub mod peersharing_server;
 
+// -- Node-to-Client (NtC) server drivers ----------------------------------
+
+/// LocalTxSubmission server driver — NtC transaction intake from local clients.
+pub mod local_tx_submission_server;
+
+/// LocalStateQuery server driver — NtC ledger state query responder.
+pub mod local_state_query_server;
+
 // -- Bearer re-exports --------------------------------------------------------
 pub use bearer::{Bearer, BearerError, Sdu, TcpBearer, MAX_SDU_PAYLOAD};
 
@@ -75,6 +83,8 @@ pub use multiplexer::{
 
 // -- Mux re-exports -----------------------------------------------------------
 pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as start_mux, MAX_SEGMENT_SIZE};
+#[cfg(unix)]
+pub use mux::start_unix as start_mux_unix;
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
@@ -115,8 +125,20 @@ pub use protocols::{
     BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
     ChainSyncMessage, ChainSyncState, ChainSyncTransitionError,
     KeepAliveMessage, KeepAliveState, KeepAliveTransitionError,
+    AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
+    LocalStateQueryTransitionError,
+    LocalTxSubmissionMessage, LocalTxSubmissionState, LocalTxSubmissionTransitionError,
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
+};
+
+// -- NtC server driver re-exports ---------------------------------------------
+pub use local_tx_submission_server::{
+    LocalTxRequest, LocalTxSubmissionServer, LocalTxSubmissionServerError,
+};
+pub use local_state_query_server::{
+    LocalStateQueryAcquiredRequest, LocalStateQueryIdleRequest,
+    LocalStateQueryServer, LocalStateQueryServerError,
 };
 
 // -- ChainSync client re-exports ----------------------------------------------

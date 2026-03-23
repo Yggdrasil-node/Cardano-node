@@ -2,7 +2,7 @@ use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::Era;
 use crate::eras::{
     AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, MaryTxBody, ShelleyTx,
-    ShelleyWitnessSet,
+    ShelleyTxIn, ShelleyWitnessSet,
 };
 use crate::error::LedgerError;
 use crate::types::{BlockNo, HeaderHash, SlotNo, TxId};
@@ -306,6 +306,24 @@ impl MultiEraSubmittedTx {
             Self::Alonzo(tx) => tx.body.ttl.map(SlotNo),
             Self::Babbage(tx) => tx.body.ttl.map(SlotNo),
             Self::Conway(tx) => tx.body.ttl.map(SlotNo),
+        }
+    }
+
+    /// Return the UTxO inputs consumed by this transaction.
+    ///
+    /// This is used by the mempool for double-spend conflict detection:
+    /// two transactions conflict if their input sets overlap, meaning both
+    /// attempt to spend the same UTxO output.
+    ///
+    /// Reference: `Cardano.Ledger.Core` — `inputs txb`.
+    pub fn inputs(&self) -> Vec<ShelleyTxIn> {
+        match self {
+            Self::Shelley(tx) => tx.body.inputs.clone(),
+            Self::Allegra(tx) => tx.body.inputs.clone(),
+            Self::Mary(tx) => tx.body.inputs.clone(),
+            Self::Alonzo(tx) => tx.body.inputs.clone(),
+            Self::Babbage(tx) => tx.body.inputs.clone(),
+            Self::Conway(tx) => tx.body.inputs.clone(),
         }
     }
 

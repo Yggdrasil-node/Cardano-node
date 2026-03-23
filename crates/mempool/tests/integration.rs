@@ -14,6 +14,7 @@ fn make_entry(id_byte: u8, fee: u64, size: usize) -> MempoolEntry {
         raw_tx: vec![0u8; size],
         size_bytes: size,
         ttl: SlotNo(u64::MAX), // effectively no expiry
+        inputs: vec![],
     }
 }
 
@@ -209,6 +210,7 @@ fn make_entry_with_ttl(id_byte: u8, fee: u64, size: usize, ttl: u64) -> MempoolE
         raw_tx: vec![0u8; size],
         size_bytes: size,
         ttl: SlotNo(ttl),
+        inputs: vec![],
     }
 }
 
@@ -339,4 +341,141 @@ fn purge_expired_removes_nothing_when_all_valid() {
     let removed = mempool.purge_expired(SlotNo(500));
     assert_eq!(removed, 0);
     assert_eq!(mempool.len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Conflict detection tests (double-spend prevention)
+// ---------------------------------------------------------------------------
+
+/// Build a `MempoolEntry` with a specific set of UTxO inputs.
+fn make_entry_with_inputs(
+    id_byte: u8,
+    fee: u64,
+    size: usize,
+    inputs: Vec<ShelleyTxIn>,
+) -> MempoolEntry {
+    MempoolEntry {
+        era: Era::Shelley,
+        tx_id: TxId([id_byte; 32]),
+        fee,
+        body: vec![0u8; size],
+        raw_tx: vec![0u8; size],
+        size_bytes: size,
+        ttl: SlotNo(u64::MAX),
+        inputs,
+    }
+}
+
+fn sample_input(tx_seed: u8, index: u16) -> ShelleyTxIn {
+    ShelleyTxIn {
+        transaction_id: [tx_seed; 32],
+        index,
+    }
+}
+
+#[test]
+fn conflict_detection_rejects_double_spend() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("first tx should be accepted");
+
+    let result = mempool.insert(entry2);
+    assert!(
+        matches!(result, Err(MempoolError::ConflictingInputs(_))),
+        "expected ConflictingInputs error, got {:?}",
+        result
+    );
+    assert_eq!(mempool.len(), 1, "mempool should still have only the first tx");
+}
+
+#[test]
+fn conflict_detection_allows_disjoint_inputs() {
+    let input_a = sample_input(0xAA, 0);
+    let input_b = sample_input(0xBB, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a]);
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input_b]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("first tx");
+    mempool.insert(entry2).expect("second tx with different input should be accepted");
+    assert_eq!(mempool.len(), 2);
+}
+
+#[test]
+fn conflict_detection_partial_overlap_rejected() {
+    let input_a = sample_input(0xAA, 0);
+    let input_b = sample_input(0xBB, 0);
+
+    // entry1 consumes [A, B]; entry2 consumes [B, C] — overlap on B.
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone(), input_b.clone()]);
+    let entry2 = make_entry_with_inputs(
+        0x02,
+        200,
+        50,
+        vec![input_b, sample_input(0xCC, 0)],
+    );
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("first tx");
+    let result = mempool.insert(entry2);
+    assert!(matches!(result, Err(MempoolError::ConflictingInputs(_))));
+}
+
+#[test]
+fn conflict_detection_claims_released_on_removal() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1.clone()).expect("insert entry1");
+
+    // Remove entry1 — its input claim should be released.
+    assert!(mempool.remove_by_id(&entry1.tx_id));
+
+    // Now entry2 (which spends the same input) should be admitted.
+    mempool.insert(entry2).expect("entry2 should be accepted after entry1 removed");
+    assert_eq!(mempool.len(), 1);
+}
+
+#[test]
+fn conflict_detection_claims_released_on_pop_best() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 50, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("insert entry1 (higher fee)");
+
+    let popped = mempool.pop_best().expect("pop highest fee entry");
+    assert_eq!(popped.fee, 100);
+
+    // After popping, the input claim should be gone; entry2 should be admitted.
+    mempool.insert(entry2).expect("entry2 admitted after pop");
+    assert_eq!(mempool.len(), 1);
+}
+
+#[test]
+fn conflict_detection_claims_released_on_confirmed() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 50, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1.clone()).expect("insert entry1");
+
+    let removed = mempool.remove_confirmed(&[entry1.tx_id]);
+    assert_eq!(removed, 1);
+
+    // Input claim released — entry2 should now be admitted.
+    mempool.insert(entry2).expect("entry2 admitted after confirmation");
+    assert_eq!(mempool.len(), 1);
 }

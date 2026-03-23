@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod genesis;
+pub mod local_server;
 pub mod plutus_eval;
 pub mod runtime;
 pub mod server;
@@ -61,3 +62,11 @@ pub use server::{
 	run_keepalive_server,
 	run_txsubmission_server,
 };
+
+pub use local_server::{
+	BasicLocalQueryDispatcher, LocalQueryDispatcher,
+	LocalStateQuerySessionError, LocalTxSubmissionSessionError, LocalServerError,
+	run_local_tx_submission_session, run_local_state_query_session,
+};
+#[cfg(unix)]
+pub use local_server::{run_local_client_session, run_local_accept_loop};

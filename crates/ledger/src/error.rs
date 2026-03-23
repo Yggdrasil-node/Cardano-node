@@ -283,6 +283,27 @@ pub enum LedgerError {
     BlockTooLarge { actual: usize, max: usize },
 
     #[error(
+        "era regression: ledger is in {ledger_era:?} (ordinal {ledger_ordinal}), \
+         but received block in earlier era {block_era:?} (ordinal {block_ordinal})"
+    )]
+    /// Hard-fork combinator invariant violated: an incoming block is from an
+    /// era that precedes the current ledger era.  Once the ledger advances
+    /// past a hard-fork boundary it must never receive blocks from earlier
+    /// eras.
+    ///
+    /// Reference: `Ouroboros.Consensus.HardFork.Combinator` — foreground check.
+    BlockEraRegression {
+        /// The current ledger era before this block was applied.
+        ledger_era: super::eras::Era,
+        /// Ordinal of the current ledger era.
+        ledger_ordinal: u8,
+        /// The era reported by the incoming block.
+        block_era: super::eras::Era,
+        /// Ordinal of the incoming block's era.
+        block_ordinal: u8,
+    },
+
+    #[error(
         "block execution units exceed limit: mem {block_mem}/{max_mem}, \
          steps {block_steps}/{max_steps}"
     )]

@@ -2433,6 +2433,23 @@ impl LedgerState {
             }
         }
 
+        // Hard-fork combinator era-regression guard: once the ledger has
+        // advanced to era N, it must never receive a block from era < N.
+        // Era advances (N → N+1) and same-era blocks (N → N) are both valid.
+        //
+        // Genesis/origin state: when `current_era == Byron` and no blocks
+        // have been applied yet, all eras are allowed (enables syncing from
+        // a node configured to start at the latest era without having
+        // replayed the full Byron chain).
+        if self.tip != Point::Origin && self.current_era.is_era_regression(block.era) {
+            return Err(LedgerError::BlockEraRegression {
+                ledger_era: self.current_era,
+                ledger_ordinal: self.current_era.era_ordinal(),
+                block_era: block.era,
+                block_ordinal: block.era.era_ordinal(),
+            });
+        }
+
         self.maybe_activate_pending_shelley_genesis(block.era);
 
         // Block-level size validation when protocol parameters are available.
@@ -3487,6 +3504,8 @@ impl LedgerState {
                     reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
                     current_treasury_value: body.current_treasury_value,
                     treasury_donation: body.treasury_donation,
+                    voting_procedures: body.voting_procedures.clone(),
+                    proposal_procedures: proposal_slice.to_vec(),
                     ..Default::default()
                 };
                 crate::plutus_validation::validate_plutus_scripts(

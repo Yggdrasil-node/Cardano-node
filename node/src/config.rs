@@ -326,7 +326,7 @@ impl NodeConfigFile {
         &self,
         config_base_dir: Option<&Path>,
     ) -> Result<Option<CostModel>, crate::genesis::GenesisCostModelError> {
-        use crate::genesis::{build_plutus_cost_model, load_alonzo_genesis};
+        use crate::genesis::{build_plutus_cost_model, load_alonzo_genesis, load_conway_genesis};
 
         let Some(path) = self.alonzo_genesis_file.as_deref() else {
             return Ok(None);
@@ -339,7 +339,20 @@ impl NodeConfigFile {
         };
 
         let alonzo = load_alonzo_genesis(&path)?;
-        build_plutus_cost_model(&alonzo).map_err(Into::into)
+
+        let conway = match self.conway_genesis_file.as_deref() {
+            Some(path) => {
+                let path = if let Some(base) = config_base_dir {
+                    base.join(Path::new(path))
+                } else {
+                    Path::new(path).to_path_buf()
+                };
+                Some(load_conway_genesis(&path)?)
+            }
+            None => None,
+        };
+
+        build_plutus_cost_model(&alonzo, conway.as_ref()).map_err(Into::into)
     }
 
     pub fn topology_config(&self) -> TopologyConfig {

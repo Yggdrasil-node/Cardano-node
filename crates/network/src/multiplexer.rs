@@ -29,7 +29,7 @@ const DIRECTION_BIT: u16 = 0x8000;
 pub struct MiniProtocolNum(pub u16);
 
 impl MiniProtocolNum {
-    /// Handshake — reserved protocol number 0.
+    /// Handshake — reserved protocol number 0 (shared by NtN and NtC).
     pub const HANDSHAKE: Self = Self(0);
     /// ChainSync — protocol number 2 (node-to-node).
     pub const CHAIN_SYNC: Self = Self(2);
@@ -41,6 +41,14 @@ impl MiniProtocolNum {
     pub const KEEP_ALIVE: Self = Self(8);
     /// PeerSharing — protocol number 10.
     pub const PEER_SHARING: Self = Self(10);
+
+    // -- Node-to-Client (NtC) protocol numbers ----------------------------
+    // Reference: `Ouroboros.Network.NodeToClient` — `nodeToClientProtocols`.
+
+    /// NtC LocalTxSubmission — protocol number 5.
+    pub const NTC_LOCAL_TX_SUBMISSION: Self = Self(5);
+    /// NtC LocalStateQuery — protocol number 7.
+    pub const NTC_LOCAL_STATE_QUERY: Self = Self(7);
 }
 
 /// Direction of a multiplexed mini-protocol conversation.

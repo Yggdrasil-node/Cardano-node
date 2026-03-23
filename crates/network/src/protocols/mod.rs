@@ -4,6 +4,10 @@ mod block_fetch;
 mod chain_sync;
 /// KeepAlive protocol state machine and messages.
 mod keep_alive;
+/// LocalStateQuery mini-protocol state machine and messages (Node-to-Client).
+pub mod local_state_query;
+/// LocalTxSubmission mini-protocol state machine and messages (Node-to-Client).
+mod local_tx_submission;
 /// PeerSharing protocol state machine and messages.
 mod peer_sharing;
 /// TxSubmission2 protocol state machine and messages.
@@ -14,6 +18,13 @@ pub use block_fetch::{
 };
 pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
+pub use local_state_query::{
+    AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
+    LocalStateQueryTransitionError,
+};
+pub use local_tx_submission::{
+    LocalTxSubmissionMessage, LocalTxSubmissionState, LocalTxSubmissionTransitionError,
+};
 pub use peer_sharing::{
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
 };

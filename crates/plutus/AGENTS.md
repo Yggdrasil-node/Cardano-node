@@ -45,7 +45,7 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - `error.rs` — `MachineError` variants.
 
 ### Integration with `node` crate
-`node/src/plutus_eval.rs` implements `yggdrasil_ledger::plutus_validation::PlutusEvaluator` using `yggdrasil_plutus::evaluate_term`. `CekPlutusEvaluator` decodes script bytes via `decode_script_bytes`, builds term-level argument applications (datum if spending, redeemer, placeholder `ScriptContext`), and evaluates with the `ExBudget` declared by the transaction. The current simplified flat `CostModel` can now be calibrated from the upstream named Alonzo genesis `costModels.PlutusV1` map via `CostModel::from_alonzo_genesis_params()`, which maps shared CEK step costs (`Var`/`Const`/`Lam`/`Delay`/`Force`/`Apply`) and `cekBuiltinCost-*` onto the crate's flat four-field model. Full per-builtin parameterized costing and full `ScriptContext` / `TxInfo` construction remain future milestones.
+`node/src/plutus_eval.rs` implements `yggdrasil_ledger::plutus_validation::PlutusEvaluator` using `yggdrasil_plutus::evaluate_term`. `CekPlutusEvaluator` decodes script bytes via `decode_script_bytes`, builds term-level argument applications (datum if spending, redeemer, version-aware `ScriptContext`), and evaluates with the `ExBudget` declared by the transaction. The node-side context builder now derives `TxInfo` from the normalized ledger `TxContext`, including resolved inputs/reference inputs, structured Shelley-family TxOut addresses, withdrawals, certificates, datums, redeemers, and Conway governance data. Unsupported V3 certificate or proposal encodings now fail explicitly instead of fabricating placeholder integers. `CostModel::from_alonzo_genesis_params()` now derives CEK step costs plus per-builtin parameterized cost expressions from upstream named Alonzo/Babbage maps, and `CostModel::builtin_cost()` evaluates those entries against runtime argument ExMemory sizes (with flat fallback only for unmapped builtins). The node-side Conway path now maps the live 251-entry `plutusV3CostModel` array into this same named/per-builtin pipeline. The remaining budgeting work is tightening any still-approximated builtin cost shapes plus future Conway tail parameters that are not yet present in the vendored genesis files.
 
 ### Implemented Builtins
 - **Integer**: add, subtract, multiply, divide, quotient, remainder, mod, equals, less-than, less-than-equals
@@ -69,6 +69,6 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - `MachineError::CryptoError(String)` variant added for BLS operation failures.
 
 ## Next Steps
-1. Replace the current flat CEK model with per-builtin parameterized costing keyed by the full upstream cost-model parameter set.
-2. Add integration tests with on-chain script samples.
-3. Expand version-aware cost-model support so Conway `plutusV3CostModel` arrays can be mapped without falling back to Alonzo named maps.
+1. Add integration tests with on-chain script samples and upstream vector parity checks for budget accounting.
+2. Continue tightening per-builtin cost-shape parity where any current shape is still an approximation of upstream Plutus semantics.
+3. Extend Conway-array support when vendored genesis files pick up later V3+/Plomin tail parameters beyond the current 251-entry surface.

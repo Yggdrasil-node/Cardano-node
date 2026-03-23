@@ -462,3 +462,135 @@ fn byron_block_chain_spending() {
     assert_eq!(state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: tx2_id, index: 0 }).unwrap().coin(), 7_000);
     assert_eq!(state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: tx1_id, index: 1 }).unwrap().coin(), 1_000);
 }
+
+// ---------------------------------------------------------------------------
+// Hard-fork combinator era-ordering tests
+// ---------------------------------------------------------------------------
+
+/// Helper: build a minimal empty block for any era, slot, and block number.
+fn make_empty_block(era: Era, slot: u64, block_no: u64, hash_seed: u8) -> Block {
+    Block {
+        era,
+        header: BlockHeader {
+            hash: HeaderHash([hash_seed; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(slot),
+            block_no: BlockNo(block_no),
+            issuer_vkey: [0u8; 32],
+        },
+        transactions: vec![],
+        raw_cbor: None,
+    }
+}
+
+/// `Era::era_ordinal` returns the correct sequential index for every era.
+#[test]
+fn era_ordinal_is_sequential() {
+    assert_eq!(Era::Byron.era_ordinal(),   0);
+    assert_eq!(Era::Shelley.era_ordinal(), 1);
+    assert_eq!(Era::Allegra.era_ordinal(), 2);
+    assert_eq!(Era::Mary.era_ordinal(),    3);
+    assert_eq!(Era::Alonzo.era_ordinal(),  4);
+    assert_eq!(Era::Babbage.era_ordinal(), 5);
+    assert_eq!(Era::Conway.era_ordinal(),  6);
+}
+
+/// `is_hard_fork_to` is true iff the argument is strictly later.
+#[test]
+fn is_hard_fork_to_correctness() {
+    assert!(Era::Byron.is_hard_fork_to(Era::Shelley));
+    assert!(Era::Byron.is_hard_fork_to(Era::Conway));
+    assert!(Era::Shelley.is_hard_fork_to(Era::Allegra));
+    assert!(!Era::Shelley.is_hard_fork_to(Era::Shelley)); // same era — not a fork
+    assert!(!Era::Conway.is_hard_fork_to(Era::Babbage));  // regression — not a fork
+}
+
+/// `is_era_regression` is true iff the argument is strictly earlier.
+#[test]
+fn is_era_regression_correctness() {
+    assert!(Era::Conway.is_era_regression(Era::Shelley));
+    assert!(Era::Alonzo.is_era_regression(Era::Byron));
+    assert!(!Era::Shelley.is_era_regression(Era::Shelley)); // same era — not a regression
+    assert!(!Era::Shelley.is_era_regression(Era::Conway));  // advance — not a regression
+}
+
+/// Once the ledger has seen a Shelley block, a Byron block must be rejected.
+#[test]
+fn era_regression_shelley_then_byron_rejected() {
+    let mut state = LedgerState::new(Era::Byron);
+
+    let shelley_block = make_empty_block(Era::Shelley, 1, 1, 0x01);
+    state.apply_block(&shelley_block).expect("shelley block should apply");
+
+    let byron_block = make_empty_block(Era::Byron, 2, 2, 0x02);
+    let err = state
+        .apply_block(&byron_block)
+        .expect_err("byron block after shelley must be rejected");
+    assert!(
+        matches!(
+            err,
+            LedgerError::BlockEraRegression {
+                ledger_era: Era::Shelley,
+                block_era: Era::Byron,
+                ..
+            }
+        ),
+        "expected BlockEraRegression, got {err:?}"
+    );
+}
+
+/// Once the ledger has reached Conway, a Shelley block must be rejected.
+#[test]
+fn era_regression_conway_then_shelley_rejected() {
+    let mut state = LedgerState::new(Era::Conway);
+
+    let conway_block = make_empty_block(Era::Conway, 100, 1, 0x10);
+    state.apply_block(&conway_block).expect("conway block should apply");
+
+    let shelley_block = make_empty_block(Era::Shelley, 101, 2, 0x11);
+    let err = state
+        .apply_block(&shelley_block)
+        .expect_err("shelley block in conway state must be rejected");
+    assert!(
+        matches!(
+            err,
+            LedgerError::BlockEraRegression {
+                ledger_era: Era::Conway,
+                block_era: Era::Shelley,
+                ..
+            }
+        ),
+        "expected BlockEraRegression, got {err:?}"
+    );
+}
+
+/// Two consecutive blocks in the same era are allowed.
+#[test]
+fn same_era_consecutive_blocks_allowed() {
+    let mut state = LedgerState::new(Era::Babbage);
+    state.apply_block(&make_empty_block(Era::Babbage, 1, 1, 0xAA)).expect("babbage block 1");
+    state.apply_block(&make_empty_block(Era::Babbage, 2, 2, 0xBB)).expect("babbage block 2");
+    assert_eq!(state.tip, Point::BlockPoint(SlotNo(2), HeaderHash([0xBBu8; 32])));
+}
+
+/// An era-advance from Shelley to Conway (skipping Allegra/Mary/Alonzo/Babbage) is allowed.
+#[test]
+fn era_advance_across_multiple_eras_allowed() {
+    // A ledger configured for Shelley may receive a Conway block if the local
+    // genesis configuration skips intermediate eras — this is allowed by the HFC.
+    let mut state = LedgerState::new(Era::Shelley);
+    state.apply_block(&make_empty_block(Era::Shelley, 10, 1, 0x01)).expect("shelley block");
+    state.apply_block(&make_empty_block(Era::Conway, 20, 2, 0x02)).expect("conway block after shelley should be allowed");
+    assert_eq!(state.tip, Point::BlockPoint(SlotNo(20), HeaderHash([0x02u8; 32])));
+}
+
+/// A fresh ledger (tip = Origin) accepts a block from any era, enabling
+/// nodes that start SSD/fast-sync at a later era without replaying Byron.
+#[test]
+fn fresh_ledger_accepts_any_era_first_block() {
+    let mut state = LedgerState::new(Era::Byron);
+    // tip is Origin at creation; deliver a Conway block directly
+    let conway_block = make_empty_block(Era::Conway, 50, 1, 0x99);
+    state.apply_block(&conway_block).expect("fresh ledger should accept any era as first block");
+    assert_eq!(state.tip, Point::BlockPoint(SlotNo(50), HeaderHash([0x99u8; 32])));
+}
