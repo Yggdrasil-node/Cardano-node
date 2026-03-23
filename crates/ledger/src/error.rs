@@ -196,6 +196,12 @@ pub enum LedgerError {
     #[error("unsupported certificate kind in this ledger slice: {0}")]
     UnsupportedCertificate(&'static str),
 
+    #[error("unsupported plutus purpose in this context: {0}")]
+    UnsupportedPlutusPurpose(&'static str),
+
+    #[error("unsupported plutus context feature in this context: {0}")]
+    UnsupportedPlutusContext(&'static str),
+
     #[error(
         "multi-asset not preserved for policy {policy:02x?} / asset {asset_name:02x?}: \
          expected {expected}, produced {produced}"
