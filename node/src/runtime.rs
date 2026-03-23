@@ -567,6 +567,13 @@ fn preferred_hot_peer_from_registry(
     registry.preferred_hot_peer()
 }
 
+fn reconnect_preferred_peer(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    previous_preferred_peer: Option<SocketAddr>,
+) -> Option<SocketAddr> {
+    preferred_hot_peer_from_registry(peer_registry).or(previous_preferred_peer)
+}
+
 fn extend_unique_peers(target: &mut Vec<SocketAddr>, peers: impl IntoIterator<Item = SocketAddr>) {
     for peer in peers {
         if !target.contains(&peer) {
@@ -2046,9 +2053,7 @@ where
             tracer,
         );
         let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = preferred_hot_peer_from_registry(peer_registry.as_ref()) {
-            attempt_state.record_success(peer_addr);
-        } else if let Some(peer_addr) = preferred_peer {
+        if let Some(peer_addr) = reconnect_preferred_peer(peer_registry.as_ref(), preferred_peer) {
             attempt_state.record_success(peer_addr);
         }
 
@@ -2281,9 +2286,7 @@ where
             tracer,
         );
         let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = preferred_hot_peer_from_registry(peer_registry.as_ref()) {
-            attempt_state.record_success(peer_addr);
-        } else if let Some(peer_addr) = preferred_peer {
+        if let Some(peer_addr) = reconnect_preferred_peer(peer_registry.as_ref(), preferred_peer) {
             attempt_state.record_success(peer_addr);
         }
 
@@ -3055,6 +3058,7 @@ mod tests {
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
         preferred_hot_peer_from_registry,
+        reconnect_preferred_peer,
         refresh_ledger_peer_sources_from_chain_db,
         seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
         verified_sync_batch_trace_fields,
@@ -3717,6 +3721,34 @@ mod tests {
     #[test]
     fn preferred_hot_peer_from_registry_returns_none_without_registry() {
         assert_eq!(preferred_hot_peer_from_registry(None), None);
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_prefers_hot_registry_peer_over_previous() {
+        let previous = local_addr(3201);
+        let hot_peer = local_addr(3202);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_peer, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_peer, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_peer, Some(42));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(
+            reconnect_preferred_peer(Some(&shared), Some(previous)),
+            Some(hot_peer)
+        );
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_falls_back_to_previous_peer() {
+        let previous = local_addr(3203);
+        assert_eq!(reconnect_preferred_peer(None, Some(previous)), Some(previous));
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_returns_none_without_candidates() {
+        assert_eq!(reconnect_preferred_peer(None, None), None);
     }
 
     /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
