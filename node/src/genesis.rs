@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_ledger::{
-    Address, AddrKeyHash, GenesisDelegateHash, GenesisHash, PoolKeyHash,
+    Address, AddrKeyHash, Anchor, EnactState, GenesisDelegateHash, GenesisHash, PoolKeyHash,
     ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
 };
 use yggdrasil_ledger::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
@@ -413,6 +413,35 @@ pub struct ConwayGenesis {
     /// rather than the named map used by Alonzo genesis.
     #[serde(default, rename = "plutusV3CostModel")]
     pub plutus_v3_cost_model: Option<Vec<i64>>,
+
+    /// Genesis constitution with anchor and optional guardrails script hash.
+    #[serde(default)]
+    pub constitution: Option<GenesisConstitution>,
+}
+
+/// Constitution as serialised in `conway-genesis.json`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GenesisConstitution {
+    /// Anchor containing a URL and data-hash.
+    #[serde(default)]
+    pub anchor: Option<GenesisConstitutionAnchor>,
+
+    /// Guardrails script hash (hex-encoded 28-byte script hash).
+    #[serde(default)]
+    pub script: Option<String>,
+}
+
+/// Anchor inside the genesis constitution.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenesisConstitutionAnchor {
+    /// URL of the constitution document.
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// Blake2b-256 hash of the constitution document.
+    #[serde(default)]
+    pub data_hash: Option<String>,
 }
 
 /// Pool voting thresholds as serialised in `conway-genesis.json`.
@@ -545,6 +574,47 @@ pub fn build_protocol_parameters(
         min_committee_size: conway.and_then(|c| c.committee_min_size),
         committee_term_limit: conway.and_then(|c| c.committee_max_term_length),
     }
+}
+
+/// Build the initial [`EnactState`] from the Conway genesis constitution.
+///
+/// If the Conway genesis file contains a `constitution` section with an anchor
+/// and/or a guardrails script hash, the returned `EnactState` will carry those
+/// values so that governance validation has the correct initial constitution
+/// against which to check proposals.
+pub fn build_genesis_enact_state(
+    conway: Option<&ConwayGenesis>,
+) -> Result<Option<EnactState>, GenesisLoadError> {
+    let Some(gc) = conway.and_then(|c| c.constitution.as_ref()) else {
+        return Ok(None);
+    };
+
+    let anchor = if let Some(a) = &gc.anchor {
+        Anchor {
+            url: a.url.clone().unwrap_or_default(),
+            data_hash: match &a.data_hash {
+                Some(h) => decode_fixed_hash::<32>(h, "constitution.anchor.dataHash")?,
+                None => [0u8; 32],
+            },
+        }
+    } else {
+        Anchor {
+            url: String::new(),
+            data_hash: [0u8; 32],
+        }
+    };
+
+    let guardrails_script_hash = match &gc.script {
+        Some(h) => Some(decode_fixed_hash::<28>(h, "constitution.script")?),
+        None => None,
+    };
+
+    let mut enact = EnactState::default();
+    enact.constitution = yggdrasil_ledger::eras::conway::Constitution {
+        anchor,
+        guardrails_script_hash,
+    };
+    Ok(Some(enact))
 }
 
 /// Build the Shelley bootstrap bundle used to activate genesis initial funds
@@ -1136,6 +1206,13 @@ mod tests {
             d_rep_activity: Some(20),
             min_fee_ref_script_cost_per_byte: Some(15),
             plutus_v3_cost_model: None,
+            constitution: Some(GenesisConstitution {
+                anchor: Some(GenesisConstitutionAnchor {
+                    url: Some("ipfs://example".to_owned()),
+                    data_hash: Some("ca41a91f399259bcefe57f9858e91f6d00e1a38d6d9c63d4052914ea7bd70cb2".to_owned()),
+                }),
+                script: Some("fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64".to_owned()),
+            }),
         }
     }
 
@@ -1205,6 +1282,29 @@ mod tests {
         assert_eq!(dvt.motion_no_confidence.numerator, 670_000);
         assert_eq!(dvt.update_to_constitution.numerator, 750_000);
         assert_eq!(dvt.treasury_withdrawal.numerator, 670_000);
+    }
+
+    #[test]
+    fn build_genesis_enact_state_parses_constitution() {
+        let conway = sample_conway();
+        let enact = build_genesis_enact_state(Some(&conway))
+            .expect("parse ok")
+            .expect("enact state present");
+
+        assert_eq!(enact.constitution.anchor.url, "ipfs://example");
+        assert_ne!(enact.constitution.anchor.data_hash, [0u8; 32]);
+        let hash = enact.constitution.guardrails_script_hash.expect("script hash");
+        // First byte of "fa24fb..." is 0xfa.
+        assert_eq!(hash[0], 0xfa);
+        assert_eq!(hash.len(), 28);
+    }
+
+    #[test]
+    fn build_genesis_enact_state_none_without_constitution() {
+        let mut conway = sample_conway();
+        conway.constitution = None;
+        let result = build_genesis_enact_state(Some(&conway)).expect("parse ok");
+        assert!(result.is_none());
     }
 
     #[test]

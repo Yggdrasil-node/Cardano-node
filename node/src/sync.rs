@@ -779,6 +779,20 @@ pub struct VerifiedSyncServiceConfig {
     /// phase-2 Plutus validation during checkpoint-tracked ledger replay.
     /// When absent, `CekPlutusEvaluator` falls back to `CostModel::default()`.
     pub plutus_cost_model: Option<CostModel>,
+    /// Whether to verify VRF leader eligibility proofs against stake
+    /// distribution during epoch-boundary-aware block application.
+    ///
+    /// Requires `nonce_config` to be set (so epoch nonce and stake snapshots
+    /// are tracked).  When the `set` snapshot is non-empty and the epoch
+    /// nonce is available, each Shelley-family block's VRF proof is checked
+    /// against the pool's relative stake.
+    ///
+    /// Defaults to `false` for backward compatibility and because VRF
+    /// verification is computationally expensive during initial sync.
+    pub verify_vrf: bool,
+    /// Active slot coefficient `f` from genesis, required when `verify_vrf`
+    /// is `true`.  Ignored when VRF verification is disabled.
+    pub active_slot_coeff: Option<ActiveSlotCoeff>,
 }
 
 /// Outcome returned when the verified sync service finishes.
@@ -873,12 +887,24 @@ pub(crate) fn advance_ledger_state_with_progress(
 /// Returns the list of epoch boundary events that fired during this batch.
 /// When no epoch transition occurs, the returned vec is empty and the
 /// behavior is identical to [`advance_ledger_state_with_progress`].
+/// Optional VRF verification context for epoch-boundary-aware block application.
+///
+/// When provided, each block's VRF leader eligibility proof is checked
+/// against the pool's relative stake using the `set` snapshot.
+pub(crate) struct VrfVerificationContext<'a> {
+    /// Current epoch nonce from nonce evolution tracking.
+    pub nonce_state: &'a NonceEvolutionState,
+    /// Active slot coefficient from genesis.
+    pub active_slot_coeff: &'a ActiveSlotCoeff,
+}
+
 pub(crate) fn advance_ledger_with_epoch_boundary(
     ledger_state: &mut LedgerState,
     snapshots: &mut StakeSnapshots,
     epoch_size: EpochSize,
     progress: &MultiEraSyncProgress,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
+    vrf_ctx: Option<&VrfVerificationContext<'_>>,
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
     for_each_roll_forward_block(progress, |block| -> Result<(), SyncError> {
@@ -897,6 +923,22 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
             apply_epoch_boundary(ledger_state, new_epoch, snapshots, &BTreeMap::new())
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
+        }
+
+        // VRF leader eligibility check using the `set` snapshot.
+        if let Some(ctx) = vrf_ctx {
+            let stake_dist = snapshots.set.pool_stake_distribution();
+            if stake_dist.total_active_stake() > 0 {
+                let valid = verify_block_vrf_with_stake(
+                    block,
+                    ctx.nonce_state.epoch_nonce,
+                    &stake_dist,
+                    ctx.active_slot_coeff,
+                )?;
+                if !valid {
+                    return Err(SyncError::Consensus(ConsensusError::VrfLeaderCheckFailed));
+                }
+            }
         }
 
         ledger_state.apply_block_validated(&converted, evaluator)?;
@@ -921,6 +963,7 @@ pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
     tracking: &mut LedgerCheckpointTracking,
     progress: &MultiEraSyncProgress,
     policy: &LedgerCheckpointPolicy,
+    vrf_ctx: Option<&VrfVerificationContext<'_>>,
 ) -> Result<LedgerCheckpointUpdateOutcome, SyncError>
 where
     I: ImmutableStore,
@@ -949,6 +992,7 @@ where
             epoch_size,
             progress,
             Some(&tracking.plutus_evaluator),
+            vrf_ctx,
         )?;
     } else {
         advance_ledger_state_with_progress(
@@ -1210,12 +1254,28 @@ where
 
             result = batch_fut => {
                 let progress = result?;
+
+                // Build VRF context when verification is enabled and nonce
+                // tracking is active.  The nonce state must be read before
+                // this batch's nonce evolution update.
+                let vrf_ctx = if config.verify_vrf {
+                    nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
+                        |(ns, asc)| VrfVerificationContext {
+                            nonce_state: ns,
+                            active_slot_coeff: asc,
+                        },
+                    )
+                } else {
+                    None
+                };
+
                 let applied = apply_verified_progress_to_chaindb(
                     chain_db,
                     &progress,
                     chain_state.as_mut(),
                     Some(&mut checkpoint_tracking),
                     &config.checkpoint_policy,
+                    vrf_ctx.as_ref(),
                 )?;
                 from_point = progress.current_point;
                 total_blocks += progress.fetched_blocks;
@@ -1527,7 +1587,8 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 /// - `prev_hash`: from Byron consensus data
 /// - `slot_no`: absolute slot via `epoch * 21600 + slot_in_epoch`
 /// - `block_no`: `chain_difficulty` from consensus data
-/// - `issuer_vkey`: zeroed (Byron uses a different signature scheme)
+/// - `issuer_vkey`: PBFT issuer key from consensus data (MainBlock) or
+///   zeroed (EBB)
 /// - `transactions`: decoded from block body tx_payload
 pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
     match block {
@@ -1556,7 +1617,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                     prev_hash: HeaderHash(*byron.prev_hash()),
                     slot_no: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
                     block_no: BlockNo(byron.chain_difficulty()),
-                    issuer_vkey: [0u8; 32],
+                    issuer_vkey: byron.issuer_vkey(),
                 },
                 transactions,
                 raw_cbor: None,
@@ -2200,6 +2261,7 @@ pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
     chain_state: Option<&mut ChainState>,
     checkpoint_tracking: Option<&mut LedgerCheckpointTracking>,
     checkpoint_policy: &LedgerCheckpointPolicy,
+    vrf_ctx: Option<&VrfVerificationContext<'_>>,
 ) -> Result<AppliedVerifiedProgress, SyncError>
 where
     I: ImmutableStore,
@@ -2229,6 +2291,7 @@ where
                 tracking,
                 progress,
                 checkpoint_policy,
+                vrf_ctx,
             )
         })
         .transpose()?;
@@ -2417,4 +2480,25 @@ pub fn evict_confirmed_from_mempool(
         }
         MultiEraSyncStep::RollBackward { .. } => 0,
     }
+}
+
+/// Collect transaction IDs from rolled-back blocks so they can be
+/// considered for re-admission.
+///
+/// Before a volatile store rollback is applied, this reads the blocks
+/// that will be discarded (the suffix *after* `target`) and returns
+/// their transaction IDs. Callers can then re-admit any of these
+/// transactions that remain valid under the new chain state.
+///
+/// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — post-rollback
+/// re-addition of rolled-back transactions.
+pub fn collect_rolled_back_tx_ids<V: VolatileStore>(
+    store: &V,
+    target: &Point,
+) -> Vec<TxId> {
+    store
+        .suffix_after(target)
+        .iter()
+        .flat_map(|block| block.transactions.iter().map(|tx| tx.id))
+        .collect()
 }

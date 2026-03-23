@@ -167,6 +167,25 @@ impl VolatileStore for FileVolatile {
             Point::BlockPoint(block.header.slot_no, block.header.hash)
         })
     }
+
+    fn suffix_after(&self, point: &Point) -> Vec<Block> {
+        let start = match point {
+            Point::Origin => 0,
+            Point::BlockPoint(_, hash) => {
+                match self.chain.iter().position(|h| h == hash) {
+                    Some(pos) => pos + 1,
+                    None => return Vec::new(),
+                }
+            }
+        };
+        if start >= self.chain.len() {
+            return Vec::new();
+        }
+        self.chain[start..]
+            .iter()
+            .filter_map(|h| self.index.get(h).cloned())
+            .collect()
+    }
 }
 
 /// Encode a byte slice as lowercase hex.

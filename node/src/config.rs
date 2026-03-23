@@ -320,6 +320,28 @@ impl NodeConfigFile {
         Ok(Some(load_shelley_genesis_bootstrap(&path)?))
     }
 
+    /// Load the genesis [`EnactState`] from the configured Conway genesis file
+    /// when a `constitution` section is present.
+    pub fn load_genesis_enact_state(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<Option<yggdrasil_ledger::EnactState>, crate::genesis::GenesisLoadError> {
+        use crate::genesis::{build_genesis_enact_state, load_conway_genesis};
+
+        let Some(path) = self.conway_genesis_file.as_deref() else {
+            return Ok(None);
+        };
+
+        let path = if let Some(base) = config_base_dir {
+            base.join(Path::new(path))
+        } else {
+            Path::new(path).to_path_buf()
+        };
+
+        let conway = load_conway_genesis(&path)?;
+        build_genesis_enact_state(Some(&conway))
+    }
+
     /// Load the simplified CEK [`CostModel`] from the configured Alonzo
     /// genesis file when a named Plutus cost-model map is available.
     pub fn load_plutus_cost_model(

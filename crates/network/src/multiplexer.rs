@@ -49,6 +49,8 @@ impl MiniProtocolNum {
     pub const NTC_LOCAL_TX_SUBMISSION: Self = Self(5);
     /// NtC LocalStateQuery — protocol number 7.
     pub const NTC_LOCAL_STATE_QUERY: Self = Self(7);
+    /// NtC LocalTxMonitor — protocol number 9.
+    pub const NTC_LOCAL_TX_MONITOR: Self = Self(9);
 }
 
 /// Direction of a multiplexed mini-protocol conversation.

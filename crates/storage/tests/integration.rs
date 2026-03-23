@@ -137,6 +137,60 @@ fn volatile_rejects_duplicate() {
         .expect_err("duplicate hash should be rejected");
 }
 
+#[test]
+fn volatile_suffix_after_origin_returns_all() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 10)).unwrap();
+    store.add_block(test_block(0x02, 11)).unwrap();
+    store.add_block(test_block(0x03, 12)).unwrap();
+
+    let suffix = store.suffix_after(&Point::Origin);
+    assert_eq!(suffix.len(), 3);
+    assert_eq!(suffix[0].header.slot_no, SlotNo(10));
+    assert_eq!(suffix[2].header.slot_no, SlotNo(12));
+}
+
+#[test]
+fn volatile_suffix_after_mid_block() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 10)).unwrap();
+    store.add_block(test_block(0x02, 11)).unwrap();
+    store.add_block(test_block(0x03, 12)).unwrap();
+
+    let suffix = store.suffix_after(&Point::BlockPoint(
+        SlotNo(10),
+        HeaderHash([0x01; 32]),
+    ));
+    assert_eq!(suffix.len(), 2);
+    assert_eq!(suffix[0].header.hash, HeaderHash([0x02; 32]));
+    assert_eq!(suffix[1].header.hash, HeaderHash([0x03; 32]));
+}
+
+#[test]
+fn volatile_suffix_after_tip_returns_empty() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 10)).unwrap();
+    store.add_block(test_block(0x02, 11)).unwrap();
+
+    let suffix = store.suffix_after(&Point::BlockPoint(
+        SlotNo(11),
+        HeaderHash([0x02; 32]),
+    ));
+    assert!(suffix.is_empty());
+}
+
+#[test]
+fn volatile_suffix_after_unknown_point_returns_empty() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 10)).unwrap();
+
+    let suffix = store.suffix_after(&Point::BlockPoint(
+        SlotNo(99),
+        HeaderHash([0xFF; 32]),
+    ));
+    assert!(suffix.is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Ledger snapshot store
 // ---------------------------------------------------------------------------

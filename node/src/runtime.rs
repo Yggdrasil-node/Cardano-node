@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
-    MultiEraSyncProgress, SyncError, VerifiedSyncServiceConfig,
+    MultiEraSyncProgress, SyncError, VerifiedSyncServiceConfig, VrfVerificationContext,
     apply_verified_progress_to_chaindb,
     apply_nonce_evolution_to_progress, recover_ledger_state_chaindb,
     sync_batch_apply_verified, sync_batch_verified, track_chain_state,
@@ -28,7 +28,7 @@ use yggdrasil_network::{
     GovernorAction, GovernorState, GovernorTargets, LedgerPeerSnapshot,
     LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
     LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
-    PeerConnection, PeerError, PeerRegistry, PeerSource, PeerStatus,
+    PeerConnection, PeerError, PeerRegistry, PeerSharingClient, PeerSource, PeerStatus,
     PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
     RootPeerProviderState, TopologyConfig, TxSubmissionClient,
     TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
@@ -76,6 +76,11 @@ struct ManagedWarmPeer {
     session: PeerSession,
     last_keepalive_at: Instant,
     next_cookie: u16,
+    /// When `true` the peer is considered hot (active data exchange candidate).
+    is_hot: bool,
+    /// Most recently observed chain tip from this peer, used for chain
+    /// selection among hot peers.
+    last_known_tip: Option<Point>,
 }
 
 impl ManagedWarmPeer {
@@ -84,6 +89,8 @@ impl ManagedWarmPeer {
             session,
             last_keepalive_at: now,
             next_cookie: 1,
+            is_hot: false,
+            last_known_tip: None,
         }
     }
 
@@ -105,6 +112,18 @@ impl ManagedWarmPeer {
     fn abort(self) {
         self.session.mux.abort();
     }
+
+    async fn share_peers(&mut self, amount: u16) -> Result<Option<Vec<SocketAddr>>, String> {
+        let Some(peer_sharing) = self.session.peer_sharing.as_mut() else {
+            return Ok(None);
+        };
+
+        peer_sharing
+            .share_request(amount)
+            .await
+            .map(|peers| Some(peers.into_iter().map(|peer| peer.addr).collect()))
+            .map_err(|err| err.to_string())
+    }
 }
 
 struct OutboundPeerManager {
@@ -123,10 +142,6 @@ impl OutboundPeerManager {
         Self {
             warm_peers: BTreeMap::new(),
         }
-    }
-
-    fn contains(&self, peer: &SocketAddr) -> bool {
-        self.warm_peers.contains_key(peer)
     }
 
     async fn promote_to_warm(
@@ -188,6 +203,115 @@ impl OutboundPeerManager {
         }
     }
 
+    /// Mark a warm peer as hot (active data exchange candidate).
+    ///
+    /// Returns `true` when the peer was found and its status changed.
+    /// The underlying session remains alive so the peer continues to
+    /// receive KeepAlive heartbeats while hot.
+    fn promote_to_hot(&mut self, peer: SocketAddr) -> bool {
+        match self.warm_peers.get_mut(&peer) {
+            Some(managed) if !managed.is_hot => {
+                managed.is_hot = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Demote a hot peer back to warm.
+    ///
+    /// Returns `true` when the peer was found and its `is_hot` flag cleared.
+    fn demote_to_warm(&mut self, peer: SocketAddr) -> bool {
+        match self.warm_peers.get_mut(&peer) {
+            Some(managed) if managed.is_hot => {
+                managed.is_hot = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Query the chain tip of each hot peer via ChainSync `find_intersect`
+    /// and update the cached `last_known_tip`.
+    ///
+    /// Uses Origin as the sole candidate point so the server always returns
+    /// its current tip without advancing the cursor.  Peers that fail the
+    /// query are left with their previous tip value and tracked as failures.
+    ///
+    /// Reference: upstream `peerSelectionGovernor` refreshes candidate tips
+    /// periodically.
+    async fn refresh_hot_peer_tips(
+        &mut self,
+        governor_state: &mut GovernorState,
+        tracer: &NodeTracer,
+    ) {
+        let hot_peers: Vec<SocketAddr> = self
+            .warm_peers
+            .iter()
+            .filter(|(_, m)| m.is_hot)
+            .map(|(addr, _)| *addr)
+            .collect();
+
+        for peer in hot_peers {
+            let Some(managed) = self.warm_peers.get_mut(&peer) else {
+                continue;
+            };
+            match managed
+                .session
+                .chain_sync
+                .find_intersect_points(vec![Point::Origin])
+                .await
+            {
+                Ok(resp) => {
+                    let tip = match &resp {
+                        yggdrasil_network::TypedIntersectResponse::Found { tip, .. } => tip.clone(),
+                        yggdrasil_network::TypedIntersectResponse::NotFound { tip } => tip.clone(),
+                    };
+                    tracer.trace_runtime(
+                        "Net.Governor",
+                        "Debug",
+                        "hot peer tip refreshed",
+                        trace_fields([
+                            ("peer", json!(peer.to_string())),
+                            ("tip", json!(format!("{:?}", tip))),
+                        ]),
+                    );
+                    managed.last_known_tip = Some(tip);
+                }
+                Err(err) => {
+                    governor_state.record_failure(peer);
+                    tracer.trace_runtime(
+                        "Net.Governor",
+                        "Warning",
+                        "hot peer tip query failed",
+                        trace_fields([
+                            ("peer", json!(peer.to_string())),
+                            ("error", json!(err.to_string())),
+                        ]),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Select the best hot peer to sync from based on its last known tip.
+    ///
+    /// Returns the address of the hot peer with the highest block number
+    /// at its reported tip (most advanced chain), or `None` if no hot
+    /// peers have a known tip.
+    ///
+    /// Reference: upstream chain selection picks the peer whose candidate
+    /// chain header is best according to `selectView`.
+    fn best_hot_peer(&self) -> Option<SocketAddr> {
+        self.warm_peers
+            .iter()
+            .filter(|(_, m)| m.is_hot && m.last_known_tip.is_some())
+            .max_by_key(|(_, m)| {
+                m.last_known_tip.as_ref().and_then(|tip| tip.slot())
+            })
+            .map(|(addr, _)| *addr)
+    }
+
     async fn drive_keepalives(
         &mut self,
         keepalive_interval: Option<Duration>,
@@ -235,6 +359,68 @@ impl OutboundPeerManager {
             );
         }
     }
+
+    async fn refresh_peer_share_sources(
+        &mut self,
+        request_amount: u16,
+        peer_registry: &Arc<RwLock<PeerRegistry>>,
+        governor_state: &mut GovernorState,
+        tracer: &NodeTracer,
+    ) {
+        let peers = self.warm_peers.keys().copied().collect::<Vec<_>>();
+        let mut discovered = Vec::new();
+        let mut attempted = false;
+
+        for peer in peers {
+            let Some(session) = self.warm_peers.get_mut(&peer) else {
+                continue;
+            };
+
+            match session.share_peers(request_amount).await {
+                Ok(Some(shared_peers)) => {
+                    attempted = true;
+                    governor_state.record_success(peer);
+                    extend_unique_peers(&mut discovered, shared_peers);
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    attempted = true;
+                    governor_state.record_failure(peer);
+                    tracer.trace_runtime(
+                        "Net.PeerSelection",
+                        "Warning",
+                        "peer sharing request failed",
+                        trace_fields([
+                            ("peer", json!(peer.to_string())),
+                            ("error", json!(err)),
+                        ]),
+                    );
+                }
+            }
+        }
+
+        if !attempted {
+            return;
+        }
+
+        let changed = {
+            let mut registry = peer_registry.write().expect("peer registry lock poisoned");
+            registry.sync_peer_share_peers(discovered.clone())
+        };
+
+        if changed {
+            tracer.trace_runtime(
+                "Net.PeerSelection",
+                "Info",
+                "peer sharing registry refreshed",
+                trace_fields([("peerCount", json!(discovered.len()))]),
+            );
+        }
+    }
+}
+
+fn peer_share_request_amount(targets: &GovernorTargets) -> u16 {
+    targets.target_known.clamp(1, u16::MAX as usize) as u16
 }
 
 impl RuntimeRootPeerSources {
@@ -542,6 +728,7 @@ pub async fn run_governor_loop<I, V, L, F>(
     config: RuntimeGovernorConfig,
     topology: TopologyConfig,
     base_ledger_state: LedgerState,
+    mempool: Option<SharedMempool>,
     tracer: NodeTracer,
     shutdown: F,
 ) where
@@ -613,6 +800,39 @@ pub async fn run_governor_loop<I, V, L, F>(
                     .drive_keepalives(config.keepalive_interval, &mut governor_state, &tracer)
                     .await;
 
+                peer_manager
+                    .refresh_peer_share_sources(
+                        peer_share_request_amount(&config.targets),
+                        &peer_registry,
+                        &mut governor_state,
+                        &tracer,
+                    )
+                    .await;
+
+                peer_manager
+                    .refresh_hot_peer_tips(&mut governor_state, &tracer)
+                    .await;
+
+                // Purge expired mempool entries using the current chain tip slot.
+                if let Some(ref mempool) = mempool {
+                    let tip_slot = {
+                        let db = chain_db.read().expect("chain_db lock poisoned");
+                        db.volatile().tip().slot().unwrap_or(SlotNo(0))
+                    };
+                    let purged = mempool.purge_expired(tip_slot);
+                    if purged > 0 {
+                        tracer.trace_runtime(
+                            "Mempool",
+                            "Info",
+                            "expired transactions purged",
+                            trace_fields([
+                                ("purged", json!(purged)),
+                                ("tipSlot", json!(tip_slot.0)),
+                            ]),
+                        );
+                    }
+                }
+
                 let local_root_groups = root_sources.local_root_targets();
                 let actions = {
                     let registry = peer_registry.read().expect("peer registry lock poisoned");
@@ -640,7 +860,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             }
                         }
                         GovernorAction::PromoteToHot(peer) => {
-                            if peer_manager.contains(&peer) {
+                            if peer_manager.promote_to_hot(peer) {
                                 let mut registry = peer_registry
                                     .write()
                                     .expect("peer registry lock poisoned");
@@ -650,6 +870,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             }
                         }
                         GovernorAction::DemoteToWarm(peer) => {
+                            peer_manager.demote_to_warm(peer);
                             let mut registry = peer_registry
                                 .write()
                                 .expect("peer registry lock poisoned");
@@ -1070,6 +1291,8 @@ pub struct PeerSession {
     pub keep_alive: KeepAliveClient,
     /// TxSubmission client driver.
     pub tx_submission: TxSubmissionClient,
+    /// Optional PeerSharing client driver when negotiated with the peer.
+    pub peer_sharing: Option<PeerSharingClient>,
     /// Mux handle — abort to tear down the connection.
     pub mux: yggdrasil_network::MuxHandle,
     /// Negotiated protocol version.
@@ -1844,12 +2067,23 @@ where
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
+                            let vrf_ctx = if config.verify_vrf {
+                                nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
+                                    |(ns, asc)| VrfVerificationContext {
+                                        nonce_state: ns,
+                                        active_slot_coeff: asc,
+                                    },
+                                )
+                            } else {
+                                None
+                            };
                             let applied = apply_verified_progress_to_chaindb(
                                 chain_db,
                                 &progress,
                                 chain_state.as_mut(),
                                 checkpoint_tracking.as_mut(),
                                 &config.checkpoint_policy,
+                                vrf_ctx.as_ref(),
                             )?;
 
                             record_verified_batch_progress(
@@ -2026,6 +2260,16 @@ where
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
+                            let vrf_ctx = if config.verify_vrf {
+                                nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
+                                    |(ns, asc)| VrfVerificationContext {
+                                        nonce_state: ns,
+                                        active_slot_coeff: asc,
+                                    },
+                                )
+                            } else {
+                                None
+                            };
                             let applied = {
                                 let mut chain_db = chain_db.write().map_err(|_| shared_chaindb_lock_error())?;
                                 apply_verified_progress_to_chaindb(
@@ -2034,6 +2278,7 @@ where
                                     chain_state.as_mut(),
                                     checkpoint_tracking.as_mut(),
                                     &config.checkpoint_policy,
+                                    vrf_ctx.as_ref(),
                                 )?
                             };
 
@@ -2138,7 +2383,7 @@ async fn bootstrap_with_attempt_state(
                 NodeToNodeVersionData {
                     network_magic: config.network_magic,
                     initiator_only_diffusion_mode: false,
-                    peer_sharing: 0,
+                    peer_sharing: 1,
                     query: false,
                 },
             )
@@ -2224,6 +2469,12 @@ async fn bootstrap_with_attempt_state(
         .ok_or_else(|| PeerError::HandshakeProtocol {
             detail: "missing TxSubmission protocol handle".into(),
         })?;
+    let peer_sharing = conn.protocols.remove(&MiniProtocolNum::PEER_SHARING);
+    let peer_sharing = if conn.version_data.peer_sharing > 0 {
+        peer_sharing.map(PeerSharingClient::new)
+    } else {
+        None
+    };
 
     Ok(PeerSession {
         connected_peer_addr,
@@ -2231,6 +2482,7 @@ async fn bootstrap_with_attempt_state(
         block_fetch: BlockFetchClient::new(bf),
         keep_alive: KeepAliveClient::new(ka),
         tx_submission: TxSubmissionClient::new(tx),
+        peer_sharing,
         mux: conn.mux,
         version: conn.version,
         version_data: conn.version_data,
@@ -2654,6 +2906,7 @@ mod tests {
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
         NodeConfig, ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
         VerifiedSyncServiceConfig,
+        peer_share_request_amount,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
         refresh_ledger_peer_sources_from_chain_db,
@@ -2673,7 +2926,8 @@ mod tests {
     };
     use yggdrasil_network::{
         AfterSlot, BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
-        HandshakeVersion, PeerAccessPoint, PeerSource, TopologyConfig, UseBootstrapPeers,
+        GovernorTargets, HandshakeVersion, PeerAccessPoint, PeerSource, TopologyConfig,
+        UseBootstrapPeers,
         UseLedgerPeers,
     };
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
@@ -2702,6 +2956,8 @@ mod tests {
             security_param: None,
             checkpoint_policy: LedgerCheckpointPolicy::default(),
             plutus_cost_model: None,
+            verify_vrf: false,
+            active_slot_coeff: None,
         }
     }
 
@@ -2723,6 +2979,24 @@ mod tests {
             relays: vec![relay],
             pool_metadata: None,
         }
+    }
+
+    #[test]
+    fn peer_share_request_amount_is_clamped_to_u16() {
+        let targets = GovernorTargets {
+            target_known: usize::MAX,
+            target_established: 5,
+            target_active: 2,
+        };
+
+        assert_eq!(peer_share_request_amount(&targets), u16::MAX);
+
+        let targets = GovernorTargets {
+            target_known: 0,
+            target_established: 0,
+            target_active: 0,
+        };
+        assert_eq!(peer_share_request_amount(&targets), 1);
     }
 
     fn ledger_state_with_pool_relay(peer: SocketAddr) -> LedgerState {
@@ -3163,5 +3437,166 @@ mod tests {
         assert_eq!(targets[0].hot_valency, 2);
         assert_eq!(targets[0].warm_valency, 2);
         assert_eq!(targets[0].peers, vec![local_addr(4001)]);
+    }
+
+    #[test]
+    fn promote_to_hot_marks_warm_peer() {
+        use super::OutboundPeerManager;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+
+        // Cannot promote unknown peer.
+        assert!(!mgr.promote_to_hot(addr));
+
+        // Simulate adding a warm peer directly.
+        let session = fake_peer_session(addr);
+        mgr.warm_peers.insert(addr, super::ManagedWarmPeer::new(session, std::time::Instant::now()));
+
+        // First promotion succeeds.
+        assert!(mgr.promote_to_hot(addr));
+        assert!(mgr.warm_peers[&addr].is_hot);
+
+        // Second promotion is idempotent.
+        assert!(!mgr.promote_to_hot(addr));
+    }
+
+    #[test]
+    fn demote_to_warm_clears_hot_flag() {
+        use super::OutboundPeerManager;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session(addr);
+        mgr.warm_peers.insert(addr, super::ManagedWarmPeer::new(session, std::time::Instant::now()));
+
+        mgr.promote_to_hot(addr);
+        assert!(mgr.warm_peers[&addr].is_hot);
+
+        assert!(mgr.demote_to_warm(addr));
+        assert!(!mgr.warm_peers[&addr].is_hot);
+
+        // Demoting an already-warm peer is no-op.
+        assert!(!mgr.demote_to_warm(addr));
+    }
+
+    #[test]
+    fn best_hot_peer_selects_highest_slot() {
+        use super::OutboundPeerManager;
+
+        let addr_a: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let addr_b: std::net::SocketAddr = "5.6.7.8:3001".parse().unwrap();
+
+        let mut mgr = OutboundPeerManager::new();
+
+        // Insert two warm peers.
+        let sess_a = fake_peer_session(addr_a);
+        mgr.warm_peers.insert(addr_a, super::ManagedWarmPeer::new(sess_a, std::time::Instant::now()));
+        let sess_b = fake_peer_session(addr_b);
+        mgr.warm_peers.insert(addr_b, super::ManagedWarmPeer::new(sess_b, std::time::Instant::now()));
+
+        // No hot peers → no best peer.
+        assert!(mgr.best_hot_peer().is_none());
+
+        // Promote both to hot.
+        mgr.promote_to_hot(addr_a);
+        mgr.promote_to_hot(addr_b);
+
+        // Still none — no tips cached yet.
+        assert!(mgr.best_hot_peer().is_none());
+
+        // Give peer A a higher slot tip.
+        mgr.warm_peers.get_mut(&addr_a).unwrap().last_known_tip = Some(
+            Point::BlockPoint(SlotNo(200), HeaderHash([0xAA; 32])),
+        );
+        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip = Some(
+            Point::BlockPoint(SlotNo(100), HeaderHash([0xBB; 32])),
+        );
+
+        assert_eq!(mgr.best_hot_peer(), Some(addr_a));
+
+        // Switch — peer B gets a higher slot.
+        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip = Some(
+            Point::BlockPoint(SlotNo(300), HeaderHash([0xCC; 32])),
+        );
+
+        assert_eq!(mgr.best_hot_peer(), Some(addr_b));
+    }
+
+    /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
+    fn fake_peer_session(addr: std::net::SocketAddr) -> super::PeerSession {
+        use yggdrasil_network::{
+            HandshakeVersion, NodeToNodeVersionData,
+        };
+        use yggdrasil_network::multiplexer::MiniProtocolNum;
+
+        // We need real protocol handles. Create a TCP loopback pair and mux it.
+        // However, that requires async. For pure unit tests we can use an
+        // abortable sentinel that panics if any protocol method is called.
+        //
+        // The simplest approach: create protocol handles from a mux that will
+        // never be driven (tests only inspect .is_hot / .promote_to_hot).
+        // We build a TcpStream pair synchronously via std and wrap in tokio.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let listen_addr = listener.local_addr().unwrap();
+            let client_stream = tokio::net::TcpStream::connect(listen_addr).await.unwrap();
+            let (server_stream, _) = listener.accept().await.unwrap();
+
+            let protocols = [
+                MiniProtocolNum::CHAIN_SYNC,
+                MiniProtocolNum::BLOCK_FETCH,
+                MiniProtocolNum::KEEP_ALIVE,
+                MiniProtocolNum::TX_SUBMISSION,
+            ];
+
+            let (mut handles, mux) = yggdrasil_network::mux::start(
+                client_stream,
+                yggdrasil_network::multiplexer::MiniProtocolDir::Initiator,
+                &protocols,
+                4096,
+            );
+            // Also start the server side so the mux doesn't immediately fail.
+            let (_server_handles, server_mux) = yggdrasil_network::mux::start(
+                server_stream,
+                yggdrasil_network::multiplexer::MiniProtocolDir::Responder,
+                &protocols,
+                4096,
+            );
+
+            // Stash server mux so it outlives the construction; it will be
+            // cleaned up when tests drop the manager.
+            std::mem::forget(server_mux);
+
+            super::PeerSession {
+                connected_peer_addr: addr,
+                chain_sync: yggdrasil_network::ChainSyncClient::new(
+                    handles.remove(&MiniProtocolNum::CHAIN_SYNC).unwrap(),
+                ),
+                block_fetch: yggdrasil_network::BlockFetchClient::new(
+                    handles.remove(&MiniProtocolNum::BLOCK_FETCH).unwrap(),
+                ),
+                keep_alive: yggdrasil_network::KeepAliveClient::new(
+                    handles.remove(&MiniProtocolNum::KEEP_ALIVE).unwrap(),
+                ),
+                tx_submission: yggdrasil_network::TxSubmissionClient::new(
+                    handles.remove(&MiniProtocolNum::TX_SUBMISSION).unwrap(),
+                ),
+                peer_sharing: None,
+                mux,
+                version: HandshakeVersion(15),
+                version_data: NodeToNodeVersionData {
+                    network_magic: 764824073,
+                    initiator_only_diffusion_mode: false,
+                    peer_sharing: 0,
+                    query: false,
+                },
+            }
+        })
     }
 }

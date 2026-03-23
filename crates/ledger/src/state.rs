@@ -4406,7 +4406,6 @@ fn apply_certificates_and_withdrawals(
                     // Accepting the cert here allows mainnet blocks containing
                     // MIR to be decoded and applied without error.
                 }
-                other => return Err(LedgerError::UnsupportedCertificate(certificate_kind(other))),
             }
         }
     }
@@ -4625,36 +4624,6 @@ fn touch_drep_activity_for_certs(
 
 fn is_builtin_drep(drep: DRep) -> bool {
     matches!(drep, DRep::AlwaysAbstain | DRep::AlwaysNoConfidence)
-}
-
-fn certificate_kind(cert: &DCert) -> &'static str {
-    match cert {
-        DCert::AccountRegistration(_) => "AccountRegistration",
-        DCert::AccountUnregistration(_) => "AccountUnregistration",
-        DCert::DelegationToStakePool(_, _) => "DelegationToStakePool",
-        DCert::PoolRegistration(_) => "PoolRegistration",
-        DCert::PoolRetirement(_, _) => "PoolRetirement",
-        DCert::GenesisDelegation(_, _, _) => "GenesisDelegation",
-        DCert::MoveInstantaneousReward(_, _) => "MoveInstantaneousReward",
-        DCert::AccountRegistrationDeposit(_, _) => "AccountRegistrationDeposit",
-        DCert::AccountUnregistrationDeposit(_, _) => "AccountUnregistrationDeposit",
-        DCert::DelegationToDrep(_, _) => "DelegationToDrep",
-        DCert::DelegationToStakePoolAndDrep(_, _, _) => "DelegationToStakePoolAndDrep",
-        DCert::AccountRegistrationDelegationToStakePool(_, _, _) => {
-            "AccountRegistrationDelegationToStakePool"
-        }
-        DCert::AccountRegistrationDelegationToDrep(_, _, _) => {
-            "AccountRegistrationDelegationToDrep"
-        }
-        DCert::AccountRegistrationDelegationToStakePoolAndDrep(_, _, _, _) => {
-            "AccountRegistrationDelegationToStakePoolAndDrep"
-        }
-        DCert::CommitteeAuthorization(_, _) => "CommitteeAuthorization",
-        DCert::CommitteeResignation(_, _) => "CommitteeResignation",
-        DCert::DrepRegistration(_, _, _) => "DrepRegistration",
-        DCert::DrepUnregistration(_, _) => "DrepUnregistration",
-        DCert::DrepUpdate(_, _) => "DrepUpdate",
-    }
 }
 
 // ---------------------------------------------------------------------------

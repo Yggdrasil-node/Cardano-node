@@ -63,4 +63,8 @@ pub enum ConsensusError {
         /// The block number that was received.
         got: u64,
     },
+    /// The VRF leader eligibility check failed — the block issuer's VRF
+    /// output does not meet the leader threshold for their relative stake.
+    #[error("VRF leader eligibility check failed")]
+    VrfLeaderCheckFailed,
 }

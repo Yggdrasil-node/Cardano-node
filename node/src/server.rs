@@ -27,6 +27,8 @@ use yggdrasil_network::{
     ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest,
     KeepAliveServer, KeepAliveServerError,
     MuxHandle, PeerConnection, PeerListener, PeerListenerError,
+    PeerRegistry, PeerSharingServer, PeerSharingServerError,
+    PeerStatus, SharedPeerAddress,
     TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
 };
 use yggdrasil_network::multiplexer::MiniProtocolNum;
@@ -48,10 +50,21 @@ pub struct InboundPeerSession {
     pub keep_alive: KeepAliveServer,
     /// TxSubmission server driver (server-driven request flow).
     pub tx_submission: TxSubmissionServer,
+    /// Optional PeerSharing server driver.
+    pub peer_sharing: Option<PeerSharingServer>,
     /// Mux handle for aborting all background tasks on shutdown.
     pub mux: MuxHandle,
     /// Remote peer address.
     pub remote_addr: SocketAddr,
+}
+
+/// A provider of peer addresses for the PeerSharing responder.
+///
+/// Implementations return a list of known shareable peer addresses when a
+/// remote node requests peers over mini-protocol 10.
+pub trait PeerSharingProvider: Send + Sync {
+    /// Return up to `amount` peer addresses to share with the requester.
+    fn shareable_peers(&self, amount: u16) -> Vec<SharedPeerAddress>;
 }
 
 /// A sink for transactions pulled from an inbound TxSubmission client.
@@ -127,6 +140,48 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// PeerSharing provider backed by a shared PeerRegistry
+// ---------------------------------------------------------------------------
+
+/// Shared [`PeerRegistry`]-backed peer-sharing provider that serves warm and
+/// hot peers to inbound requester nodes.
+///
+/// Only peers with status `PeerWarm` or `PeerHot` are returned, matching the
+/// upstream policy of advertising established peers only.
+#[derive(Clone, Debug)]
+pub struct SharedPeerSharingProvider {
+    peer_registry: Arc<RwLock<PeerRegistry>>,
+}
+
+impl SharedPeerSharingProvider {
+    /// Create a new provider from a shared peer registry.
+    pub fn new(peer_registry: Arc<RwLock<PeerRegistry>>) -> Self {
+        Self { peer_registry }
+    }
+}
+
+impl PeerSharingProvider for SharedPeerSharingProvider {
+    fn shareable_peers(&self, amount: u16) -> Vec<SharedPeerAddress> {
+        let registry = match self.peer_registry.read() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+
+        registry
+            .iter()
+            .filter(|(_, entry)| {
+                matches!(
+                    entry.status,
+                    PeerStatus::PeerWarm | PeerStatus::PeerHot
+                )
+            })
+            .take(amount as usize)
+            .map(|(addr, _)| SharedPeerAddress { addr: *addr })
+            .collect()
+    }
+}
+
 impl InboundPeerSession {
     /// Build an inbound session from an accepted [`PeerConnection`].
     ///
@@ -141,11 +196,16 @@ impl InboundPeerSession {
         let bf = conn.protocols.remove(&MiniProtocolNum::BLOCK_FETCH)?;
         let ka = conn.protocols.remove(&MiniProtocolNum::KEEP_ALIVE)?;
         let ts = conn.protocols.remove(&MiniProtocolNum::TX_SUBMISSION)?;
+        let ps = conn
+            .protocols
+            .remove(&MiniProtocolNum::PEER_SHARING)
+            .map(PeerSharingServer::new);
         Some(Self {
             chain_sync: ChainSyncServer::new(cs),
             block_fetch: BlockFetchServer::new(bf),
             keep_alive: KeepAliveServer::new(ka),
             tx_submission: TxSubmissionServer::new(ts),
+            peer_sharing: ps,
             mux: conn.mux,
             remote_addr,
         })
@@ -307,6 +367,23 @@ pub async fn run_txsubmission_server(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// PeerSharing server task
+// ---------------------------------------------------------------------------
+
+/// Run the PeerSharing server loop, serving known peers from a
+/// [`PeerSharingProvider`].
+///
+/// Terminates when the client sends `MsgDone` or the connection drops.
+pub async fn run_peersharing_server(
+    mut server: PeerSharingServer,
+    provider: &dyn PeerSharingProvider,
+) -> Result<(), PeerSharingServerError> {
+    server
+        .serve_loop(|amount| provider.shareable_peers(amount))
+        .await
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +674,9 @@ pub enum InboundServiceError {
 /// Accepts connections on the given [`PeerListener`], builds an
 /// [`InboundPeerSession`] for each, and spawns protocol server tasks.
 /// When `block_provider` and `chain_provider` are supplied, BlockFetch
-/// and ChainSync server tasks are spawned alongside KeepAlive.
+/// and ChainSync server tasks are spawned alongside KeepAlive.  When a
+/// `peer_sharing_provider` is supplied, PeerSharing server tasks are
+/// spawned for connections that negotiated the protocol.
 ///
 /// The loop runs until the `shutdown` future resolves or a fatal listener
 /// error occurs.
@@ -606,6 +685,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     block_provider: Option<Arc<dyn BlockProvider>>,
     chain_provider: Option<Arc<dyn ChainProvider>>,
     tx_submission_consumer: Option<Arc<dyn TxSubmissionConsumer>>,
+    peer_sharing_provider: Option<Arc<dyn PeerSharingProvider>>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
     tokio::pin!(shutdown);
@@ -623,6 +703,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 let bp = block_provider.clone();
                 let cp = chain_provider.clone();
                 let tx_consumer = tx_submission_consumer.clone();
+                let ps_provider = peer_sharing_provider.clone();
 
                 tokio::spawn(async move {
                     let ka = tokio::spawn(run_keepalive_server(session.keep_alive));
@@ -645,12 +726,21 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         })
                     });
 
+                    let ps = session.peer_sharing.and_then(|server| {
+                        ps_provider.map(|provider| {
+                            tokio::spawn(async move {
+                                let _ = run_peersharing_server(server, &*provider).await;
+                            })
+                        })
+                    });
+
                     // Wait for KeepAlive to finish (indicates peer disconnected
                     // or sent MsgDone). Then abort the remaining tasks.
                     let _ = ka.await;
                     if let Some(h) = bf { h.abort(); }
                     if let Some(h) = cs { h.abort(); }
                     if let Some(h) = tx { h.abort(); }
+                    if let Some(h) = ps { h.abort(); }
                     session.mux.abort();
                 });
             }
@@ -661,10 +751,11 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockProvider, ChainProvider, SharedChainDb, TxSubmissionConsumer,
+        BlockProvider, ChainProvider, PeerSharingProvider, SharedChainDb,
+        SharedPeerSharingProvider, TxSubmissionConsumer,
         run_inbound_accept_loop,
     };
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
     use std::collections::HashMap;
     use std::time::Duration;
     use yggdrasil_ledger::{
@@ -857,6 +948,7 @@ mod tests {
                     None,
                     None,
                     Some(consumer),
+                    None,
                     async move {
                         let _ = shutdown_rx.await;
                     },
@@ -943,5 +1035,49 @@ mod tests {
 
         let _ = shutdown_tx.send(());
         accept_task.await.expect("accept task join").expect("accept loop");
+    }
+
+    #[test]
+    fn shared_peer_sharing_provider_returns_warm_and_hot_peers() {
+        use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus};
+        use std::net::SocketAddr;
+
+        let mut registry = PeerRegistry::default();
+        let warm: SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let hot: SocketAddr = "5.6.7.8:3001".parse().unwrap();
+        let cold: SocketAddr = "9.10.11.12:3001".parse().unwrap();
+
+        registry.insert_source(warm, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(hot, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(cold, PeerSource::PeerSourceBootstrap);
+
+        registry.set_status(warm, PeerStatus::PeerWarm);
+        registry.set_status(hot, PeerStatus::PeerHot);
+        // cold stays PeerCold by default
+
+        let provider = SharedPeerSharingProvider::new(Arc::new(RwLock::new(registry)));
+        let peers = provider.shareable_peers(10);
+
+        let addrs: Vec<SocketAddr> = peers.iter().map(|p| p.addr).collect();
+        assert!(addrs.contains(&warm), "warm peer should be shareable");
+        assert!(addrs.contains(&hot), "hot peer should be shareable");
+        assert!(!addrs.contains(&cold), "cold peer should not be shareable");
+    }
+
+    #[test]
+    fn shared_peer_sharing_provider_respects_amount_limit() {
+        use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus};
+        use std::net::SocketAddr;
+
+        let mut registry = PeerRegistry::default();
+        for i in 1..=5u8 {
+            let addr: SocketAddr = format!("10.0.0.{i}:3001").parse().unwrap();
+            registry.insert_source(addr, PeerSource::PeerSourceBootstrap);
+            registry.set_status(addr, PeerStatus::PeerWarm);
+        }
+
+        let provider = SharedPeerSharingProvider::new(Arc::new(RwLock::new(registry)));
+        let peers = provider.shareable_peers(2);
+        assert_eq!(peers.len(), 2, "should return at most the requested amount");
     }
 }

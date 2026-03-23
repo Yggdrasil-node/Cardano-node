@@ -83,13 +83,15 @@ pub struct PeerConnection {
 // ---------------------------------------------------------------------------
 
 /// The set of mini-protocol numbers registered for a standard node-to-node
-/// connection: Handshake (for negotiation) plus the four data protocols.
-const N2N_PROTOCOLS: [MiniProtocolNum; 5] = [
+/// connection: Handshake (for negotiation) plus the standard data protocols
+/// and PeerSharing.
+const N2N_PROTOCOLS: [MiniProtocolNum; 6] = [
     MiniProtocolNum::HANDSHAKE,
     MiniProtocolNum::CHAIN_SYNC,
     MiniProtocolNum::BLOCK_FETCH,
     MiniProtocolNum::TX_SUBMISSION,
     MiniProtocolNum::KEEP_ALIVE,
+    MiniProtocolNum::PEER_SHARING,
 ];
 
 /// Default per-protocol channel buffer capacity.
@@ -224,4 +226,15 @@ pub async fn accept(
     hs.send(refuse.to_cbor()).await?;
 
     Err(PeerError::NoCompatibleVersion)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::N2N_PROTOCOLS;
+    use crate::multiplexer::MiniProtocolNum;
+
+    #[test]
+    fn n2n_protocols_include_peer_sharing() {
+        assert!(N2N_PROTOCOLS.contains(&MiniProtocolNum::PEER_SHARING));
+    }
 }

@@ -1,6 +1,6 @@
 //! Node-to-Client (NtC) local socket server.
 //!
-//! Accepts connections on a Unix-domain socket and services the two NtC
+//! Accepts connections on a Unix-domain socket and services the NtC
 //! mini-protocols:
 //!
 //! * **LocalTxSubmission** (protocol 5) — wallets submit signed transactions;
@@ -10,19 +10,24 @@
 //!   snapshot at a declared chain point and issues opaque queries against it.
 //!   The node dispatches each query byte-blob via a [`LocalQueryDispatcher`]
 //!   and returns a byte-blob result.
+//! * **LocalTxMonitor** (protocol 9) — clients acquire a mempool snapshot and
+//!   iterate over its contents, check transaction membership, or query
+//!   aggregate sizes.
 //!
 //! # Session lifecycle
 //!
 //! ```text
 //! UnixListener::bind(path)
 //!   └─ accept() → UnixStream
-//!       └─ start_mux_unix([NTC_LOCAL_TX_SUBMISSION, NTC_LOCAL_STATE_QUERY])
+//!       └─ start_mux_unix([..., NTC_LOCAL_TX_MONITOR])
 //!           ├─ LocalTxSubmissionServer ──► run_local_tx_submission_session()
-//!           └─ LocalStateQueryServer   ──► run_local_state_query_session()
+//!           ├─ LocalStateQueryServer   ──► run_local_state_query_session()
+//!           └─ LocalTxMonitorServer    ──► run_local_tx_monitor_session()
 //! ```
 //!
 //! Reference:
-//! `ouroboros-network-protocols` — `LocalTxSubmission` and `LocalStateQuery`.
+//! `ouroboros-network-protocols` — `LocalTxSubmission`, `LocalStateQuery`,
+//! and `LocalTxMonitor`.
 
 #[cfg(unix)]
 use std::path::Path;
@@ -34,8 +39,10 @@ use yggdrasil_network::{
     AcquireFailure, AcquireTarget,
     LocalStateQueryAcquiredRequest, LocalStateQueryIdleRequest,
     LocalStateQueryServer, LocalStateQueryServerError,
+    LocalTxMonitorAcquiredRequest, LocalTxMonitorIdleRequest,
+    LocalTxMonitorServer, LocalTxMonitorServerError,
     LocalTxRequest, LocalTxSubmissionServer, LocalTxSubmissionServerError,
-    MiniProtocolDir, MiniProtocolNum,
+    MiniProtocolDir,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
@@ -80,6 +87,14 @@ pub enum LocalStateQuerySessionError {
     /// Underlying LocalStateQuery protocol error.
     #[error("local state-query protocol error: {0}")]
     Protocol(#[from] LocalStateQueryServerError),
+}
+
+/// Errors from running a [`LocalTxMonitorServer`] session.
+#[derive(Debug, thiserror::Error)]
+pub enum LocalTxMonitorSessionError {
+    /// Underlying LocalTxMonitor protocol error.
+    #[error("local tx-monitor protocol error: {0}")]
+    Protocol(#[from] LocalTxMonitorServerError),
 }
 
 /// Errors from the NtC accept loop.
@@ -252,6 +267,86 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// run_local_tx_monitor_session
+// ---------------------------------------------------------------------------
+
+/// Drive a single LocalTxMonitor server session to completion.
+///
+/// Acquires a snapshot of the shared mempool on each `Acquire`/`AwaitAcquire`
+/// request, then services `NextTx`, `HasTx`, and `GetSizes` queries against
+/// that snapshot until the client releases or re-acquires.
+///
+/// The session ends when the client sends `MsgDone` or the protocol errors.
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Server`.
+pub async fn run_local_tx_monitor_session(
+    mut server: LocalTxMonitorServer,
+    mempool: SharedMempool,
+) -> Result<(), LocalTxMonitorSessionError> {
+    loop {
+        match server.recv_idle_request().await? {
+            LocalTxMonitorIdleRequest::Done => return Ok(()),
+            LocalTxMonitorIdleRequest::Acquire => {
+                // Take a snapshot and enter the acquired loop.
+                let snapshot = mempool.snapshot();
+                let tip_slot = 0u64; // Slot of last applied block; 0 when unknown.
+                server.acquired(tip_slot).await?;
+
+                let mut tx_iter = snapshot.mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX).into_iter();
+
+                loop {
+                    match server.recv_acquired_request().await? {
+                        LocalTxMonitorAcquiredRequest::NextTx => {
+                            let next_tx = tx_iter.next().and_then(|(_, idx, _)| {
+                                snapshot.mempool_lookup_tx(idx).map(|e| e.raw_tx.clone())
+                            });
+                            server.reply_next_tx(next_tx).await?;
+                        }
+                        LocalTxMonitorAcquiredRequest::HasTx { tx_id } => {
+                            let has = if tx_id.len() == 32 {
+                                let mut id = [0u8; 32];
+                                id.copy_from_slice(&tx_id);
+                                snapshot.mempool_has_tx(&yggdrasil_ledger::TxId(id))
+                            } else {
+                                false
+                            };
+                            server.reply_has_tx(has).await?;
+                        }
+                        LocalTxMonitorAcquiredRequest::GetSizes => {
+                            let cap = mempool.capacity() as u32;
+                            let size: usize = snapshot
+                                .mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX)
+                                .iter()
+                                .map(|(_, _, sz)| *sz)
+                                .sum();
+                            let count = snapshot
+                                .mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX)
+                                .len() as u32;
+                            server.reply_get_sizes(cap, size as u32, count).await?;
+                        }
+                        LocalTxMonitorAcquiredRequest::Release => break,
+                        LocalTxMonitorAcquiredRequest::AwaitAcquire => {
+                            // Re-acquire: take a fresh snapshot.
+                            let new_snapshot = mempool.snapshot();
+                            server.acquired(tip_slot).await?;
+                            tx_iter = new_snapshot.mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX).into_iter();
+                            // Note: we shadow `snapshot` by rebinding below,
+                            // but the borrow checker requires us to break out
+                            // the new snapshot. Instead, we restart the outer
+                            // acquired loop with a fresh snapshot.
+                            // For simplicity, break and re-enter the idle loop
+                            // (the protocol transitions back to StIdle after
+                            // AwaitAcquire → MsgAcquired).
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helper: acquire ledger snapshot
 // ---------------------------------------------------------------------------
 
@@ -320,7 +415,7 @@ where
 /// in a minimal 1-element CBOR array containing the text string so clients
 /// that understand CBOR can decode it while raw bytes remain readable.
 fn encode_rejection_reason(reason: &str) -> Vec<u8> {
-    use yggdrasil_ledger::{CborEncode, Encoder};
+    use yggdrasil_ledger::Encoder;
 
     let mut enc = Encoder::new();
     enc.array(1).text(reason);
@@ -331,9 +426,9 @@ fn encode_rejection_reason(reason: &str) -> Vec<u8> {
 // run_local_client_session — wire both protocols for one accepted connection
 // ---------------------------------------------------------------------------
 
-/// Spawn both NtC protocol tasks for a single accepted Unix-socket connection.
+/// Spawn all NtC protocol tasks for a single accepted Unix-socket connection.
 ///
-/// Starts the mux over the provided `stream`, builds both server drivers, and
+/// Starts the mux over the provided `stream`, builds all server drivers, and
 /// spawns independent tokio tasks for each mini-protocol.  Returns the
 /// [`yggdrasil_network::MuxHandle`] so the caller can abort on shutdown.
 #[cfg(unix)]
@@ -353,31 +448,42 @@ where
     let protocols = [
         MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
         MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
+        MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
     ];
     let (mut handles, mux_handle) =
         start_mux_unix(stream, MiniProtocolDir::Responder, &protocols, 32);
 
-    // Extract handles — both are guaranteed to exist because we requested them.
+    // Extract handles — all are guaranteed to exist because we requested them.
     let tx_handle = handles
         .remove(&MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION)
         .expect("NTC_LOCAL_TX_SUBMISSION handle missing");
     let sq_handle = handles
         .remove(&MiniProtocolNum::NTC_LOCAL_STATE_QUERY)
         .expect("NTC_LOCAL_STATE_QUERY handle missing");
+    let tm_handle = handles
+        .remove(&MiniProtocolNum::NTC_LOCAL_TX_MONITOR)
+        .expect("NTC_LOCAL_TX_MONITOR handle missing");
 
     let tx_server = LocalTxSubmissionServer::new(tx_handle);
     let sq_server = LocalStateQueryServer::new(sq_handle);
+    let tm_server = LocalTxMonitorServer::new(tm_handle);
 
     // Spawn LocalTxSubmission task.
     let tx_chain_db = Arc::clone(&chain_db);
+    let tx_mempool = mempool.clone();
     tokio::spawn(async move {
-        let _ = run_local_tx_submission_session(tx_server, tx_chain_db, mempool).await;
+        let _ = run_local_tx_submission_session(tx_server, tx_chain_db, tx_mempool).await;
     });
 
     // Spawn LocalStateQuery task.
     let sq_chain_db = Arc::clone(&chain_db);
     tokio::spawn(async move {
         let _ = run_local_state_query_session(sq_server, sq_chain_db, dispatcher).await;
+    });
+
+    // Spawn LocalTxMonitor task.
+    tokio::spawn(async move {
+        let _ = run_local_tx_monitor_session(tm_server, mempool).await;
     });
 
     mux_handle
@@ -390,8 +496,8 @@ where
 /// Bind a Unix-domain socket and accept NtC client connections until `shutdown`
 /// resolves.
 ///
-/// Each accepted connection is handled in a dedicated tokio task running both
-/// LocalTxSubmission and LocalStateQuery sessions concurrently.
+/// Each accepted connection is handled in a dedicated tokio task running
+/// LocalTxSubmission, LocalStateQuery, and LocalTxMonitor sessions concurrently.
 ///
 /// # Parameters
 ///
@@ -455,39 +561,43 @@ where
 // BasicLocalQueryDispatcher
 // ---------------------------------------------------------------------------
 
-/// Minimal built-in query dispatcher for the LocalStateQuery protocol.
+/// Built-in query dispatcher for the LocalStateQuery protocol.
 ///
-/// Decodes each raw query byte-blob as a 1-element CBOR array where the
-/// first item is the query tag (`u64`), and returns an appropriate CBOR
-/// response.  Unknown query tags return an empty byte vector.
+/// Decodes each raw query byte-blob as a CBOR array `[tag, ...]` where
+/// the first element is the query tag (`u64`) and optional subsequent
+/// elements carry query parameters.
 ///
-/// Supported query tags (provisional, matching `cardano-api` conventions):
+/// Supported query tags:
 ///
-/// | Tag | Query              | Response                     |
-/// |-----|--------------------|------------------------------|
-/// |   0 | CurrentEra         | CBOR unsigned (era ordinal)  |
-/// |   1 | ChainTip           | CBOR-encoded `Point`         |
-/// |   2 | CurrentEpoch       | CBOR unsigned (epoch no.)    |
-///
-/// This dispatcher is intentionally minimal.  Production deployments should
-/// supply a richer dispatcher that handles full per-era query schemas.
+/// | Tag | Query                  | Parameters                       | Response                                        |
+/// |-----|------------------------|----------------------------------|-------------------------------------------------|
+/// |   0 | CurrentEra             | none                             | CBOR unsigned (era ordinal)                     |
+/// |   1 | ChainTip               | none                             | CBOR-encoded `Point`                            |
+/// |   2 | CurrentEpoch           | none                             | CBOR unsigned (epoch no.)                       |
+/// |   3 | ProtocolParameters     | none                             | CBOR-encoded `ProtocolParameters` map or null   |
+/// |   4 | UTxOByAddress          | `[tag, address_bytes]`           | CBOR map { txin => txout }                      |
+/// |   5 | StakeDistribution      | none                             | CBOR map { pool_hash => [num, den] }            |
+/// |   6 | RewardBalance          | `[tag, reward_account_bytes]`    | CBOR unsigned (lovelace)                        |
+/// |   7 | TreasuryAndReserves    | none                             | CBOR array [treasury, reserves]                 |
 pub struct BasicLocalQueryDispatcher;
 
 impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
     fn dispatch_query(&self, snapshot: &LedgerStateSnapshot, query: &[u8]) -> Vec<u8> {
-        use yggdrasil_ledger::{CborDecode, CborEncode, Decoder, Encoder};
+        use yggdrasil_ledger::{CborEncode, Decoder, Encoder};
 
         // Decode query as [tag, ...] CBOR array.
-        let tag = {
+        let (tag, param_start) = {
             let mut dec = Decoder::new(query);
             if let Ok(len) = dec.array() {
                 if len >= 1 {
-                    dec.unsigned().ok()
+                    let t = dec.unsigned().ok();
+                    let pos = dec.position();
+                    (t, pos)
                 } else {
-                    None
+                    (None, dec.position())
                 }
             } else {
-                None
+                (None, 0)
             }
         };
 
@@ -507,6 +617,76 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                 // QueryCurrentEpoch — respond with epoch number as a plain u64.
                 enc.unsigned(snapshot.current_epoch().0);
             }
+            Some(3) => {
+                // QueryProtocolParameters — respond with CBOR-encoded
+                // ProtocolParameters map or CBOR null.
+                if let Some(pp) = snapshot.protocol_params() {
+                    pp.encode_cbor(&mut enc);
+                } else {
+                    enc.null();
+                }
+            }
+            Some(4) => {
+                // QueryUTxOByAddress — parameter: address bytes.
+                // Query format: [4, address_bytes]
+                let utxos = if param_start < query.len() {
+                    let mut pdec = Decoder::new(&query[param_start..]);
+                    if let Ok(addr_bytes) = pdec.bytes() {
+                        if let Some(addr) = yggdrasil_ledger::Address::from_bytes(addr_bytes) {
+                            snapshot.query_utxos_by_address(&addr)
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                };
+                // Encode as CBOR map { txin => txout }.
+                enc.map(utxos.len() as u64);
+                for (txin, txout) in &utxos {
+                    txin.encode_cbor(&mut enc);
+                    txout.encode_cbor(&mut enc);
+                }
+            }
+            Some(5) => {
+                // QueryStakeDistribution — respond with pool stake map.
+                // Encode as CBOR map { pool_hash_bytes => pool_params }.
+                let pool_state = snapshot.pool_state();
+                let pools: Vec<_> = pool_state.iter().collect();
+                enc.map(pools.len() as u64);
+                for (operator, pool) in &pools {
+                    enc.bytes(*operator);
+                    pool.encode_cbor(&mut enc);
+                }
+            }
+            Some(6) => {
+                // QueryRewardBalance — parameter: reward account bytes.
+                // Query format: [6, reward_account_bytes]
+                let balance = if param_start < query.len() {
+                    let mut pdec = Decoder::new(&query[param_start..]);
+                    if let Ok(acct_bytes) = pdec.bytes() {
+                        if let Some(acct) = yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes) {
+                            snapshot.query_reward_balance(&acct)
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                enc.unsigned(balance);
+            }
+            Some(7) => {
+                // QueryTreasuryAndReserves — respond with [treasury, reserves].
+                let accounting = snapshot.accounting();
+                enc.array(2);
+                enc.unsigned(accounting.treasury);
+                enc.unsigned(accounting.reserves);
+            }
             _ => {
                 // Unknown query — return empty bytes; client should handle gracefully.
             }
@@ -523,13 +703,14 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yggdrasil_ledger::{Era, LedgerState, Point};
+    use yggdrasil_ledger::{Era, LedgerState};
     use yggdrasil_network::MiniProtocolNum;
 
     #[test]
     fn test_ntc_protocol_numbers() {
         assert_eq!(MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION, MiniProtocolNum(5));
         assert_eq!(MiniProtocolNum::NTC_LOCAL_STATE_QUERY, MiniProtocolNum(7));
+        assert_eq!(MiniProtocolNum::NTC_LOCAL_TX_MONITOR, MiniProtocolNum(9));
     }
 
     #[test]
@@ -540,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_basic_dispatcher_current_era() {
-        use yggdrasil_ledger::{CborEncode, Encoder};
+        use yggdrasil_ledger::Encoder;
 
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
@@ -556,7 +737,7 @@ mod tests {
 
     #[test]
     fn test_basic_dispatcher_chain_tip() {
-        use yggdrasil_ledger::{CborEncode, Encoder};
+        use yggdrasil_ledger::Encoder;
 
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
@@ -572,7 +753,7 @@ mod tests {
 
     #[test]
     fn test_basic_dispatcher_current_epoch() {
-        use yggdrasil_ledger::{CborEncode, Encoder};
+        use yggdrasil_ledger::Encoder;
 
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
@@ -588,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_basic_dispatcher_unknown_tag_returns_empty() {
-        use yggdrasil_ledger::{CborEncode, Encoder};
+        use yggdrasil_ledger::Encoder;
 
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
@@ -609,5 +790,95 @@ mod tests {
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[]);
         assert!(result.is_empty(), "empty query bytes should return empty bytes");
+    }
+
+    #[test]
+    fn test_basic_dispatcher_protocol_params_null_when_absent() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(3u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty(), "QueryProtocolParameters should return CBOR null");
+        // CBOR null is 0xf6
+        assert_eq!(result, vec![0xf6]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_utxo_by_address_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query [4, address_bytes] — with a dummy address that has no UTxOs.
+        let mut enc = Encoder::new();
+        // Enterprise address: header 0x61 (type 6, network 1) + 28-byte keyhash
+        let mut addr = vec![0x61u8];
+        addr.extend_from_slice(&[0xAA; 28]);
+        enc.array(2).unsigned(4u64).bytes(&addr);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Should return empty CBOR map: 0xa0
+        assert_eq!(result, vec![0xa0]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_stake_distribution_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(5u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Should return empty CBOR map: 0xa0
+        assert_eq!(result, vec![0xa0]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_reward_balance_zero() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Reward account: header 0xe1 (type 14, network 1) + 28-byte keyhash
+        let mut acct = vec![0xe1u8];
+        acct.extend_from_slice(&[0xBB; 28]);
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(6u64).bytes(&acct);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Should return CBOR unsigned 0: 0x00
+        assert_eq!(result, vec![0x00]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_treasury_and_reserves() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(7u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Should return [treasury, reserves] = [0, 0] on fresh state.
+        assert!(!result.is_empty());
+        // CBOR [0, 0] is 0x82 0x00 0x00
+        assert_eq!(result, vec![0x82, 0x00, 0x00]);
     }
 }

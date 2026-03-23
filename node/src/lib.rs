@@ -39,7 +39,7 @@ pub use sync::{
 	apply_multi_era_step_to_volatile, apply_nonce_evolution,
 	apply_typed_progress_to_volatile, apply_typed_step_to_volatile, decode_multi_era_block,
 	decode_multi_era_blocks, decode_point, decode_shelley_blocks, decode_shelley_header,
-	evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat,
+	evict_confirmed_from_mempool, extract_tx_ids, collect_rolled_back_tx_ids, keepalive_heartbeat,
 	multi_era_block_to_block, multi_era_block_to_chain_entry, promote_stable_blocks,
 	recover_ledger_state_chaindb,
 	run_verified_sync_service_chaindb, track_chain_state, track_chain_state_entries,
@@ -57,17 +57,20 @@ pub use tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};
 
 pub use server::{
 	BlockProvider, ChainProvider, InboundPeerSession, InboundServiceError,
+	PeerSharingProvider, SharedPeerSharingProvider,
 	SharedTxSubmissionConsumer, TxSubmissionConsumer,
 	SharedChainDb,
 	run_blockfetch_server, run_chainsync_server, run_inbound_accept_loop,
-	run_keepalive_server,
+	run_keepalive_server, run_peersharing_server,
 	run_txsubmission_server,
 };
 
 pub use local_server::{
 	BasicLocalQueryDispatcher, LocalQueryDispatcher,
-	LocalStateQuerySessionError, LocalTxSubmissionSessionError, LocalServerError,
+	LocalStateQuerySessionError, LocalTxMonitorSessionError,
+	LocalTxSubmissionSessionError, LocalServerError,
 	run_local_tx_submission_session, run_local_state_query_session,
+	run_local_tx_monitor_session,
 };
 #[cfg(unix)]
 pub use local_server::{run_local_client_session, run_local_accept_loop};

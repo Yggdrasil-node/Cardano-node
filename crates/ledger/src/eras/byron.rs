@@ -364,6 +364,9 @@ pub enum ByronBlock {
         chain_difficulty: u64,
         /// Previous block hash (32 bytes).
         prev_hash: [u8; 32],
+        /// PBFT issuer verification key (first 32 bytes of the 64-byte
+        /// extended Ed25519 public key from consensus data).
+        issuer_vkey: [u8; 32],
         /// Raw CBOR bytes of the header element (for hash computation).
         raw_header: Vec<u8>,
         /// Decoded transactions (TxAux entries from the block body).
@@ -421,6 +424,18 @@ impl ByronBlock {
         match self {
             Self::EpochBoundary { prev_hash, .. } => prev_hash,
             Self::MainBlock { prev_hash, .. } => prev_hash,
+        }
+    }
+
+    /// Returns the PBFT issuer verification key (32 bytes).
+    ///
+    /// For MainBlocks this is the first 32 bytes of the extended Ed25519
+    /// public key from the consensus data.  EBBs have no issuer and
+    /// return all zeros.
+    pub fn issuer_vkey(&self) -> [u8; 32] {
+        match self {
+            Self::EpochBoundary { .. } => [0u8; 32],
+            Self::MainBlock { issuer_vkey, .. } => *issuer_vkey,
         }
     }
 
@@ -612,8 +627,16 @@ impl ByronBlock {
         let epoch = dec.unsigned()?;
         let slot_in_epoch = dec.unsigned()?;
 
-        // pubkey
-        dec.skip()?;
+        // pubkey — 64-byte extended Ed25519 public key
+        let pubkey_raw = dec.bytes()?;
+        let issuer_vkey: [u8; 32] = if pubkey_raw.len() >= 32 {
+            pubkey_raw[..32].try_into().unwrap()
+        } else {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: pubkey_raw.len(),
+            });
+        };
 
         // difficulty: [Word64] — 1-element array.
         let diff_len = dec.array()?;
@@ -666,6 +689,7 @@ impl ByronBlock {
             slot_in_epoch,
             chain_difficulty,
             prev_hash,
+            issuer_vkey,
             raw_header,
             transactions,
         })

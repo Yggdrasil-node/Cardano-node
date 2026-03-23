@@ -743,7 +743,7 @@ fn guard_legacy_plutus_context_features(
     Ok(())
 }
 
-fn certifying_purpose_data(cert_index: u64, certificate: &DCert) -> Result<PlutusData, LedgerError> {
+fn certifying_purpose_data(_cert_index: u64, certificate: &DCert) -> Result<PlutusData, LedgerError> {
     let certificate_data = legacy_dcert_data(certificate)?;
     Ok(PlutusData::Constr(3, vec![certificate_data]))
 }
@@ -1197,7 +1197,7 @@ mod tests {
     use yggdrasil_ledger::plutus_validation::{
         PlutusScriptEval, PlutusVersion, ScriptPurpose, TxContext,
     };
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::BTreeMap;
     use yggdrasil_ledger::{
         Address,
         AlonzoTxOut,
@@ -1214,7 +1214,6 @@ mod tests {
         PointerAddress,
         PoolParams,
         ProtocolParameterUpdate,
-        Relay,
         ShelleyTxOut,
         UnitInterval,
         Vote,

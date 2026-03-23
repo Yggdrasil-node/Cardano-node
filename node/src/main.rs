@@ -17,7 +17,8 @@ use yggdrasil_node::{
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome,
     RuntimeGovernorConfig, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
-    SharedChainDb, SharedTxSubmissionConsumer, recover_ledger_state_chaindb,
+    SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer,
+    recover_ledger_state_chaindb,
     run_governor_loop,
     resume_reconnecting_verified_sync_service_shared_chaindb,
     seed_peer_registry,
@@ -242,6 +243,8 @@ fn main() -> Result<()> {
                         max_snapshots: max_ledger_snapshots,
                     },
                     plutus_cost_model: plutus_cost_model.clone(),
+                    verify_vrf: false,
+                    active_slot_coeff: None,
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -258,6 +261,8 @@ fn main() -> Result<()> {
                         max_snapshots: max_ledger_snapshots,
                     },
                     plutus_cost_model: plutus_cost_model.clone(),
+                    verify_vrf: false,
+                    active_slot_coeff: None,
                 }
             };
 
@@ -396,6 +401,12 @@ fn strict_base_ledger_state(
         .wrap_err("failed to load genesis protocol parameters")?
     {
         state.set_protocol_params(params);
+    }
+    if let Some(enact) = file_cfg
+        .load_genesis_enact_state(config_base_dir)
+        .wrap_err("failed to load genesis enact state")?
+    {
+        *state.enact_state_mut() = enact;
     }
     Ok(state)
 }
@@ -936,6 +947,9 @@ async fn run_node(
         let _ = signal_shutdown_tx.send(true);
     });
 
+    // Shared mempool for governor TTL purge and inbound TxSubmission admission.
+    let shared_mempool = SharedMempool::default();
+
     let governor_task = {
         let mut governor_shutdown = shutdown_rx.clone();
         let governor_node_config = node_config.clone();
@@ -944,6 +958,7 @@ async fn run_node(
         let governor_tracer = tracer.clone();
         let governor_topology = topology_config.clone();
         let governor_base_ledger_state = base_ledger_state.clone();
+        let governor_mempool = shared_mempool.clone();
         tokio::spawn(async move {
             let shutdown = async move {
                 if *governor_shutdown.borrow() {
@@ -964,6 +979,7 @@ async fn run_node(
                 governor_config,
                 governor_topology,
                 governor_base_ledger_state,
+                Some(governor_mempool),
                 governor_tracer,
                 shutdown,
             ).await;
@@ -990,7 +1006,10 @@ async fn run_node(
         let chain_provider: Arc<dyn ChainProvider> = shared_provider;
         let tx_submission_consumer = Arc::new(SharedTxSubmissionConsumer::new(
             Arc::clone(&chain_db),
-            SharedMempool::default(),
+            shared_mempool.clone(),
+        ));
+        let peer_sharing = Arc::new(SharedPeerSharingProvider::new(
+            Arc::clone(&peer_registry),
         ));
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
@@ -1012,6 +1031,7 @@ async fn run_node(
                 Some(block_provider),
                 Some(chain_provider),
                 Some(tx_submission_consumer),
+                Some(peer_sharing),
                 shutdown,
             )
             .await

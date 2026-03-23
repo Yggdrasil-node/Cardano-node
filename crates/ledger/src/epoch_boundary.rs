@@ -312,19 +312,14 @@ fn ratify_and_enact(
 ) -> (Vec<GovActionId>, Vec<EnactOutcome>) {
     use crate::state::ratify_action;
 
-    // Extract thresholds from protocol params; if absent, skip ratification.
+    // Extract thresholds from protocol params. When Conway-specific threshold
+    // fields are absent, fall back to the built-in Conway defaults rather than
+    // silently skipping ratification.
     let (pool_thresholds, drep_thresholds) = match ledger.protocol_params() {
-        Some(pp) => {
-            let pool_t = match &pp.pool_voting_thresholds {
-                Some(t) => t.clone(),
-                None => return (Vec::new(), Vec::new()),
-            };
-            let drep_t = match &pp.drep_voting_thresholds {
-                Some(t) => t.clone(),
-                None => return (Vec::new(), Vec::new()),
-            };
-            (pool_t, drep_t)
-        }
+        Some(pp) => (
+            pp.pool_voting_thresholds.clone().unwrap_or_default(),
+            pp.drep_voting_thresholds.clone().unwrap_or_default(),
+        ),
         None => return (Vec::new(), Vec::new()),
     };
 
@@ -511,6 +506,23 @@ mod tests {
         ledger.accounting_mut().treasury = 500_000_000_000; // 500k ADA
 
         ledger
+    }
+
+    fn require_committee_vote_for_ratification(ledger: &mut LedgerState, cold_byte: u8, hot_byte: u8) {
+        let cc_cred = test_cred(cold_byte);
+        let hot_cred = test_cred(hot_byte);
+        ledger.committee_state_mut().register(cc_cred);
+        ledger
+            .committee_state_mut()
+            .get_mut(&cc_cred)
+            .expect("registered committee credential")
+            .set_authorization(Some(
+                crate::state::CommitteeAuthorization::CommitteeHotCredential(hot_cred),
+            ));
+        ledger.enact_state_mut().committee_quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
     }
 
     // -- Snapshot rotation ------------------------------------------------
@@ -764,7 +776,10 @@ mod tests {
         crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: ra.to_bytes().to_vec(),
-            gov_action: GovAction::InfoAction,
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
             anchor: Anchor {
                 url: String::from("https://example.com"),
                 data_hash: [0u8; 32],
@@ -782,6 +797,7 @@ mod tests {
     #[test]
     fn test_expired_governance_actions_removed_at_epoch_boundary() {
         let mut ledger = make_ledger_with_pool(7);
+        require_committee_vote_for_ratification(&mut ledger, 0x71, 0x72);
         let deposit_amount = 500_000_000u64;
         let ra = test_reward_account(7);
 
@@ -821,6 +837,7 @@ mod tests {
     #[test]
     fn test_non_expired_governance_actions_preserved() {
         let mut ledger = make_ledger_with_pool(8);
+        require_committee_vote_for_ratification(&mut ledger, 0x81, 0x82);
 
         // Stage a governance action proposed in epoch 5, lifetime 10 → expires_after = epoch 15.
         let gas = GovernanceActionState::new_with_lifetime(
@@ -844,6 +861,7 @@ mod tests {
     #[test]
     fn test_multiple_governance_actions_mixed_expiry() {
         let mut ledger = make_ledger_with_pool(9);
+        require_committee_vote_for_ratification(&mut ledger, 0x91, 0x92);
 
         // Register two more reward accounts for proposals.
         ledger.reward_accounts_mut().insert(
@@ -902,6 +920,7 @@ mod tests {
     #[test]
     fn test_governance_expiry_with_no_lifetime() {
         let mut ledger = make_ledger_with_pool(12);
+        require_committee_vote_for_ratification(&mut ledger, 0xC2, 0xC3);
 
         // Action without lifetime tracking (legacy/None).
         let gas = GovernanceActionState::new(test_proposal(100_000_000, 12));
@@ -1114,7 +1133,7 @@ mod tests {
 
     use crate::eras::conway::{Constitution, Vote, Voter};
     use crate::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
-    use crate::state::{CommitteeAuthorization, EnactOutcome, CommitteeState};
+    use crate::state::{CommitteeAuthorization, EnactOutcome};
 
     fn test_protocol_params_with_governance() -> ProtocolParameters {
         let mut pp = test_protocol_params();
@@ -1329,9 +1348,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ratification_without_voting_thresholds_skips() {
+    fn test_ratification_without_voting_thresholds_uses_defaults() {
         let mut ledger = make_ledger_with_pool(21);
-        // Protocol params without voting thresholds → ratification is skipped.
+        // Protocol params without explicit Conway thresholds fall back to the
+        // built-in defaults so ratification still runs.
         let gas = GovernanceActionState::new(test_info_proposal());
         let gai = test_gov_action_id(0xD1, 0);
         ledger.governance_actions_mut().insert(gai.clone(), gas);
@@ -1342,9 +1362,8 @@ mod tests {
         let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1 boundary");
 
-        // No thresholds → no ratification → action preserved.
-        assert_eq!(event.governance_actions_enacted, 0);
-        assert_eq!(ledger.governance_actions().len(), 1);
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert!(ledger.governance_actions().is_empty());
     }
 
     #[test]

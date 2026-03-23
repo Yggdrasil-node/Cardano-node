@@ -37,6 +37,17 @@ pub trait VolatileStore {
 
     /// Returns the tip of the volatile chain as a [`Point`].
     fn tip(&self) -> Point;
+
+    /// Returns clones of all blocks *after* `point` in the volatile chain.
+    ///
+    /// This is used during rollback to capture the blocks that will be
+    /// discarded so their transactions can be re-admitted to the mempool.
+    ///
+    /// The default implementation uses [`prefix_up_to`] to find the split
+    /// point and returns the remaining suffix. Returns an empty vec for
+    /// `Origin` (the entire chain would be returned by the rollback path
+    /// instead) or if the point is not found.
+    fn suffix_after(&self, point: &Point) -> Vec<Block>;
 }
 
 /// In-memory volatile store for tests and interface stabilization.
@@ -103,5 +114,19 @@ impl VolatileStore for InMemoryVolatile {
         self.blocks.last().map_or(Point::Origin, |b| {
             Point::BlockPoint(b.header.slot_no, b.header.hash)
         })
+    }
+
+    fn suffix_after(&self, point: &Point) -> Vec<Block> {
+        match point {
+            Point::Origin => self.blocks.clone(),
+            Point::BlockPoint(_, hash) => {
+                match self.blocks.iter().position(|b| b.header.hash == *hash) {
+                    Some(pos) if pos + 1 < self.blocks.len() => {
+                        self.blocks[(pos + 1)..].to_vec()
+                    }
+                    _ => Vec::new(),
+                }
+            }
+        }
     }
 }

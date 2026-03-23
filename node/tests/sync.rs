@@ -9,7 +9,7 @@ use yggdrasil_ledger::{
     CborEncode, ConwayBlock, ConwayTxBody, Encoder, HeaderHash, LedgerState, Nonce, Point,
     PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
-    ShelleyWitnessSet, SlotNo, StakeCredential, TxId,
+    ShelleyWitnessSet, SlotNo, StakeCredential, Tx, TxId,
     Era,
     compute_block_body_hash,
 };
@@ -21,7 +21,8 @@ use yggdrasil_node::{
     apply_multi_era_step_to_volatile,
     apply_nonce_evolution,
     apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
-    evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
+    evict_confirmed_from_mempool, extract_tx_ids, collect_rolled_back_tx_ids,
+    keepalive_heartbeat, multi_era_block_to_block,
     multi_era_block_to_chain_entry, promote_stable_blocks, recover_ledger_state_chaindb,
     run_verified_sync_service_chaindb, track_chain_state, track_chain_state_entries,
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
@@ -372,6 +373,8 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         security_param: Some(SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
         plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
     };
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let mut chain_db = ChainDb::new(
@@ -2949,6 +2952,7 @@ fn apply_nonce_evolution_byron_is_no_op() {
             slot_in_epoch: 0,
             chain_difficulty: 0,
             prev_hash: [0; 32],
+            issuer_vkey: [0u8; 32],
             raw_header: vec![],
             transactions: vec![],
         },
@@ -3064,6 +3068,7 @@ fn chain_entry_from_byron_returns_some() {
             slot_in_epoch: 5,
             chain_difficulty: 42,
             prev_hash: [0x11; 32],
+            issuer_vkey: [0u8; 32],
             raw_header: vec![0xCC],
             transactions: vec![],
         },
@@ -3312,6 +3317,7 @@ fn recover_ledger_state_chaindb_bootstraps_initial_funds_on_first_shelley_block(
                 slot_in_epoch: 1,
                 chain_difficulty: 1,
                 prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
                 raw_header: vec![0xAA],
                 transactions: vec![],
             },
@@ -3360,6 +3366,7 @@ fn recover_ledger_state_chaindb_keeps_initial_funds_hidden_before_shelley() {
                 slot_in_epoch: 1,
                 chain_difficulty: 1,
                 prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
                 raw_header: vec![0xAA],
                 transactions: vec![],
             },
@@ -3396,6 +3403,7 @@ fn recover_ledger_state_chaindb_bootstraps_genesis_stake_on_first_shelley_block(
                 slot_in_epoch: 1,
                 chain_difficulty: 1,
                 prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
                 raw_header: vec![0xAA],
                 transactions: vec![],
             },
@@ -3430,6 +3438,7 @@ fn track_chain_state_includes_byron_blocks() {
                 slot_in_epoch: 1,
                 chain_difficulty: 1,
                 prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
                 raw_header: vec![0xDD],
                 transactions: vec![],
             },
@@ -3447,4 +3456,64 @@ fn track_chain_state_includes_byron_blocks() {
     assert_eq!(stable, 0);
     // Both the Byron and the Shelley block were tracked.
     assert_eq!(cs.volatile_len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// collect_rolled_back_tx_ids
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collect_rolled_back_tx_ids_returns_txs_after_target() {
+    let mut store = InMemoryVolatile::default();
+
+    // Block 1: no transactions (the rollback target)
+    store.add_block(test_store_block(0x01, 10)).unwrap();
+
+    // Block 2: 2 transactions
+    let tx_a = TxId([0xA0; 32]);
+    let tx_b = TxId([0xB0; 32]);
+    let mut blk2 = test_store_block(0x02, 11);
+    blk2.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk2).unwrap();
+
+    // Block 3: 1 transaction
+    let tx_c = TxId([0xC0; 32]);
+    let mut blk3 = test_store_block(0x03, 12);
+    blk3.transactions = vec![
+        Tx { id: tx_c, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk3).unwrap();
+
+    // Rolling back to block 1 should yield tx_a, tx_b, tx_c.
+    let target = Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]));
+    let ids = collect_rolled_back_tx_ids(&store, &target);
+    assert_eq!(ids, vec![tx_a, tx_b, tx_c]);
+}
+
+#[test]
+fn collect_rolled_back_tx_ids_empty_when_at_tip() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_store_block(0x01, 10)).unwrap();
+
+    let target = Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]));
+    let ids = collect_rolled_back_tx_ids(&store, &target);
+    assert!(ids.is_empty());
+}
+
+#[test]
+fn collect_rolled_back_tx_ids_origin_returns_all() {
+    let mut store = InMemoryVolatile::default();
+
+    let tx_a = TxId([0xAA; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk1).unwrap();
+
+    let ids = collect_rolled_back_tx_ids(&store, &Point::Origin);
+    assert_eq!(ids, vec![tx_a]);
 }

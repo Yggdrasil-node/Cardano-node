@@ -539,6 +539,11 @@ impl SharedMempool {
             .size_bytes()
     }
 
+    /// Maximum capacity of the mempool in bytes (0 = unlimited).
+    pub fn capacity(&self) -> usize {
+        self.inner.read().expect("shared mempool poisoned").max_bytes
+    }
+
     /// Create a pure owned snapshot of the current mempool contents.
     pub fn snapshot(&self) -> MempoolSnapshot {
         self.inner.read().expect("shared mempool poisoned").snapshot()
