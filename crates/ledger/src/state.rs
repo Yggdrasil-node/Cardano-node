@@ -3967,15 +3967,145 @@ fn conway_voter_is_allowed_for_action(
             | crate::eras::conway::GovAction::InfoAction => true,
             crate::eras::conway::GovAction::TreasuryWithdrawals { .. }
             | crate::eras::conway::GovAction::NewConstitution { .. } => false,
-            crate::eras::conway::GovAction::ParameterChange { .. } => {
-                // Upstream stake-pool voting distinguishes security-relevant parameter
-                // updates by parameter group, but this slice still lacks a
-                // dedicated classifier for the typed update payload, so we
-                // intentionally avoid a false negative here.
-                true
-            }
+            crate::eras::conway::GovAction::ParameterChange {
+                protocol_param_update,
+                ..
+            } => conway_parameter_change_has_spo_security_vote_group(protocol_param_update),
         },
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ConwayModifiedPParamGroups {
+    network: bool,
+    economic: bool,
+    technical: bool,
+    gov: bool,
+    security: bool,
+}
+
+impl ConwayModifiedPParamGroups {
+    fn has_drep_group(self) -> bool {
+        self.network || self.economic || self.technical || self.gov
+    }
+}
+
+fn conway_modified_pparam_groups(
+    update: &crate::protocol_params::ProtocolParameterUpdate,
+) -> ConwayModifiedPParamGroups {
+    let mut groups = ConwayModifiedPParamGroups::default();
+
+    // Economic + Security
+    if update.min_fee_a.is_some() || update.min_fee_b.is_some() {
+        groups.economic = true;
+        groups.security = true;
+    }
+
+    // Network + Security
+    if update.max_block_body_size.is_some()
+        || update.max_tx_size.is_some()
+        || update.max_block_header_size.is_some()
+        || update.max_block_ex_units.is_some()
+        || update.max_val_size.is_some()
+    {
+        groups.network = true;
+        groups.security = true;
+    }
+
+    // Economic (no SPO)
+    if update.key_deposit.is_some()
+        || update.pool_deposit.is_some()
+        || update.rho.is_some()
+        || update.tau.is_some()
+        || update.min_pool_cost.is_some()
+        || update.coins_per_utxo_byte.is_some()
+        || update.price_mem.is_some()
+        || update.price_step.is_some()
+        || update.min_utxo_value.is_some()
+    {
+        groups.economic = true;
+    }
+
+    // Technical (no SPO)
+    if update.e_max.is_some()
+        || update.n_opt.is_some()
+        || update.a0.is_some()
+        || update.max_tx_ex_units.is_some()
+        || update.collateral_percentage.is_some()
+        || update.max_collateral_inputs.is_some()
+    {
+        groups.technical = true;
+    }
+
+    // Gov (no SPO unless explicitly marked otherwise)
+    if update.pool_voting_thresholds.is_some()
+        || update.drep_voting_thresholds.is_some()
+        || update.min_committee_size.is_some()
+        || update.committee_term_limit.is_some()
+        || update.gov_action_lifetime.is_some()
+        || update.drep_deposit.is_some()
+        || update.drep_activity.is_some()
+    {
+        groups.gov = true;
+    }
+
+    // Gov + Security
+    if update.gov_action_deposit.is_some() {
+        groups.gov = true;
+        groups.security = true;
+    }
+
+    // In upstream Conway this update path is disabled for parameter updates,
+    // but if present in this bounded slice treat it as security-relevant.
+    if update.protocol_version.is_some() {
+        groups.security = true;
+    }
+
+    groups
+}
+
+fn conway_parameter_change_has_spo_security_vote_group(
+    update: &crate::protocol_params::ProtocolParameterUpdate,
+) -> bool {
+    conway_modified_pparam_groups(update).security
+}
+
+fn conway_drep_parameter_change_threshold(
+    update: &crate::protocol_params::ProtocolParameterUpdate,
+    thresholds: &DRepVotingThresholds,
+) -> Option<UnitInterval> {
+    let groups = conway_modified_pparam_groups(update);
+    if !groups.has_drep_group() {
+        return None;
+    }
+
+    let mut selected: Option<UnitInterval> = None;
+    let mut include = |candidate: UnitInterval| {
+        selected = Some(match selected {
+            Some(current)
+                if (current.numerator as u128) * (candidate.denominator as u128)
+                    >= (candidate.numerator as u128) * (current.denominator as u128) =>
+            {
+                current
+            }
+            _ => candidate,
+        });
+    };
+
+    if groups.network {
+        include(thresholds.pp_network_group);
+    }
+    if groups.economic {
+        include(thresholds.pp_economic_group);
+    }
+    if groups.technical {
+        include(thresholds.pp_technical_group);
+    }
+    if groups.gov {
+        include(thresholds.pp_gov_group);
+    }
+
+    selected
 }
 
 fn conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {
@@ -5312,32 +5442,54 @@ pub(crate) fn tally_spo_votes(
 /// Returns `None` for action types where DRep votes are not required
 /// (InfoAction — always accepted, never enacted).
 pub(crate) fn drep_threshold_for_action(
-    purpose: ConwayGovActionPurpose,
+    action: &crate::eras::conway::GovAction,
     thresholds: &DRepVotingThresholds,
-) -> Option<&UnitInterval> {
-    match purpose {
-        ConwayGovActionPurpose::ParameterChange => Some(&thresholds.pp_gov_group),
-        ConwayGovActionPurpose::HardFork => Some(&thresholds.hard_fork_initiation),
-        ConwayGovActionPurpose::Committee => Some(&thresholds.committee_normal),
-        ConwayGovActionPurpose::Constitution => Some(&thresholds.update_to_constitution),
-        ConwayGovActionPurpose::TreasuryWithdrawals => Some(&thresholds.treasury_withdrawal),
-        ConwayGovActionPurpose::Info => None,
+) -> Option<UnitInterval> {
+    match action {
+        crate::eras::conway::GovAction::ParameterChange {
+            protocol_param_update,
+            ..
+        } => conway_drep_parameter_change_threshold(protocol_param_update, thresholds),
+        crate::eras::conway::GovAction::HardForkInitiation { .. } => {
+            Some(thresholds.hard_fork_initiation)
+        }
+        crate::eras::conway::GovAction::NoConfidence { .. }
+        | crate::eras::conway::GovAction::UpdateCommittee { .. } => {
+            Some(thresholds.committee_normal)
+        }
+        crate::eras::conway::GovAction::NewConstitution { .. } => {
+            Some(thresholds.update_to_constitution)
+        }
+        crate::eras::conway::GovAction::TreasuryWithdrawals { .. } => {
+            Some(thresholds.treasury_withdrawal)
+        }
+        crate::eras::conway::GovAction::InfoAction => None,
     }
 }
 
-/// Look up the required SPO voting threshold for a governance action type.
+/// Look up the required SPO voting threshold for a governance action.
 ///
-/// Returns `None` for action types where SPO votes are not required.
+/// Returns `None` for actions where SPO votes are not required.
 pub(crate) fn spo_threshold_for_action(
-    purpose: ConwayGovActionPurpose,
+    action: &crate::eras::conway::GovAction,
     thresholds: &PoolVotingThresholds,
-) -> Option<&UnitInterval> {
-    match purpose {
-        ConwayGovActionPurpose::ParameterChange => Some(&thresholds.pp_security_group),
-        ConwayGovActionPurpose::HardFork => Some(&thresholds.hard_fork_initiation),
-        ConwayGovActionPurpose::Committee => Some(&thresholds.committee_normal),
-        ConwayGovActionPurpose::Constitution | ConwayGovActionPurpose::TreasuryWithdrawals => None,
-        ConwayGovActionPurpose::Info => None,
+) -> Option<UnitInterval> {
+    match action {
+        crate::eras::conway::GovAction::ParameterChange {
+            protocol_param_update,
+            ..
+        } => conway_parameter_change_has_spo_security_vote_group(protocol_param_update)
+            .then_some(thresholds.pp_security_group),
+        crate::eras::conway::GovAction::HardForkInitiation { .. } => {
+            Some(thresholds.hard_fork_initiation)
+        }
+        crate::eras::conway::GovAction::NoConfidence { .. }
+        | crate::eras::conway::GovAction::UpdateCommittee { .. } => {
+            Some(thresholds.committee_normal)
+        }
+        crate::eras::conway::GovAction::NewConstitution { .. }
+        | crate::eras::conway::GovAction::TreasuryWithdrawals { .. }
+        | crate::eras::conway::GovAction::InfoAction => None,
     }
 }
 
@@ -5376,8 +5528,7 @@ pub(crate) fn accepted_by_dreps(
     drep_activity: u64,
     thresholds: &DRepVotingThresholds,
 ) -> bool {
-    let purpose = conway_gov_action_purpose(&action.proposal.gov_action);
-    let Some(threshold) = drep_threshold_for_action(purpose, thresholds) else {
+    let Some(threshold) = drep_threshold_for_action(&action.proposal.gov_action, thresholds) else {
         return true; // no DRep vote required for this action type
     };
     let tally = tally_drep_votes(
@@ -5387,7 +5538,7 @@ pub(crate) fn accepted_by_dreps(
         current_epoch,
         drep_activity,
     );
-    tally.meets_threshold(threshold)
+    tally.meets_threshold(&threshold)
 }
 
 /// Determines whether a governance action is accepted by stake-pool
@@ -5401,12 +5552,11 @@ pub(crate) fn accepted_by_spo(
     pool_stake_dist: &PoolStakeDistribution,
     thresholds: &PoolVotingThresholds,
 ) -> bool {
-    let purpose = conway_gov_action_purpose(&action.proposal.gov_action);
-    let Some(threshold) = spo_threshold_for_action(purpose, thresholds) else {
+    let Some(threshold) = spo_threshold_for_action(&action.proposal.gov_action, thresholds) else {
         return true; // no SPO vote required for this action type
     };
     let tally = tally_spo_votes(action, pool_stake_dist);
-    tally.meets_threshold(threshold)
+    tally.meets_threshold(&threshold)
 }
 
 /// Combined ratification predicate: checks whether a governance action is
@@ -6724,29 +6874,137 @@ mod tests {
     #[test]
     fn drep_threshold_for_hard_fork() {
         let thresholds = DRepVotingThresholds::default();
-        let t = drep_threshold_for_action(ConwayGovActionPurpose::HardFork, &thresholds);
-        assert_eq!(t, Some(&thresholds.hard_fork_initiation));
+        let t = drep_threshold_for_action(
+            &GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            &thresholds,
+        );
+        assert_eq!(t, Some(thresholds.hard_fork_initiation));
     }
 
     #[test]
     fn drep_threshold_for_info_is_none() {
         let thresholds = DRepVotingThresholds::default();
-        let t = drep_threshold_for_action(ConwayGovActionPurpose::Info, &thresholds);
+        let t = drep_threshold_for_action(&GovAction::InfoAction, &thresholds);
         assert!(t.is_none());
     }
 
     #[test]
     fn spo_threshold_for_constitution_is_none() {
         let thresholds = PoolVotingThresholds::default();
-        let t = spo_threshold_for_action(ConwayGovActionPurpose::Constitution, &thresholds);
+        let t = spo_threshold_for_action(
+            &GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("c1"),
+            },
+            &thresholds,
+        );
         assert!(t.is_none());
     }
 
     #[test]
     fn spo_threshold_for_treasury_is_none() {
         let thresholds = PoolVotingThresholds::default();
-        let t = spo_threshold_for_action(ConwayGovActionPurpose::TreasuryWithdrawals, &thresholds);
+        let t = spo_threshold_for_action(
+            &GovAction::TreasuryWithdrawals {
+                withdrawals: BTreeMap::new(),
+                guardrails_script_hash: None,
+            },
+            &thresholds,
+        );
         assert!(t.is_none());
+    }
+
+    #[test]
+    fn spo_threshold_for_parameter_change_requires_security_group() {
+        let thresholds = PoolVotingThresholds::default();
+        let non_security = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                n_opt: Some(99),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+        let security = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                max_block_body_size: Some(123456),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+
+        assert!(spo_threshold_for_action(&non_security, &thresholds).is_none());
+        assert_eq!(
+            spo_threshold_for_action(&security, &thresholds),
+            Some(thresholds.pp_security_group)
+        );
+    }
+
+    #[test]
+    fn drep_threshold_for_parameter_change_uses_max_modified_group_threshold() {
+        let thresholds = DRepVotingThresholds {
+            pp_network_group: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
+            pp_economic_group: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            pp_technical_group: UnitInterval {
+                numerator: 3,
+                denominator: 4,
+            },
+            pp_gov_group: UnitInterval {
+                numerator: 4,
+                denominator: 5,
+            },
+            ..DRepVotingThresholds::default()
+        };
+        let action = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                max_tx_size: Some(1024),
+                n_opt: Some(42),
+                gov_action_lifetime: Some(100),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+
+        let selected = drep_threshold_for_action(&action, &thresholds);
+        assert_eq!(selected, Some(thresholds.pp_gov_group));
+    }
+
+    #[test]
+    fn spo_voter_permission_for_parameter_change_requires_security_group() {
+        let voter = Voter::StakePool([9; 28]);
+        let non_security_action = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                drep_activity: Some(33),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+        let security_action = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                max_block_ex_units: Some(crate::eras::alonzo::ExUnits {
+                    mem: 100,
+                    steps: 100,
+                }),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+
+        assert!(!conway_voter_is_allowed_for_action(&voter, &non_security_action));
+        assert!(conway_voter_is_allowed_for_action(&voter, &security_action));
     }
 
     // -- accepted_by_* predicates ---
