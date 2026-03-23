@@ -48,7 +48,6 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - PeerSharing protocol (mini-protocol 10) is now implemented: `PeerSharingState` state machine, `PeerSharingMessage` (MsgShareRequest/MsgSharePeers/MsgDone), `SharedPeerAddress` (IPv4/IPv6 CBOR codec). Client driver `PeerSharingClient` and server driver `PeerSharingServer` (with serve_loop callback) are in place. 8 protocol-level tests.
 - TCP listener (`listener.rs`) wraps `TcpListener` for inbound peer connections: `PeerListener::bind()`, `from_listener()`, `accept_peer()`.
 - Next implementation order:
-	1. Integrate governor `tick()` into the node runtime loop to drive peer promotions/demotions.
-	2. Wire PeerSharing client into governor for peer discovery.
-	3. Add consensus-network bridge inputs for ledger peers, latest-slot gating, and peer snapshot freshness.
-	4. Expand typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical).
+	1. Complete consensus-network bridge parity by replacing node-owned ledger-peer refresh orchestration with live consensus-fed judgement and snapshot updates into network-owned providers.
+	2. Extend hot-peer behavior from reconnect preference to real multi-peer hot-protocol scheduling and chain-selection-aware sync assignment.
+	3. Expand typed protocol payload decoding (replace remaining opaque `Vec<u8>` payloads where practical).

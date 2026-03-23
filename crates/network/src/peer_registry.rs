@@ -50,6 +50,8 @@ pub struct PeerRegistryEntry {
     pub sources: BTreeSet<PeerSource>,
     /// Current status of the peer.
     pub status: PeerStatus,
+    /// Last known tip slot for hot-peer selection.
+    pub hot_tip_slot: Option<u64>,
 }
 
 impl PeerRegistryEntry {
@@ -57,6 +59,7 @@ impl PeerRegistryEntry {
         Self {
             sources: BTreeSet::from([source]),
             status: PeerStatus::PeerCold,
+            hot_tip_slot: None,
         }
     }
 
@@ -135,10 +138,54 @@ impl PeerRegistry {
         match self.peers.get_mut(&peer) {
             Some(entry) if entry.status != status => {
                 entry.status = status;
+                if status != PeerStatus::PeerHot {
+                    entry.hot_tip_slot = None;
+                }
                 true
             }
             _ => false,
         }
+    }
+
+    /// Set the last known tip slot for an existing peer.
+    ///
+    /// Returns `true` when the value changed.
+    pub fn set_hot_tip_slot(&mut self, peer: SocketAddr, hot_tip_slot: Option<u64>) -> bool {
+        match self.peers.get_mut(&peer) {
+            Some(entry) if entry.hot_tip_slot != hot_tip_slot => {
+                entry.hot_tip_slot = hot_tip_slot;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Return the preferred hot peer for reconnect attempts.
+    ///
+    /// Prefers hot peers with the highest known tip slot. If no hot peer has a
+    /// known slot, returns the first hot peer in stable address order.
+    pub fn preferred_hot_peer(&self) -> Option<SocketAddr> {
+        let mut best_with_tip: Option<(SocketAddr, u64)> = None;
+        let mut first_hot: Option<SocketAddr> = None;
+
+        for (addr, entry) in &self.peers {
+            if entry.status != PeerStatus::PeerHot {
+                continue;
+            }
+
+            if first_hot.is_none() {
+                first_hot = Some(*addr);
+            }
+
+            if let Some(slot) = entry.hot_tip_slot {
+                match best_with_tip {
+                    Some((_, best_slot)) if slot <= best_slot => {}
+                    _ => best_with_tip = Some((*addr, slot)),
+                }
+            }
+        }
+
+        best_with_tip.map(|(addr, _)| addr).or(first_hot)
     }
 
     /// Reconcile root-peer sources from the current root-provider snapshot.
@@ -425,5 +472,50 @@ mod tests {
         registry.set_status(hot, PeerStatus::PeerHot);
 
         assert_eq!(registry.status_counts(), PeerRegistryStatusCounts { cold: 1, cooling: 1, warm: 1, hot: 1 });
+    }
+
+    #[test]
+    fn preferred_hot_peer_uses_highest_tip_slot() {
+        let hot_a: SocketAddr = "127.0.0.20:3001".parse().expect("addr");
+        let hot_b: SocketAddr = "127.0.0.21:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_a, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(hot_b, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_a, PeerStatus::PeerHot);
+        registry.set_status(hot_b, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_a, Some(100));
+        registry.set_hot_tip_slot(hot_b, Some(250));
+
+        assert_eq!(registry.preferred_hot_peer(), Some(hot_b));
+    }
+
+    #[test]
+    fn preferred_hot_peer_falls_back_to_first_hot_without_tip() {
+        let hot_a: SocketAddr = "127.0.0.22:3001".parse().expect("addr");
+        let hot_b: SocketAddr = "127.0.0.23:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_b, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(hot_a, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_a, PeerStatus::PeerHot);
+        registry.set_status(hot_b, PeerStatus::PeerHot);
+
+        // Registry iteration is stable by address (BTreeMap), so hot_a wins.
+        assert_eq!(registry.preferred_hot_peer(), Some(hot_a));
+    }
+
+    #[test]
+    fn setting_non_hot_status_clears_hot_tip_slot() {
+        let peer: SocketAddr = "127.0.0.24:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        registry.set_status(peer, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(peer, Some(123));
+        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), Some(123));
+
+        registry.set_status(peer, PeerStatus::PeerWarm);
+        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), None);
     }
 }

@@ -242,6 +242,7 @@ impl OutboundPeerManager {
     /// periodically.
     async fn refresh_hot_peer_tips(
         &mut self,
+        peer_registry: &Arc<RwLock<PeerRegistry>>,
         governor_state: &mut GovernorState,
         tracer: &NodeTracer,
     ) {
@@ -267,6 +268,9 @@ impl OutboundPeerManager {
                         yggdrasil_network::TypedIntersectResponse::Found { tip, .. } => tip.clone(),
                         yggdrasil_network::TypedIntersectResponse::NotFound { tip } => tip.clone(),
                     };
+                    if let Ok(mut registry) = peer_registry.write() {
+                        let _ = registry.set_hot_tip_slot(peer, tip.slot().map(|slot| slot.0));
+                    }
                     tracer.trace_runtime(
                         "Net.Governor",
                         "Debug",
@@ -280,6 +284,9 @@ impl OutboundPeerManager {
                 }
                 Err(err) => {
                     governor_state.record_failure(peer);
+                    if let Ok(mut registry) = peer_registry.write() {
+                        let _ = registry.set_hot_tip_slot(peer, None);
+                    }
                     tracer.trace_runtime(
                         "Net.Governor",
                         "Warning",
@@ -552,6 +559,14 @@ fn point_slot(point: &Point) -> Option<u64> {
     }
 }
 
+fn preferred_hot_peer_from_registry(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+) -> Option<SocketAddr> {
+    let registry_lock = peer_registry?;
+    let registry = registry_lock.read().ok()?;
+    registry.preferred_hot_peer()
+}
+
 fn extend_unique_peers(target: &mut Vec<SocketAddr>, peers: impl IntoIterator<Item = SocketAddr>) {
     for peer in peers {
         if !target.contains(&peer) {
@@ -810,8 +825,17 @@ pub async fn run_governor_loop<I, V, L, F>(
                     .await;
 
                 peer_manager
-                    .refresh_hot_peer_tips(&mut governor_state, &tracer)
+                    .refresh_hot_peer_tips(&peer_registry, &mut governor_state, &tracer)
                     .await;
+
+                if let Some(best_peer) = peer_manager.best_hot_peer() {
+                    tracer.trace_runtime(
+                        "Net.Governor",
+                        "Debug",
+                        "best hot peer selected",
+                        trace_fields([("peer", json!(best_peer.to_string()))]),
+                    );
+                }
 
                 // Purge expired mempool entries using the current chain tip slot.
                 if let Some(ref mempool) = mempool {
@@ -2022,17 +2046,10 @@ where
             tracer,
         );
         let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = preferred_peer {
+        if let Some(peer_addr) = preferred_hot_peer_from_registry(peer_registry.as_ref()) {
             attempt_state.record_success(peer_addr);
-        }
-        if let Some(ref registry_lock) = peer_registry {
-            if let Ok(registry) = registry_lock.read() {
-                for (addr, entry) in registry.iter() {
-                    if entry.status == PeerStatus::PeerHot {
-                        attempt_state.record_success(*addr);
-                    }
-                }
-            }
+        } else if let Some(peer_addr) = preferred_peer {
+            attempt_state.record_success(peer_addr);
         }
 
         tracer.trace_runtime(
@@ -2264,17 +2281,10 @@ where
             tracer,
         );
         let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = preferred_peer {
+        if let Some(peer_addr) = preferred_hot_peer_from_registry(peer_registry.as_ref()) {
             attempt_state.record_success(peer_addr);
-        }
-        if let Some(ref registry_lock) = peer_registry {
-            if let Ok(registry) = registry_lock.read() {
-                for (addr, entry) in registry.iter() {
-                    if entry.status == PeerStatus::PeerHot {
-                        attempt_state.record_success(*addr);
-                    }
-                }
-            }
+        } else if let Some(peer_addr) = preferred_peer {
+            attempt_state.record_success(peer_addr);
         }
 
         tracer.trace_runtime(
@@ -3044,6 +3054,7 @@ mod tests {
         peer_share_request_amount,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
+        preferred_hot_peer_from_registry,
         refresh_ledger_peer_sources_from_chain_db,
         seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
         verified_sync_batch_trace_fields,
@@ -3061,7 +3072,8 @@ mod tests {
     };
     use yggdrasil_network::{
         AfterSlot, BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
-        GovernorTargets, HandshakeVersion, PeerAccessPoint, PeerSource, TopologyConfig,
+        GovernorTargets, HandshakeVersion, PeerAccessPoint, PeerRegistry, PeerSource,
+        PeerStatus, TopologyConfig,
         UseBootstrapPeers,
         UseLedgerPeers,
     };
@@ -3683,6 +3695,28 @@ mod tests {
         );
 
         assert_eq!(mgr.best_hot_peer(), Some(addr_b));
+    }
+
+    #[test]
+    fn preferred_hot_peer_from_registry_prefers_highest_tip_slot() {
+        let hot_a = local_addr(3101);
+        let hot_b = local_addr(3102);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_a, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(hot_b, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_a, PeerStatus::PeerHot);
+        registry.set_status(hot_b, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_a, Some(100));
+        registry.set_hot_tip_slot(hot_b, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(preferred_hot_peer_from_registry(Some(&shared)), Some(hot_b));
+    }
+
+    #[test]
+    fn preferred_hot_peer_from_registry_returns_none_without_registry() {
+        assert_eq!(preferred_hot_peer_from_registry(None), None);
     }
 
     /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
