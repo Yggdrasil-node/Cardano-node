@@ -567,6 +567,28 @@ fn preferred_hot_peer_from_registry(
     registry.preferred_hot_peer()
 }
 
+fn preferred_hot_peer_handoff_target(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    current_peer: SocketAddr,
+) -> Option<SocketAddr> {
+    let registry_lock = peer_registry?;
+    let registry = registry_lock.read().ok()?;
+    let preferred = registry.preferred_hot_peer()?;
+    if preferred == current_peer {
+        return None;
+    }
+
+    let preferred_tip = registry.hot_tip_slot(preferred);
+    let current_tip = registry.hot_tip_slot(current_peer);
+    match (preferred_tip, current_tip) {
+        (Some(preferred_slot), Some(current_slot)) if preferred_slot > current_slot => {
+            Some(preferred)
+        }
+        (Some(_), None) => Some(preferred),
+        _ => None,
+    }
+}
+
 fn reconnect_preferred_peer_with_source(
     peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
     previous_preferred_peer: Option<SocketAddr>,
@@ -2377,6 +2399,24 @@ where
                                     checkpoint_tracked: Some(checkpoint_tracking.is_some()),
                                 },
                             );
+
+                            if let Some(next_hot_peer) = preferred_hot_peer_handoff_target(
+                                peer_registry.as_ref(),
+                                session.connected_peer_addr,
+                            ) {
+                                tracer.trace_runtime(
+                                    "Net.PeerSelection",
+                                    "Info",
+                                    "switching sync session to higher-tip hot peer",
+                                    trace_fields([
+                                        ("fromPeer", json!(session.connected_peer_addr.to_string())),
+                                        ("toPeer", json!(next_hot_peer.to_string())),
+                                    ]),
+                                );
+                                preferred_peer = Some(next_hot_peer);
+                                session.mux.abort();
+                                break;
+                            }
                         }
                         Err(err) => {
                             let disposition = handle_reconnect_batch_error(
@@ -2654,6 +2694,24 @@ where
                                     checkpoint_tracked: Some(checkpoint_tracking.is_some()),
                                 },
                             );
+
+                            if let Some(next_hot_peer) = preferred_hot_peer_handoff_target(
+                                peer_registry.as_ref(),
+                                session.connected_peer_addr,
+                            ) {
+                                tracer.trace_runtime(
+                                    "Net.PeerSelection",
+                                    "Info",
+                                    "switching sync session to higher-tip hot peer",
+                                    trace_fields([
+                                        ("fromPeer", json!(session.connected_peer_addr.to_string())),
+                                        ("toPeer", json!(next_hot_peer.to_string())),
+                                    ]),
+                                );
+                                preferred_peer = Some(next_hot_peer);
+                                session.mux.abort();
+                                break;
+                            }
                         }
                         Err(err) => {
                             let disposition = handle_reconnect_batch_error(
@@ -3256,6 +3314,7 @@ mod tests {
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
         preferred_hot_peer_from_registry,
+        preferred_hot_peer_handoff_target,
         ordered_reconnect_fallback_peers,
         prepare_reconnect_attempt_state,
         reconnect_preferred_peer_with_source,
@@ -3982,6 +4041,43 @@ mod tests {
     #[test]
     fn preferred_hot_peer_from_registry_returns_none_without_registry() {
         assert_eq!(preferred_hot_peer_from_registry(None), None);
+    }
+
+    #[test]
+    fn preferred_hot_peer_handoff_target_prefers_higher_tip_hot_peer() {
+        let current = local_addr(3210);
+        let better = local_addr(3211);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(current, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(better, PeerSource::PeerSourceBootstrap);
+        registry.set_status(current, PeerStatus::PeerHot);
+        registry.set_status(better, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(current, Some(100));
+        registry.set_hot_tip_slot(better, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(
+            preferred_hot_peer_handoff_target(Some(&shared), current),
+            Some(better)
+        );
+    }
+
+    #[test]
+    fn preferred_hot_peer_handoff_target_ignores_non_improving_peer() {
+        let current = local_addr(3212);
+        let other = local_addr(3213);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(current, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(other, PeerSource::PeerSourceBootstrap);
+        registry.set_status(current, PeerStatus::PeerHot);
+        registry.set_status(other, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(current, Some(300));
+        registry.set_hot_tip_slot(other, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(preferred_hot_peer_handoff_target(Some(&shared), current), None);
     }
 
     #[test]

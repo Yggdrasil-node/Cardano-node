@@ -214,6 +214,11 @@ impl PeerRegistry {
         peers.into_iter().map(|(addr, _)| addr).collect()
     }
 
+    /// Return the last known hot tip slot for a peer.
+    pub fn hot_tip_slot(&self, peer: SocketAddr) -> Option<u64> {
+        self.peers.get(&peer).and_then(|entry| entry.hot_tip_slot)
+    }
+
     /// Reconcile root-peer sources from the current root-provider snapshot.
     ///
     /// Root sources are updated to match the snapshot while preserving other
@@ -583,5 +588,17 @@ mod tests {
             registry.hot_peers_by_reconnect_priority(),
             vec![hot_2, hot_1, hot_3]
         );
+    }
+
+    #[test]
+    fn hot_tip_slot_returns_slot_for_hot_peer() {
+        let mut registry = PeerRegistry::default();
+        let hot: SocketAddr = "127.0.0.1:3900".parse().unwrap();
+
+        registry.insert_source(hot, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot, Some(777));
+
+        assert_eq!(registry.hot_tip_slot(hot), Some(777));
     }
 }
