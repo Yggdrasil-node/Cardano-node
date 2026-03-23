@@ -152,7 +152,10 @@ impl PeerRegistry {
     /// Returns `true` when the value changed.
     pub fn set_hot_tip_slot(&mut self, peer: SocketAddr, hot_tip_slot: Option<u64>) -> bool {
         match self.peers.get_mut(&peer) {
-            Some(entry) if entry.hot_tip_slot != hot_tip_slot => {
+            Some(entry)
+                if entry.status == PeerStatus::PeerHot
+                    && entry.hot_tip_slot != hot_tip_slot =>
+            {
                 entry.hot_tip_slot = hot_tip_slot;
                 true
             }
@@ -517,5 +520,19 @@ mod tests {
 
         registry.set_status(peer, PeerStatus::PeerWarm);
         assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), None);
+    }
+
+    #[test]
+    fn set_hot_tip_slot_ignored_for_non_hot_peers() {
+        let peer: SocketAddr = "127.0.0.25:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        assert!(!registry.set_hot_tip_slot(peer, Some(9)));
+        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), None);
+
+        registry.set_status(peer, PeerStatus::PeerHot);
+        assert!(registry.set_hot_tip_slot(peer, Some(9)));
+        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), Some(9));
     }
 }

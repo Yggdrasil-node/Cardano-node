@@ -567,11 +567,22 @@ fn preferred_hot_peer_from_registry(
     registry.preferred_hot_peer()
 }
 
+fn reconnect_preferred_peer_with_source(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    previous_preferred_peer: Option<SocketAddr>,
+) -> Option<(SocketAddr, &'static str)> {
+    preferred_hot_peer_from_registry(peer_registry)
+        .map(|peer| (peer, "hot"))
+        .or(previous_preferred_peer.map(|peer| (peer, "previous")))
+}
+
+#[cfg(test)]
 fn reconnect_preferred_peer(
     peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
     previous_preferred_peer: Option<SocketAddr>,
 ) -> Option<SocketAddr> {
-    preferred_hot_peer_from_registry(peer_registry).or(previous_preferred_peer)
+    reconnect_preferred_peer_with_source(peer_registry, previous_preferred_peer)
+        .map(|(peer, _)| peer)
 }
 
 fn extend_unique_peers(target: &mut Vec<SocketAddr>, peers: impl IntoIterator<Item = SocketAddr>) {
@@ -2052,8 +2063,12 @@ where
             peer_snapshot_path,
             tracer,
         );
+        let reconnect_preference = reconnect_preferred_peer_with_source(
+            peer_registry.as_ref(),
+            preferred_peer,
+        );
         let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = reconnect_preferred_peer(peer_registry.as_ref(), preferred_peer) {
+        if let Some((peer_addr, _)) = reconnect_preference {
             attempt_state.record_success(peer_addr);
         }
 
@@ -2070,6 +2085,14 @@ where
                         .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
                 ),
                 ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+                (
+                    "preferredPeer",
+                    json!(reconnect_preference.map(|(peer, _)| peer.to_string())),
+                ),
+                (
+                    "preferredPeerSource",
+                    json!(reconnect_preference.map(|(_, source)| source)),
+                ),
             ]),
         );
 
@@ -2285,8 +2308,12 @@ where
             peer_snapshot_path,
             tracer,
         );
+        let reconnect_preference = reconnect_preferred_peer_with_source(
+            peer_registry.as_ref(),
+            preferred_peer,
+        );
         let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = reconnect_preferred_peer(peer_registry.as_ref(), preferred_peer) {
+        if let Some((peer_addr, _)) = reconnect_preference {
             attempt_state.record_success(peer_addr);
         }
 
@@ -2303,6 +2330,14 @@ where
                         .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
                 ),
                 ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+                (
+                    "preferredPeer",
+                    json!(reconnect_preference.map(|(peer, _)| peer.to_string())),
+                ),
+                (
+                    "preferredPeerSource",
+                    json!(reconnect_preference.map(|(_, source)| source)),
+                ),
             ]),
         );
 
@@ -3058,6 +3093,7 @@ mod tests {
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
         preferred_hot_peer_from_registry,
+        reconnect_preferred_peer_with_source,
         reconnect_preferred_peer,
         refresh_ledger_peer_sources_from_chain_db,
         seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
@@ -3749,6 +3785,31 @@ mod tests {
     #[test]
     fn reconnect_preferred_peer_returns_none_without_candidates() {
         assert_eq!(reconnect_preferred_peer(None, None), None);
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_with_source_marks_hot_source() {
+        let hot_peer = local_addr(3204);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_peer, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_peer, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_peer, Some(55));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(
+            reconnect_preferred_peer_with_source(Some(&shared), None),
+            Some((hot_peer, "hot"))
+        );
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_with_source_marks_previous_source() {
+        let previous = local_addr(3205);
+        assert_eq!(
+            reconnect_preferred_peer_with_source(None, Some(previous)),
+            Some((previous, "previous"))
+        );
     }
 
     /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
