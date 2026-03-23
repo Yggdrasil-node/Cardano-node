@@ -15,7 +15,7 @@ use crate::eras::babbage::{BabbageTxBody, BabbageTxOut};
 use crate::eras::byron::ByronTx;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MaryTxBody, MaryTxOut, MintAsset, MultiAsset, Value};
-use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyTxOut};
+use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo};
 use crate::plutus::ScriptRef;
 use crate::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::error::LedgerError;
@@ -182,13 +182,13 @@ impl MultiEraUtxo {
         pub fn utxo_delta_for_tx<'a>(
             &'a self,
             inputs: &[ShelleyTxIn],
-            outputs: &[(ShelleyTxIn, MultiEraTxOut)],
-        ) -> (Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>, Vec<(&ShelleyTxIn, &MultiEraTxOut)>) {
+            outputs: &'a [(ShelleyTxIn, MultiEraTxOut)],
+        ) -> (Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>, Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>) {
             let consumed: Vec<_> = inputs
                 .iter()
                 .filter_map(|txin| self.entries.get_key_value(txin))
                 .collect();
-            let produced: Vec<_> = outputs.iter().collect();
+            let produced: Vec<_> = outputs.iter().map(|(k, v)| (k, v)).collect();
             (consumed, produced)
         }
     /// Creates an empty UTxO set.

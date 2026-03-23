@@ -64,6 +64,9 @@ pub mod peersharing_server;
 /// LocalTxSubmission server driver — NtC transaction intake from local clients.
 pub mod local_tx_submission_server;
 
+/// LocalTxMonitor server driver — NtC mempool monitoring for local clients.
+pub mod local_tx_monitor_server;
+
 /// LocalStateQuery server driver — NtC ledger state query responder.
 pub mod local_state_query_server;
 
@@ -127,6 +130,7 @@ pub use protocols::{
     KeepAliveMessage, KeepAliveState, KeepAliveTransitionError,
     AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
     LocalStateQueryTransitionError,
+    LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,
     LocalTxSubmissionMessage, LocalTxSubmissionState, LocalTxSubmissionTransitionError,
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
@@ -135,6 +139,10 @@ pub use protocols::{
 // -- NtC server driver re-exports ---------------------------------------------
 pub use local_tx_submission_server::{
     LocalTxRequest, LocalTxSubmissionServer, LocalTxSubmissionServerError,
+};
+pub use local_tx_monitor_server::{
+    LocalTxMonitorAcquiredRequest, LocalTxMonitorIdleRequest,
+    LocalTxMonitorServer, LocalTxMonitorServerError,
 };
 pub use local_state_query_server::{
     LocalStateQueryAcquiredRequest, LocalStateQueryIdleRequest,

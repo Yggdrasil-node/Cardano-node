@@ -1785,6 +1785,62 @@ pub fn verify_block_vrf(
     .map_err(SyncError::Consensus)
 }
 
+/// Extract the issuer's cold verification key bytes from a multi-era block.
+///
+/// Returns `None` for Byron blocks (which use PBFT, not VRF).
+pub fn block_issuer_vkey(block: &MultiEraBlock) -> Option<[u8; 32]> {
+    match block {
+        MultiEraBlock::Shelley(s) => Some(s.header.body.issuer_vkey),
+        MultiEraBlock::Alonzo(a) => Some(a.header.body.issuer_vkey),
+        MultiEraBlock::Babbage(b) => Some(b.header.body.issuer_vkey),
+        MultiEraBlock::Conway(c) => Some(c.header.body.issuer_vkey),
+        MultiEraBlock::Byron { .. } => None,
+    }
+}
+
+/// Verify a block's VRF leader eligibility proof using the pool stake
+/// distribution from the ledger's `set` snapshot.
+///
+/// This function:
+/// 1. Extracts the issuer's cold key from the block header.
+/// 2. Hashes it (Blake2b-224) to obtain the pool operator key hash.
+/// 3. Looks up the pool's relative stake `σ = pool_stake / total_stake`
+///    from the stake distribution.
+/// 4. Verifies the VRF proof and checks the output against the leader
+///    threshold `φ_f(σ) = 1 − (1 − f)^σ`.
+///
+/// Byron blocks are always `Ok(true)` (no VRF).  If the pool is unknown
+/// (not in the stake distribution), `sigma` defaults to `(0, 1)` which will
+/// fail the leader check unless the VRF output is exactly zero (impossible
+/// in practice).
+///
+/// Reference: `validateVRFSignature` in
+/// `Ouroboros.Consensus.Protocol.Praos`.
+pub fn verify_block_vrf_with_stake(
+    block: &MultiEraBlock,
+    epoch_nonce: Nonce,
+    stake_dist: &yggdrasil_ledger::PoolStakeDistribution,
+    active_slot_coeff: &ActiveSlotCoeff,
+) -> Result<bool, SyncError> {
+    let issuer_vkey_bytes = match block_issuer_vkey(block) {
+        Some(vk) => vk,
+        None => return Ok(true), // Byron
+    };
+
+    // Derive pool key hash = Blake2b-224(issuer_vkey).
+    let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey_bytes).0;
+    let (sigma_num, sigma_den) = stake_dist.relative_stake(&pool_hash);
+
+    let params = VrfVerificationParams {
+        epoch_nonce,
+        sigma_num,
+        sigma_den,
+        active_slot_coeff: active_slot_coeff.clone(),
+    };
+
+    verify_block_vrf(block, &params)
+}
+
 /// Applies a multi-era block to the nonce evolution state machine.
 ///
 /// Extracts the VRF nonce contribution and `prev_hash` from the block header

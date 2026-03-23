@@ -28,7 +28,7 @@
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use yggdrasil_ledger::{Era, LedgerStateSnapshot, MultiEraSubmittedTx, Point, SlotNo};
+use yggdrasil_ledger::{CborDecode, Era, LedgerStateSnapshot, MultiEraSubmittedTx, Point, SlotNo};
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     AcquireFailure, AcquireTarget,
@@ -117,30 +117,29 @@ where
             LocalTxRequest::Done => return Ok(()),
             LocalTxRequest::SubmitTx { tx: tx_bytes } => {
                 // Recover a current ledger state for decoding and validation.
-                let mut ledger_state = {
-                    let db = match chain_db.read() {
-                        Ok(guard) => guard,
-                        Err(_) => {
-                            let reason = encode_rejection_reason("internal error: chain db lock");
-                            let _ = server.reject(reason).await;
-                            continue;
-                        }
-                    };
-                    match recover_ledger_state_chaindb(
-                        &db,
-                        yggdrasil_ledger::LedgerState::new(Era::Byron),
-                    ) {
-                        Ok(recovery) => recovery.ledger_state,
-                        Err(_) => {
-                            let reason = encode_rejection_reason("internal error: ledger recovery");
-                            let _ = server.reject(reason).await;
-                            continue;
-                        }
+                // The RwLockReadGuard (and its originating Result) must be
+                // fully dropped before any .await to keep the future Send.
+                let ledger_result = chain_db
+                    .read()
+                    .ok()
+                    .and_then(|db| {
+                        recover_ledger_state_chaindb(
+                            &db,
+                            yggdrasil_ledger::LedgerState::new(Era::Byron),
+                        )
+                        .ok()
+                    });
+                let mut ledger_state = match ledger_result {
+                    Some(recovery) => recovery.ledger_state,
+                    None => {
+                        let reason = encode_rejection_reason("internal error: ledger recovery");
+                        let _ = server.reject(reason).await;
+                        continue;
                     }
                 };
 
                 let era = ledger_state.current_era();
-                let current_slot = SlotNo::from(ledger_state.tip().slot_no().unwrap_or(0));
+                let current_slot = ledger_state.tip.slot().unwrap_or(SlotNo(0));
 
                 // Decode the submitted transaction bytes for the current era.
                 let submitted_tx =
@@ -160,10 +159,10 @@ where
                     submitted_tx,
                     current_slot,
                 ) {
-                    Ok(MempoolAddTxResult::Accepted { .. }) => {
+                    Ok(MempoolAddTxResult::MempoolTxAdded(_)) => {
                         server.accept().await?;
                     }
-                    Ok(MempoolAddTxResult::Rejected { reason, .. }) => {
+                    Ok(MempoolAddTxResult::MempoolTxRejected(_, reason)) => {
                         let reason_bytes = encode_rejection_reason(&format!("{reason:?}"));
                         server.reject(reason_bytes).await?;
                     }
@@ -291,13 +290,20 @@ where
             )
             .ok()?;
             let snapshot = recovery.ledger_state.snapshot();
-            if snapshot.tip() == point || *point == Point::Origin {
+            if snapshot.tip() == &Point::Origin {
                 Some(snapshot)
             } else {
-                // Specific historical point replay is not yet implemented.
-                // Report unavailability so the client can retry with
-                // VolatileTip or back off.
-                None
+                // Decode the requested point and compare with snapshot tip.
+                let mut dec = yggdrasil_ledger::cbor::Decoder::new(point);
+                let requested = Point::decode_cbor(&mut dec).ok();
+                if requested.as_ref() == Some(snapshot.tip()) {
+                    Some(snapshot)
+                } else {
+                    // Specific historical point replay is not yet implemented.
+                    // Report unavailability so the client can retry with
+                    // VolatileTip or back off.
+                    None
+                }
             }
         }
     }
@@ -316,10 +322,9 @@ where
 fn encode_rejection_reason(reason: &str) -> Vec<u8> {
     use yggdrasil_ledger::{CborEncode, Encoder};
 
-    let mut buf = Vec::new();
-    let mut enc = Encoder::new(&mut buf);
+    let mut enc = Encoder::new();
     enc.array(1).text(reason);
-    buf
+    enc.into_bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -486,8 +491,7 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
             }
         };
 
-        let mut buf = Vec::new();
-        let mut enc = Encoder::new(&mut buf);
+        let mut enc = Encoder::new();
 
         match tag {
             Some(0) => {
@@ -508,7 +512,7 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
             }
         }
 
-        buf
+        enc.into_bytes()
     }
 }
 
@@ -542,9 +546,9 @@ mod tests {
         let snapshot = state.snapshot();
 
         // Build a [0] query — QueryCurrentEra.
-        let mut query = Vec::new();
-        let mut enc = Encoder::new(&mut query);
+        let mut enc = Encoder::new();
         enc.array(1).unsigned(0u64);
+        let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         assert!(!result.is_empty(), "QueryCurrentEra should return a non-empty response");
@@ -558,9 +562,9 @@ mod tests {
         let snapshot = state.snapshot();
 
         // Build a [1] query — QueryChainTip.
-        let mut query = Vec::new();
-        let mut enc = Encoder::new(&mut query);
+        let mut enc = Encoder::new();
         enc.array(1).unsigned(1u64);
+        let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         assert!(!result.is_empty(), "QueryChainTip should return a non-empty response");
@@ -574,9 +578,9 @@ mod tests {
         let snapshot = state.snapshot();
 
         // Build a [2] query — QueryCurrentEpoch.
-        let mut query = Vec::new();
-        let mut enc = Encoder::new(&mut query);
+        let mut enc = Encoder::new();
         enc.array(1).unsigned(2u64);
+        let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         assert!(!result.is_empty(), "QueryCurrentEpoch should return a non-empty response");
@@ -590,9 +594,9 @@ mod tests {
         let snapshot = state.snapshot();
 
         // Build a [99] query — unknown tag.
-        let mut query = Vec::new();
-        let mut enc = Encoder::new(&mut query);
+        let mut enc = Encoder::new();
         enc.array(1).unsigned(99u64);
+        let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         assert!(result.is_empty(), "unknown query tag should return empty bytes");

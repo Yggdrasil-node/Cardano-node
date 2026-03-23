@@ -25,6 +25,9 @@ pub enum LedgerError {
     #[error("CBOR: {0} trailing bytes after value")]
     CborTrailingBytes(usize),
 
+    #[error("CBOR: {0}")]
+    CborDecodeError(String),
+
     // -- UTxO validation errors ---------------------------------------------
 
     #[error("block slot {block_slot} does not advance past current tip slot {tip_slot}")]
@@ -76,7 +79,7 @@ pub enum LedgerError {
     PoolRetirementTooFar {
         retirement_epoch: u64,
         current_epoch: u64,
-        e_max: u32,
+        e_max: u64,
         max_epoch: u64,
     },
 

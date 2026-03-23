@@ -6,6 +6,8 @@ mod chain_sync;
 mod keep_alive;
 /// LocalStateQuery mini-protocol state machine and messages (Node-to-Client).
 pub mod local_state_query;
+/// LocalTxMonitor mini-protocol state machine and messages (Node-to-Client).
+mod local_tx_monitor;
 /// LocalTxSubmission mini-protocol state machine and messages (Node-to-Client).
 mod local_tx_submission;
 /// PeerSharing protocol state machine and messages.
@@ -21,6 +23,9 @@ pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError}
 pub use local_state_query::{
     AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
     LocalStateQueryTransitionError,
+};
+pub use local_tx_monitor::{
+    LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,
 };
 pub use local_tx_submission::{
     LocalTxSubmissionMessage, LocalTxSubmissionState, LocalTxSubmissionTransitionError,

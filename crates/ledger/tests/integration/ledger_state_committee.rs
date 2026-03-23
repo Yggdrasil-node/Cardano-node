@@ -114,7 +114,7 @@ fn ledger_state_resigns_known_committee_member() {
         .expect("committee authorization block");
 
     let block = make_shelley_block_with_txs(
-        12,
+        13,
         1,
         0xAF,
         vec![ShelleyTxBody {
@@ -247,7 +247,7 @@ fn ledger_state_rejects_reauthorizing_resigned_committee_member() {
         .expect("committee resignation block");
 
     let block = make_shelley_block_with_txs(
-        12,
+        13,
         1,
         0xB3,
         vec![ShelleyTxBody {

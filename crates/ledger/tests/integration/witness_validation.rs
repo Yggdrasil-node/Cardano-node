@@ -2395,6 +2395,7 @@ fn conway_block_rejects_vote_for_expired_governance_action() {
             &TEST_SEED,
             &proposal_tx_id_hash.0,
         )]))),
+        auxiliary_data: None,
     };
 
     let gov_action_id = GovActionId {
@@ -2452,6 +2453,7 @@ fn conway_block_rejects_vote_for_expired_governance_action() {
             &TEST_SEED,
             &vote_tx_id_hash.0,
         )]))),
+        auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -2852,6 +2854,7 @@ fn conway_block_persists_governance_action_and_records_votes() {
             &TEST_SEED,
             &proposal_tx_id_hash.0,
         )]))),
+    auxiliary_data: None,
     };
 
     let gov_action_id = GovActionId {
@@ -2909,6 +2912,7 @@ fn conway_block_persists_governance_action_and_records_votes() {
             &TEST_SEED,
             &vote_tx_id_hash.0,
         )]))),
+    auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);
@@ -3018,6 +3022,7 @@ fn conway_block_removes_votes_for_unregistered_drep() {
             &TEST_SEED,
             &proposal_tx_id_hash.0,
         )]))),
+    auxiliary_data: None,
     };
 
     let gov_action_id = GovActionId {
@@ -3075,6 +3080,7 @@ fn conway_block_removes_votes_for_unregistered_drep() {
             &TEST_SEED,
             &vote_tx_id_hash.0,
         )]))),
+    auxiliary_data: None,
     };
 
     let unregister_body = ConwayTxBody {
@@ -3120,6 +3126,7 @@ fn conway_block_removes_votes_for_unregistered_drep() {
             &TEST_SEED,
             &unregister_tx_id_hash.0,
         )]))),
+    auxiliary_data: None,
     };
 
     let mut state = LedgerState::new(Era::Conway);

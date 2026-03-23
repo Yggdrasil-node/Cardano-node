@@ -974,7 +974,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         plutus_cost_model: None,
     };
 
-    let mut checkpoint_state = LedgerState::new(Era::Shelley);
+    let mut checkpoint_state = LedgerState::new(Era::Byron);
     checkpoint_state.tip = recovered_point;
     checkpoint_state
         .pool_state_mut()

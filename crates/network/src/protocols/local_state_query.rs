@@ -287,7 +287,7 @@ impl LocalStateQueryMessage {
                 enc.unsigned(7);
             }
         }
-        enc.finish()
+        enc.into_bytes()
     }
 
     /// Decode a CBOR-encoded message from wire bytes.

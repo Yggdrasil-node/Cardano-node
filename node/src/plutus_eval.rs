@@ -24,6 +24,7 @@
 
 use yggdrasil_ledger::{
     Address,
+    CborEncode,
     DCert,
     LedgerError,
     Script,
@@ -267,20 +268,6 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
     );
 
     let tx_id = PlutusData::Constr(0, vec![PlutusData::Bytes(tx_ctx.tx_hash.to_vec())]);
-    let redeemers_v2 = PlutusData::Map(
-        tx_ctx
-            .redeemers
-            .iter()
-            .map(|(purpose, redeemer)| Ok((script_purpose_data_v1v2(purpose)?, redeemer.clone())))
-            .collect::<Result<Vec<_>, LedgerError>>()?,
-    );
-    let redeemers_v3 = PlutusData::Map(
-        tx_ctx
-            .redeemers
-            .iter()
-            .map(|(purpose, redeemer)| Ok((script_purpose_data_v3(purpose)?, redeemer.clone())))
-            .collect::<Result<Vec<_>, LedgerError>>()?,
-    );
 
     match version {
         PlutusVersion::V1 => Ok(PlutusData::Constr(
@@ -305,7 +292,15 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
             ],
         )),
 
-        PlutusVersion::V2 => Ok(PlutusData::Constr(
+        PlutusVersion::V2 => {
+            let redeemers_v2 = PlutusData::Map(
+                tx_ctx
+                    .redeemers
+                    .iter()
+                    .map(|(purpose, redeemer)| Ok((script_purpose_data_v1v2(purpose)?, redeemer.clone())))
+                    .collect::<Result<Vec<_>, LedgerError>>()?,
+            );
+            Ok(PlutusData::Constr(
             0,
             vec![
                 inputs_data,                                          // inputs
@@ -327,9 +322,16 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
                 datums,                                               // datums
                 tx_id,                                                // txInfoId
             ],
-        )),
+        ))},
 
         PlutusVersion::V3 => {
+            let redeemers_v3 = PlutusData::Map(
+                tx_ctx
+                    .redeemers
+                    .iter()
+                    .map(|(purpose, redeemer)| Ok((script_purpose_data_v3(purpose)?, redeemer.clone())))
+                    .collect::<Result<Vec<_>, LedgerError>>()?,
+            );
             // V3 uses the richer TxCert encoding (not legacy DCert).
             let tx_certs = PlutusData::List(
                 tx_ctx
@@ -853,6 +855,9 @@ fn tx_cert_data_v3(certificate: &DCert) -> Result<PlutusData, LedgerError> {
         DCert::GenesisDelegation(_, _, _) => Err(LedgerError::UnsupportedCertificate(
             "GenesisDelegation has no Plutus V3 TxCert encoding",
         )),
+        DCert::MoveInstantaneousReward(_, _) => Err(LedgerError::UnsupportedCertificate(
+            "MoveInstantaneousReward has no Plutus V3 TxCert encoding",
+        )),
     }
 }
 
@@ -1142,6 +1147,9 @@ fn legacy_dcert_data(certificate: &DCert) -> Result<PlutusData, LedgerError> {
         | DCert::DrepUnregistration(_, _)
         | DCert::DrepUpdate(_, _) => Err(LedgerError::UnsupportedCertificate(
             "Certificate has no Plutus V1/V2 DCert encoding",
+        )),
+        DCert::MoveInstantaneousReward(_, _) => Err(LedgerError::UnsupportedCertificate(
+            "MoveInstantaneousReward has no Plutus V1/V2 DCert encoding",
         )),
     }
 }
@@ -1929,9 +1937,12 @@ mod tests {
                     PlutusData::Constr(
                         0,
                         vec![
-                            PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x45; 28])]),
+                            PlutusData::Constr(0, vec![
+                                PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x45; 28])]),
+                                PlutusData::Constr(1, vec![]),
+                            ]),
                             plutus_value_data(&Value::Coin(10)),
-                            PlutusData::Constr(1, vec![]),
+                            PlutusData::Constr(0, vec![]),
                             PlutusData::Constr(1, vec![]),
                         ],
                     ),
@@ -2231,13 +2242,13 @@ mod tests {
     #[test]
     fn tx_info_v3_withdrawals_use_plain_credentials() {
         let mut tx_ctx = test_tx_ctx();
-        tx_ctx.withdrawals = vec![(
+        tx_ctx.withdrawals = [(
             RewardAccount {
                 network: 1,
                 credential: StakeCredential::ScriptHash([0x24; 28]),
             },
             11,
-        )];
+        )].into_iter().collect();
 
         let tx_info = expect_tx_info(PlutusVersion::V3, &tx_ctx);
         let PlutusData::Constr(0, fields) = tx_info else { panic!("TxInfo must be Constr(0, ...)") };
@@ -2687,7 +2698,9 @@ mod tests {
                     PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x99; 28])]),
                     PlutusData::Constr(1, vec![
                         PlutusData::Constr(0, vec![
-                            PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xdd; 28])]),
+                            PlutusData::Constr(0, vec![
+                                PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xdd; 28])]),
+                            ]),
                         ]),
                     ]),
                     PlutusData::Integer(5_000_000),
@@ -2759,7 +2772,10 @@ mod tests {
             pledge: 100_000_000,
             cost: 340_000_000,
             margin: UnitInterval { numerator: 1, denominator: 100 },
-            reward_account: vec![0xe0, 0x01, 0x02, 0x03],
+            reward_account: RewardAccount {
+                network: 0,
+                credential: StakeCredential::AddrKeyHash([0x01; 28]),
+            },
             pool_owners: vec![],
             relays: vec![],
             pool_metadata: None,
@@ -3538,10 +3554,10 @@ mod tests {
             proposal_index: 0,
             proposal: yggdrasil_ledger::ProposalProcedure {
                 deposit: 1_000_000,
-                reward_account: RewardAccount {
+                reward_account: Address::Reward(RewardAccount {
                     network: 1,
                     credential: StakeCredential::AddrKeyHash([0xAA; 28]),
-                },
+                }).to_bytes(),
                 gov_action: GovAction::InfoAction,
                 anchor: Anchor { url: String::new(), data_hash: [0; 32] },
             },
@@ -3615,8 +3631,8 @@ mod tests {
             address: Address::Enterprise(EnterpriseAddress {
                 network: 1,
                 payment: StakeCredential::AddrKeyHash([0x11; 28]),
-            }),
-            value: Value::Coin(5_000_000),
+            }).to_bytes(),
+            amount: Value::Coin(5_000_000),
             datum_option: None,
             script_ref: None,
         });
@@ -3682,7 +3698,7 @@ mod tests {
 
     #[test]
     fn constitution_data_v3_with_guardrails() {
-        let c = Constitution { guardrails_script_hash: Some([0xEE; 28]) };
+        let c = Constitution { anchor: Anchor { url: String::new(), data_hash: [0; 32] }, guardrails_script_hash: Some([0xEE; 28]) };
         let result = constitution_data_v3(&c);
         assert_eq!(
             result,
@@ -3694,7 +3710,7 @@ mod tests {
 
     #[test]
     fn constitution_data_v3_without_guardrails() {
-        let c = Constitution { guardrails_script_hash: None };
+        let c = Constitution { anchor: Anchor { url: String::new(), data_hash: [0; 32] }, guardrails_script_hash: None };
         let result = constitution_data_v3(&c);
         assert_eq!(
             result,
@@ -3779,8 +3795,8 @@ mod tests {
             address: Address::Enterprise(EnterpriseAddress {
                 network: 1,
                 payment: StakeCredential::AddrKeyHash([0x66; 28]),
-            }),
-            value: Value::Coin(2_000_000),
+            }).to_bytes(),
+            amount: Value::Coin(2_000_000),
             datum_option: Some(DatumOption::Inline(PlutusData::Integer(777))),
             script_ref: None,
         });
@@ -3799,8 +3815,8 @@ mod tests {
             address: Address::Enterprise(EnterpriseAddress {
                 network: 1,
                 payment: StakeCredential::AddrKeyHash([0x77; 28]),
-            }),
-            value: Value::Coin(1_000_000),
+            }).to_bytes(),
+            amount: Value::Coin(1_000_000),
             datum_option: Some(DatumOption::Hash([0x88; 32])),
             script_ref: None,
         });
@@ -3816,8 +3832,8 @@ mod tests {
             address: Address::Enterprise(EnterpriseAddress {
                 network: 1,
                 payment: StakeCredential::AddrKeyHash([0x99; 28]),
-            }),
-            value: Value::Coin(1_000_000),
+            }).to_bytes(),
+            amount: Value::Coin(1_000_000),
             datum_option: None,
             script_ref: None,
         });
@@ -3997,8 +4013,8 @@ mod tests {
             address: Address::Enterprise(EnterpriseAddress {
                 network: 1,
                 payment: StakeCredential::AddrKeyHash([0xEE; 28]),
-            }),
-            value: Value::Coin(2_000_000),
+            }).to_bytes(),
+            amount: Value::Coin(2_000_000),
             datum_option: None,
             script_ref: None,
         });

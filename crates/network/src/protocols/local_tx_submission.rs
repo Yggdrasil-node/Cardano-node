@@ -152,7 +152,7 @@ impl LocalTxSubmissionMessage {
                 enc.unsigned(3);
             }
         }
-        enc.finish()
+        enc.into_bytes()
     }
 
     /// Decode a CBOR-encoded message from wire bytes.

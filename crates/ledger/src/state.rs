@@ -2424,12 +2424,17 @@ impl LedgerState {
         let slot = block.header.slot_no.0;
 
         // Slot monotonicity: the block slot must strictly exceed the tip slot.
-        if let Some(tip_slot) = self.tip.slot() {
-            if slot <= tip_slot.0 {
-                return Err(LedgerError::SlotNotIncreasing {
-                    tip_slot: tip_slot.0,
-                    block_slot: slot,
-                });
+        // Byron-era blocks are exempt because Byron EBBs (Epoch Boundary
+        // Blocks) share slot 0 with regular blocks — chain selection in
+        // that era is driven by the block difficulty number instead.
+        if block.era != Era::Byron {
+            if let Some(tip_slot) = self.tip.slot() {
+                if slot <= tip_slot.0 {
+                    return Err(LedgerError::SlotNotIncreasing {
+                        tip_slot: tip_slot.0,
+                        block_slot: slot,
+                    });
+                }
             }
         }
 
@@ -2768,7 +2773,7 @@ impl LedgerState {
                 key_deposit: 0,
                 pool_deposit: 0,
                 min_pool_cost: 0,
-                e_max: u32::MAX,
+                e_max: u64::MAX,
                 current_epoch: self.current_epoch,
                 expected_network_id: self.expected_network_id,
             },
@@ -4220,7 +4225,7 @@ struct CertificateValidationContext {
     key_deposit: u64,
     pool_deposit: u64,
     min_pool_cost: u64,
-    e_max: u32,
+    e_max: u64,
     current_epoch: EpochNo,
     expected_network_id: Option<u8>,
 }
@@ -4368,7 +4373,7 @@ fn apply_certificates_and_withdrawals(
                         return Err(LedgerError::PoolNotRegistered(*pool));
                     }
                     // POOL rule: retirement epoch must be within eMax of current epoch.
-                    let max_epoch = ctx.current_epoch.0.saturating_add(ctx.e_max as u64);
+                    let max_epoch = ctx.current_epoch.0.saturating_add(ctx.e_max);
                     if epoch.0 > max_epoch {
                         return Err(LedgerError::PoolRetirementTooFar {
                             retirement_epoch: epoch.0,

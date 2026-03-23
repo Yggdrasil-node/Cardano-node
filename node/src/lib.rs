@@ -49,6 +49,7 @@ pub use sync::{
 	shelley_opcert_to_consensus, sync_batch_apply, sync_batch_apply_verified, sync_step,
 	sync_step_decoded, sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed,
 	sync_until_typed, typed_find_intersect, verify_block_body_hash, verify_block_vrf,
+	verify_block_vrf_with_stake, block_issuer_vkey,
 	verify_multi_era_block,
 	verify_praos_header, verify_shelley_header, SHELLEY_KES_DEPTH,
 };
