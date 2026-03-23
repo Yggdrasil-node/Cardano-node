@@ -195,6 +195,9 @@ pub enum LedgerError {
         expected: (u64, u64),
     },
 
+    #[error("hard-fork proposal cannot be validated without a current protocol-version baseline: {0:?}")]
+    MissingProtocolVersionForHardFork(crate::eras::conway::ProposalProcedure),
+
     #[error(
         "withdrawal exceeds reward balance for {account:?}: requested {requested}, available {available}"
     )]

@@ -4568,6 +4568,35 @@ fn validate_conway_proposals(
                     expected,
                 });
             }
+        } else if let GovAction::HardForkInitiation {
+            prev_action_id: Some(prev_action_id),
+            protocol_version: supplied,
+        } = &proposal.gov_action
+        {
+            if enact_state.prev_hard_fork() == Some(prev_action_id) {
+                let Some(expected) = protocol_version else {
+                    return Err(LedgerError::MissingProtocolVersionForHardFork(
+                        proposal.clone(),
+                    ));
+                };
+                if !conway_pv_can_follow(expected, *supplied) {
+                    return Err(LedgerError::ProposalCantFollow {
+                        prev_action_id: Some(prev_action_id.clone()),
+                        supplied: *supplied,
+                        expected,
+                    });
+                }
+            }
+        } else if matches!(
+            proposal.gov_action,
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                ..
+            }
+        ) {
+            return Err(LedgerError::MissingProtocolVersionForHardFork(
+                proposal.clone(),
+            ));
         }
 
         if let Some(expected_deposit) = gov_action_deposit {
@@ -6623,6 +6652,58 @@ mod tests {
     }
 
     #[test]
+    fn test_hard_fork_prev_enacted_root_requires_pv_follow() {
+        let root_id = sample_gov_action_id(42);
+        let mut es = EnactState::default();
+        es.prev_hard_fork = Some(root_id.clone());
+        let stake_creds = empty_stake_creds_with(1);
+
+        let valid = vec![sample_proposal(
+            GovAction::HardForkInitiation {
+                prev_action_id: Some(root_id.clone()),
+                protocol_version: (10, 1),
+            },
+            1,
+            1,
+        )];
+        let valid_result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &valid,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            Some((10, 0)),
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(valid_result.is_ok());
+
+        let invalid = vec![sample_proposal(
+            GovAction::HardForkInitiation {
+                prev_action_id: Some(root_id),
+                protocol_version: (10, 2),
+            },
+            1,
+            1,
+        )];
+        let invalid_result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &invalid,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            Some((10, 0)),
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(invalid_result, Err(LedgerError::ProposalCantFollow { .. })));
+    }
+
+    #[test]
     fn test_enacted_root_unknown_prev_rejected() {
         // prev_action_id matches neither enacted root nor stored proposals.
         let es = EnactState::default();
@@ -6820,6 +6901,70 @@ mod tests {
             &es,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hard_fork_rejects_when_current_protocol_version_missing() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            1,
+            1,
+        )];
+
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::MissingProtocolVersionForHardFork(_))
+        ));
+    }
+
+    #[test]
+    fn test_hard_fork_prev_enacted_root_rejects_when_current_protocol_version_missing() {
+        let root_id = sample_gov_action_id(70);
+        let mut es = EnactState::default();
+        es.prev_hard_fork = Some(root_id.clone());
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::HardForkInitiation {
+                prev_action_id: Some(root_id),
+                protocol_version: (10, 1),
+            },
+            1,
+            1,
+        )];
+
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::MissingProtocolVersionForHardFork(_))
+        ));
     }
 
     #[test]
