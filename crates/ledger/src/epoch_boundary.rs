@@ -43,6 +43,8 @@ use crate::eras::conway::GovActionId;
 pub struct EpochBoundaryEvent {
     /// The new epoch number after the transition.
     pub new_epoch: EpochNo,
+    /// Number of protocol parameter fields updated via Shelley PPUP proposals.
+    pub pparam_updates_applied: usize,
     /// Number of pools retired during this transition.
     pub pools_retired: usize,
     /// Operator keys of retired pools.
@@ -104,6 +106,13 @@ pub fn apply_epoch_boundary(
     pool_performance: &BTreeMap<PoolKeyHash, UnitInterval>,
 ) -> Result<EpochBoundaryEvent, LedgerError> {
     ledger.set_current_epoch(new_epoch);
+
+    // -----------------------------------------------------------------------
+    // 0. PPUP — apply any pending Shelley-era protocol parameter update
+    //    proposals whose target epoch matches the new epoch.
+    //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — PPUP tick.
+    // -----------------------------------------------------------------------
+    let pparam_updates_applied = ledger.apply_pending_pparam_updates(new_epoch);
 
     let params = ledger
         .protocol_params()
@@ -193,6 +202,7 @@ pub fn apply_epoch_boundary(
 
     Ok(EpochBoundaryEvent {
         new_epoch,
+        pparam_updates_applied,
         pools_retired,
         retired_pool_keys,
         pool_deposit_refunds,
@@ -419,13 +429,15 @@ pub fn retire_pools_with_refunds(
 mod tests {
     use super::*;
     use crate::stake::StakeSnapshot;
+    use crate::state::GenesisDelegationState;
     use crate::state::RewardAccountState;
     use crate::types::{
         Address, BaseAddress, EpochNo, PoolKeyHash, PoolParams, RewardAccount,
         StakeCredential, UnitInterval,
     };
     use crate::eras::{Era, ShelleyTxIn, ShelleyTxOut};
-    use crate::protocol_params::ProtocolParameters;
+    use crate::eras::shelley::ShelleyUpdate;
+    use crate::protocol_params::{ProtocolParameterUpdate, ProtocolParameters};
 
     fn test_cred(b: u8) -> StakeCredential {
         StakeCredential::AddrKeyHash([b; 28])
@@ -1461,5 +1473,110 @@ mod tests {
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(event.enacted_gov_action_ids.is_empty());
         assert!(event.enact_outcomes.is_empty());
+    }
+
+    fn make_ppup_ledger(gen_deleg_count: usize) -> LedgerState {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        let mut pp = test_protocol_params();
+        pp.min_fee_a = 44;
+        ledger.set_protocol_params(pp);
+        for i in 0..gen_deleg_count {
+            let mut genesis_hash = [0u8; 28];
+            genesis_hash[0] = i as u8;
+            ledger.gen_delegs_mut().insert(
+                genesis_hash,
+                GenesisDelegationState {
+                    delegate: [0x10 + i as u8; 28],
+                    vrf: [0x20 + i as u8; 32],
+                },
+            );
+        }
+        ledger
+    }
+
+    fn pparam_update_min_fee_a(value: u64) -> ProtocolParameterUpdate {
+        ProtocolParameterUpdate {
+            min_fee_a: Some(value),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ppup_applies_when_quorum_reached() {
+        let mut ledger = make_ppup_ledger(3);
+        let mut p1 = BTreeMap::new();
+        p1.insert([0u8; 28], pparam_update_min_fee_a(77));
+        ledger.collect_pparam_proposals(&ShelleyUpdate {
+            proposed_protocol_parameter_updates: p1,
+            epoch: 3,
+        });
+
+        let mut p2 = BTreeMap::new();
+        let mut h2 = [0u8; 28];
+        h2[0] = 1;
+        p2.insert(h2, pparam_update_min_fee_a(77));
+        ledger.collect_pparam_proposals(&ShelleyUpdate {
+            proposed_protocol_parameter_updates: p2,
+            epoch: 3,
+        });
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf)
+            .expect("epoch 3");
+
+        assert!(event.pparam_updates_applied > 0);
+        assert_eq!(ledger.protocol_params().expect("params").min_fee_a, 77);
+        assert!(ledger.pending_pparam_updates().is_empty());
+    }
+
+    #[test]
+    fn ppup_no_quorum_does_not_apply() {
+        let mut ledger = make_ppup_ledger(3);
+        let mut p1 = BTreeMap::new();
+        p1.insert([0u8; 28], pparam_update_min_fee_a(88));
+        ledger.collect_pparam_proposals(&ShelleyUpdate {
+            proposed_protocol_parameter_updates: p1,
+            epoch: 2,
+        });
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        assert_eq!(event.pparam_updates_applied, 0);
+        assert_eq!(ledger.protocol_params().expect("params").min_fee_a, 44);
+    }
+
+    #[test]
+    fn ppup_ignores_unknown_delegate_hashes() {
+        let mut ledger = make_ppup_ledger(1);
+        let mut p1 = BTreeMap::new();
+        p1.insert([0xFFu8; 28], pparam_update_min_fee_a(101));
+        ledger.collect_pparam_proposals(&ShelleyUpdate {
+            proposed_protocol_parameter_updates: p1,
+            epoch: 4,
+        });
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(4), &mut snapshots, &perf)
+            .expect("epoch 4");
+
+        assert_eq!(event.pparam_updates_applied, 0);
+        assert_eq!(ledger.protocol_params().expect("params").min_fee_a, 44);
+    }
+
+    #[test]
+    fn pparam_update_field_count_counts_some_fields() {
+        let update = ProtocolParameterUpdate {
+            min_fee_a: Some(1),
+            min_fee_b: Some(2),
+            max_tx_size: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(update.field_count(), 3);
+        assert_eq!(ProtocolParameterUpdate::default().field_count(), 0);
     }
 }

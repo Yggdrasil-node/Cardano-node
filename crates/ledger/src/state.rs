@@ -1814,6 +1814,16 @@ pub struct LedgerState {
     ///
     /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `GenDelegs`.
     gen_delegs: BTreeMap<GenesisHash, GenesisDelegationState>,
+    /// Pending Shelley-era protocol parameter update proposals keyed by
+    /// target epoch and genesis delegate key hash.
+    ///
+    /// Each transaction carrying a `ShelleyUpdate` (CDDL key 6) adds its
+    /// per-genesis-hash proposals here.  At the epoch boundary when the
+    /// target epoch arrives, proposals that reach a quorum (> 50% of
+    /// `gen_delegs`) are merged and applied to `protocol_params`.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Ppup` — PPUP rule.
+    pending_pparam_updates: BTreeMap<EpochNo, BTreeMap<GenesisHash, crate::protocol_params::ProtocolParameterUpdate>>,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -1829,7 +1839,7 @@ pub struct LedgerStateCheckpoint {
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(17);
+        enc.array(18);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
         match self.expected_network_id {
@@ -1869,16 +1879,26 @@ impl CborEncode for LedgerState {
             enc.bytes(&deleg.delegate);
             enc.bytes(&deleg.vrf);
         }
+        // pending_pparam_updates: map epoch → map genesis-hash → update
+        enc.map(self.pending_pparam_updates.len() as u64);
+        for (epoch, proposals) in &self.pending_pparam_updates {
+            epoch.encode_cbor(enc);
+            enc.map(proposals.len() as u64);
+            for (genesis_hash, update) in proposals {
+                enc.bytes(genesis_hash);
+                update.encode_cbor(enc);
+            }
+        }
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept legacy 9/10-element arrays and current 12-17-element arrays.
-        if len != 9 && len != 10 && !(12..=17).contains(&len) {
+        // Accept legacy 9/10-element arrays and current 12-18-element arrays.
+        if len != 9 && len != 10 && !(12..=18).contains(&len) {
             return Err(LedgerError::CborInvalidLength {
-                expected: 17,
+                expected: 18,
                 actual: len as usize,
             });
         }
@@ -1986,6 +2006,30 @@ impl CborDecode for LedgerState {
             BTreeMap::new()
         };
 
+        let pending_pparam_updates = if len >= 18 {
+            let outer_len = dec.map()?;
+            let mut updates = BTreeMap::new();
+            for _ in 0..outer_len {
+                let epoch = EpochNo::decode_cbor(dec)?;
+                let inner_len = dec.map()?;
+                let mut proposals = BTreeMap::new();
+                for _ in 0..inner_len {
+                    let genesis_hash: GenesisHash = {
+                        let bytes = dec.bytes()?;
+                        let mut arr = [0u8; 28];
+                        arr.copy_from_slice(&bytes);
+                        arr
+                    };
+                    let update = crate::protocol_params::ProtocolParameterUpdate::decode_cbor(dec)?;
+                    proposals.insert(genesis_hash, update);
+                }
+                updates.insert(epoch, proposals);
+            }
+            updates
+        } else {
+            BTreeMap::new()
+        };
+
         Ok(Self {
             current_era,
             tip,
@@ -2004,6 +2048,7 @@ impl CborDecode for LedgerState {
             accounting,
             enact_state,
             gen_delegs,
+            pending_pparam_updates,
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
@@ -2076,6 +2121,7 @@ impl LedgerState {
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
             gen_delegs: BTreeMap::new(),
+            pending_pparam_updates: BTreeMap::new(),
         }
     }
 
@@ -2129,6 +2175,100 @@ impl LedgerState {
     /// `GenesisDelegation` certificates during block application.
     pub fn gen_delegs(&self) -> &BTreeMap<GenesisHash, GenesisDelegationState> {
         &self.gen_delegs
+    }
+
+    /// Returns a mutable reference to the active genesis delegation map.
+    pub fn gen_delegs_mut(&mut self) -> &mut BTreeMap<GenesisHash, GenesisDelegationState> {
+        &mut self.gen_delegs
+    }
+
+    /// Returns a reference to pending Shelley-era protocol parameter update
+    /// proposals, keyed by target epoch.
+    pub fn pending_pparam_updates(
+        &self,
+    ) -> &BTreeMap<EpochNo, BTreeMap<GenesisHash, crate::protocol_params::ProtocolParameterUpdate>>
+    {
+        &self.pending_pparam_updates
+    }
+
+    /// Collects protocol parameter update proposals from a `ShelleyUpdate`.
+    ///
+    /// Each proposal is stored under its target epoch and genesis key hash.
+    /// Duplicate proposals from the same genesis key for the same epoch
+    /// overwrite the earlier entry (last-writer-wins per block ordering).
+    pub fn collect_pparam_proposals(&mut self, update: &crate::eras::shelley::ShelleyUpdate) {
+        let epoch = EpochNo(update.epoch);
+        let epoch_proposals = self.pending_pparam_updates.entry(epoch).or_default();
+        for (genesis_hash, param_update) in &update.proposed_protocol_parameter_updates {
+            epoch_proposals.insert(*genesis_hash, param_update.clone());
+        }
+    }
+
+    /// Applies any pending protocol parameter proposals whose target epoch
+    /// matches `epoch`.
+    ///
+    /// The upstream Shelley PPUP rule requires a quorum: more than 50% of
+    /// the genesis delegates (`gen_delegs`) must propose identical updates
+    /// for the same epoch.  When multiple distinct updates are proposed, the
+    /// update with the most votes wins if it exceeds quorum; otherwise no
+    /// change is applied.
+    ///
+    /// After processing, all proposals for epochs ≤ `epoch` are removed so
+    /// stale proposals do not accumulate.
+    ///
+    /// Returns the number of parameter fields updated (0 if no quorum).
+    pub fn apply_pending_pparam_updates(&mut self, epoch: EpochNo) -> usize {
+        let proposals = self.pending_pparam_updates.remove(&epoch);
+        // Remove stale proposals for earlier epochs.
+        self.pending_pparam_updates.retain(|e, _| *e > epoch);
+
+        let proposals = match proposals {
+            Some(p) if !p.is_empty() => p,
+            _ => return 0,
+        };
+
+        let gen_delegs_count = self.gen_delegs.len();
+        if gen_delegs_count == 0 {
+            // No genesis delegates — cannot reach quorum.
+            return 0;
+        }
+
+        // Only consider proposals from recognized genesis delegates.
+        let valid_proposals: Vec<&crate::protocol_params::ProtocolParameterUpdate> = proposals
+            .iter()
+            .filter(|(hash, _)| self.gen_delegs.contains_key(*hash))
+            .map(|(_, update)| update)
+            .collect();
+
+        if valid_proposals.is_empty() {
+            return 0;
+        }
+
+        let quorum = gen_delegs_count / 2 + 1;
+
+        // Group identical proposals and find the one with the most votes.
+        // We compare proposals by their Debug representation as a simple
+        // equality check (ProtocolParameterUpdate derives Eq).
+        let mut vote_counts: Vec<(&crate::protocol_params::ProtocolParameterUpdate, usize)> = Vec::new();
+        for proposal in &valid_proposals {
+            if let Some(entry) = vote_counts.iter_mut().find(|(p, _)| *p == *proposal) {
+                entry.1 += 1;
+            } else {
+                vote_counts.push((proposal, 1));
+            }
+        }
+
+        // Find the proposal with the most votes.
+        let best = vote_counts.iter().max_by_key(|(_, count)| *count);
+        match best {
+            Some((winning_update, count)) if *count >= quorum => {
+                let params = self.protocol_params.get_or_insert_with(Default::default);
+                params.apply_update(winning_update);
+                // Count non-None fields as the number of updates applied.
+                winning_update.field_count()
+            }
+            _ => 0,
+        }
     }
 
     /// Returns a reference to registered stake-pool state.
@@ -2923,6 +3063,12 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        // Collect protocol parameter update proposals (PPUP rule).
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
+            if let Some(ref update) = body.update {
+                self.collect_pparam_proposals(update);
+            }
+        }
         Ok(())
     }
 
@@ -3013,6 +3159,12 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        // Collect protocol parameter update proposals (PPUP rule).
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
+            if let Some(ref update) = body.update {
+                self.collect_pparam_proposals(update);
+            }
+        }
         Ok(())
     }
 
@@ -3103,6 +3255,12 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        // Collect protocol parameter update proposals (PPUP rule).
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
+            if let Some(ref update) = body.update {
+                self.collect_pparam_proposals(update);
+            }
+        }
         Ok(())
     }
 
@@ -3237,6 +3395,12 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        // Collect protocol parameter update proposals (PPUP rule).
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
+            if let Some(ref update) = body.update {
+                self.collect_pparam_proposals(update);
+            }
+        }
         Ok(())
     }
 
@@ -3375,6 +3539,12 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        // Collect protocol parameter update proposals (PPUP rule).
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
+            if let Some(ref update) = body.update {
+                self.collect_pparam_proposals(update);
+            }
+        }
         Ok(())
     }
 

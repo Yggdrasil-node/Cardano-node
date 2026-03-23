@@ -746,6 +746,43 @@ impl ProtocolParameterUpdate {
     pub fn is_empty(&self) -> bool {
         self == &Self::default()
     }
+
+    /// Returns the number of `Some` fields in this update.
+    pub fn field_count(&self) -> usize {
+        let mut count = 0usize;
+        if self.min_fee_a.is_some() { count += 1; }
+        if self.min_fee_b.is_some() { count += 1; }
+        if self.max_block_body_size.is_some() { count += 1; }
+        if self.max_tx_size.is_some() { count += 1; }
+        if self.max_block_header_size.is_some() { count += 1; }
+        if self.key_deposit.is_some() { count += 1; }
+        if self.pool_deposit.is_some() { count += 1; }
+        if self.e_max.is_some() { count += 1; }
+        if self.n_opt.is_some() { count += 1; }
+        if self.a0.is_some() { count += 1; }
+        if self.rho.is_some() { count += 1; }
+        if self.tau.is_some() { count += 1; }
+        if self.protocol_version.is_some() { count += 1; }
+        if self.min_utxo_value.is_some() { count += 1; }
+        if self.min_pool_cost.is_some() { count += 1; }
+        if self.coins_per_utxo_byte.is_some() { count += 1; }
+        if self.price_mem.is_some() { count += 1; }
+        if self.price_step.is_some() { count += 1; }
+        if self.max_tx_ex_units.is_some() { count += 1; }
+        if self.max_block_ex_units.is_some() { count += 1; }
+        if self.max_val_size.is_some() { count += 1; }
+        if self.collateral_percentage.is_some() { count += 1; }
+        if self.max_collateral_inputs.is_some() { count += 1; }
+        if self.pool_voting_thresholds.is_some() { count += 1; }
+        if self.drep_voting_thresholds.is_some() { count += 1; }
+        if self.min_committee_size.is_some() { count += 1; }
+        if self.committee_term_limit.is_some() { count += 1; }
+        if self.gov_action_lifetime.is_some() { count += 1; }
+        if self.gov_action_deposit.is_some() { count += 1; }
+        if self.drep_deposit.is_some() { count += 1; }
+        if self.drep_activity.is_some() { count += 1; }
+        count
+    }
 }
 
 impl ProtocolParameters {
