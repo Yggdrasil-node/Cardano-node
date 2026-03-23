@@ -3032,6 +3032,7 @@ mod tests {
         UseBootstrapPeers,
         UseLedgerPeers,
     };
+    use yggdrasil_mempool::SharedMempool;
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
     fn local_addr(port: u16) -> SocketAddr {
@@ -3226,6 +3227,32 @@ mod tests {
         assert_eq!(req.peer_snapshot_path, Some(second));
         assert_eq!(req.use_ledger_peers, None);
         assert_eq!(req.nonce_state, None);
+    }
+
+    #[test]
+    fn resume_request_builder_sets_mempool() {
+        let node = sample_node_config();
+        let cfg = sample_sync_config();
+        let mempool = SharedMempool::default();
+
+        let req = ResumeReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            LedgerState::new(Era::Byron),
+            &cfg,
+        )
+        .with_mempool(Some(mempool.clone()));
+
+        assert!(req.mempool.is_some());
+
+        // Default constructor has none.
+        let req2 = ResumeReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            LedgerState::new(Era::Byron),
+            &cfg,
+        );
+        assert!(req2.mempool.is_none());
     }
 
     #[test]

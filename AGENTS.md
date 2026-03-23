@@ -31,7 +31,7 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - `node/` owns orchestration, CLI, and runtime integration.
 - `specs/upstream-test-vectors` officially test-vectors from the `IntersectMBO` repositories.
 
-## Official Upstream References *Always research referances and add or update links as needed*
+## Official Upstream References *"Always research referances and add or update links as needed"*
 - `crates/crypto`: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class> and <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
 - `crates/cddl-codegen`: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras> and <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
 - `crates/ledger`: <https://github.com/IntersectMBO/cardano-ledger> and <https://github.com/IntersectMBO/formal-ledger-specifications>
@@ -43,7 +43,7 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - Cardano developer portal: <https://github.com/cardano-foundation/developer-portal/tree/staging/docs/>
 - cardano- blueprint: <https://github.com/cardano-scaling/cardano-blueprint/tree/main/src> or <https://cardano-scaling.github.io/cardano-blueprint/>
 
-##  Rules *Non-Negotiable*
+##  Rules *"Non-Negotiable"*
 - Always write typesafe Rust code.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
