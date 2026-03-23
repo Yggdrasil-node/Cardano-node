@@ -576,6 +576,35 @@ fn reconnect_preferred_peer_with_source(
         .or(previous_preferred_peer.map(|peer| (peer, "previous")))
 }
 
+fn ordered_reconnect_fallback_peers(
+    primary_peer: SocketAddr,
+    refreshed_fallback_peers: &[SocketAddr],
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+) -> Vec<SocketAddr> {
+    let mut ordered = Vec::new();
+
+    if let Some(registry_lock) = peer_registry {
+        if let Ok(registry) = registry_lock.read() {
+            for peer in registry.hot_peers_by_reconnect_priority() {
+                if peer != primary_peer
+                    && refreshed_fallback_peers.contains(&peer)
+                    && !ordered.contains(&peer)
+                {
+                    ordered.push(peer);
+                }
+            }
+        }
+    }
+
+    for peer in refreshed_fallback_peers {
+        if *peer != primary_peer && !ordered.contains(peer) {
+            ordered.push(*peer);
+        }
+    }
+
+    ordered
+}
+
 fn prepare_reconnect_attempt_state(
     primary_peer: SocketAddr,
     refreshed_fallback_peers: &[SocketAddr],
@@ -584,7 +613,12 @@ fn prepare_reconnect_attempt_state(
 ) -> (PeerAttemptState, Option<(SocketAddr, &'static str)>) {
     let reconnect_preference =
         reconnect_preferred_peer_with_source(peer_registry, previous_preferred_peer);
-    let mut attempt_state = peer_attempt_state(primary_peer, refreshed_fallback_peers);
+    let ordered_fallback_peers = ordered_reconnect_fallback_peers(
+        primary_peer,
+        refreshed_fallback_peers,
+        peer_registry,
+    );
+    let mut attempt_state = peer_attempt_state(primary_peer, &ordered_fallback_peers);
     if let Some((peer_addr, _)) = reconnect_preference {
         attempt_state.record_success(peer_addr);
     }
@@ -3105,6 +3139,7 @@ mod tests {
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
         preferred_hot_peer_from_registry,
+        ordered_reconnect_fallback_peers,
         prepare_reconnect_attempt_state,
         reconnect_preferred_peer_with_source,
         reconnect_preferred_peer,
@@ -3865,6 +3900,32 @@ mod tests {
 
         assert_eq!(preference, Some((previous, "previous")));
         assert_eq!(attempt_state.preferred_peer(), Some(previous));
+    }
+
+    #[test]
+    fn ordered_reconnect_fallback_peers_prioritizes_ranked_hot_peers() {
+        let primary = local_addr(3310);
+        let hot_low = local_addr(3311);
+        let hot_high = local_addr(3312);
+        let cold = local_addr(3313);
+
+        let mut registry = PeerRegistry::default();
+        for peer in [hot_low, hot_high, cold] {
+            registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        }
+        registry.set_status(hot_low, PeerStatus::PeerHot);
+        registry.set_status(hot_high, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_low, Some(100));
+        registry.set_hot_tip_slot(hot_high, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        let ordered = ordered_reconnect_fallback_peers(
+            primary,
+            &[cold, hot_low, hot_high],
+            Some(&shared),
+        );
+
+        assert_eq!(ordered, vec![hot_high, hot_low, cold]);
     }
 
     /// Build a minimal `PeerSession` for unit tests that don't drive protocols.

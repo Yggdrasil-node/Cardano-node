@@ -191,6 +191,29 @@ impl PeerRegistry {
         best_with_tip.map(|(addr, _)| addr).or(first_hot)
     }
 
+    /// Return all hot peers ordered for reconnect attempts.
+    ///
+    /// Peers with known tip slots are ordered first by descending tip slot.
+    /// Ties and peers without known tip slots are ordered by stable address.
+    pub fn hot_peers_by_reconnect_priority(&self) -> Vec<SocketAddr> {
+        let mut peers = self
+            .peers
+            .iter()
+            .filter_map(|(addr, entry)| {
+                (entry.status == PeerStatus::PeerHot).then_some((*addr, entry.hot_tip_slot))
+            })
+            .collect::<Vec<_>>();
+
+        peers.sort_by(|(addr_a, tip_a), (addr_b, tip_b)| match (tip_a, tip_b) {
+            (Some(a), Some(b)) => b.cmp(a).then_with(|| addr_a.cmp(addr_b)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => addr_a.cmp(addr_b),
+        });
+
+        peers.into_iter().map(|(addr, _)| addr).collect()
+    }
+
     /// Reconcile root-peer sources from the current root-provider snapshot.
     ///
     /// Root sources are updated to match the snapshot while preserving other
@@ -534,5 +557,31 @@ mod tests {
         registry.set_status(peer, PeerStatus::PeerHot);
         assert!(registry.set_hot_tip_slot(peer, Some(9)));
         assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), Some(9));
+    }
+
+    #[test]
+    fn hot_peers_by_reconnect_priority_orders_by_tip_then_address() {
+        let hot_1: SocketAddr = "127.0.0.30:3001".parse().expect("addr");
+        let hot_2: SocketAddr = "127.0.0.31:3001".parse().expect("addr");
+        let hot_3: SocketAddr = "127.0.0.32:3001".parse().expect("addr");
+        let warm: SocketAddr = "127.0.0.33:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        for peer in [hot_1, hot_2, hot_3, warm] {
+            registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        }
+        registry.set_status(hot_1, PeerStatus::PeerHot);
+        registry.set_status(hot_2, PeerStatus::PeerHot);
+        registry.set_status(hot_3, PeerStatus::PeerHot);
+        registry.set_status(warm, PeerStatus::PeerWarm);
+
+        registry.set_hot_tip_slot(hot_1, Some(200));
+        registry.set_hot_tip_slot(hot_2, Some(300));
+        // hot_3 intentionally has no known tip slot.
+
+        assert_eq!(
+            registry.hot_peers_by_reconnect_priority(),
+            vec![hot_2, hot_1, hot_3]
+        );
     }
 }
