@@ -1996,8 +1996,8 @@ where
         config,
         tracer,
         metrics,
-        peer_registry: _,
-        mempool: _,
+        peer_registry,
+        mempool,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -2024,6 +2024,15 @@ where
         let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
         if let Some(peer_addr) = preferred_peer {
             attempt_state.record_success(peer_addr);
+        }
+        if let Some(ref registry_lock) = peer_registry {
+            if let Ok(registry) = registry_lock.read() {
+                for (addr, entry) in registry.iter() {
+                    if entry.status == PeerStatus::PeerHot {
+                        attempt_state.record_success(*addr);
+                    }
+                }
+            }
         }
 
         tracer.trace_runtime(
@@ -2123,8 +2132,32 @@ where
                                 );
                             }
 
-                            // Non-shared path: mempool eviction not wired
-                            // (this path is only used from tests).
+                            if let Some(ref mempool) = mempool {
+                                for step in &progress.steps {
+                                    if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
+                                        let confirmed_ids: Vec<TxId> = blocks
+                                            .iter()
+                                            .flat_map(extract_tx_ids)
+                                            .collect();
+                                        if !confirmed_ids.is_empty() {
+                                            let removed = mempool.remove_confirmed(&confirmed_ids);
+                                            let tip_slot = tip.slot().unwrap_or(SlotNo(0));
+                                            let purged = mempool.purge_expired(tip_slot);
+                                            if removed + purged > 0 {
+                                                tracer.trace_runtime(
+                                                    "Mempool.Eviction",
+                                                    "Info",
+                                                    "evicted confirmed/expired txs from mempool",
+                                                    trace_fields([
+                                                        ("confirmed", json!(removed)),
+                                                        ("expired", json!(purged)),
+                                                    ]),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             record_verified_batch_progress(
                                 &mut from_point,

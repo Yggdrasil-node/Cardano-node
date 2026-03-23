@@ -32,16 +32,17 @@ Yggdrasil is organized as a Rust workspace with explicit crate boundaries so pro
 The project has a complete Cardano-era type system and a functional node binary:
 - Full era type coverage from Byron through Conway with typed CBOR codecs.
 - Multi-era UTxO validation with coin and multi-asset preservation checks.
-- Network transport + mux + handshake + peer lifecycle with all four mini-protocol state machines, wire codecs, and typed client drivers.
+- Network transport + mux + handshake + peer lifecycle with all five mini-protocol state machines, wire codecs, and typed client/server drivers.
 - Reusable topology domain types, topology-root configuration parsing, root-provider snapshots, peer registry state, peer candidate ordering, bootstrap-target sequencing, reconnect attempt ordering, and preferred-peer retry state now live in `crates/network`; `node` only feeds those helpers into runtime startup.
 - Multi-era block decode (all 7 era tags) with consensus header verification (KES/OpCert).
-- Node binary with `clap` CLI (`run` + `default-config`), JSON configuration, upstream-aligned tracing config fields, local runtime trace emission, and managed sync service with graceful shutdown.
+- Node binary with `clap` CLI (`run`, `validate-config`, `status`, `default-config`), JSON configuration, upstream-aligned tracing config fields, local runtime trace emission, and managed sync service with graceful shutdown.
+- Epoch-boundary wiring in runtime sync paths now includes real per-pool performance inputs for rewards and Shelley PPUP application at epoch transition.
 - Mempool with TTL-aware admission, fee ordering, and block-application eviction.
 - File-backed storage implementations behind `ImmutableStore`, `VolatileStore`, and `LedgerStore` traits.
 - Storage crate now also exposes a minimal `ChainDb` coordination layer for best-known tip recovery, typed ledger checkpoint restore and replay, checkpoint retention/truncation, volatile-prefix promotion into immutable storage, and rollback-time snapshot truncation without moving sync policy into `node`.
 - Consensus hardening with `SecurityParam`, `ChainState` volatile chain tracker, rollback depth enforcement, and stability window detection.
 
-Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas. 640 workspace tests pass across all crates.
+Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas. `cargo test --workspace` currently passes with 1526 tests across all crates.
 
 The next architecture milestones are end-to-end multi-peer management, dedicated tracer transport/metrics export, and mainnet sync endurance testing.
 
