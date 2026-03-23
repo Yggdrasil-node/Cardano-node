@@ -576,6 +576,22 @@ fn reconnect_preferred_peer_with_source(
         .or(previous_preferred_peer.map(|peer| (peer, "previous")))
 }
 
+fn prepare_reconnect_attempt_state(
+    primary_peer: SocketAddr,
+    refreshed_fallback_peers: &[SocketAddr],
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    previous_preferred_peer: Option<SocketAddr>,
+) -> (PeerAttemptState, Option<(SocketAddr, &'static str)>) {
+    let reconnect_preference =
+        reconnect_preferred_peer_with_source(peer_registry, previous_preferred_peer);
+    let mut attempt_state = peer_attempt_state(primary_peer, refreshed_fallback_peers);
+    if let Some((peer_addr, _)) = reconnect_preference {
+        attempt_state.record_success(peer_addr);
+    }
+
+    (attempt_state, reconnect_preference)
+}
+
 #[cfg(test)]
 fn reconnect_preferred_peer(
     peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
@@ -2063,14 +2079,12 @@ where
             peer_snapshot_path,
             tracer,
         );
-        let reconnect_preference = reconnect_preferred_peer_with_source(
+        let (mut attempt_state, reconnect_preference) = prepare_reconnect_attempt_state(
+            node_config.peer_addr,
+            &refreshed_fallback_peers,
             peer_registry.as_ref(),
             preferred_peer,
         );
-        let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some((peer_addr, _)) = reconnect_preference {
-            attempt_state.record_success(peer_addr);
-        }
 
         tracer.trace_runtime(
             "Net.PeerSelection",
@@ -2308,14 +2322,12 @@ where
             peer_snapshot_path,
             tracer,
         );
-        let reconnect_preference = reconnect_preferred_peer_with_source(
+        let (mut attempt_state, reconnect_preference) = prepare_reconnect_attempt_state(
+            node_config.peer_addr,
+            &refreshed_fallback_peers,
             peer_registry.as_ref(),
             preferred_peer,
         );
-        let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some((peer_addr, _)) = reconnect_preference {
-            attempt_state.record_success(peer_addr);
-        }
 
         tracer.trace_runtime(
             "Net.PeerSelection",
@@ -3093,6 +3105,7 @@ mod tests {
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
         preferred_hot_peer_from_registry,
+        prepare_reconnect_attempt_state,
         reconnect_preferred_peer_with_source,
         reconnect_preferred_peer,
         refresh_ledger_peer_sources_from_chain_db,
@@ -3810,6 +3823,48 @@ mod tests {
             reconnect_preferred_peer_with_source(None, Some(previous)),
             Some((previous, "previous"))
         );
+    }
+
+    #[test]
+    fn prepare_reconnect_attempt_state_prefers_hot_peer_over_previous() {
+        let primary = local_addr(3301);
+        let fallback = local_addr(3302);
+        let previous = local_addr(3303);
+        let hot = local_addr(3304);
+
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(hot, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(fallback, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot, Some(500));
+        let shared = Arc::new(RwLock::new(registry));
+
+        let (attempt_state, preference) = prepare_reconnect_attempt_state(
+            primary,
+            &[fallback, hot],
+            Some(&shared),
+            Some(previous),
+        );
+
+        assert_eq!(preference, Some((hot, "hot")));
+        assert_eq!(attempt_state.preferred_peer(), Some(hot));
+    }
+
+    #[test]
+    fn prepare_reconnect_attempt_state_uses_previous_without_hot_peer() {
+        let primary = local_addr(3305);
+        let fallback = local_addr(3306);
+        let previous = fallback;
+
+        let (attempt_state, preference) = prepare_reconnect_attempt_state(
+            primary,
+            &[fallback],
+            None,
+            Some(previous),
+        );
+
+        assert_eq!(preference, Some((previous, "previous")));
+        assert_eq!(attempt_state.preferred_peer(), Some(previous));
     }
 
     /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
