@@ -24,7 +24,7 @@ use yggdrasil_node::{
     seed_peer_registry,
     run_inbound_accept_loop,
 };
-use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
+use yggdrasil_consensus::{ActiveSlotCoeff, EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
 use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
@@ -232,6 +232,8 @@ fn main() -> Result<()> {
             let max_ledger_snapshots = max_ledger_snapshots
                 .unwrap_or(file_cfg.max_ledger_snapshots);
 
+            let active_slot_coeff = ActiveSlotCoeff::new(file_cfg.active_slot_coeff).ok();
+
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
                     batch_size,
@@ -243,8 +245,8 @@ fn main() -> Result<()> {
                         max_snapshots: max_ledger_snapshots,
                     },
                     plutus_cost_model: plutus_cost_model.clone(),
-                    verify_vrf: false,
-                    active_slot_coeff: None,
+                    verify_vrf: active_slot_coeff.is_some(),
+                    active_slot_coeff: active_slot_coeff.clone(),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -261,8 +263,8 @@ fn main() -> Result<()> {
                         max_snapshots: max_ledger_snapshots,
                     },
                     plutus_cost_model: plutus_cost_model.clone(),
-                    verify_vrf: false,
-                    active_slot_coeff: None,
+                    verify_vrf: active_slot_coeff.is_some(),
+                    active_slot_coeff,
                 }
             };
 
@@ -1057,7 +1059,9 @@ async fn run_node(
     .with_nonce_state(nonce_state)
     .with_use_ledger_peers(use_ledger_peers)
     .with_peer_snapshot_path(peer_snapshot_path)
-    .with_metrics(Some(&metrics));
+    .with_metrics(Some(&metrics))
+    .with_peer_registry(Some(Arc::clone(&peer_registry)))
+    .with_mempool(Some(shared_mempool.clone()));
 
     let mut sync_shutdown = shutdown_rx.clone();
     let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb(

@@ -3517,3 +3517,170 @@ fn collect_rolled_back_tx_ids_origin_returns_all() {
     let ids = collect_rolled_back_tx_ids(&store, &Point::Origin);
     assert_eq!(ids, vec![tx_a]);
 }
+
+// ---------------------------------------------------------------------------
+// Rollback + mempool integration
+// ---------------------------------------------------------------------------
+
+/// After a rollback, the tx IDs collected from discarded blocks should not
+/// match anything the mempool considers confirmed (since they are now
+/// *un-confirmed*). This validates the dual flow: evict_confirmed_from_mempool
+/// removes confirmed txs, while collect_rolled_back_tx_ids identifies txs
+/// that should be re-admitted.
+#[test]
+fn rollback_collected_tx_ids_not_evicted_from_mempool() {
+    let mut store = InMemoryVolatile::default();
+    let mut mempool = Mempool::with_capacity(1_000_000);
+
+    // Build two blocks with transactions.
+    let tx_a = TxId([0xA0; 32]);
+    let tx_b = TxId([0xB0; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk1).unwrap();
+
+    let mut blk2 = test_store_block(0x02, 20);
+    blk2.transactions = vec![
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk2).unwrap();
+
+    // Simulate: tx_a was in our mempool before being confirmed.
+    let entry_a = MempoolEntry {
+        era: Era::Shelley,
+        tx_id: tx_a,
+        fee: 200_000,
+        body: vec![0xCA, 0xFE],
+        raw_tx: vec![0xDE, 0xAD],
+        size_bytes: 256,
+        ttl: SlotNo(100),
+        inputs: vec![],
+    };
+    mempool.insert(entry_a).unwrap();
+
+    // Before rollback: evict_confirmed_from_mempool removes tx_a 
+    // (it is confirmed in block 1).
+    let blocks: Vec<_> = store.prefix_up_to(
+        &Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    ).unwrap();
+    let confirmed_ids: Vec<TxId> = blocks
+        .iter()
+        .flat_map(|b| b.transactions.iter().map(|tx| tx.id))
+        .collect();
+    let evicted = mempool.remove_confirmed(&confirmed_ids);
+    assert_eq!(evicted, 1, "tx_a should be evicted as confirmed");
+
+    // Now simulate a rollback to origin, collecting rolled-back tx IDs.
+    let rolled_back = collect_rolled_back_tx_ids(
+        &store,
+        &Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])),
+    );
+    assert_eq!(rolled_back.len(), 1, "block 2's tx_b should appear");
+    assert_eq!(rolled_back[0], tx_b);
+
+    // The mempool shouldn't contain tx_b (it was never submitted there),
+    // but if it were, it should NOT be evicted since the block was rolled back.
+    assert!(!mempool.contains(&tx_b));
+
+    // Apply the rollback.
+    store.rollback_to(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]))
+    );
+}
+
+/// Verifies that apply_multi_era_step_to_volatile handles rollback steps
+/// by truncating the volatile store and that transactions from the removed
+/// blocks can be identified beforehand via collect_rolled_back_tx_ids.
+#[test]
+fn apply_rollback_step_discards_volatile_suffix() {
+    let mut store = InMemoryVolatile::default();
+
+    let tx_a = TxId([0xAA; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk1).unwrap();
+
+    let tx_b = TxId([0xBB; 32]);
+    let mut blk2 = test_store_block(0x02, 20);
+    blk2.transactions = vec![
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk2).unwrap();
+
+    let target = Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]));
+
+    // Collect tx IDs before applying the rollback step.
+    let rolled_back = collect_rolled_back_tx_ids(&store, &target);
+    assert_eq!(rolled_back, vec![tx_b]);
+
+    // Apply the rollback step.
+    let step = MultiEraSyncStep::RollBackward {
+        point: target,
+        tip: Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])),
+    };
+    apply_multi_era_step_to_volatile(&mut store, &step).unwrap();
+
+    // Store is now truncated.
+    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
+}
+
+/// After promotion and rollback, the immutable portion is preserved and
+/// only volatile blocks are discarded. Collected tx IDs should come only
+/// from the discarded volatile suffix.
+#[test]
+fn promote_then_rollback_collects_only_volatile_tx_ids() {
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    let tx_imm = TxId([0x11; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_imm, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    chain_db.add_volatile_block(blk1).unwrap();
+
+    let tx_vol_a = TxId([0x22; 32]);
+    let mut blk2 = test_store_block(0x02, 20);
+    blk2.transactions = vec![
+        Tx { id: tx_vol_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    chain_db.add_volatile_block(blk2).unwrap();
+
+    let tx_vol_b = TxId([0x33; 32]);
+    let mut blk3 = test_store_block(0x03, 30);
+    blk3.transactions = vec![
+        Tx { id: tx_vol_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    chain_db.add_volatile_block(blk3).unwrap();
+
+    // Promote block 1 to immutable.
+    chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])))
+        .unwrap();
+    assert_eq!(chain_db.immutable().len(), 1);
+
+    // Collect tx IDs that would be rolled back if we roll to block 2.
+    let target = Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]));
+    let rolled_back = collect_rolled_back_tx_ids(chain_db.volatile(), &target);
+    // Only block 3's tx (tx_vol_b) is in the volatile suffix after the target.
+    assert_eq!(rolled_back, vec![tx_vol_b]);
+
+    // Apply the rollback.
+    chain_db.volatile_mut().rollback_to(&target);
+    assert_eq!(
+        chain_db.volatile().tip(),
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    );
+    // Immutable block is preserved.
+    assert!(chain_db.immutable().get_block(&HeaderHash([0x01; 32])).is_some());
+}

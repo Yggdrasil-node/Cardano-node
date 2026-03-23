@@ -20,4 +20,4 @@ Use this directory to pin persistence and rollback expectations for storage back
 - Node storage integration reference: <https://github.com/IntersectMBO/cardano-node/>
 
 ## Current Phase
-- Tests in this directory verify trait conformance, persistence after reopen, rollback deletion, and snapshot-visible behavior for storage backends.
+- Tests in this directory verify trait conformance, persistence after reopen, rollback deletion, snapshot-visible behavior, and volatile→immutable promotion for storage backends.

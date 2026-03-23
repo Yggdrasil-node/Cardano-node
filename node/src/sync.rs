@@ -23,8 +23,8 @@ use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
     CborDecode, CborEncode, ConwayBlock,
     Decoder, Era, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState, Nonce, Point,
-    PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
-    SlotNo, StakeSnapshots, Tx, TxId,
+    PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
+    ShelleyOpCert, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
     apply_epoch_boundary, compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
@@ -833,6 +833,12 @@ pub(crate) struct LedgerCheckpointTracking {
     /// Epoch size (slots per epoch) for epoch boundary detection.
     /// Required when `stake_snapshots` is `Some`.
     pub(crate) epoch_size: Option<EpochSize>,
+    /// Per-pool block production counts for the current epoch.
+    ///
+    /// At each epoch boundary, these counts are converted to performance
+    /// ratios (`blocks_produced / expected_blocks`) and passed to
+    /// `apply_epoch_boundary`, then reset for the next epoch.
+    pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -887,6 +893,49 @@ pub(crate) fn advance_ledger_state_with_progress(
 /// Returns the list of epoch boundary events that fired during this batch.
 /// When no epoch transition occurs, the returned vec is empty and the
 /// behavior is identical to [`advance_ledger_state_with_progress`].
+/// Compute per-pool performance ratios from accumulated block counts and
+/// the `set` stake snapshot.
+///
+/// Performance for each pool is `blocks_produced / expected_blocks` where
+/// `expected_blocks = σ_pool * total_blocks`. When the snapshot has no
+/// stake data (initial sync epochs), returns an empty map which causes
+/// `apply_epoch_boundary` to fall back to perfect performance for all pools.
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `completeRupd`.
+pub(crate) fn compute_pool_performance(
+    pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
+    set_snapshot: &yggdrasil_ledger::StakeSnapshot,
+    _epoch_size: EpochSize,
+) -> BTreeMap<PoolKeyHash, UnitInterval> {
+    let stake_dist = set_snapshot.pool_stake_distribution();
+    let total_stake = stake_dist.total_active_stake();
+    if total_stake == 0 || pool_block_counts.is_empty() {
+        return BTreeMap::new();
+    }
+
+    let total_blocks: u64 = pool_block_counts.values().sum();
+    if total_blocks == 0 {
+        return BTreeMap::new();
+    }
+
+    let mut performance = BTreeMap::new();
+    for (pool_hash, &blocks_produced) in pool_block_counts {
+        let pool_stake = stake_dist.pool_stake(pool_hash);
+        if pool_stake == 0 {
+            // Pool has no stake in the set snapshot — skip (defaults to perfect).
+            continue;
+        }
+        // performance = blocks_produced / (σ * total_blocks)
+        //             = blocks_produced * total_stake / (pool_stake * total_blocks)
+        let numerator = blocks_produced.saturating_mul(total_stake);
+        let denominator = pool_stake.saturating_mul(total_blocks);
+        if denominator > 0 {
+            performance.insert(*pool_hash, UnitInterval { numerator, denominator });
+        }
+    }
+    performance
+}
+
 /// Optional VRF verification context for epoch-boundary-aware block application.
 ///
 /// When provided, each block's VRF leader eligibility proof is checked
@@ -905,6 +954,7 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
     progress: &MultiEraSyncProgress,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
+    pool_block_counts: &mut BTreeMap<PoolKeyHash, u64>,
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
     for_each_roll_forward_block(progress, |block| -> Result<(), SyncError> {
@@ -918,11 +968,27 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
         };
         if is_new_epoch(prev_slot, block_slot, epoch_size) {
             let new_epoch = slot_to_epoch(block_slot, epoch_size);
-            // Pool performance is not yet tracked; treat all pools as
-            // having ideal performance (empty map → perfect σ/σ̂ ratio).
-            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &BTreeMap::new())
+            // Compute pool performance ratios from accumulated block counts.
+            // Performance = blocks_produced / expected_blocks where
+            // expected_blocks ≈ σ_pool * epoch_size * f.  When the set
+            // snapshot has stake data we use it; otherwise fall back to
+            // the previous behavior of treating all pools as perfect.
+            let pool_performance = compute_pool_performance(
+                pool_block_counts,
+                &snapshots.set,
+                epoch_size,
+            );
+            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
+            // Reset counts for the new epoch.
+            pool_block_counts.clear();
+        }
+
+        // Track pool block production.
+        if let Some(issuer_vkey) = block_issuer_vkey(block) {
+            let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey).0;
+            *pool_block_counts.entry(pool_hash).or_insert(0) += 1;
         }
 
         // VRF leader eligibility check using the `set` snapshot.
@@ -983,6 +1049,8 @@ where
         if tracking.stake_snapshots.is_some() {
             tracking.stake_snapshots = Some(StakeSnapshots::new());
         }
+        // Pool block counts are epoch-relative and stale after rollback.
+        tracking.pool_block_counts.clear();
     } else if let (Some(snapshots), Some(epoch_size)) =
         (tracking.stake_snapshots.as_mut(), tracking.epoch_size)
     {
@@ -993,6 +1061,7 @@ where
             progress,
             Some(&tracking.plutus_evaluator),
             vrf_ctx,
+            &mut tracking.pool_block_counts,
         )?;
     } else {
         advance_ledger_state_with_progress(
@@ -1070,6 +1139,7 @@ where
             .unwrap_or_default(),
         stake_snapshots: None,
         epoch_size: None,
+        pool_block_counts: BTreeMap::new(),
     })
 }
 
@@ -2253,6 +2323,8 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
 pub(crate) struct AppliedVerifiedProgress {
     pub stable_block_count: usize,
     pub checkpoint_outcome: Option<LedgerCheckpointUpdateOutcome>,
+    /// Transaction ids collected from blocks discarded during rollback steps.
+    pub rolled_back_tx_ids: Vec<TxId>,
 }
 
 pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
@@ -2268,7 +2340,11 @@ where
     V: VolatileStore,
     L: LedgerStore,
 {
+    let mut rolled_back_tx_ids = Vec::new();
     for step in &progress.steps {
+        if let MultiEraSyncStep::RollBackward { point, .. } = step {
+            rolled_back_tx_ids.extend(collect_rolled_back_tx_ids(chain_db.volatile(), point));
+        }
         apply_multi_era_step_to_volatile(chain_db.volatile_mut(), step)?;
     }
 
@@ -2299,6 +2375,7 @@ where
     Ok(AppliedVerifiedProgress {
         stable_block_count: total_stable,
         checkpoint_outcome,
+        rolled_back_tx_ids,
     })
 }
 
@@ -2501,4 +2578,124 @@ pub fn collect_rolled_back_tx_ids<V: VolatileStore>(
         .iter()
         .flat_map(|block| block.transactions.iter().map(|tx| tx.id))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yggdrasil_ledger::{
+        PoolKeyHash, PoolParams, StakeCredential,
+        StakeSnapshot, UnitInterval, RewardAccount,
+    };
+    use yggdrasil_consensus::EpochSize;
+
+    fn pool_hash(seed: u8) -> PoolKeyHash {
+        [seed; 28]
+    }
+
+    fn stake_cred(seed: u8) -> StakeCredential {
+        StakeCredential::AddrKeyHash([seed; 28])
+    }
+
+    /// Build a snapshot where each pool has the specified stake via a
+    /// dedicated fake credential.
+    fn make_snapshot_with_pools(pools: &[(PoolKeyHash, u64)]) -> StakeSnapshot {
+        let mut snapshot = StakeSnapshot::default();
+        for (i, (hash, amount)) in pools.iter().enumerate() {
+            let cred = stake_cred(100 + i as u8);
+            let params = PoolParams {
+                operator: *hash,
+                vrf_keyhash: [0u8; 32],
+                pledge: 0,
+                cost: 0,
+                margin: UnitInterval { numerator: 0, denominator: 1 },
+                reward_account: RewardAccount {
+                    network: 0,
+                    credential: StakeCredential::AddrKeyHash([0u8; 28]),
+                },
+                pool_owners: vec![],
+                relays: vec![],
+                pool_metadata: None,
+            };
+            snapshot.pool_params.insert(*hash, params);
+            snapshot.delegations.insert(cred, *hash);
+            snapshot.stake.add(cred, *amount);
+        }
+        snapshot
+    }
+
+    #[test]
+    fn pool_performance_empty_counts_returns_empty_map() {
+        let snapshot = make_snapshot_with_pools(&[(pool_hash(1), 500)]);
+        let counts = BTreeMap::new();
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        assert!(perf.is_empty());
+    }
+
+    #[test]
+    fn pool_performance_no_stake_returns_empty_map() {
+        let snapshot = StakeSnapshot::default();
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_hash(1), 10);
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        assert!(perf.is_empty());
+    }
+
+    #[test]
+    fn pool_performance_single_pool_perfect() {
+        let pool_a = pool_hash(1);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 1000)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 100);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        let p = perf.get(&pool_a).unwrap();
+        // numerator = 100 * 1000, denominator = 1000 * 100 → 1/1
+        assert_eq!(p.numerator, p.denominator);
+    }
+
+    #[test]
+    fn pool_performance_two_pools_proportional() {
+        let pool_a = pool_hash(1);
+        let pool_b = pool_hash(2);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 500), (pool_b, 500)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 50);
+        counts.insert(pool_b, 50);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        let pa = perf.get(&pool_a).unwrap();
+        let pb = perf.get(&pool_b).unwrap();
+        assert_eq!(pa.numerator, pa.denominator);
+        assert_eq!(pb.numerator, pb.denominator);
+    }
+
+    #[test]
+    fn pool_performance_underperforming_pool() {
+        let pool_a = pool_hash(1);
+        let pool_b = pool_hash(2);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 500), (pool_b, 500)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 25);
+        counts.insert(pool_b, 75);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        let pa = perf.get(&pool_a).unwrap();
+        // numerator = 25 * 1000, denominator = 500 * 100 → 25000/50000 = 0.5
+        assert_eq!(pa.numerator * 2, pa.denominator);
+    }
+
+    #[test]
+    fn pool_performance_pool_without_stake_skipped() {
+        let pool_a = pool_hash(1);
+        let pool_c = pool_hash(3);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 1000)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 90);
+        counts.insert(pool_c, 10);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        assert!(perf.contains_key(&pool_a));
+        assert!(!perf.contains_key(&pool_c));
+    }
 }

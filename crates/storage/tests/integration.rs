@@ -936,3 +936,117 @@ fn file_ledger_store_does_not_leave_temp_files() {
         .collect();
     assert!(tmp_files.is_empty(), "no temp files should remain after atomic write");
 }
+
+// ---------------------------------------------------------------------------
+// Volatile → Immutable promotion
+// ---------------------------------------------------------------------------
+
+#[test]
+fn promote_volatile_prefix_moves_blocks_to_immutable() {
+    let chain_db = &mut ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    chain_db.add_volatile_block(test_block(0x01, 10)).unwrap();
+    chain_db.add_volatile_block(test_block(0x02, 20)).unwrap();
+    chain_db.add_volatile_block(test_block(0x03, 30)).unwrap();
+
+    let promoted = chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
+        .unwrap();
+    assert_eq!(promoted, 2);
+
+    // First two blocks are now immutable.
+    assert_eq!(chain_db.immutable().len(), 2);
+    assert!(chain_db.immutable().get_block(&HeaderHash([0x01; 32])).is_some());
+    assert!(chain_db.immutable().get_block(&HeaderHash([0x02; 32])).is_some());
+
+    // Third block remains volatile.
+    assert!(chain_db.volatile().get_block(&HeaderHash([0x03; 32])).is_some());
+    assert!(chain_db.volatile().get_block(&HeaderHash([0x01; 32])).is_none());
+}
+
+#[test]
+fn promote_all_volatile_blocks_leaves_volatile_empty() {
+    let chain_db = &mut ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    chain_db.add_volatile_block(test_block(0xAA, 5)).unwrap();
+    chain_db.add_volatile_block(test_block(0xBB, 10)).unwrap();
+
+    let promoted = chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(10), HeaderHash([0xBB; 32])))
+        .unwrap();
+    assert_eq!(promoted, 2);
+    assert_eq!(chain_db.immutable().len(), 2);
+    assert_eq!(chain_db.volatile().tip(), Point::Origin);
+}
+
+#[test]
+fn promote_single_block_from_volatile() {
+    let chain_db = &mut ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    chain_db.add_volatile_block(test_block(0x01, 1)).unwrap();
+    chain_db.add_volatile_block(test_block(0x02, 2)).unwrap();
+
+    let promoted = chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(1), HeaderHash([0x01; 32])))
+        .unwrap();
+    assert_eq!(promoted, 1);
+    assert_eq!(chain_db.immutable().len(), 1);
+    assert_eq!(
+        chain_db.volatile().tip(),
+        Point::BlockPoint(SlotNo(2), HeaderHash([0x02; 32]))
+    );
+}
+
+#[test]
+fn promote_then_rollback_volatile_preserves_immutable() {
+    let chain_db = &mut ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    chain_db.add_volatile_block(test_block(0x01, 10)).unwrap();
+    chain_db.add_volatile_block(test_block(0x02, 20)).unwrap();
+    chain_db.add_volatile_block(test_block(0x03, 30)).unwrap();
+
+    chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])))
+        .unwrap();
+    assert_eq!(chain_db.immutable().len(), 1);
+
+    // Rollback volatile to the middle block.
+    chain_db.volatile_mut().rollback_to(&Point::BlockPoint(
+        SlotNo(20),
+        HeaderHash([0x02; 32]),
+    ));
+
+    // Immutable is untouched, volatile only has block at slot 20.
+    assert_eq!(chain_db.immutable().len(), 1);
+    assert_eq!(
+        chain_db.volatile().tip(),
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    );
+    assert!(chain_db.volatile().get_block(&HeaderHash([0x03; 32])).is_none());
+}
+
+#[test]
+fn promote_volatile_prefix_point_not_found() {
+    let chain_db = &mut ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    chain_db.add_volatile_block(test_block(0x01, 10)).unwrap();
+
+    let result = chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(99), HeaderHash([0xFF; 32])));
+    assert!(result.is_err(), "promoting a non-existent point should fail");
+}
