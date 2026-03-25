@@ -7995,6 +7995,208 @@ mod tests {
         assert!(tally.meets_threshold(&threshold)); // 600/1000 = 60% >= 51%
     }
 
+    // -- Parameter-group classification ---
+
+    #[test]
+    fn pparam_groups_empty_update_has_no_groups() {
+        let update = crate::protocol_params::ProtocolParameterUpdate::default();
+        let g = conway_modified_pparam_groups(&update);
+        assert!(!g.network);
+        assert!(!g.economic);
+        assert!(!g.technical);
+        assert!(!g.gov);
+        assert!(!g.security);
+        assert!(!g.has_drep_group());
+    }
+
+    #[test]
+    fn pparam_groups_min_fee_a_is_economic_plus_security() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            min_fee_a: Some(44),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(g.security);
+        assert!(!g.network);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_min_fee_b_is_economic_plus_security() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            min_fee_b: Some(155381),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(g.security);
+        assert!(!g.network);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_max_block_body_size_is_network_plus_security() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            max_block_body_size: Some(65536),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.network);
+        assert!(g.security);
+        assert!(!g.economic);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_max_tx_size_is_network_plus_security() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            max_tx_size: Some(16384),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.network);
+        assert!(g.security);
+    }
+
+    #[test]
+    fn pparam_groups_key_deposit_is_economic_only() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            key_deposit: Some(2_000_000),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(!g.security);
+        assert!(!g.network);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_pool_deposit_is_economic_only() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            pool_deposit: Some(500_000_000),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(!g.security);
+    }
+
+    #[test]
+    fn pparam_groups_n_opt_is_technical_only() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            n_opt: Some(500),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.technical);
+        assert!(!g.security);
+        assert!(!g.network);
+        assert!(!g.economic);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_e_max_is_technical_only() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            e_max: Some(18),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.technical);
+        assert!(!g.security);
+    }
+
+    #[test]
+    fn pparam_groups_collateral_percentage_is_technical_only() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            collateral_percentage: Some(150),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.technical);
+        assert!(!g.security);
+        assert!(!g.economic);
+    }
+
+    #[test]
+    fn pparam_groups_pool_voting_thresholds_is_gov_only() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            pool_voting_thresholds: Some(crate::protocol_params::PoolVotingThresholds::default()),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.gov);
+        assert!(!g.security);
+        assert!(!g.network);
+        assert!(!g.economic);
+        assert!(!g.technical);
+    }
+
+    #[test]
+    fn pparam_groups_drep_activity_is_gov_only() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            drep_activity: Some(20),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.gov);
+        assert!(!g.security);
+    }
+
+    #[test]
+    fn pparam_groups_gov_action_deposit_is_gov_plus_security() {
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            gov_action_deposit: Some(100_000_000_000),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.gov);
+        assert!(g.security);
+        assert!(!g.network);
+        assert!(!g.economic);
+        assert!(!g.technical);
+    }
+
+    #[test]
+    fn pparam_groups_mixed_fields_combine_correctly() {
+        // min_fee_a = economic+security, n_opt = technical, drep_activity = gov
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            min_fee_a: Some(44),
+            n_opt: Some(500),
+            drep_activity: Some(20),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(g.technical);
+        assert!(g.gov);
+        assert!(g.security);
+        assert!(!g.network);
+        assert!(g.has_drep_group());
+    }
+
+    #[test]
+    fn pparam_groups_security_only_update_has_no_drep_group() {
+        // protocol_version is security-only in this implementation
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            protocol_version: Some((10, 0)),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.security);
+        assert!(!g.has_drep_group());
+        assert!(!g.network);
+        assert!(!g.economic);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
     // -- Threshold dispatch ---
 
     #[test]
@@ -8141,6 +8343,54 @@ mod tests {
 
         let selected = drep_threshold_for_action(&action, &committee_state, &thresholds);
         assert_eq!(selected, Some(thresholds.pp_gov_group));
+    }
+
+    #[test]
+    fn drep_threshold_for_security_only_parameter_change_returns_none() {
+        let thresholds = DRepVotingThresholds {
+            pp_network_group: UnitInterval { numerator: 1, denominator: 2 },
+            pp_economic_group: UnitInterval { numerator: 2, denominator: 3 },
+            pp_technical_group: UnitInterval { numerator: 3, denominator: 4 },
+            pp_gov_group: UnitInterval { numerator: 4, denominator: 5 },
+            ..DRepVotingThresholds::default()
+        };
+        // protocol_version is security-only — no DRep group, threshold should be None
+        let action = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                protocol_version: Some((10, 0)),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+        let committee_state = CommitteeState::default();
+
+        let selected = drep_threshold_for_action(&action, &committee_state, &thresholds);
+        assert_eq!(selected, None);
+    }
+
+    #[test]
+    fn drep_threshold_for_single_economic_group_returns_economic_threshold() {
+        let thresholds = DRepVotingThresholds {
+            pp_network_group: UnitInterval { numerator: 1, denominator: 10 },
+            pp_economic_group: UnitInterval { numerator: 2, denominator: 3 },
+            pp_technical_group: UnitInterval { numerator: 1, denominator: 10 },
+            pp_gov_group: UnitInterval { numerator: 1, denominator: 10 },
+            ..DRepVotingThresholds::default()
+        };
+        // key_deposit is economic-only
+        let action = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                key_deposit: Some(2_000_000),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+        let committee_state = CommitteeState::default();
+
+        let selected = drep_threshold_for_action(&action, &committee_state, &thresholds);
+        assert_eq!(selected, Some(thresholds.pp_economic_group));
     }
 
     #[test]
