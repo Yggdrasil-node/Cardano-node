@@ -1366,3 +1366,373 @@ impl CborDecode for ConwayBlock {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eras::mary::Value;
+
+    fn mk_txin(idx: u16) -> ShelleyTxIn {
+        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+    }
+
+    fn mk_babbage_txout() -> BabbageTxOut {
+        BabbageTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: None,
+        }
+    }
+
+    fn mk_anchor() -> Anchor {
+        Anchor { url: "https://example.com".to_string(), data_hash: [0xDD; 32] }
+    }
+
+    fn mk_gov_action_id() -> GovActionId {
+        GovActionId { transaction_id: [0xBB; 32], gov_action_index: 0 }
+    }
+
+    // ── Vote ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn vote_no_round_trip() {
+        let v = Vote::No;
+        let decoded = Vote::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn vote_yes_round_trip() {
+        let v = Vote::Yes;
+        let decoded = Vote::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn vote_abstain_round_trip() {
+        let v = Vote::Abstain;
+        let decoded = Vote::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn vote_all_variants_differ() {
+        let a = Vote::No.to_cbor_bytes();
+        let b = Vote::Yes.to_cbor_bytes();
+        let c = Vote::Abstain.to_cbor_bytes();
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
+
+    // ── Voter ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn voter_committee_key_hash_round_trip() {
+        let v = Voter::CommitteeKeyHash([0x01; 28]);
+        let decoded = Voter::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn voter_committee_script_round_trip() {
+        let v = Voter::CommitteeScript([0x02; 28]);
+        let decoded = Voter::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn voter_drep_key_hash_round_trip() {
+        let v = Voter::DRepKeyHash([0x03; 28]);
+        let decoded = Voter::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn voter_drep_script_round_trip() {
+        let v = Voter::DRepScript([0x04; 28]);
+        let decoded = Voter::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn voter_stake_pool_round_trip() {
+        let v = Voter::StakePool([0x05; 28]);
+        let decoded = Voter::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn voter_all_tags_differ() {
+        let h = [0xAA; 28];
+        let variants = [
+            Voter::CommitteeKeyHash(h).to_cbor_bytes(),
+            Voter::CommitteeScript(h).to_cbor_bytes(),
+            Voter::DRepKeyHash(h).to_cbor_bytes(),
+            Voter::DRepScript(h).to_cbor_bytes(),
+            Voter::StakePool(h).to_cbor_bytes(),
+        ];
+        for i in 0..variants.len() {
+            for j in (i + 1)..variants.len() {
+                assert_ne!(variants[i], variants[j]);
+            }
+        }
+    }
+
+    // ── GovActionId ────────────────────────────────────────────────────
+
+    #[test]
+    fn gov_action_id_round_trip() {
+        let gid = mk_gov_action_id();
+        let decoded = GovActionId::from_cbor_bytes(&gid.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, gid);
+    }
+
+    #[test]
+    fn gov_action_id_different_index() {
+        let a = GovActionId { transaction_id: [0x00; 32], gov_action_index: 0 };
+        let b = GovActionId { transaction_id: [0x00; 32], gov_action_index: 1 };
+        assert_ne!(a.to_cbor_bytes(), b.to_cbor_bytes());
+    }
+
+    // ── Constitution ───────────────────────────────────────────────────
+
+    #[test]
+    fn constitution_with_guardrails_round_trip() {
+        let c = Constitution {
+            anchor: mk_anchor(),
+            guardrails_script_hash: Some([0xEE; 28]),
+        };
+        let decoded = Constitution::from_cbor_bytes(&c.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, c);
+    }
+
+    #[test]
+    fn constitution_no_guardrails_round_trip() {
+        let c = Constitution {
+            anchor: mk_anchor(),
+            guardrails_script_hash: None,
+        };
+        let decoded = Constitution::from_cbor_bytes(&c.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, c);
+    }
+
+    // ── GovAction ──────────────────────────────────────────────────────
+
+    #[test]
+    fn gov_action_info_round_trip() {
+        let a = GovAction::InfoAction;
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    #[test]
+    fn gov_action_no_confidence_round_trip() {
+        let a = GovAction::NoConfidence {
+            prev_action_id: Some(mk_gov_action_id()),
+        };
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    #[test]
+    fn gov_action_no_confidence_null_prev_round_trip() {
+        let a = GovAction::NoConfidence { prev_action_id: None };
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    #[test]
+    fn gov_action_hard_fork_round_trip() {
+        let a = GovAction::HardForkInitiation {
+            prev_action_id: None,
+            protocol_version: (10, 0),
+        };
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    #[test]
+    fn gov_action_new_constitution_round_trip() {
+        let a = GovAction::NewConstitution {
+            prev_action_id: None,
+            constitution: Constitution {
+                anchor: mk_anchor(),
+                guardrails_script_hash: None,
+            },
+        };
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    #[test]
+    fn gov_action_parameter_change_round_trip() {
+        let a = GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: ProtocolParameterUpdate {
+                min_fee_a: Some(44),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        };
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    #[test]
+    fn gov_action_treasury_withdrawals_round_trip() {
+        let mut wdrl = BTreeMap::new();
+        let ra = RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xE1; 28]) };
+        wdrl.insert(ra, 1_000_000u64);
+        let a = GovAction::TreasuryWithdrawals {
+            withdrawals: wdrl,
+            guardrails_script_hash: Some([0xFF; 28]),
+        };
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    #[test]
+    fn gov_action_update_committee_round_trip() {
+        let cred = StakeCredential::AddrKeyHash([0x11; 28]);
+        let mut to_add = BTreeMap::new();
+        to_add.insert(cred.clone(), 300u64);
+        let a = GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![StakeCredential::ScriptHash([0x22; 28])],
+            members_to_add: to_add,
+            quorum: UnitInterval { numerator: 2, denominator: 3 },
+        };
+        let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, a);
+    }
+
+    // ── VotingProcedure ────────────────────────────────────────────────
+
+    #[test]
+    fn voting_procedure_with_anchor_round_trip() {
+        let vp = VotingProcedure {
+            vote: Vote::Yes,
+            anchor: Some(mk_anchor()),
+        };
+        let decoded = VotingProcedure::from_cbor_bytes(&vp.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, vp);
+    }
+
+    #[test]
+    fn voting_procedure_null_anchor_round_trip() {
+        let vp = VotingProcedure {
+            vote: Vote::No,
+            anchor: None,
+        };
+        let decoded = VotingProcedure::from_cbor_bytes(&vp.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, vp);
+    }
+
+    // ── ProposalProcedure ──────────────────────────────────────────────
+
+    #[test]
+    fn proposal_procedure_round_trip() {
+        let pp = ProposalProcedure {
+            deposit: 500_000_000,
+            reward_account: vec![0xE1; 29],
+            gov_action: GovAction::InfoAction,
+            anchor: mk_anchor(),
+        };
+        let decoded = ProposalProcedure::from_cbor_bytes(&pp.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, pp);
+    }
+
+    // ── VotingProcedures ───────────────────────────────────────────────
+
+    #[test]
+    fn voting_procedures_round_trip() {
+        let voter = Voter::DRepKeyHash([0x44; 28]);
+        let gid = mk_gov_action_id();
+        let vp = VotingProcedure { vote: Vote::Abstain, anchor: None };
+        let mut inner = BTreeMap::new();
+        inner.insert(gid, vp);
+        let mut procs = BTreeMap::new();
+        procs.insert(voter, inner);
+        let vps = VotingProcedures { procedures: procs };
+        let decoded = VotingProcedures::from_cbor_bytes(&vps.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, vps);
+    }
+
+    #[test]
+    fn voting_procedures_empty_round_trip() {
+        let vps = VotingProcedures { procedures: BTreeMap::new() };
+        let decoded = VotingProcedures::from_cbor_bytes(&vps.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, vps);
+    }
+
+    // ── ConwayTxBody ───────────────────────────────────────────────────
+
+    fn mk_conway_body() -> ConwayTxBody {
+        ConwayTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![mk_babbage_txout()],
+            fee: 200_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+            voting_procedures: None,
+            proposal_procedures: None,
+            current_treasury_value: None,
+            treasury_donation: None,
+        }
+    }
+
+    #[test]
+    fn conway_tx_body_minimal_round_trip() {
+        let body = mk_conway_body();
+        let decoded = ConwayTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn conway_tx_body_with_governance_round_trip() {
+        let voter = Voter::StakePool([0x77; 28]);
+        let gid = mk_gov_action_id();
+        let mut inner = BTreeMap::new();
+        inner.insert(gid, VotingProcedure { vote: Vote::Yes, anchor: None });
+        let mut procs = BTreeMap::new();
+        procs.insert(voter, inner);
+
+        let body = ConwayTxBody {
+            voting_procedures: Some(VotingProcedures { procedures: procs }),
+            proposal_procedures: Some(vec![ProposalProcedure {
+                deposit: 500_000_000,
+                reward_account: vec![0xE1; 29],
+                gov_action: GovAction::InfoAction,
+                anchor: mk_anchor(),
+            }]),
+            current_treasury_value: Some(1_000_000_000),
+            treasury_donation: Some(100_000),
+            ..mk_conway_body()
+        };
+        let decoded = ConwayTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn conway_tx_body_no_governance_vs_with_differ() {
+        let base = mk_conway_body();
+        let with_gov = ConwayTxBody {
+            current_treasury_value: Some(42),
+            ..base.clone()
+        };
+        assert_ne!(base.to_cbor_bytes(), with_gov.to_cbor_bytes());
+    }
+}

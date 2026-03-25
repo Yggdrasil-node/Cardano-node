@@ -648,3 +648,184 @@ impl CborDecode for AlonzoBlock {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eras::mary::Value;
+
+    fn mk_txin(idx: u16) -> ShelleyTxIn {
+        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+    }
+
+    fn mk_alonzo_txout() -> AlonzoTxOut {
+        AlonzoTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+            datum_hash: None,
+        }
+    }
+
+    // ── ExUnits ────────────────────────────────────────────────────────
+
+    #[test]
+    fn ex_units_round_trip() {
+        let eu = ExUnits { mem: 1_000_000, steps: 2_000_000 };
+        let decoded = ExUnits::from_cbor_bytes(&eu.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, eu);
+    }
+
+    #[test]
+    fn ex_units_zero_round_trip() {
+        let eu = ExUnits { mem: 0, steps: 0 };
+        let decoded = ExUnits::from_cbor_bytes(&eu.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, eu);
+    }
+
+    // ── Redeemer ───────────────────────────────────────────────────────
+
+    #[test]
+    fn redeemer_spend_round_trip() {
+        let r = Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(42),
+            ex_units: ExUnits { mem: 100, steps: 200 },
+        };
+        let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, r);
+    }
+
+    #[test]
+    fn redeemer_mint_round_trip() {
+        let r = Redeemer {
+            tag: 1,
+            index: 3,
+            data: PlutusData::Bytes(vec![0xDE, 0xAD]),
+            ex_units: ExUnits { mem: 500, steps: 600 },
+        };
+        let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, r);
+    }
+
+    #[test]
+    fn redeemer_cert_round_trip() {
+        let r = Redeemer {
+            tag: 2,
+            index: 0,
+            data: PlutusData::List(vec![PlutusData::Integer(1)]),
+            ex_units: ExUnits { mem: 10, steps: 20 },
+        };
+        let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, r);
+    }
+
+    #[test]
+    fn redeemer_reward_round_trip() {
+        let r = Redeemer {
+            tag: 3,
+            index: 1,
+            data: PlutusData::Constr(0, vec![]),
+            ex_units: ExUnits { mem: 300, steps: 400 },
+        };
+        let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, r);
+    }
+
+    // ── AlonzoTxOut ────────────────────────────────────────────────────
+
+    #[test]
+    fn txout_no_datum_hash_round_trip() {
+        let out = mk_alonzo_txout();
+        let decoded = AlonzoTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn txout_with_datum_hash_round_trip() {
+        let out = AlonzoTxOut {
+            address: vec![0x01; 57],
+            amount: Value::Coin(5_000_000),
+            datum_hash: Some([0xCC; 32]),
+        };
+        let decoded = AlonzoTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn txout_datum_hash_absent_vs_present_differ() {
+        let without = mk_alonzo_txout();
+        let with = AlonzoTxOut {
+            datum_hash: Some([0xFF; 32]),
+            ..without.clone()
+        };
+        assert_ne!(without.to_cbor_bytes(), with.to_cbor_bytes());
+    }
+
+    // ── AlonzoTxBody ───────────────────────────────────────────────────
+
+    fn mk_alonzo_body() -> AlonzoTxBody {
+        AlonzoTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![mk_alonzo_txout()],
+            fee: 200_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        }
+    }
+
+    #[test]
+    fn tx_body_minimal_round_trip() {
+        let body = mk_alonzo_body();
+        let decoded = AlonzoTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_alonzo_fields_round_trip() {
+        let body = AlonzoTxBody {
+            script_data_hash: Some([0x11; 32]),
+            collateral: Some(vec![mk_txin(1)]),
+            required_signers: Some(vec![[0x22; 28]]),
+            network_id: Some(1),
+            ..mk_alonzo_body()
+        };
+        let decoded = AlonzoTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_all_optional_round_trip() {
+        let body = AlonzoTxBody {
+            ttl: Some(500),
+            auxiliary_data_hash: Some([0x33; 32]),
+            validity_interval_start: Some(10),
+            script_data_hash: Some([0x44; 32]),
+            collateral: Some(vec![mk_txin(2)]),
+            required_signers: Some(vec![[0x55; 28], [0x66; 28]]),
+            network_id: Some(0),
+            ..mk_alonzo_body()
+        };
+        let decoded = AlonzoTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_no_collateral_vs_with_collateral_differ() {
+        let base = mk_alonzo_body();
+        let with_col = AlonzoTxBody {
+            collateral: Some(vec![mk_txin(5)]),
+            ..base.clone()
+        };
+        assert_ne!(base.to_cbor_bytes(), with_col.to_cbor_bytes());
+    }
+}
