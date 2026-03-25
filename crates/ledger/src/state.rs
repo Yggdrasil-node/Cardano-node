@@ -6387,6 +6387,343 @@ mod tests {
         assert_eq!(es, decoded);
     }
 
+    // ── Enactment edge-case tests ──────────────────────────────────
+
+    #[test]
+    fn test_enact_update_committee_remove_nonexistent_member() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let existing = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
+        let ghost = crate::StakeCredential::AddrKeyHash([0xA2; 28]);
+        committee.register(existing.clone());
+        assert_eq!(committee.len(), 1);
+
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let outcome = enact_gov_action(
+            &mut es,
+            sample_gov_action_id(50),
+            &GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![ghost],
+                members_to_add: std::collections::BTreeMap::new(),
+                quorum: UnitInterval { numerator: 1, denominator: 2 },
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(
+            outcome,
+            EnactOutcome::CommitteeUpdated { members_removed: 0, members_added: 0 }
+        );
+        assert_eq!(committee.len(), 1);
+        assert!(committee.is_member(&existing));
+    }
+
+    #[test]
+    fn test_enact_no_confidence_on_empty_committee() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        assert_eq!(committee.len(), 0);
+
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(51);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::NoConfidence { prev_action_id: None },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::CommitteeRemoved);
+        assert_eq!(committee.len(), 0);
+        assert_eq!(es.committee_quorum().numerator, 0);
+        assert_eq!(es.committee_quorum().denominator, 1);
+        assert_eq!(es.prev_committee(), Some(&action_id));
+    }
+
+    #[test]
+    fn test_enact_parameter_change_multi_field() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = Some(crate::protocol_params::ProtocolParameters {
+            min_fee_a: 100,
+            min_fee_b: 200,
+            max_tx_size: 4096,
+            ..Default::default()
+        });
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+        let action_id = sample_gov_action_id(52);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            action_id.clone(),
+            &GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(999),
+                    min_fee_b: Some(888),
+                    max_tx_size: Some(8192),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::ParameterChangeRecorded);
+        let p = pp.unwrap();
+        assert_eq!(p.min_fee_a, 999);
+        assert_eq!(p.min_fee_b, 888);
+        assert_eq!(p.max_tx_size, 8192);
+        assert_eq!(es.prev_pparams_update(), Some(&action_id));
+    }
+
+    #[test]
+    fn test_enact_treasury_withdrawals_zero_amount_skipped() {
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let ra1 = sample_reward_account(10);
+        let mut ra = RewardAccounts::new();
+        ra.insert(ra1.clone(), RewardAccountState::new(500, None));
+        let mut acc = AccountingState { treasury: 1000, reserves: 0 };
+
+        let mut withdrawals = std::collections::BTreeMap::new();
+        withdrawals.insert(ra1.clone(), 0);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            sample_gov_action_id(53),
+            &GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::TreasuryWithdrawn { total_withdrawn: 0 });
+        assert_eq!(ra.balance(&ra1), 500); // unchanged
+        assert_eq!(acc.treasury, 1000); // unchanged
+    }
+
+    #[test]
+    fn test_enact_treasury_withdrawals_exceeds_treasury() {
+        // When withdrawal amounts exceed treasury, saturating_sub
+        // should bring treasury to 0 without panicking.
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let ra1 = sample_reward_account(20);
+        let ra2 = sample_reward_account(21);
+        let mut ra = RewardAccounts::new();
+        ra.insert(ra1.clone(), RewardAccountState::new(0, None));
+        ra.insert(ra2.clone(), RewardAccountState::new(0, None));
+        let mut acc = AccountingState { treasury: 100, reserves: 0 };
+
+        let mut withdrawals = std::collections::BTreeMap::new();
+        withdrawals.insert(ra1.clone(), 80);
+        withdrawals.insert(ra2.clone(), 80);
+
+        let outcome = enact_gov_action(
+            &mut es,
+            sample_gov_action_id(54),
+            &GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::TreasuryWithdrawn { total_withdrawn: 160 });
+        assert_eq!(ra.balance(&ra1), 80);
+        assert_eq!(ra.balance(&ra2), 80);
+        assert_eq!(acc.treasury, 0); // saturated to 0
+    }
+
+    #[test]
+    fn test_enact_update_committee_add_existing_member() {
+        // Adding a member that already exists should NOT count as "added".
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let existing = crate::StakeCredential::AddrKeyHash([0xB1; 28]);
+        committee.register(existing.clone());
+
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(existing.clone(), 100); // already exists
+
+        let outcome = enact_gov_action(
+            &mut es,
+            sample_gov_action_id(55),
+            &GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval { numerator: 1, denominator: 1 },
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(
+            outcome,
+            EnactOutcome::CommitteeUpdated { members_removed: 0, members_added: 0 }
+        );
+        assert_eq!(committee.len(), 1);
+    }
+
+    #[test]
+    fn test_enact_hard_fork_lineage_chain() {
+        // Two sequential hard forks: v10 then v11.
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = Some(crate::protocol_params::ProtocolParameters::alonzo_defaults());
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let id1 = sample_gov_action_id(60);
+        let id2 = sample_gov_action_id(61);
+
+        let outcome1 = enact_gov_action(
+            &mut es,
+            id1.clone(),
+            &GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome1, EnactOutcome::HardForkEnacted { new_version: (10, 0) });
+        assert_eq!(es.prev_hard_fork(), Some(&id1));
+
+        let outcome2 = enact_gov_action(
+            &mut es,
+            id2.clone(),
+            &GovAction::HardForkInitiation {
+                prev_action_id: Some(id1),
+                protocol_version: (11, 0),
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome2, EnactOutcome::HardForkEnacted { new_version: (11, 0) });
+        assert_eq!(es.prev_hard_fork(), Some(&id2));
+        assert_eq!(pp.unwrap().protocol_version, Some((11, 0)));
+    }
+
+    #[test]
+    fn test_enact_parameter_change_lineage_chain() {
+        // Two sequential parameter changes — lineage advances.
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let id1 = sample_gov_action_id(70);
+        let id2 = sample_gov_action_id(71);
+
+        enact_gov_action(
+            &mut es,
+            id1.clone(),
+            &GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(100),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(es.prev_pparams_update(), Some(&id1));
+        assert_eq!(pp.as_ref().unwrap().min_fee_a, 100);
+
+        enact_gov_action(
+            &mut es,
+            id2.clone(),
+            &GovAction::ParameterChange {
+                prev_action_id: Some(id1),
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_b: Some(200),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(es.prev_pparams_update(), Some(&id2));
+        let p = pp.unwrap();
+        assert_eq!(p.min_fee_a, 100); // preserved from first
+        assert_eq!(p.min_fee_b, 200); // applied from second
+    }
+
+    #[test]
+    fn test_enact_parameter_change_initializes_defaults_when_none() {
+        // When protocol_params is None, ParameterChange should
+        // initialize defaults then apply the update.
+        let mut es = EnactState::new();
+        let mut committee = CommitteeState::new();
+        let mut pp: Option<crate::protocol_params::ProtocolParameters> = None;
+        let mut ra = RewardAccounts::new();
+        let mut acc = AccountingState::default();
+
+        let outcome = enact_gov_action(
+            &mut es,
+            sample_gov_action_id(72),
+            &GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(42),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            &mut committee,
+            &mut pp,
+            &mut ra,
+            &mut acc,
+        );
+        assert_eq!(outcome, EnactOutcome::ParameterChangeRecorded);
+        assert!(pp.is_some());
+        assert_eq!(pp.as_ref().unwrap().min_fee_a, 42);
+        // Other fields retain their Default::default() values.
+        let defaults = crate::protocol_params::ProtocolParameters::default();
+        assert_eq!(pp.as_ref().unwrap().min_fee_b, defaults.min_fee_b);
+    }
+
     #[test]
     fn test_ledger_state_16_element_round_trip() {
         let mut ls = LedgerState::new(Era::Conway);
@@ -8693,5 +9030,2710 @@ mod tests {
         let bytes = params.to_cbor_bytes();
         let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
         assert_eq!(params, decoded);
+    }
+
+    // -----------------------------------------------------------------------
+    // DRep inactivity boundary tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn drep_tally_boundary_active_when_sum_equals_current() {
+        // last_active=90, drep_activity=10, current_epoch=100.
+        // 90+10 = 100. Condition: 100 < 100 → false → DRep is ACTIVE.
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(90)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(100), 10);
+        assert_eq!(tally.total, 1000, "DRep should be active at exact boundary");
+        assert_eq!(tally.yes, 1000);
+    }
+
+    #[test]
+    fn drep_tally_boundary_inactive_when_sum_less_than_current() {
+        // last_active=90, drep_activity=10, current_epoch=101.
+        // 90+10 = 100. Condition: 100 < 101 → true → DRep is INACTIVE.
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(90)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(101), 10);
+        assert_eq!(tally.total, 0, "DRep should be inactive one epoch past boundary");
+        assert_eq!(tally.yes, 0);
+    }
+
+    #[test]
+    fn drep_tally_no_last_active_epoch_is_active() {
+        // DRep registered with no last_active_epoch (None) — should be counted.
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new(0, None));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 500);
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(999), 10);
+        assert_eq!(tally.total, 500, "DRep with no last_active_epoch should be counted");
+        assert_eq!(tally.yes, 500);
+    }
+
+    #[test]
+    fn drep_tally_zero_activity_window() {
+        // drep_activity=0. last_active=50, current=50. 50+0=50 < 50 → false → ACTIVE.
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(50)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(50), 0);
+        assert_eq!(tally.total, 1000, "DRep active when sum == current with zero window");
+
+        // current=51: 50+0=50 < 51 → true → INACTIVE.
+        let tally2 = tally_drep_votes(&action, &drep_state, &stake, EpochNo(51), 0);
+        assert_eq!(tally2.total, 0, "DRep inactive when sum < current with zero window");
+    }
+
+    #[test]
+    fn drep_tally_saturating_add_no_overflow() {
+        // Ensure saturating_add prevents overflow: large last_active + large activity.
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(u64::MAX - 5)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        // (u64::MAX - 5) + 100 would overflow, saturates to u64::MAX.
+        // u64::MAX < u64::MAX is false → DRep is ACTIVE.
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(u64::MAX), 100);
+        assert_eq!(tally.total, 1000, "saturating_add should prevent overflow");
+    }
+
+    // -----------------------------------------------------------------------
+    // DRep tally: AlwaysAbstain and AlwaysNoConfidence special DReps
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn drep_tally_always_abstain_excluded_from_active_vote() {
+        // Stake delegated to AlwaysAbstain is not counted at all.
+        let action = test_hf_action();
+        let drep_state = DrepState::new();
+        let mut stake = BTreeMap::new();
+        stake.insert(DRep::AlwaysAbstain, 5000);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        assert_eq!(tally.total, 0, "AlwaysAbstain stake not counted");
+    }
+
+    #[test]
+    fn drep_tally_always_no_confidence_excluded() {
+        let action = test_hf_action();
+        let drep_state = DrepState::new();
+        let mut stake = BTreeMap::new();
+        stake.insert(DRep::AlwaysNoConfidence, 5000);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        assert_eq!(tally.total, 0, "AlwaysNoConfidence stake not counted");
+    }
+
+    #[test]
+    fn drep_tally_non_voting_drep_counted_in_total() {
+        // A registered active DRep who does NOT vote is still in the total
+        // (their stake counts against the denominator).
+        let action = test_hf_action(); // no DRep votes
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 1000);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        assert_eq!(tally.total, 1000, "non-voting DRep stake in total");
+        assert_eq!(tally.yes, 0);
+        assert_eq!(tally.no, 0);
+        assert_eq!(tally.abstain, 0);
+    }
+
+    #[test]
+    fn drep_tally_abstain_vote_counted_as_abstain() {
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Abstain);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        assert_eq!(tally.abstain, 1000);
+        assert_eq!(tally.total, 1000);
+        // All abstain → vacuous quorum → passes any threshold.
+        let threshold = UnitInterval { numerator: 99, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    // -----------------------------------------------------------------------
+    // SPO tally edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spo_tally_empty_pool_distribution() {
+        let action = test_hf_action();
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let tally = tally_spo_votes(&action, &pool_dist);
+        assert_eq!(tally.total, 0);
+        // Zero total is vacuous → meets any threshold.
+        let threshold = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn spo_tally_non_voting_pool_in_total() {
+        let action = test_hf_action(); // no SPO votes
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([1u8; 28], 2000u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 2000);
+
+        let tally = tally_spo_votes(&action, &pool_dist);
+        assert_eq!(tally.total, 2000);
+        assert_eq!(tally.yes, 0);
+        // Non-voting pool means 0 yes out of 2000 → does NOT meet 51%.
+        let threshold = UnitInterval { numerator: 51, denominator: 100 };
+        assert!(!tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn spo_tally_abstain_vote() {
+        let mut action = test_hf_action();
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([1u8; 28], 1000u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+        action.votes.insert(Voter::StakePool([1; 28]), Vote::Abstain);
+
+        let tally = tally_spo_votes(&action, &pool_dist);
+        assert_eq!(tally.abstain, 1000);
+        assert_eq!(tally.total, 1000);
+        // All abstain → vacuous quorum.
+        let threshold = UnitInterval { numerator: 99, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    // -----------------------------------------------------------------------
+    // Committee tally edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn committee_tally_empty_committee_is_vacuous() {
+        let action = test_hf_action();
+        let cs = CommitteeState::default();
+
+        let tally = tally_committee_votes(&action, &cs);
+        assert_eq!(tally.total, 0);
+        // Vacuous → passes any quorum.
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(tally.meets_threshold(&quorum));
+    }
+
+    #[test]
+    fn committee_tally_all_resigned_is_vacuous() {
+        let action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        let cred = StakeCredential::AddrKeyHash([1; 28]);
+        cs.register(cred);
+        cs.get_mut(&cred).unwrap().set_authorization(Some(
+            CommitteeAuthorization::CommitteeMemberResigned(None),
+        ));
+
+        let tally = tally_committee_votes(&action, &cs);
+        assert_eq!(tally.total, 0, "all-resigned committee has zero eligible members");
+    }
+
+    #[test]
+    fn committee_tally_single_member_exact_quorum() {
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([1; 28]));
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+
+        let tally = tally_committee_votes(&action, &cs);
+        assert_eq!(tally.yes, 1);
+        assert_eq!(tally.total, 1);
+        // 1/1 >= 100% quorum.
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(tally.meets_threshold(&quorum));
+    }
+
+    #[test]
+    fn committee_member_votes_no() {
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([1; 28]));
+        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::No);
+
+        let tally = tally_committee_votes(&action, &cs);
+        assert_eq!(tally.no, 1);
+        assert_eq!(tally.yes, 0);
+        assert_eq!(tally.total, 1);
+        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        assert!(!tally.meets_threshold(&quorum));
+    }
+
+    // -----------------------------------------------------------------------
+    // accepted_by_spo: actions that don't require SPO votes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn accepted_by_spo_treasury_always_true() {
+        // TreasuryWithdrawals doesn't require SPO vote → always accepted.
+        let action = test_treasury_action();
+        let cs = CommitteeState::default();
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let pvt = PoolVotingThresholds::default();
+        assert!(accepted_by_spo(&action, &cs, &pool_dist, &pvt));
+    }
+
+    #[test]
+    fn accepted_by_spo_new_constitution_always_true() {
+        let action = GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("test"),
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        });
+        let cs = CommitteeState::default();
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let pvt = PoolVotingThresholds::default();
+        assert!(accepted_by_spo(&action, &cs, &pool_dist, &pvt));
+    }
+
+    #[test]
+    fn accepted_by_dreps_info_always_true() {
+        // InfoAction has no DRep threshold → always accepted.
+        let action = test_info_action();
+        let cs = CommitteeState::default();
+        let drep_state = DrepState::new();
+        let drep_stake = BTreeMap::new();
+        let dvt = DRepVotingThresholds::default();
+        assert!(accepted_by_dreps(&action, &cs, &drep_state, &drep_stake, EpochNo(1), 100, &dvt));
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification: NoConfidence (CC + DRep + SPO all required)
+    // -----------------------------------------------------------------------
+
+    fn test_param_change_security_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    max_block_body_size: Some(65536), // network+security group
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        })
+    }
+
+    fn test_param_change_economic_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    key_deposit: Some(2_000_000), // economic group only
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        })
+    }
+
+    fn test_update_committee_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval { numerator: 1, denominator: 2 },
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        })
+    }
+
+    fn test_new_constitution_action() -> GovernanceActionState {
+        GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("ratify-test"),
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        })
+    }
+
+    /// Helper: minimal committee with one member who votes yes.
+    fn setup_cc_one_yes(
+        action: &mut GovernanceActionState,
+    ) -> (CommitteeState, UnitInterval) {
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([0xCC; 28]));
+        action.votes.insert(Voter::CommitteeKeyHash([0xCC; 28]), Vote::Yes);
+        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        (cs, quorum)
+    }
+
+    /// Helper: one DRep with given stake who votes yes.
+    fn setup_drep_one_yes(
+        action: &mut GovernanceActionState,
+        drep_id: u8,
+        stake_amount: u64,
+    ) -> (DrepState, BTreeMap<DRep, u64>) {
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([drep_id; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut stake = BTreeMap::new();
+        stake.insert(drep, stake_amount);
+        action.votes.insert(Voter::DRepKeyHash([drep_id; 28]), Vote::Yes);
+        (drep_state, stake)
+    }
+
+    /// Helper: one pool with given stake that votes yes.
+    fn setup_spo_one_yes(
+        action: &mut GovernanceActionState,
+        pool_id: u8,
+        pool_stake: u64,
+    ) -> crate::stake::PoolStakeDistribution {
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([pool_id; 28], pool_stake);
+        action.votes.insert(Voter::StakePool([pool_id; 28]), Vote::Yes);
+        crate::stake::PoolStakeDistribution::from_raw(pool_stakes, pool_stake)
+    }
+
+    #[test]
+    fn ratify_no_confidence_accepted_when_all_agree() {
+        let mut action = test_no_confidence_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_no_confidence_rejected_when_dreps_vote_no() {
+        let mut action = test_no_confidence_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        // DRep votes no
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_no_confidence_rejected_when_spo_vote_no() {
+        let mut action = test_no_confidence_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        // SPO votes no
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([0xA1; 28], 1000u64);
+        action.votes.insert(Voter::StakePool([0xA1; 28]), Vote::No);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_no_confidence_rejected_when_committee_votes_no() {
+        let mut action = test_no_confidence_action();
+        // CC member votes no
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([0xCC; 28]));
+        action.votes.insert(Voter::CommitteeKeyHash([0xCC; 28]), Vote::No);
+        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification: ParameterChange
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ratify_param_change_security_accepted() {
+        // Security-group change: requires CC + DRep + SPO.
+        let mut action = test_param_change_security_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_param_change_security_rejected_without_spo() {
+        // Security-group change requires SPO. If SPO votes no → rejected.
+        let mut action = test_param_change_security_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        // SPO votes no.
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([0xA1; 28], 1000u64);
+        action.votes.insert(Voter::StakePool([0xA1; 28]), Vote::No);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_param_change_economic_no_spo_needed() {
+        // Economic-only change: CC + DRep required, SPO NOT required.
+        let mut action = test_param_change_economic_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        // No SPO votes, empty pool dist — should still pass.
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_param_change_rejected_when_dreps_insufficient() {
+        let mut action = test_param_change_economic_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        // DRep votes no.
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification: TreasuryWithdrawals (CC + DRep, no SPO)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ratify_treasury_accepted_cc_and_drep() {
+        let mut action = test_treasury_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        // No SPO needed for treasury.
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_treasury_rejected_when_dreps_vote_no() {
+        let mut action = test_treasury_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_treasury_rejected_when_committee_fails() {
+        let mut action = test_treasury_action();
+        // CC votes no.
+        let mut cs = CommitteeState::default();
+        cs.register(StakeCredential::AddrKeyHash([0xCC; 28]));
+        action.votes.insert(Voter::CommitteeKeyHash([0xCC; 28]), Vote::No);
+        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification: NewConstitution (CC + DRep, no SPO)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ratify_new_constitution_accepted() {
+        let mut action = test_new_constitution_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_new_constitution_rejected_when_dreps_vote_no() {
+        let mut action = test_new_constitution_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification: UpdateCommittee (DRep + SPO, CC not required for
+    // committee changes — actually CC IS required per accepted_by_committee)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ratify_update_committee_accepted_all_agree() {
+        let mut action = test_update_committee_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_update_committee_rejected_when_spo_votes_no() {
+        let mut action = test_update_committee_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        // SPO votes no.
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([0xA1; 28], 1000u64);
+        action.votes.insert(Voter::StakePool([0xA1; 28]), Vote::No);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification: DRep inactivity affects ratification outcome
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ratify_hf_rejected_when_only_drep_is_inactive() {
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        // DRep registered at epoch 10, activity window 10, current epoch 25.
+        // 10 + 10 = 20 < 25 → inactive. No active DReps = vacuous → passes.
+        // BUT: let's add a second DRep that is active and votes No.
+        let mut drep_state = DrepState::new();
+        let drep_inactive = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep_inactive.clone(), RegisteredDrep::new_active(0, None, EpochNo(10)));
+        let drep_active = DRep::KeyHash([0xD2; 28]);
+        drep_state.register(drep_active.clone(), RegisteredDrep::new_active(0, None, EpochNo(20)));
+
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep_inactive, 1000);
+        drep_stake.insert(drep_active, 1000);
+
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes); // inactive, excluded
+        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);  // active, counted
+
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        // Only active DRep voted No → 0/1000 yes → fails DRep threshold.
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_hf_accepted_when_inactive_dreps_excluded_and_active_vote_yes() {
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        // Inactive DRep with large NO stake is excluded; active DRep votes yes.
+        let mut drep_state = DrepState::new();
+        let drep_inactive = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep_inactive.clone(), RegisteredDrep::new_active(0, None, EpochNo(10)));
+        let drep_active = DRep::KeyHash([0xD2; 28]);
+        drep_state.register(drep_active.clone(), RegisteredDrep::new_active(0, None, EpochNo(20)));
+
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep_inactive, 9000);
+        drep_stake.insert(drep_active, 1000);
+
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No); // inactive, excluded
+        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::Yes);
+
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        // Active DRep: 1000 yes / 1000 total = 100% >= 67%. Passes.
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Ratification: Multi-voter edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ratify_hf_rejected_partial_drep_support() {
+        // Two DReps: 40% yes, 60% no → fails 67% threshold.
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        let mut drep_state = DrepState::new();
+        let drep_a = DRep::KeyHash([0xD1; 28]);
+        let drep_b = DRep::KeyHash([0xD2; 28]);
+        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep_a, 400);
+        drep_stake.insert(drep_b, 600);
+
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);
+
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        // 400/1000 = 40% < 67% → fails.
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_hf_accepted_with_abstentions_raising_effective_ratio() {
+        // One DRep yes (500), one DRep abstain (500). Active = 500.
+        // 500/500 = 100% >= 67%.
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        let mut drep_state = DrepState::new();
+        let drep_a = DRep::KeyHash([0xD1; 28]);
+        let drep_b = DRep::KeyHash([0xD2; 28]);
+        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep_a, 500);
+        drep_stake.insert(drep_b, 500);
+
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::Abstain);
+
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_empty_committee_is_vacuous() {
+        // No CC members → accepted_by_committee returns vacuous pass for
+        // non-Info actions.
+        let mut action = test_hf_action();
+        let cs = CommitteeState::default(); // empty
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_all_dreps_abstain_is_vacuous_pass() {
+        // All DReps abstain → vacuous quorum → DRep check passes.
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        let mut drep_stake = BTreeMap::new();
+        drep_stake.insert(drep, 1000);
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Abstain);
+
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_no_dreps_registered_is_vacuous() {
+        // No registered DReps → total=0 → vacuous pass.
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+
+        let drep_state = DrepState::new();
+        let drep_stake = BTreeMap::new();
+
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    #[test]
+    fn ratify_no_pools_registered_is_vacuous_for_hf() {
+        // HF requires SPO vote. No pools → total=0 → vacuous pass.
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
+
+        let pool_dist = crate::stake::PoolStakeDistribution::default();
+        let dvt = DRepVotingThresholds::default();
+        let pvt = PoolVotingThresholds::default();
+
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // VoteTally threshold edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tally_fractional_threshold_cross_multiply() {
+        // Verify cross-multiplication works for non-trivial fractions.
+        // 3 yes out of 7 active. Threshold 2/5. 3*5 = 15 >= 2*7 = 14 → passes.
+        let tally = VoteTally { yes: 3, no: 4, abstain: 0, total: 7 };
+        let threshold = UnitInterval { numerator: 2, denominator: 5 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_fractional_threshold_just_below() {
+        // 2 yes out of 7 active. Threshold 2/5. 2*5 = 10 < 2*7 = 14 → fails.
+        let tally = VoteTally { yes: 2, no: 5, abstain: 0, total: 7 };
+        let threshold = UnitInterval { numerator: 2, denominator: 5 };
+        assert!(!tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_100_percent_threshold_requires_unanimity() {
+        let tally = VoteTally { yes: 99, no: 1, abstain: 0, total: 100 };
+        let threshold = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(!tally.meets_threshold(&threshold));
+
+        let tally_unanimous = VoteTally { yes: 100, no: 0, abstain: 0, total: 100 };
+        assert!(tally_unanimous.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_zero_numerator_threshold_always_passes() {
+        // 0% threshold → 0 yes suffices.
+        let tally = VoteTally { yes: 0, no: 100, abstain: 0, total: 100 };
+        let threshold = UnitInterval { numerator: 0, denominator: 1 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    // -----------------------------------------------------------------------
+    // Proposal validation: ParameterChange edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proposal_rejects_empty_parameter_change() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate::default(),
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_rejects_zero_drep_deposit() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    drep_deposit: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_rejects_zero_min_committee_size() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_committee_size: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_rejects_zero_gov_action_lifetime() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    gov_action_lifetime: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_rejects_zero_drep_activity() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    drep_activity: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_rejects_zero_committee_term_limit() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    committee_term_limit: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_rejects_malformed_pool_voting_thresholds() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    pool_voting_thresholds: Some(crate::protocol_params::PoolVotingThresholds {
+                        // numerator > denominator → invalid
+                        motion_no_confidence: UnitInterval { numerator: 3, denominator: 2 },
+                        ..crate::protocol_params::PoolVotingThresholds::default()
+                    }),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_rejects_malformed_drep_voting_thresholds() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    drep_voting_thresholds: Some(DRepVotingThresholds {
+                        // zero denominator → invalid
+                        treasury_withdrawal: UnitInterval { numerator: 0, denominator: 0 },
+                        ..DRepVotingThresholds::default()
+                    }),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    #[test]
+    fn proposal_accepts_valid_parameter_change() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    key_deposit: Some(2_000_000),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Proposal validation: deposit and reward account checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proposal_rejects_incorrect_deposit() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(GovAction::InfoAction, 500, 1)];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            Some(1000), // expected deposit = 1000
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::ProposalDepositIncorrect { supplied: 500, expected: 1000 })
+        ));
+    }
+
+    #[test]
+    fn proposal_rejects_unregistered_return_account() {
+        let es = EnactState::default();
+        // Return account for ra_id=1 but only register ra_id=2.
+        let stake_creds = empty_stake_creds_with(2);
+        let proposals = vec![sample_proposal(GovAction::InfoAction, 1, 1)];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::RewardAccountNotRegistered(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Proposal validation: TreasuryWithdrawals edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proposal_rejects_zero_treasury_withdrawals() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut withdrawals = BTreeMap::new();
+        withdrawals.insert(sample_reward_account(1), 0);
+        let proposals = vec![sample_proposal(
+            GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::ZeroTreasuryWithdrawals(_))
+        ));
+    }
+
+    #[test]
+    fn proposal_rejects_treasury_withdrawal_to_unregistered_account() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut withdrawals = BTreeMap::new();
+        // Withdrawal target ra_id=2 is not registered.
+        withdrawals.insert(sample_reward_account(2), 1_000_000);
+        let proposals = vec![sample_proposal(
+            GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::RewardAccountNotRegistered(_))
+        ));
+    }
+
+    #[test]
+    fn proposal_rejects_treasury_withdrawal_network_mismatch() {
+        let es = EnactState::default();
+        let mut stake_creds = StakeCredentials::new();
+        // Register the return account credential (ra_id=1).
+        stake_creds.register(crate::StakeCredential::AddrKeyHash([1; 28]));
+        // Register the treasury withdrawal target credential.
+        let cred = crate::StakeCredential::AddrKeyHash([0x77; 28]);
+        stake_creds.register(cred);
+        let ra = RewardAccount { network: 0, credential: cred };
+
+        let mut withdrawals = BTreeMap::new();
+        withdrawals.insert(ra, 1_000_000);
+
+        // Use return account with network=1 (matches expected_network).
+        let proposals = vec![sample_proposal(
+            GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            Some(1), // expected network = 1
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::TreasuryWithdrawalsNetworkIdMismatch { .. })
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Proposal validation: UpdateCommittee edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proposal_rejects_conflicting_committee_update() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let conflicting_cred = crate::StakeCredential::AddrKeyHash([0x99; 28]);
+        let mut members_to_add = BTreeMap::new();
+        members_to_add.insert(conflicting_cred, 100);
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![conflicting_cred],
+                members_to_add,
+                quorum: UnitInterval { numerator: 1, denominator: 2 },
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::ConflictingCommitteeUpdate(_))
+        ));
+    }
+
+    #[test]
+    fn proposal_rejects_committee_member_expiring_at_current_epoch() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members_to_add = BTreeMap::new();
+        // Epoch 10 — member expiring at epoch 10 is not strictly after.
+        members_to_add.insert(
+            crate::StakeCredential::AddrKeyHash([0xAA; 28]),
+            10,
+        );
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval { numerator: 1, denominator: 2 },
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(10),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::ExpirationEpochTooSmall(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Proposal validation: forward self-reference
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proposal_rejects_forward_self_reference() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let tx_id = crate::types::TxId([0xBB; 32]);
+        // Proposal at index 0 references gov_action_index 0 in same tx → forward self-ref.
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: Some(crate::eras::conway::GovActionId {
+                    transaction_id: tx_id.0,
+                    gov_action_index: 0,
+                }),
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    key_deposit: Some(2_000_000),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            tx_id,
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::InvalidPrevGovActionId(_))
+        ));
+    }
+
+    #[test]
+    fn proposal_rejects_forward_reference_later_in_same_tx() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let tx_id = crate::types::TxId([0xBB; 32]);
+        // Proposal at index 0 referencing index 1 (forward ref).
+        let proposals = vec![
+            sample_proposal(
+                GovAction::ParameterChange {
+                    prev_action_id: Some(crate::eras::conway::GovActionId {
+                        transaction_id: tx_id.0,
+                        gov_action_index: 1,
+                    }),
+                    protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                        key_deposit: Some(2_000_000),
+                        ..Default::default()
+                    },
+                    guardrails_script_hash: None,
+                },
+                1,
+                1,
+            ),
+            sample_proposal(
+                GovAction::ParameterChange {
+                    prev_action_id: None,
+                    protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                        key_deposit: Some(3_000_000),
+                        ..Default::default()
+                    },
+                    guardrails_script_hash: None,
+                },
+                1,
+                1,
+            ),
+        ];
+        let result = validate_conway_proposals(
+            tx_id,
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::InvalidPrevGovActionId(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Vote recasting and DRep vote removal on unregistration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn vote_recast_overwrites_previous_vote() {
+        let gov_id = crate::eras::conway::GovActionId {
+            transaction_id: [0x01; 32],
+            gov_action_index: 0,
+        };
+        let mut governance_actions = BTreeMap::new();
+        governance_actions.insert(gov_id.clone(), test_info_action());
+
+        let voter = Voter::DRepKeyHash([0xD1; 28]);
+        let mut drep_state = DrepState::new();
+        drep_state.register(DRep::KeyHash([0xD1; 28]), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        // First vote: Yes
+        let mut procedures = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
+        let mut votes = BTreeMap::new();
+        votes.insert(gov_id.clone(), crate::eras::conway::VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        });
+        procedures.procedures.insert(voter.clone(), votes);
+        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(5));
+        assert_eq!(
+            governance_actions[&gov_id].votes.get(&voter),
+            Some(&Vote::Yes),
+        );
+
+        // Second vote: changes to No → overwrites.
+        let mut votes2 = BTreeMap::new();
+        votes2.insert(gov_id.clone(), crate::eras::conway::VotingProcedure {
+            vote: Vote::No,
+            anchor: None,
+        });
+        let mut procedures2 = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
+        procedures2.procedures.insert(voter.clone(), votes2);
+        apply_conway_votes(&procedures2, &mut governance_actions, &mut drep_state, EpochNo(5));
+        assert_eq!(
+            governance_actions[&gov_id].votes.get(&voter),
+            Some(&Vote::No),
+        );
+    }
+
+    #[test]
+    fn vote_casting_touches_drep_activity() {
+        let gov_id = crate::eras::conway::GovActionId {
+            transaction_id: [0x01; 32],
+            gov_action_index: 0,
+        };
+        let mut governance_actions = BTreeMap::new();
+        governance_actions.insert(gov_id.clone(), test_info_action());
+
+        let mut drep_state = DrepState::new();
+        let drep = DRep::KeyHash([0xD1; 28]);
+        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut procedures = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
+        let mut votes = BTreeMap::new();
+        votes.insert(gov_id.clone(), crate::eras::conway::VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        });
+        procedures.procedures.insert(Voter::DRepKeyHash([0xD1; 28]), votes);
+        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(42));
+
+        assert_eq!(
+            drep_state.get(&drep).unwrap().last_active_epoch(),
+            Some(EpochNo(42)),
+        );
+    }
+
+    #[test]
+    fn drep_unregistration_removes_stored_votes() {
+        let gov_id = crate::eras::conway::GovActionId {
+            transaction_id: [0x01; 32],
+            gov_action_index: 0,
+        };
+        let mut governance_actions = BTreeMap::new();
+        let mut action = test_info_action();
+        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);
+        governance_actions.insert(gov_id.clone(), action);
+
+        // Simulate DRep [D1] unregistering.
+        let unregistered = vec![Voter::DRepKeyHash([0xD1; 28])];
+        remove_conway_drep_votes(&unregistered, &mut governance_actions);
+
+        // D1's vote removed, D2's vote preserved.
+        assert!(!governance_actions[&gov_id].votes.contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+        assert_eq!(
+            governance_actions[&gov_id].votes.get(&Voter::DRepKeyHash([0xD2; 28])),
+            Some(&Vote::No),
+        );
+    }
+
+    #[test]
+    fn drep_unregistration_removes_votes_across_multiple_actions() {
+        let gov_id_1 = crate::eras::conway::GovActionId { transaction_id: [1; 32], gov_action_index: 0 };
+        let gov_id_2 = crate::eras::conway::GovActionId { transaction_id: [2; 32], gov_action_index: 0 };
+        let mut governance_actions = BTreeMap::new();
+
+        let mut action_1 = test_info_action();
+        action_1.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        governance_actions.insert(gov_id_1.clone(), action_1);
+
+        let mut action_2 = test_hf_action();
+        action_2.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+        governance_actions.insert(gov_id_2.clone(), action_2);
+
+        let unregistered = vec![Voter::DRepKeyHash([0xD1; 28])];
+        remove_conway_drep_votes(&unregistered, &mut governance_actions);
+
+        assert!(!governance_actions[&gov_id_1].votes.contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+        assert!(!governance_actions[&gov_id_2].votes.contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+    }
+
+    #[test]
+    fn collect_unregistered_drep_voters_from_certs() {
+        let certificates = vec![
+            DCert::DrepUnregistration(
+                StakeCredential::AddrKeyHash([0xD1; 28]),
+                0,
+            ),
+            DCert::DrepUnregistration(
+                StakeCredential::ScriptHash([0xD2; 28]),
+                0,
+            ),
+        ];
+        let unregistered = collect_conway_unregistered_drep_voters(Some(&certificates));
+        assert_eq!(unregistered.len(), 2);
+        assert!(unregistered.contains(&Voter::DRepKeyHash([0xD1; 28])));
+        assert!(unregistered.contains(&Voter::DRepScript([0xD2; 28])));
+    }
+
+    #[test]
+    fn collect_unregistered_drep_voters_deduplicates() {
+        // Same DRep unregistered twice but only one entry.
+        let certificates = vec![
+            DCert::DrepUnregistration(StakeCredential::AddrKeyHash([0xD1; 28]), 0),
+            DCert::DrepUnregistration(StakeCredential::AddrKeyHash([0xD1; 28]), 0),
+        ];
+        let unregistered = collect_conway_unregistered_drep_voters(Some(&certificates));
+        assert_eq!(unregistered.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Voter existence checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn voter_exists_drep_script_hash() {
+        let pool_state = PoolState::new();
+        let committee_state = CommitteeState::default();
+        let mut drep_state = DrepState::new();
+        drep_state.register(DRep::ScriptHash([0xAB; 28]), RegisteredDrep::new(0, None));
+
+        let voter = Voter::DRepScript([0xAB; 28]);
+        assert!(conway_voter_exists(&voter, &pool_state, &committee_state, &drep_state));
+
+        let unknown_voter = Voter::DRepScript([0xCD; 28]);
+        assert!(!conway_voter_exists(&unknown_voter, &pool_state, &committee_state, &drep_state));
+    }
+
+    #[test]
+    fn voter_exists_committee_script_hash() {
+        let pool_state = PoolState::new();
+        let mut committee_state = CommitteeState::default();
+        let cold_cred = StakeCredential::AddrKeyHash([0x01; 28]);
+        committee_state.register(cold_cred);
+        // Authorize hot key as a script hash.
+        committee_state
+            .get_mut(&cold_cred)
+            .unwrap()
+            .set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(
+                StakeCredential::ScriptHash([0xEE; 28]),
+            )));
+        let drep_state = DrepState::new();
+
+        let voter = Voter::CommitteeScript([0xEE; 28]);
+        assert!(conway_voter_exists(&voter, &pool_state, &committee_state, &drep_state));
+
+        let unknown_voter = Voter::CommitteeScript([0xFF; 28]);
+        assert!(!conway_voter_exists(&unknown_voter, &pool_state, &committee_state, &drep_state));
+    }
+
+    #[test]
+    fn voter_exists_spo() {
+        let mut pool_state = PoolState::new();
+        pool_state.register(
+            crate::types::PoolParams {
+                operator: [0x01; 28],
+                vrf_keyhash: [0; 32],
+                pledge: 0,
+                cost: 0,
+                margin: UnitInterval { numerator: 0, denominator: 1 },
+                reward_account: sample_reward_account(1),
+                pool_owners: vec![],
+                relays: vec![],
+                pool_metadata: None,
+            },
+        );
+        let committee_state = CommitteeState::default();
+        let drep_state = DrepState::new();
+
+        let voter = Voter::StakePool([0x01; 28]);
+        assert!(conway_voter_exists(&voter, &pool_state, &committee_state, &drep_state));
+
+        let unknown_voter = Voter::StakePool([0x02; 28]);
+        assert!(!conway_voter_exists(&unknown_voter, &pool_state, &committee_state, &drep_state));
+    }
+
+    // -----------------------------------------------------------------------
+    // Post-bootstrap voter permission matrix (complete)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn post_bootstrap_spo_rejected_on_treasury_withdrawals() {
+        let voter = Voter::StakePool([9; 28]);
+        let action = GovAction::TreasuryWithdrawals {
+            withdrawals: BTreeMap::new(),
+            guardrails_script_hash: None,
+        };
+        assert!(!conway_voter_is_allowed_for_action(&voter, &action));
+    }
+
+    #[test]
+    fn post_bootstrap_spo_accepted_on_no_confidence() {
+        let voter = Voter::StakePool([9; 28]);
+        let action = GovAction::NoConfidence { prev_action_id: None };
+        assert!(conway_voter_is_allowed_for_action(&voter, &action));
+    }
+
+    #[test]
+    fn post_bootstrap_spo_accepted_on_hard_fork() {
+        let voter = Voter::StakePool([9; 28]);
+        let action = GovAction::HardForkInitiation {
+            prev_action_id: None,
+            protocol_version: (11, 0),
+        };
+        assert!(conway_voter_is_allowed_for_action(&voter, &action));
+    }
+
+    #[test]
+    fn post_bootstrap_spo_accepted_on_update_committee() {
+        let voter = Voter::StakePool([9; 28]);
+        let action = GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add: BTreeMap::new(),
+            quorum: UnitInterval { numerator: 1, denominator: 2 },
+        };
+        assert!(conway_voter_is_allowed_for_action(&voter, &action));
+    }
+
+    #[test]
+    fn post_bootstrap_spo_rejected_on_new_constitution() {
+        let voter = Voter::StakePool([9; 28]);
+        let action = GovAction::NewConstitution {
+            prev_action_id: None,
+            constitution: sample_constitution("spo-test"),
+        };
+        assert!(!conway_voter_is_allowed_for_action(&voter, &action));
+    }
+
+    #[test]
+    fn post_bootstrap_committee_accepted_on_most_actions() {
+        let voter = Voter::CommitteeKeyHash([9; 28]);
+        // Committee can vote on everything except NoConfidence per Conway rules.
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::InfoAction));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::HardForkInitiation {
+            prev_action_id: None, protocol_version: (11, 0),
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::TreasuryWithdrawals {
+            withdrawals: BTreeMap::new(), guardrails_script_hash: None,
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::NewConstitution {
+            prev_action_id: None, constitution: sample_constitution("cc"),
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                key_deposit: Some(1), ..Default::default()
+            },
+            guardrails_script_hash: None,
+        }));
+    }
+
+    #[test]
+    fn post_bootstrap_committee_rejected_on_no_confidence() {
+        let voter = Voter::CommitteeKeyHash([9; 28]);
+        let action = GovAction::NoConfidence { prev_action_id: None };
+        assert!(!conway_voter_is_allowed_for_action(&voter, &action));
+    }
+
+    #[test]
+    fn post_bootstrap_drep_accepted_on_all_actions() {
+        let voter = Voter::DRepKeyHash([9; 28]);
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::InfoAction));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::NoConfidence {
+            prev_action_id: None,
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::HardForkInitiation {
+            prev_action_id: None, protocol_version: (11, 0),
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::TreasuryWithdrawals {
+            withdrawals: BTreeMap::new(), guardrails_script_hash: None,
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::NewConstitution {
+            prev_action_id: None, constitution: sample_constitution("drep"),
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add: BTreeMap::new(),
+            quorum: UnitInterval { numerator: 1, denominator: 2 },
+        }));
+        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                key_deposit: Some(1), ..Default::default()
+            },
+            guardrails_script_hash: None,
+        }));
+    }
+
+    // -----------------------------------------------------------------------
+    // conway_unit_interval_well_formed
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unit_interval_well_formed_valid() {
+        assert!(conway_unit_interval_well_formed(&UnitInterval { numerator: 0, denominator: 1 }));
+        assert!(conway_unit_interval_well_formed(&UnitInterval { numerator: 1, denominator: 1 }));
+        assert!(conway_unit_interval_well_formed(&UnitInterval { numerator: 2, denominator: 3 }));
+    }
+
+    #[test]
+    fn unit_interval_well_formed_invalid() {
+        // Zero denominator.
+        assert!(!conway_unit_interval_well_formed(&UnitInterval { numerator: 0, denominator: 0 }));
+        // Numerator > denominator.
+        assert!(!conway_unit_interval_well_formed(&UnitInterval { numerator: 2, denominator: 1 }));
+    }
+
+    // ── Certificate processing unit tests ──────────────────────────
+
+    /// Helper: default CertificateValidationContext for cert unit tests.
+    fn sample_cert_ctx() -> CertificateValidationContext {
+        CertificateValidationContext {
+            key_deposit: 2_000_000,
+            pool_deposit: 500_000_000,
+            min_pool_cost: 170_000_000,
+            e_max: 18,
+            current_epoch: EpochNo(100),
+            expected_network_id: Some(1),
+        }
+    }
+
+    #[test]
+    fn test_cert_account_registration_deposit() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+        let cred = crate::StakeCredential::AddrKeyHash([0xC1; 28]);
+
+        let certs = vec![DCert::AccountRegistrationDeposit(cred, 5_000_000)];
+        let total = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert_eq!(total, 0);
+        assert!(sc.is_registered(&cred));
+        assert_eq!(dp.key_deposits, 5_000_000);
+    }
+
+    #[test]
+    fn test_cert_account_unregistration_deposit() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xC2; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 5_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::AccountUnregistrationDeposit(cred, 5_000_000)];
+        let total = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert_eq!(total, 0);
+        assert!(!sc.is_registered(&cred));
+        assert_eq!(dp.key_deposits, 0);
+    }
+
+    #[test]
+    fn test_cert_delegation_to_stake_pool_and_drep() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xD1; 28];
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xD1; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xD1; 28]) },
+            pool_owners: vec![[0xD1; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xD2; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        // Register a DRep for delegation target.
+        let drep_cred = crate::StakeCredential::AddrKeyHash([0xD3; 28]);
+        let drep = DRep::KeyHash([0xD3; 28]);
+        ds.register(drep, RegisteredDrep::new(0, None));
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::DelegationToStakePoolAndDrep(cred, operator, drep)];
+        let total = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert_eq!(total, 0);
+        let sc_state = sc.get(&cred).unwrap();
+        assert_eq!(sc_state.delegated_pool(), Some(operator));
+        assert_eq!(sc_state.delegated_drep(), Some(drep));
+    }
+
+    #[test]
+    fn test_cert_account_reg_delegation_to_stake_pool() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xE1; 28];
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xE1; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xE1; 28]) },
+            pool_owners: vec![[0xE1; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+        let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
+
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePool(cred, operator, 2_000_000)];
+        let total = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert_eq!(total, 0);
+        assert!(sc.is_registered(&cred));
+        assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(operator));
+        assert_eq!(dp.key_deposits, 2_000_000);
+    }
+
+    #[test]
+    fn test_cert_account_reg_delegation_to_drep() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let drep = DRep::AlwaysAbstain;
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+        let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
+
+        let certs = vec![DCert::AccountRegistrationDelegationToDrep(cred, drep, 2_000_000)];
+        let total = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert_eq!(total, 0);
+        assert!(sc.is_registered(&cred));
+        assert_eq!(sc.get(&cred).unwrap().delegated_drep(), Some(drep));
+        assert_eq!(dp.key_deposits, 2_000_000);
+    }
+
+    #[test]
+    fn test_cert_account_reg_delegation_to_pool_and_drep() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xF1; 28];
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xF1; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xF1; 28]) },
+            pool_owners: vec![[0xF1; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let drep = DRep::AlwaysNoConfidence;
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+        let cred = crate::StakeCredential::AddrKeyHash([0xF2; 28]);
+
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, operator, drep, 3_000_000)];
+        let total = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert_eq!(total, 0);
+        assert!(sc.is_registered(&cred));
+        assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(operator));
+        assert_eq!(sc.get(&cred).unwrap().delegated_drep(), Some(drep));
+        assert_eq!(dp.key_deposits, 3_000_000);
+    }
+
+    #[test]
+    fn test_cert_drep_registration_and_unregistration() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
+
+        // Register DRep.
+        let reg_certs = vec![DCert::DrepRegistration(cred, 500_000, None)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&reg_certs), None,
+        ).unwrap();
+        let drep = DRep::KeyHash([0xA0; 28]);
+        assert!(ds.is_registered(&drep));
+        assert_eq!(dp.drep_deposits, 500_000);
+
+        // Unregister DRep.
+        let unreg_certs = vec![DCert::DrepUnregistration(cred, 500_000)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&unreg_certs), None,
+        ).unwrap();
+        assert!(!ds.is_registered(&drep));
+        assert_eq!(dp.drep_deposits, 0);
+    }
+
+    #[test]
+    fn test_cert_drep_update() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
+
+        // Register first.
+        let reg_certs = vec![DCert::DrepRegistration(cred, 500_000, None)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&reg_certs), None,
+        ).unwrap();
+
+        // Update with anchor.
+        let anchor = Some(Anchor { url: "https://drep.example".to_string(), data_hash: [0xBB; 32] });
+        let upd_certs = vec![DCert::DrepUpdate(cred, anchor.clone())];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&upd_certs), None,
+        ).unwrap();
+        let drep = DRep::KeyHash([0xA1; 28]);
+        assert!(ds.is_registered(&drep));
+    }
+
+    #[test]
+    fn test_cert_pool_registration() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let params = PoolParams {
+            operator: [0xAA; 28],
+            vrf_keyhash: [0xAA; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 1, denominator: 10 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xAA; 28]) },
+            pool_owners: vec![[0xAA; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let certs = vec![DCert::PoolRegistration(params.clone())];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert!(pool.is_registered(&[0xAA; 28]));
+        assert_eq!(dp.pool_deposits, 500_000_000);
+    }
+
+    #[test]
+    fn test_cert_pool_registration_cost_too_low() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let params = PoolParams {
+            operator: [0xBB; 28],
+            vrf_keyhash: [0xBB; 32],
+            pledge: 1_000,
+            cost: 1_000, // below min_pool_cost (170_000_000)
+            margin: UnitInterval { numerator: 1, denominator: 10 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]) },
+            pool_owners: vec![[0xBB; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let certs = vec![DCert::PoolRegistration(params)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolCostTooLow { .. }));
+    }
+
+    #[test]
+    fn test_cert_pool_registration_invalid_margin() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let params = PoolParams {
+            operator: [0xBC; 28],
+            vrf_keyhash: [0xBC; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 2, denominator: 1 }, // invalid: num > denom
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBC; 28]) },
+            pool_owners: vec![[0xBC; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let certs = vec![DCert::PoolRegistration(params)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolMarginInvalid { .. }));
+    }
+
+    #[test]
+    fn test_cert_pool_registration_reward_network_mismatch() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // expected_network_id = Some(1)
+
+        let params = PoolParams {
+            operator: [0xBD; 28],
+            vrf_keyhash: [0xBD; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 0, credential: crate::StakeCredential::AddrKeyHash([0xBD; 28]) }, // network 0 != 1
+            pool_owners: vec![[0xBD; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let certs = vec![DCert::PoolRegistration(params)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolRewardAccountNetworkMismatch { .. }));
+    }
+
+    #[test]
+    fn test_cert_pool_registration_metadata_url_too_long() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let params = PoolParams {
+            operator: [0xBE; 28],
+            vrf_keyhash: [0xBE; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBE; 28]) },
+            pool_owners: vec![[0xBE; 28]],
+            relays: vec![],
+            pool_metadata: Some(crate::types::PoolMetadata {
+                url: "x".repeat(65), // 65 bytes > 64
+                metadata_hash: [0; 32],
+            }),
+        };
+        let certs = vec![DCert::PoolRegistration(params)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolMetadataUrlTooLong { .. }));
+    }
+
+    #[test]
+    fn test_cert_pool_retirement() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xCC; 28];
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xCC; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xCC; 28]) },
+            pool_owners: vec![[0xCC; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
+
+        // Retire at epoch 110 (within 100+18=118).
+        let certs = vec![DCert::PoolRetirement(operator, EpochNo(110))];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+    }
+
+    #[test]
+    fn test_cert_pool_retirement_epoch_too_far() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xCD; 28];
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xCD; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xCD; 28]) },
+            pool_owners: vec![[0xCD; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
+
+        // Retire at epoch 200 — beyond 100+18=118.
+        let certs = vec![DCert::PoolRetirement(operator, EpochNo(200))];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolRetirementTooFar { .. }));
+    }
+
+    #[test]
+    fn test_cert_pool_retirement_not_registered() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::PoolRetirement([0xDE; 28], EpochNo(110))];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolNotRegistered(_)));
+    }
+
+    #[test]
+    fn test_cert_committee_authorization() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xDA; 28]);
+        let hot = crate::StakeCredential::AddrKeyHash([0xDB; 28]);
+        cs.register(cold.clone());
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::CommitteeAuthorization(cold.clone(), hot.clone())];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        let ms = cs.get(&cold).unwrap();
+        assert!(!ms.is_resigned());
+    }
+
+    #[test]
+    fn test_cert_committee_authorization_unknown_member() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xDC; 28]);
+        let hot = crate::StakeCredential::AddrKeyHash([0xDD; 28]);
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::CommitteeIsUnknown(_)));
+    }
+
+    #[test]
+    fn test_cert_committee_resignation() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xEA; 28]);
+        cs.register(cold.clone());
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::CommitteeResignation(cold.clone(), None)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap();
+        assert!(cs.get(&cold).unwrap().is_resigned());
+    }
+
+    #[test]
+    fn test_cert_committee_resignation_already_resigned() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xEB; 28]);
+        cs.register(cold.clone());
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        // First resign.
+        let certs1 = vec![DCert::CommitteeResignation(cold.clone(), None)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs1), None,
+        ).unwrap();
+
+        // Second resign should fail.
+        let certs2 = vec![DCert::CommitteeResignation(cold, None)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs2), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::CommitteeHasPreviouslyResigned(_)));
+    }
+
+    #[test]
+    fn test_cert_stake_credential_already_registered() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xFA; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::AccountRegistration(cred)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
+    }
+
+    #[test]
+    fn test_cert_stake_credential_unregister_not_registered() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xFB; 28]);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::AccountUnregistration(cred)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::StakeCredentialNotRegistered(_)));
+    }
+
+    #[test]
+    fn test_cert_delegate_to_unregistered_pool() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xFC; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::DelegationToStakePool(cred, [0x00; 28])]; // pool not registered
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolNotRegistered(_)));
+    }
+
+    #[test]
+    fn test_cert_drep_already_registered() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xFD; 28]);
+        let drep = DRep::KeyHash([0xFD; 28]);
+        ds.register(drep, RegisteredDrep::new(500_000, None));
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::DrepRegistration(cred, 500_000, None)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::DrepAlreadyRegistered(_)));
+    }
+
+    #[test]
+    fn test_cert_delegate_to_unregistered_drep() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xFE; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        // Delegate to a DRep that is NOT registered and NOT a built-in.
+        let drep = DRep::KeyHash([0x99; 28]);
+        let certs = vec![DCert::DelegationToDrep(cred, drep)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::DrepNotRegistered(_)));
+    }
+
+    #[test]
+    fn test_cert_withdrawals_credited_correctly() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xAB; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let ra_key = RewardAccount { network: 1, credential: cred };
+        let mut ra = RewardAccounts::new();
+        ra.insert(ra_key.clone(), RewardAccountState::new(100, None));
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let mut withdrawals = std::collections::BTreeMap::new();
+        withdrawals.insert(ra_key.clone(), 100); // withdraw entire balance
+
+        let total = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &ctx, None, Some(&withdrawals),
+        ).unwrap();
+        assert_eq!(total, 100);
+        assert_eq!(ra.balance(&ra_key), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // conway_pv_can_follow
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pv_can_follow_major_increment() {
+        assert!(conway_pv_can_follow((9, 0), (10, 0)));
+    }
+
+    #[test]
+    fn pv_can_follow_minor_increment() {
+        assert!(conway_pv_can_follow((9, 0), (9, 1)));
+    }
+
+    #[test]
+    fn pv_can_follow_rejects_downgrade() {
+        assert!(!conway_pv_can_follow((10, 0), (9, 0)));
+    }
+
+    #[test]
+    fn pv_can_follow_rejects_same_version() {
+        assert!(!conway_pv_can_follow((10, 0), (10, 0)));
+    }
+
+    #[test]
+    fn pv_can_follow_rejects_major_jump() {
+        // Major +2 is not allowed (per upstream pvCanFollow).
+        assert!(!conway_pv_can_follow((9, 0), (11, 0)));
     }
 }

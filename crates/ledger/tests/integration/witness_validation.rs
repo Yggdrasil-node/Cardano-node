@@ -4426,3 +4426,437 @@ fn shelley_block_rejects_signature_on_wrong_body() {
         "expected InvalidVKeyWitnessSignature for wrong-body sig, got: {err:?}"
     );
 }
+
+// ===========================================================================
+// E2E Governance lifecycle integration tests
+// ===========================================================================
+
+/// Helper: build a Conway tx with only proposal procedures.
+fn make_proposal_tx(
+    input_tx_id: [u8; 32],
+    payment_address: &[u8],
+    output_amount: u64,
+    fee: u64,
+    proposals: Vec<ProposalProcedure>,
+    seed: &[u8; 32],
+) -> (yggdrasil_ledger::Tx, [u8; 32]) {
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: input_tx_id, index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: payment_address.to_vec(),
+            amount: Value::Coin(output_amount),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(proposals),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_hash.0),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&witness_set_with_vkeys(vec![make_witness(seed, &tx_hash.0)]))),
+        auxiliary_data: None,
+    };
+    (tx, tx_hash.0)
+}
+
+/// Helper: build a Conway tx with only voting procedures.
+fn make_vote_tx(
+    input_tx_id: [u8; 32],
+    payment_address: &[u8],
+    output_amount: u64,
+    fee: u64,
+    voting_procedures: VotingProcedures,
+    seed: &[u8; 32],
+) -> yggdrasil_ledger::Tx {
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: input_tx_id, index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: payment_address.to_vec(),
+            amount: Value::Coin(output_amount),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: Some(voting_procedures),
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    yggdrasil_ledger::Tx {
+        id: TxId(tx_hash.0),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&witness_set_with_vkeys(vec![make_witness(seed, &tx_hash.0)]))),
+        auxiliary_data: None,
+    }
+}
+
+/// Helper: seed UTxO for a given tx input.
+fn seed_utxo(state: &mut LedgerState, tx_id: [u8; 32], address: &[u8], amount: u64) {
+    state.multi_era_utxo_mut().insert(
+        ShelleyTxIn { transaction_id: tx_id, index: 0 },
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: address.to_vec(),
+            amount: Value::Coin(amount),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+}
+
+#[test]
+fn conway_block_vote_recast_overwrites_previous_vote() {
+    use std::collections::BTreeMap;
+
+    let payment_keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let payment_address = enterprise_keyhash_address(&payment_keyhash);
+    let reward_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0x90; 28]),
+    };
+    let drep_keyhash = payment_keyhash;
+
+    // Propose an InfoAction.
+    let (proposal_tx, proposal_hash) = make_proposal_tx(
+        [0x91; 32],
+        &payment_address,
+        4_800_000,
+        200_000,
+        vec![ProposalProcedure {
+            deposit: 0,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor { url: "https://example.invalid/vote-recast".to_owned(), data_hash: [0x92; 32] },
+        }],
+        &TEST_SEED,
+    );
+    let gov_action_id = GovActionId { transaction_id: proposal_hash, gov_action_index: 0 };
+
+    // First vote: Yes.
+    let mut vote_map1 = BTreeMap::new();
+    vote_map1.insert(gov_action_id.clone(), VotingProcedure { vote: Vote::Yes, anchor: None });
+    let vote_tx1 = make_vote_tx(
+        [0x93; 32], &payment_address, 4_800_000, 200_000,
+        VotingProcedures { procedures: [(Voter::DRepKeyHash(drep_keyhash), vote_map1)].into_iter().collect() },
+        &TEST_SEED,
+    );
+
+    // Second vote: No (recast).
+    let mut vote_map2 = BTreeMap::new();
+    vote_map2.insert(gov_action_id.clone(), VotingProcedure { vote: Vote::No, anchor: None });
+    let vote_tx2 = make_vote_tx(
+        [0x94; 32], &payment_address, 4_800_000, 200_000,
+        VotingProcedures { procedures: [(Voter::DRepKeyHash(drep_keyhash), vote_map2)].into_iter().collect() },
+        &TEST_SEED,
+    );
+
+    let mut state = LedgerState::new(Era::Conway);
+    for tx_id in [[0x91; 32], [0x93; 32], [0x94; 32]] {
+        seed_utxo(&mut state, tx_id, &payment_address, 5_000_000);
+    }
+    state.stake_credentials_mut().register(reward_account.credential);
+    state.drep_state_mut().register(DRep::KeyHash(drep_keyhash), RegisteredDrep::new(0, None));
+
+    state.apply_block(&make_conway_block(500, 1, 0xF1, vec![proposal_tx])).unwrap();
+    state.apply_block(&make_conway_block(501, 2, 0xF2, vec![vote_tx1])).unwrap();
+
+    // Verify initial vote is Yes.
+    assert_eq!(
+        state.governance_action(&gov_action_id).unwrap().votes().get(&Voter::DRepKeyHash(drep_keyhash)),
+        Some(&Vote::Yes),
+    );
+
+    state.apply_block(&make_conway_block(502, 3, 0xF3, vec![vote_tx2])).unwrap();
+
+    // Verify vote has been recast to No.
+    assert_eq!(
+        state.governance_action(&gov_action_id).unwrap().votes().get(&Voter::DRepKeyHash(drep_keyhash)),
+        Some(&Vote::No),
+    );
+}
+
+#[test]
+fn conway_block_proposal_and_vote_in_same_block() {
+    use std::collections::BTreeMap;
+
+    let payment_keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let payment_address = enterprise_keyhash_address(&payment_keyhash);
+    let reward_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0xA0; 28]),
+    };
+    let drep_keyhash = payment_keyhash;
+
+    // Proposal tx.
+    let (proposal_tx, proposal_hash) = make_proposal_tx(
+        [0xA1; 32],
+        &payment_address,
+        4_800_000,
+        200_000,
+        vec![ProposalProcedure {
+            deposit: 0,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor { url: "https://example.invalid/same-block".to_owned(), data_hash: [0xA2; 32] },
+        }],
+        &TEST_SEED,
+    );
+    let gov_action_id = GovActionId { transaction_id: proposal_hash, gov_action_index: 0 };
+
+    // Vote tx in the same block, referencing the proposal from the first tx.
+    let mut vote_map = BTreeMap::new();
+    vote_map.insert(gov_action_id.clone(), VotingProcedure { vote: Vote::Yes, anchor: None });
+    let vote_tx = make_vote_tx(
+        [0xA3; 32], &payment_address, 4_800_000, 200_000,
+        VotingProcedures { procedures: [(Voter::DRepKeyHash(drep_keyhash), vote_map)].into_iter().collect() },
+        &TEST_SEED,
+    );
+
+    let mut state = LedgerState::new(Era::Conway);
+    for tx_id in [[0xA1; 32], [0xA3; 32]] {
+        seed_utxo(&mut state, tx_id, &payment_address, 5_000_000);
+    }
+    state.stake_credentials_mut().register(reward_account.credential);
+    state.drep_state_mut().register(DRep::KeyHash(drep_keyhash), RegisteredDrep::new(0, None));
+
+    // Both txs in the same block — proposal should be visible to the vote.
+    state.apply_block(&make_conway_block(500, 1, 0xB1, vec![proposal_tx, vote_tx])).unwrap();
+
+    let stored = state.governance_action(&gov_action_id).unwrap();
+    assert_eq!(stored.proposal().gov_action, GovAction::InfoAction);
+    assert_eq!(stored.votes().get(&Voter::DRepKeyHash(drep_keyhash)), Some(&Vote::Yes));
+}
+
+#[test]
+fn conway_block_cross_block_lineage_chain() {
+
+    let payment_keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let payment_address = enterprise_keyhash_address(&payment_keyhash);
+    let reward_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0xB0; 28]),
+    };
+
+    // First proposal: HardForkInitiation with no prev.
+    let (proposal_tx1, hash1) = make_proposal_tx(
+        [0xB1; 32],
+        &payment_address,
+        4_800_000,
+        200_000,
+        vec![ProposalProcedure {
+            deposit: 0,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            anchor: Anchor { url: "https://example.invalid/hf1".to_owned(), data_hash: [0xB2; 32] },
+        }],
+        &TEST_SEED,
+    );
+    let gov_id1 = GovActionId { transaction_id: hash1, gov_action_index: 0 };
+
+    // Second proposal: HardForkInitiation chaining from the first.
+    let (proposal_tx2, hash2) = make_proposal_tx(
+        [0xB3; 32],
+        &payment_address,
+        4_800_000,
+        200_000,
+        vec![ProposalProcedure {
+            deposit: 0,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: Some(gov_id1.clone()),
+                protocol_version: (11, 0),
+            },
+            anchor: Anchor { url: "https://example.invalid/hf2".to_owned(), data_hash: [0xB4; 32] },
+        }],
+        &TEST_SEED,
+    );
+    let gov_id2 = GovActionId { transaction_id: hash2, gov_action_index: 0 };
+
+    let mut state = LedgerState::new(Era::Conway);
+    let mut pp = ProtocolParameters::default();
+    pp.min_fee_a = 0;
+    pp.min_fee_b = 0;
+    pp.protocol_version = Some((9, 0));
+    *state.protocol_params_mut() = Some(pp);
+    for tx_id in [[0xB1; 32], [0xB3; 32]] {
+        seed_utxo(&mut state, tx_id, &payment_address, 5_000_000);
+    }
+    state.stake_credentials_mut().register(reward_account.credential);
+
+    // Block 1: first hard fork proposal.
+    state.apply_block(&make_conway_block(500, 1, 0xC1, vec![proposal_tx1])).unwrap();
+    assert!(state.governance_action(&gov_id1).is_some());
+
+    // Block 2: second hard fork proposal chaining from first.
+    state.apply_block(&make_conway_block(501, 2, 0xC2, vec![proposal_tx2])).unwrap();
+    let stored2 = state.governance_action(&gov_id2).unwrap();
+    assert_eq!(
+        stored2.proposal().gov_action,
+        GovAction::HardForkInitiation { prev_action_id: Some(gov_id1), protocol_version: (11, 0) },
+    );
+}
+
+#[test]
+fn conway_block_cert_and_proposal_and_vote_combo() {
+    use std::collections::BTreeMap;
+
+    let payment_keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let payment_address = enterprise_keyhash_address(&payment_keyhash);
+    let staker_cred = StakeCredential::AddrKeyHash([0xC0; 28]);
+    let reward_account = RewardAccount { network: 0, credential: staker_cred };
+    let drep_keyhash = payment_keyhash;
+
+    // Single tx: register stake cred + propose + vote.
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: [0xC1; 32], index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: payment_address.clone(),
+            amount: Value::Coin(4_800_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        certificates: Some(vec![
+            DCert::AccountRegistration(staker_cred),
+        ]),
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(vec![ProposalProcedure {
+            deposit: 0,
+            reward_account: reward_account.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor { url: "https://example.invalid/combo".to_owned(), data_hash: [0xC2; 32] },
+        }]),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let combo_tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_hash.0),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&witness_set_with_vkeys(vec![make_witness(&TEST_SEED, &tx_hash.0)]))),
+        auxiliary_data: None,
+    };
+    let gov_action_id = GovActionId { transaction_id: tx_hash.0, gov_action_index: 0 };
+
+    // Vote in separate tx same block.
+    let mut vote_map = BTreeMap::new();
+    vote_map.insert(gov_action_id.clone(), VotingProcedure { vote: Vote::Yes, anchor: None });
+    let vote_tx = make_vote_tx(
+        [0xC3; 32], &payment_address, 4_800_000, 200_000,
+        VotingProcedures { procedures: [(Voter::DRepKeyHash(drep_keyhash), vote_map)].into_iter().collect() },
+        &TEST_SEED,
+    );
+
+    let mut state = LedgerState::new(Era::Conway);
+    for tx_id in [[0xC1; 32], [0xC3; 32]] {
+        seed_utxo(&mut state, tx_id, &payment_address, 5_000_000);
+    }
+    // Pre-register the DRep (separate from the staking cred).
+    state.drep_state_mut().register(DRep::KeyHash(drep_keyhash), RegisteredDrep::new(0, None));
+
+    state.apply_block(&make_conway_block(500, 1, 0xD1, vec![combo_tx, vote_tx])).unwrap();
+
+    // Staker credential registered via cert in same tx.
+    assert!(state.stake_credentials().is_registered(&staker_cred));
+    // Proposal persisted.
+    let stored = state.governance_action(&gov_action_id).unwrap();
+    assert_eq!(stored.proposal().gov_action, GovAction::InfoAction);
+    // Vote recorded.
+    assert_eq!(stored.votes().get(&Voter::DRepKeyHash(drep_keyhash)), Some(&Vote::Yes));
+}
+
+#[test]
+fn conway_block_multiple_proposals_in_one_tx() {
+    let payment_keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let payment_address = enterprise_keyhash_address(&payment_keyhash);
+    let reward_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0xD0; 28]),
+    };
+
+    let (tx, tx_hash) = make_proposal_tx(
+        [0xD1; 32],
+        &payment_address,
+        4_800_000,
+        200_000,
+        vec![
+            ProposalProcedure {
+                deposit: 0,
+                reward_account: reward_account.to_bytes().to_vec(),
+                gov_action: GovAction::InfoAction,
+                anchor: Anchor { url: "https://example.invalid/multi1".to_owned(), data_hash: [0xD2; 32] },
+            },
+            ProposalProcedure {
+                deposit: 0,
+                reward_account: reward_account.to_bytes().to_vec(),
+                gov_action: GovAction::InfoAction,
+                anchor: Anchor { url: "https://example.invalid/multi2".to_owned(), data_hash: [0xD3; 32] },
+            },
+        ],
+        &TEST_SEED,
+    );
+
+    let gov_id_0 = GovActionId { transaction_id: tx_hash, gov_action_index: 0 };
+    let gov_id_1 = GovActionId { transaction_id: tx_hash, gov_action_index: 1 };
+
+    let mut state = LedgerState::new(Era::Conway);
+    seed_utxo(&mut state, [0xD1; 32], &payment_address, 5_000_000);
+    state.stake_credentials_mut().register(reward_account.credential);
+
+    state.apply_block(&make_conway_block(500, 1, 0xE1, vec![tx])).unwrap();
+
+    // Both proposals should be persisted with correct indices.
+    let s0 = state.governance_action(&gov_id_0).expect("proposal 0");
+    assert_eq!(s0.proposal().anchor.url, "https://example.invalid/multi1");
+    let s1 = state.governance_action(&gov_id_1).expect("proposal 1");
+    assert_eq!(s1.proposal().anchor.url, "https://example.invalid/multi2");
+}
