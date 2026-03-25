@@ -549,3 +549,418 @@ fn extract_vk_right_from_sk(sk: &SumKesSigningKey) -> [u8; VK_SIZE] {
         .try_into()
         .expect("signing key should contain right VK")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    fn test_seed(byte: u8) -> [u8; SEED_SIZE] {
+        [byte; SEED_SIZE]
+    }
+
+    // ── SumKesVerificationKey ────────────────────────────────────────────
+
+    #[test]
+    fn vk_from_bytes_roundtrip() {
+        let bytes = [0xAB; VK_SIZE];
+        let vk = SumKesVerificationKey::from_bytes(bytes);
+        assert_eq!(vk.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn vk_debug_format() {
+        let vk = SumKesVerificationKey::from_bytes([0x12; VK_SIZE]);
+        let dbg = format!("{:?}", vk);
+        assert!(dbg.starts_with("SumKesVK("));
+    }
+
+    // ── SumKesSignature ──────────────────────────────────────────────────
+
+    #[test]
+    fn signature_expected_size_depth_0() {
+        assert_eq!(SumKesSignature::expected_size(0), 64);
+    }
+
+    #[test]
+    fn signature_expected_size_depth_1() {
+        assert_eq!(SumKesSignature::expected_size(1), 64 + 64);
+    }
+
+    #[test]
+    fn signature_expected_size_depth_6() {
+        assert_eq!(SumKesSignature::expected_size(6), 64 + 6 * 64);
+    }
+
+    #[test]
+    fn signature_from_bytes_correct_len() {
+        let data = vec![0u8; SumKesSignature::expected_size(2)];
+        let sig = SumKesSignature::from_bytes(2, &data).unwrap();
+        assert_eq!(sig.depth(), 2);
+    }
+
+    #[test]
+    fn signature_from_bytes_wrong_len() {
+        let data = vec![0u8; 10];
+        let result = SumKesSignature::from_bytes(1, &data);
+        assert!(result.is_err());
+    }
+
+    // ── SumKesSigningKey ─────────────────────────────────────────────────
+
+    #[test]
+    fn signing_key_debug_redacted() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 0).unwrap();
+        let dbg = format!("{:?}", sk);
+        assert!(dbg.contains("REDACTED"));
+    }
+
+    #[test]
+    fn signing_key_total_periods() {
+        for depth in 0..=6 {
+            let sk = gen_sum_kes_signing_key(&test_seed(1), depth).unwrap();
+            assert_eq!(sk.total_periods(), 1u32 << depth);
+        }
+    }
+
+    #[test]
+    fn signing_key_constant_time_eq() {
+        let sk1 = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let sk2 = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let sk3 = gen_sum_kes_signing_key(&test_seed(2), 1).unwrap();
+        assert_eq!(sk1, sk2);
+        assert_ne!(sk1, sk3);
+    }
+
+    // ── Seed expansion ───────────────────────────────────────────────────
+
+    #[test]
+    fn expand_seed_produces_different_halves() {
+        let (left, right) = expand_seed(&test_seed(0));
+        assert_ne!(left, right);
+    }
+
+    #[test]
+    fn expand_seed_is_deterministic() {
+        let (l1, r1) = expand_seed(&test_seed(42));
+        let (l2, r2) = expand_seed(&test_seed(42));
+        assert_eq!(l1, l2);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn expand_seed_different_inputs_differ() {
+        let (l1, _) = expand_seed(&test_seed(1));
+        let (l2, _) = expand_seed(&test_seed(2));
+        assert_ne!(l1, l2);
+    }
+
+    // ── hash_pair_of_vkeys ───────────────────────────────────────────────
+
+    #[test]
+    fn hash_pair_of_vkeys_deterministic() {
+        let a = [1u8; VK_SIZE];
+        let b = [2u8; VK_SIZE];
+        assert_eq!(hash_pair_of_vkeys(&a, &b), hash_pair_of_vkeys(&a, &b));
+    }
+
+    #[test]
+    fn hash_pair_of_vkeys_order_matters() {
+        let a = [1u8; VK_SIZE];
+        let b = [2u8; VK_SIZE];
+        assert_ne!(hash_pair_of_vkeys(&a, &b), hash_pair_of_vkeys(&b, &a));
+    }
+
+    // ── Key generation ───────────────────────────────────────────────────
+
+    #[test]
+    fn gen_depth_0() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 0).unwrap();
+        assert_eq!(sk.depth(), 0);
+        assert_eq!(sk.data.len(), SEED_SIZE);
+    }
+
+    #[test]
+    fn gen_depth_1() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        assert_eq!(sk.depth(), 1);
+        assert_eq!(sk.data.len(), sk_size(1));
+    }
+
+    #[test]
+    fn gen_depth_3() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 3).unwrap();
+        assert_eq!(sk.depth(), 3);
+        assert_eq!(sk.data.len(), sk_size(3));
+        assert_eq!(sk.total_periods(), 8);
+    }
+
+    // ── VK derivation ────────────────────────────────────────────────────
+
+    #[test]
+    fn derive_vk_depth_0_matches_ed25519() {
+        let seed = test_seed(7);
+        let sk = gen_sum_kes_signing_key(&seed, 0).unwrap();
+        let sum_vk = derive_sum_kes_vk(&sk).unwrap();
+        let ed_vk = crate::ed25519::SigningKey::from_bytes(seed)
+            .verification_key()
+            .unwrap();
+        assert_eq!(sum_vk.0, ed_vk.to_bytes());
+    }
+
+    #[test]
+    fn derive_vk_depth_1_is_hash_of_children() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+        // VK should be Blake2b-256(vk_left || vk_right).
+        let vk_left = extract_vk_left_from_sk(&sk);
+        let vk_right = extract_vk_right_from_sk(&sk);
+        assert_eq!(vk.0, hash_pair_of_vkeys(&vk_left, &vk_right));
+    }
+
+    #[test]
+    fn derive_vk_deterministic() {
+        let sk = gen_sum_kes_signing_key(&test_seed(5), 2).unwrap();
+        let vk1 = derive_sum_kes_vk(&sk).unwrap();
+        let vk2 = derive_sum_kes_vk(&sk).unwrap();
+        assert_eq!(vk1, vk2);
+    }
+
+    // ── sign + verify depth 0 ────────────────────────────────────────────
+
+    #[test]
+    fn sign_verify_depth_0_period_0() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 0).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+        let sig = sign_sum_kes(&sk, 0, b"hello").unwrap();
+        verify_sum_kes(&vk, 0, b"hello", &sig)
+            .expect("depth 0 period 0 should verify");
+    }
+
+    #[test]
+    fn sign_depth_0_period_1_rejected() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 0).unwrap();
+        assert_eq!(
+            sign_sum_kes(&sk, 1, b"msg"),
+            Err(CryptoError::InvalidKesPeriod(1))
+        );
+    }
+
+    // ── sign + verify depth 1 ────────────────────────────────────────────
+
+    #[test]
+    fn sign_verify_depth_1_both_periods() {
+        let sk = gen_sum_kes_signing_key(&test_seed(3), 1).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+
+        // Period 0 with the initial key.
+        let sig0 = sign_sum_kes(&sk, 0, b"test").unwrap();
+        verify_sum_kes(&vk, 0, b"test", &sig0)
+            .expect("depth 1 period 0 should verify");
+
+        // Evolve to period 1.
+        let sk1 = update_sum_kes(&sk, 0).unwrap().expect("should evolve");
+        let sig1 = sign_sum_kes(&sk1, 1, b"test").unwrap();
+        verify_sum_kes(&vk, 1, b"test", &sig1)
+            .expect("depth 1 period 1 should verify");
+    }
+
+    #[test]
+    fn depth_1_period_2_rejected() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        assert_eq!(
+            sign_sum_kes(&sk, 2, b"msg"),
+            Err(CryptoError::InvalidKesPeriod(2))
+        );
+    }
+
+    // ── sign + verify depth 2 ────────────────────────────────────────────
+
+    #[test]
+    fn sign_verify_depth_2_all_periods() {
+        let sk = gen_sum_kes_signing_key(&test_seed(9), 2).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+
+        let mut current_sk = sk;
+        for period in 0..4 {
+            let sig = sign_sum_kes(&current_sk, period, b"depth2").unwrap();
+            verify_sum_kes(&vk, period, b"depth2", &sig)
+                .unwrap_or_else(|e| panic!("depth 2 period {period} should verify: {e}"));
+            if period < 3 {
+                current_sk = update_sum_kes(&current_sk, period)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("should evolve from period {period}"));
+            }
+        }
+    }
+
+    // ── sign + verify depth 3 ────────────────────────────────────────────
+
+    #[test]
+    fn sign_verify_depth_3_all_periods() {
+        let sk = gen_sum_kes_signing_key(&test_seed(0xAA), 3).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+
+        let mut current_sk = sk;
+        for period in 0..8 {
+            let sig = sign_sum_kes(&current_sk, period, b"depth3msg").unwrap();
+            verify_sum_kes(&vk, period, b"depth3msg", &sig)
+                .unwrap_or_else(|e| panic!("depth 3 period {period} should verify: {e}"));
+            if period < 7 {
+                current_sk = update_sum_kes(&current_sk, period)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("should evolve from period {period}"));
+            }
+        }
+    }
+
+    // ── Signature tamper detection ───────────────────────────────────────
+
+    #[test]
+    fn tampered_signature_rejected() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+        let sig = sign_sum_kes(&sk, 0, b"msg").unwrap();
+        let mut bad_data = sig.data.clone();
+        bad_data[0] ^= 0xFF;
+        let bad_sig = SumKesSignature {
+            depth: sig.depth,
+            data: bad_data,
+        };
+        assert!(verify_sum_kes(&vk, 0, b"msg", &bad_sig).is_err());
+    }
+
+    #[test]
+    fn wrong_message_rejected() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+        let sig = sign_sum_kes(&sk, 0, b"good").unwrap();
+        assert!(verify_sum_kes(&vk, 0, b"bad", &sig).is_err());
+    }
+
+    #[test]
+    fn wrong_vk_rejected() {
+        let sk1 = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let vk2 = derive_sum_kes_vk(
+            &gen_sum_kes_signing_key(&test_seed(2), 1).unwrap(),
+        )
+        .unwrap();
+        let sig = sign_sum_kes(&sk1, 0, b"msg").unwrap();
+        assert!(verify_sum_kes(&vk2, 0, b"msg", &sig).is_err());
+    }
+
+    #[test]
+    fn verify_out_of_range_period_rejected() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+        let sig = sign_sum_kes(&sk, 0, b"msg").unwrap();
+        assert_eq!(
+            verify_sum_kes(&vk, 2, b"msg", &sig),
+            Err(CryptoError::InvalidKesPeriod(2))
+        );
+    }
+
+    // ── Key update (evolution) ───────────────────────────────────────────
+
+    #[test]
+    fn update_depth_0_returns_none() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 0).unwrap();
+        assert!(update_sum_kes(&sk, 0).unwrap().is_none());
+    }
+
+    #[test]
+    fn update_depth_1_from_period_0() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+
+        let sk1 = update_sum_kes(&sk, 0).unwrap().expect("should evolve to period 1");
+        let sig = sign_sum_kes(&sk1, 1, b"evolved").unwrap();
+        verify_sum_kes(&vk, 1, b"evolved", &sig)
+            .expect("evolved key should sign period 1 validly");
+    }
+
+    #[test]
+    fn update_depth_1_at_last_period_returns_none() {
+        let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
+        let sk1 = update_sum_kes(&sk, 0).unwrap().unwrap();
+        assert!(update_sum_kes(&sk1, 1).unwrap().is_none());
+    }
+
+    #[test]
+    fn update_depth_2_full_evolution() {
+        let sk = gen_sum_kes_signing_key(&test_seed(5), 2).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+
+        // Evolve through all 4 periods: 0 → 1 → 2 → 3
+        let mut current_sk = sk;
+        for period in 0..4 {
+            let sig = sign_sum_kes(&current_sk, period, b"evo").unwrap();
+            verify_sum_kes(&vk, period, b"evo", &sig)
+                .unwrap_or_else(|e| panic!("period {period} should verify: {e}"));
+
+            if period < 3 {
+                current_sk = update_sum_kes(&current_sk, period)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("should evolve from period {period}"));
+            } else {
+                assert!(update_sum_kes(&current_sk, period).unwrap().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn update_depth_3_full_evolution() {
+        let sk = gen_sum_kes_signing_key(&test_seed(0xBB), 3).unwrap();
+        let vk = derive_sum_kes_vk(&sk).unwrap();
+
+        let mut current_sk = sk;
+        for period in 0..8 {
+            let sig = sign_sum_kes(&current_sk, period, b"d3evo").unwrap();
+            verify_sum_kes(&vk, period, b"d3evo", &sig)
+                .unwrap_or_else(|e| panic!("period {period} should verify: {e}"));
+
+            if period < 7 {
+                current_sk = update_sum_kes(&current_sk, period)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("should evolve from period {period}"));
+            } else {
+                assert!(update_sum_kes(&current_sk, period).unwrap().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn evolved_key_preserves_vk() {
+        let sk = gen_sum_kes_signing_key(&test_seed(3), 2).unwrap();
+        let vk_before = derive_sum_kes_vk(&sk).unwrap();
+
+        let sk1 = update_sum_kes(&sk, 0).unwrap().unwrap();
+        let vk_after = derive_sum_kes_vk(&sk1).unwrap();
+        assert_eq!(vk_before, vk_after, "VK should be stable across evolution");
+    }
+
+    // ── sk_size helper ───────────────────────────────────────────────────
+
+    #[test]
+    fn sk_size_depth_0() {
+        assert_eq!(sk_size(0), SEED_SIZE);
+    }
+
+    #[test]
+    fn sk_size_depth_1() {
+        assert_eq!(sk_size(1), SEED_SIZE + SEED_SIZE + 2 * VK_SIZE);
+    }
+
+    #[test]
+    fn sk_size_matches_generated_key_data() {
+        for depth in 0..=4 {
+            let sk = gen_sum_kes_signing_key(&test_seed(1), depth).unwrap();
+            assert_eq!(
+                sk.data.len(),
+                sk_size(depth),
+                "data length mismatch at depth {depth}"
+            );
+        }
+    }
+}
