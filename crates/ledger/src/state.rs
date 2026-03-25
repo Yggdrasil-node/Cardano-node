@@ -6968,6 +6968,352 @@ mod tests {
     }
 
     #[test]
+    fn test_bootstrap_rejects_non_bootstrap_proposal_action() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("bootstrap-disallowed"),
+            },
+            1,
+            1,
+        )];
+
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            Some((9, 0)),
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::DisallowedProposalDuringBootstrap(_))
+        ));
+    }
+
+    #[test]
+    fn test_bootstrap_allows_parameter_change_proposal_action() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            Some((9, 0)),
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_rejects_drep_vote_on_non_info_action() {
+        let drep_voter = Voter::DRepKeyHash([0x66; 28]);
+        let action_id = sample_gov_action_id(71);
+        let governance_actions = sample_governance_actions_with(vec![
+            (
+                action_id.clone(),
+                GovAction::HardForkInitiation {
+                    prev_action_id: None,
+                    protocol_version: (10, 0),
+                },
+            ),
+        ]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(drep_voter.clone(), inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::DisallowedVotesDuringBootstrap(ref entries))
+                if entries == &vec![(drep_voter, action_id)]
+        ));
+    }
+
+    #[test]
+    fn test_bootstrap_rejects_committee_vote_on_non_bootstrap_action() {
+        let committee_voter = Voter::CommitteeKeyHash([0x67; 28]);
+        let action_id = sample_gov_action_id(72);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("bootstrap-committee-disallowed"),
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(committee_voter.clone(), inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::DisallowedVotesDuringBootstrap(ref entries))
+                if entries == &vec![(committee_voter, action_id)]
+        ));
+    }
+
+    #[test]
+    fn test_bootstrap_rejects_spo_vote_on_non_bootstrap_action() {
+        let spo_voter = Voter::StakePool([0x68; 28]);
+        let action_id = sample_gov_action_id(73);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::TreasuryWithdrawals {
+                withdrawals: BTreeMap::from([(sample_reward_account(7), 1)]),
+                guardrails_script_hash: None,
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(spo_voter.clone(), inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::DisallowedVotesDuringBootstrap(ref entries))
+                if entries == &vec![(spo_voter, action_id)]
+        ));
+    }
+
+    #[test]
+    fn test_bootstrap_allows_drep_vote_on_info_action() {
+        let drep_voter = Voter::DRepKeyHash([0x69; 28]);
+        let action_id = sample_gov_action_id(74);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::InfoAction,
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(drep_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_allows_committee_vote_on_hard_fork_action() {
+        let committee_voter = Voter::CommitteeKeyHash([0x6A; 28]);
+        let action_id = sample_gov_action_id(75);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(committee_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_allows_committee_vote_on_parameter_change_action() {
+        let committee_voter = Voter::CommitteeKeyHash([0x6C; 28]);
+        let action_id = sample_gov_action_id(77);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(committee_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_allows_spo_vote_on_hard_fork_action() {
+        let spo_voter = Voter::StakePool([0x6B; 28]);
+        let action_id = sample_gov_action_id(76);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(spo_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_allows_spo_vote_on_parameter_change_action() {
+        let spo_voter = Voter::StakePool([0x6D; 28]);
+        let action_id = sample_gov_action_id(78);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::No,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(spo_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_parameter_change_rejects_malformed_unit_interval() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
