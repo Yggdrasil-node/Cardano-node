@@ -1824,6 +1824,98 @@ fn conway_block_accepts_allowed_bootstrap_votes() {
 }
 
 #[test]
+fn conway_block_accepts_allowed_info_action_proposal_during_bootstrap() {
+    let payment_keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let payment_address = enterprise_keyhash_address(&payment_keyhash);
+    let reward_account = RewardAccount {
+        network: 0,
+        credential: StakeCredential::AddrKeyHash([0x80; 28]),
+    };
+
+    let proposal = ProposalProcedure {
+        deposit: 0,
+        reward_account: reward_account.to_bytes().to_vec(),
+        gov_action: GovAction::InfoAction,
+        anchor: Anchor {
+            url: "https://example.invalid/bootstrap-info-proposal".to_owned(),
+            data_hash: [0x81; 32],
+        },
+    };
+
+    let tx_body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x82; 32],
+            index: 0,
+        }],
+        outputs: vec![BabbageTxOut {
+            address: payment_address.clone(),
+            amount: Value::Coin(4_800_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(vec![proposal.clone()]),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let body_bytes = tx_body.to_cbor_bytes();
+    let tx_id_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id_hash.0),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&witness_set_with_vkeys(vec![make_witness(
+            &TEST_SEED,
+            &tx_id_hash.0,
+        )]))),
+        auxiliary_data: None,
+    };
+
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(conway_bootstrap_protocol_params());
+    state.multi_era_utxo_mut().insert(
+        ShelleyTxIn {
+            transaction_id: [0x82; 32],
+            index: 0,
+        },
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: payment_address,
+            amount: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+    state.stake_credentials_mut().register(reward_account.credential);
+
+    state
+        .apply_block(&make_conway_block(500, 1, 0xD8, vec![tx]))
+        .expect("allowed bootstrap InfoAction proposal should succeed");
+
+    let gov_action_id = GovActionId {
+        transaction_id: tx_id_hash.0,
+        gov_action_index: 0,
+    };
+    let stored_action = state
+        .governance_action(&gov_action_id)
+        .expect("bootstrap InfoAction proposal stored");
+    assert_eq!(stored_action.proposal(), &proposal);
+}
+
+#[test]
 fn conway_block_rejects_missing_cross_tx_prev_governance_action_reference() {
     let reward_account = RewardAccount {
         network: 0,

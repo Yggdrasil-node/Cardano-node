@@ -7031,6 +7031,31 @@ mod tests {
     }
 
     #[test]
+    fn test_bootstrap_allows_info_action_proposal() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::InfoAction,
+            1,
+            1,
+        )];
+
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            Some((9, 0)),
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_bootstrap_rejects_drep_vote_on_non_info_action() {
         let drep_voter = Voter::DRepKeyHash([0x66; 28]);
         let action_id = sample_gov_action_id(71);
@@ -7311,6 +7336,221 @@ mod tests {
             Some((9, 0)),
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_allows_committee_vote_on_info_action() {
+        let committee_voter = Voter::CommitteeKeyHash([0x6E; 28]);
+        let action_id = sample_gov_action_id(79);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::InfoAction,
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(committee_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_allows_spo_vote_on_info_action() {
+        let spo_voter = Voter::StakePool([0x6F; 28]);
+        let action_id = sample_gov_action_id(80);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::InfoAction,
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(spo_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            Some((9, 0)),
+        );
+        assert!(result.is_ok());
+    }
+
+    // --- Post-bootstrap (non-bootstrap) voter permission tests ---
+
+    #[test]
+    fn test_post_bootstrap_spo_vote_allowed_on_security_group_parameter_change() {
+        let spo_voter = Voter::StakePool([0xA0; 28]);
+        let action_id = sample_gov_action_id(90);
+        // min_fee_a is Economic + Security group, so SPO should be allowed
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(500),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id,
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(spo_voter, inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            None, // post-bootstrap
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_post_bootstrap_spo_vote_rejected_on_non_security_parameter_change() {
+        let spo_voter = Voter::StakePool([0xA1; 28]);
+        let action_id = sample_gov_action_id(91);
+        // key_deposit is Economic only (no security group), so SPO should be rejected
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    key_deposit: Some(2_000_000),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(spo_voter.clone(), inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            None, // post-bootstrap
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::DisallowedVoters(ref entries))
+                if entries == &vec![(spo_voter, action_id)]
+        ));
+    }
+
+    #[test]
+    fn test_post_bootstrap_spo_vote_rejected_on_new_constitution() {
+        let spo_voter = Voter::StakePool([0xA2; 28]);
+        let action_id = sample_gov_action_id(92);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("post-bootstrap-constitution"),
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(spo_voter.clone(), inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            None, // post-bootstrap
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::DisallowedVoters(ref entries))
+                if entries == &vec![(spo_voter, action_id)]
+        ));
+    }
+
+    #[test]
+    fn test_post_bootstrap_committee_vote_rejected_on_no_confidence() {
+        let committee_voter = Voter::CommitteeKeyHash([0xA3; 28]);
+        let action_id = sample_gov_action_id(93);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::NoConfidence {
+                prev_action_id: None,
+            },
+        )]);
+
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            action_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::No,
+                anchor: None,
+            },
+        );
+        let voting_procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::from([(committee_voter.clone(), inner)]),
+        };
+
+        let result = validate_conway_voter_permissions(
+            EpochNo(0),
+            &voting_procedures,
+            &governance_actions,
+            None, // post-bootstrap
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::DisallowedVoters(ref entries))
+                if entries == &vec![(committee_voter, action_id)]
+        ));
     }
 
     #[test]
