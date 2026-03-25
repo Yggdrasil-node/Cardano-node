@@ -366,3 +366,246 @@ pub enum LedgerError {
     #[error("protocol parameters are required but missing")]
     MissingProtocolParameters,
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eras::Era;
+
+    #[test]
+    fn unsupported_era_display() {
+        let e = LedgerError::UnsupportedEra(Era::Byron);
+        assert!(e.to_string().contains("unsupported era"));
+    }
+
+    #[test]
+    fn cbor_unexpected_eof_display() {
+        let e = LedgerError::CborUnexpectedEof;
+        assert_eq!(e.to_string(), "CBOR: unexpected end of input");
+    }
+
+    #[test]
+    fn cbor_type_mismatch_display() {
+        let e = LedgerError::CborTypeMismatch { expected: 0, actual: 2 };
+        let s = e.to_string();
+        assert!(s.contains("expected major 0"));
+        assert!(s.contains("got 2"));
+    }
+
+    #[test]
+    fn cbor_invalid_additional_info_display() {
+        let e = LedgerError::CborInvalidAdditionalInfo(31);
+        assert!(e.to_string().contains("31"));
+    }
+
+    #[test]
+    fn cbor_invalid_length_display() {
+        let e = LedgerError::CborInvalidLength { expected: 3, actual: 5 };
+        let s = e.to_string();
+        assert!(s.contains("expected 3"));
+        assert!(s.contains("got 5"));
+    }
+
+    #[test]
+    fn cbor_trailing_bytes_display() {
+        let e = LedgerError::CborTrailingBytes(10);
+        assert!(e.to_string().contains("10 trailing bytes"));
+    }
+
+    #[test]
+    fn cbor_decode_error_display() {
+        let e = LedgerError::CborDecodeError("custom error".into());
+        assert!(e.to_string().contains("custom error"));
+    }
+
+    #[test]
+    fn tx_expired_display() {
+        let e = LedgerError::TxExpired { ttl: 100, slot: 200 };
+        let s = e.to_string();
+        assert!(s.contains("TTL 100"));
+        assert!(s.contains("slot 200"));
+    }
+
+    #[test]
+    fn input_not_in_utxo_display() {
+        let e = LedgerError::InputNotInUtxo;
+        assert_eq!(e.to_string(), "input not found in UTxO set");
+    }
+
+    #[test]
+    fn value_not_preserved_display() {
+        let e = LedgerError::ValueNotPreserved {
+            consumed: 100,
+            produced: 80,
+            fee: 10,
+        };
+        let s = e.to_string();
+        assert!(s.contains("100"));
+        assert!(s.contains("80"));
+        assert!(s.contains("10"));
+    }
+
+    #[test]
+    fn no_inputs_display() {
+        assert_eq!(LedgerError::NoInputs.to_string(), "no inputs in transaction");
+    }
+
+    #[test]
+    fn no_outputs_display() {
+        assert_eq!(LedgerError::NoOutputs.to_string(), "no outputs in transaction");
+    }
+
+    #[test]
+    fn pool_not_registered_display() {
+        let e = LedgerError::PoolNotRegistered([0xaa; 28]);
+        assert!(e.to_string().contains("stake pool not registered"));
+    }
+
+    #[test]
+    fn stake_credential_already_registered_display() {
+        let cred = StakeCredential::AddrKeyHash([0x01; 28]);
+        let e = LedgerError::StakeCredentialAlreadyRegistered(cred);
+        assert!(e.to_string().contains("already registered"));
+    }
+
+    #[test]
+    fn stake_credential_not_registered_display() {
+        let cred = StakeCredential::ScriptHash([0x02; 28]);
+        let e = LedgerError::StakeCredentialNotRegistered(cred);
+        assert!(e.to_string().contains("not registered"));
+    }
+
+    #[test]
+    fn drep_already_registered_display() {
+        let e = LedgerError::DrepAlreadyRegistered(DRep::AlwaysAbstain);
+        assert!(e.to_string().contains("drep already registered"));
+    }
+
+    #[test]
+    fn drep_not_registered_display() {
+        let e = LedgerError::DrepNotRegistered(DRep::AlwaysNoConfidence);
+        assert!(e.to_string().contains("drep not registered"));
+    }
+
+    #[test]
+    fn fee_too_small_display() {
+        let e = LedgerError::FeeTooSmall { minimum: 200_000, declared: 100_000 };
+        let s = e.to_string();
+        assert!(s.contains("200000"));
+        assert!(s.contains("100000"));
+    }
+
+    #[test]
+    fn output_too_small_display() {
+        let e = LedgerError::OutputTooSmall { minimum: 1_000_000, actual: 500_000 };
+        assert!(e.to_string().contains("1000000"));
+    }
+
+    #[test]
+    fn missing_protocol_parameters_display() {
+        let e = LedgerError::MissingProtocolParameters;
+        assert!(e.to_string().contains("protocol parameters"));
+    }
+
+    #[test]
+    fn error_equality() {
+        let e1 = LedgerError::CborUnexpectedEof;
+        let e2 = LedgerError::CborUnexpectedEof;
+        assert_eq!(e1, e2);
+
+        let e3 = LedgerError::InputNotInUtxo;
+        assert_ne!(e1, e3);
+    }
+
+    #[test]
+    fn proposal_deposit_incorrect_display() {
+        let e = LedgerError::ProposalDepositIncorrect { supplied: 500, expected: 1000 };
+        let s = e.to_string();
+        assert!(s.contains("supplied 500"));
+        assert!(s.contains("expected 1000"));
+    }
+
+    #[test]
+    fn block_too_large_display() {
+        let e = LedgerError::BlockTooLarge { actual: 100_000, max: 65_536 };
+        assert!(e.to_string().contains("100000"));
+    }
+
+    #[test]
+    fn no_collateral_inputs_display() {
+        let e = LedgerError::NoCollateralInputs;
+        assert!(e.to_string().contains("no collateral inputs"));
+    }
+
+    #[test]
+    fn auxiliary_data_hash_mismatch_display() {
+        let e = LedgerError::AuxiliaryDataHashMismatch {
+            declared: [0x01; 32],
+            computed: [0x02; 32],
+        };
+        assert!(e.to_string().contains("auxiliary data hash mismatch"));
+    }
+
+    #[test]
+    fn pool_cost_too_low_display() {
+        let e = LedgerError::PoolCostTooLow { cost: 100, min_pool_cost: 340_000_000 };
+        let s = e.to_string();
+        assert!(s.contains("100"));
+        assert!(s.contains("340000000"));
+    }
+
+    #[test]
+    fn block_era_regression_display() {
+        let e = LedgerError::BlockEraRegression {
+            ledger_era: Era::Conway,
+            ledger_ordinal: 6,
+            block_era: Era::Shelley,
+            block_ordinal: 1,
+        };
+        assert!(e.to_string().contains("era regression"));
+    }
+
+    #[test]
+    fn missing_vkey_witness_display() {
+        let e = LedgerError::MissingVKeyWitness { hash: [0xab; 28] };
+        assert!(e.to_string().contains("missing required VKey witness"));
+    }
+
+    #[test]
+    fn withdrawal_exceeds_balance_display() {
+        let ra = RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0x01; 28]),
+        };
+        let e = LedgerError::WithdrawalExceedsBalance {
+            account: ra,
+            requested: 100,
+            available: 50,
+        };
+        let s = e.to_string();
+        assert!(s.contains("withdrawal"));
+        assert!(s.contains("100"));
+        assert!(s.contains("50"));
+    }
+
+    #[test]
+    fn multi_asset_not_preserved_display() {
+        let e = LedgerError::MultiAssetNotPreserved {
+            policy: [0x01; 28],
+            asset_name: vec![0x02],
+            expected: 100,
+            produced: 90,
+        };
+        assert!(e.to_string().contains("multi-asset not preserved"));
+    }
+
+    #[test]
+    fn error_is_debug() {
+        let e = LedgerError::CborUnexpectedEof;
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("CborUnexpectedEof"));
+    }
+}

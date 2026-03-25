@@ -938,3 +938,646 @@ fn encode_variable_nat(mut value: u64, out: &mut Vec<u8>) {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── SlotNo / BlockNo / EpochNo ─────────────────────────────────────
+
+    #[test]
+    fn slot_no_ord() {
+        assert!(SlotNo(1) < SlotNo(2));
+        assert_eq!(SlotNo(0), SlotNo::default());
+    }
+
+    #[test]
+    fn block_no_ord() {
+        assert!(BlockNo(5) > BlockNo(3));
+    }
+
+    #[test]
+    fn epoch_no_default_is_zero() {
+        assert_eq!(EpochNo::default(), EpochNo(0));
+    }
+
+    // ── HeaderHash / TxId display ──────────────────────────────────────
+
+    #[test]
+    fn header_hash_debug_and_display() {
+        let hh = HeaderHash([0xab; 32]);
+        let dbg = format!("{hh:?}");
+        assert!(dbg.contains("HeaderHash("));
+        let disp = format!("{hh}");
+        // Short hex: first 8 bytes = "abababababababab…"
+        assert!(disp.starts_with("abab"));
+        assert!(disp.ends_with('…'));
+    }
+
+    #[test]
+    fn tx_id_debug_and_display() {
+        let tid = TxId([0x01; 32]);
+        let dbg = format!("{tid:?}");
+        assert!(dbg.contains("TxId("));
+        let disp = format!("{tid}");
+        assert!(disp.starts_with("0101"));
+    }
+
+    // ── Point ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn point_origin_accessors() {
+        let p = Point::Origin;
+        assert_eq!(p.slot(), None);
+        assert_eq!(p.hash(), None);
+    }
+
+    #[test]
+    fn point_block_point_accessors() {
+        let hh = HeaderHash([0xff; 32]);
+        let p = Point::BlockPoint(SlotNo(42), hh);
+        assert_eq!(p.slot(), Some(SlotNo(42)));
+        assert_eq!(p.hash(), Some(hh));
+    }
+
+    // ── Nonce ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn nonce_neutral_combine_identity() {
+        let n = Nonce::Hash([0xaa; 32]);
+        assert_eq!(n.combine(Nonce::Neutral), n);
+        assert_eq!(Nonce::Neutral.combine(n), n);
+    }
+
+    #[test]
+    fn nonce_combine_xor() {
+        let a = Nonce::Hash([0xff; 32]);
+        let b = Nonce::Hash([0x0f; 32]);
+        let c = a.combine(b);
+        if let Nonce::Hash(h) = c {
+            assert!(h.iter().all(|&byte| byte == 0xf0));
+        } else {
+            panic!("Expected Hash");
+        }
+    }
+
+    #[test]
+    fn nonce_neutral_combine_neutral_is_neutral() {
+        assert_eq!(Nonce::Neutral.combine(Nonce::Neutral), Nonce::Neutral);
+    }
+
+    #[test]
+    fn nonce_from_header_hash() {
+        let hh = HeaderHash([0x42; 32]);
+        let n = Nonce::from_header_hash(hh);
+        assert_eq!(n, Nonce::Hash([0x42; 32]));
+    }
+
+    // ── StakeCredential ────────────────────────────────────────────────
+
+    #[test]
+    fn stake_credential_hash() {
+        let h = [0x01; 28];
+        let sc = StakeCredential::AddrKeyHash(h);
+        assert_eq!(sc.hash(), &h);
+        assert!(sc.is_key_hash());
+        assert!(!sc.is_script_hash());
+    }
+
+    #[test]
+    fn stake_credential_script_variant() {
+        let h = [0x02; 28];
+        let sc = StakeCredential::ScriptHash(h);
+        assert_eq!(sc.hash(), &h);
+        assert!(!sc.is_key_hash());
+        assert!(sc.is_script_hash());
+    }
+
+    // ── RewardAccount ──────────────────────────────────────────────────
+
+    #[test]
+    fn reward_account_key_hash_round_trip() {
+        let ra = RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xaa; 28]),
+        };
+        let bytes = ra.to_bytes();
+        assert_eq!(bytes.len(), 29);
+        // Header: 0xe0 | 1 = 0xe1
+        assert_eq!(bytes[0], 0xe1);
+        let decoded = RewardAccount::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, ra);
+    }
+
+    #[test]
+    fn reward_account_script_hash_round_trip() {
+        let ra = RewardAccount {
+            network: 0,
+            credential: StakeCredential::ScriptHash([0xbb; 28]),
+        };
+        let bytes = ra.to_bytes();
+        // Header: 0xf0 | 0 = 0xf0
+        assert_eq!(bytes[0], 0xf0);
+        let decoded = RewardAccount::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, ra);
+    }
+
+    #[test]
+    fn reward_account_from_bytes_wrong_length() {
+        assert!(RewardAccount::from_bytes(&[0xe1; 10]).is_none());
+    }
+
+    #[test]
+    fn reward_account_from_bytes_bad_header() {
+        // Type nibble 0x0d is not a valid reward account type
+        let mut bytes = [0u8; 29];
+        bytes[0] = 0xd1;
+        assert!(RewardAccount::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn reward_account_from_bytes_bad_network() {
+        // network 5 is invalid (only 0 and 1 valid)
+        let mut bytes = [0u8; 29];
+        bytes[0] = 0xe5;
+        assert!(RewardAccount::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn reward_account_validate_valid() {
+        let ra = RewardAccount {
+            network: 0,
+            credential: StakeCredential::AddrKeyHash([0x01; 28]),
+        };
+        assert!(ra.validate().is_ok());
+    }
+
+    #[test]
+    fn reward_account_validate_bad_network() {
+        let ra = RewardAccount {
+            network: 3,
+            credential: StakeCredential::AddrKeyHash([0x01; 28]),
+        };
+        assert!(ra.validate().is_err());
+    }
+
+    // ── Address: Base ──────────────────────────────────────────────────
+
+    #[test]
+    fn base_address_key_key_round_trip() {
+        let addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0x11; 28]),
+            staking: StakeCredential::AddrKeyHash([0x22; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes.len(), 57);
+        assert_eq!(bytes[0], 0x01); // type 0, network 1
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    #[test]
+    fn base_address_script_script_round_trip() {
+        let addr = Address::Base(BaseAddress {
+            network: 0,
+            payment: StakeCredential::ScriptHash([0x33; 28]),
+            staking: StakeCredential::ScriptHash([0x44; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes[0], 0x30); // type 3, network 0
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    #[test]
+    fn base_address_key_script_round_trip() {
+        let addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0x55; 28]),
+            staking: StakeCredential::ScriptHash([0x66; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes[0], 0x21); // type 2, network 1
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    #[test]
+    fn base_address_script_key_round_trip() {
+        let addr = Address::Base(BaseAddress {
+            network: 0,
+            payment: StakeCredential::ScriptHash([0x77; 28]),
+            staking: StakeCredential::AddrKeyHash([0x88; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes[0], 0x10); // type 1, network 0
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    // ── Address: Enterprise ────────────────────────────────────────────
+
+    #[test]
+    fn enterprise_address_key_round_trip() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xab; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes.len(), 29);
+        assert_eq!(bytes[0], 0x61); // type 6, network 1
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    #[test]
+    fn enterprise_address_script_round_trip() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 0,
+            payment: StakeCredential::ScriptHash([0xcd; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes[0], 0x70); // type 7, network 0
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    // ── Address: Pointer ───────────────────────────────────────────────
+
+    #[test]
+    fn pointer_address_round_trip() {
+        let addr = Address::Pointer(PointerAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0x01; 28]),
+            slot: 100,
+            tx_index: 2,
+            cert_index: 0,
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes[0], 0x41); // type 4, network 1
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    #[test]
+    fn pointer_address_script_round_trip() {
+        let addr = Address::Pointer(PointerAddress {
+            network: 0,
+            payment: StakeCredential::ScriptHash([0x02; 28]),
+            slot: 0,
+            tx_index: 0,
+            cert_index: 0,
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes[0], 0x50); // type 5, network 0
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    // ── Address: Reward ────────────────────────────────────────────────
+
+    #[test]
+    fn reward_address_round_trip() {
+        let addr = Address::Reward(RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xfe; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes[0], 0xe1);
+        let decoded = Address::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, addr);
+    }
+
+    // ── Address: Byron ─────────────────────────────────────────────────
+
+    #[test]
+    fn byron_address_parses_with_type_8() {
+        // Construct a minimal type-8 header byte + dummy content
+        let mut raw = vec![0x80]; // type 8, network 0
+        raw.extend_from_slice(&[0x00; 28]);
+        let decoded = Address::from_bytes(&raw);
+        match decoded {
+            Some(Address::Byron(b)) => assert_eq!(b, raw),
+            _ => panic!("Expected Byron address"),
+        }
+    }
+
+    // ── Address: error cases ───────────────────────────────────────────
+
+    #[test]
+    fn address_from_bytes_empty() {
+        assert!(Address::from_bytes(&[]).is_none());
+    }
+
+    #[test]
+    fn address_from_bytes_unknown_type() {
+        // Type nibble 0x9 is not defined
+        let mut bytes = [0u8; 29];
+        bytes[0] = 0x91;
+        assert!(Address::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn address_from_bytes_base_wrong_length() {
+        // Base address must be 57 bytes
+        let bytes = vec![0x01; 30];
+        assert!(Address::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn address_from_bytes_enterprise_wrong_length() {
+        let bytes = vec![0x61; 10];
+        assert!(Address::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn address_from_bytes_bad_network() {
+        // Base address with network=5 (invalid)
+        let mut bytes = vec![0u8; 57];
+        bytes[0] = 0x05; // type 0, network 5
+        assert!(Address::from_bytes(&bytes).is_none());
+    }
+
+    // ── Address: payment_credential ────────────────────────────────────
+
+    #[test]
+    fn payment_credential_base() {
+        let cred = StakeCredential::AddrKeyHash([0x01; 28]);
+        let addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: cred,
+            staking: StakeCredential::AddrKeyHash([0x02; 28]),
+        });
+        assert_eq!(addr.payment_credential(), Some(&cred));
+    }
+
+    #[test]
+    fn payment_credential_enterprise() {
+        let cred = StakeCredential::ScriptHash([0x03; 28]);
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 0,
+            payment: cred,
+        });
+        assert_eq!(addr.payment_credential(), Some(&cred));
+    }
+
+    #[test]
+    fn payment_credential_byron_is_none() {
+        let addr = Address::Byron(vec![0x80, 0x00]);
+        assert!(addr.payment_credential().is_none());
+    }
+
+    // ── Address: network ───────────────────────────────────────────────
+
+    #[test]
+    fn address_network() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0; 28]),
+        });
+        assert_eq!(addr.network(), Some(1));
+    }
+
+    #[test]
+    fn byron_address_network_is_none() {
+        let addr = Address::Byron(vec![0x80]);
+        assert_eq!(addr.network(), None);
+    }
+
+    // ── Address: validate_bytes ────────────────────────────────────────
+
+    #[test]
+    fn validate_bytes_valid_enterprise() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 0,
+            payment: StakeCredential::AddrKeyHash([0x01; 28]),
+        });
+        let bytes = addr.to_bytes();
+        assert!(Address::validate_bytes(&bytes).is_ok());
+    }
+
+    #[test]
+    fn validate_bytes_invalid_returns_error() {
+        assert!(Address::validate_bytes(&[]).is_err());
+    }
+
+    // ── variable-length nat encoding ───────────────────────────────────
+
+    #[test]
+    fn variable_nat_zero() {
+        let mut out = Vec::new();
+        encode_variable_nat(0, &mut out);
+        assert_eq!(out, [0x00]);
+        let mut pos = 0;
+        assert_eq!(decode_variable_nat(&out, &mut pos), Some(0));
+        assert_eq!(pos, 1);
+    }
+
+    #[test]
+    fn variable_nat_small_value() {
+        let mut out = Vec::new();
+        encode_variable_nat(127, &mut out);
+        let mut pos = 0;
+        assert_eq!(decode_variable_nat(&out, &mut pos), Some(127));
+    }
+
+    #[test]
+    fn variable_nat_multi_byte() {
+        let mut out = Vec::new();
+        encode_variable_nat(128, &mut out);
+        assert!(out.len() > 1);
+        let mut pos = 0;
+        assert_eq!(decode_variable_nat(&out, &mut pos), Some(128));
+    }
+
+    #[test]
+    fn variable_nat_large_value_round_trip() {
+        let mut out = Vec::new();
+        let val = 100_000_000u64;
+        encode_variable_nat(val, &mut out);
+        let mut pos = 0;
+        assert_eq!(decode_variable_nat(&out, &mut pos), Some(val));
+        assert_eq!(pos, out.len());
+    }
+
+    #[test]
+    fn decode_variable_nat_empty_returns_none() {
+        let mut pos = 0;
+        assert_eq!(decode_variable_nat(&[], &mut pos), None);
+    }
+
+    // ── hex_short ──────────────────────────────────────────────────────
+
+    #[test]
+    fn hex_short_format() {
+        let bytes = [0u8; 32];
+        let s = hex_short(&bytes);
+        assert_eq!(s, "0000000000000000…");
+    }
+
+    // ── crc32_ieee ─────────────────────────────────────────────────────
+
+    #[test]
+    fn crc32_ieee_empty() {
+        assert_eq!(crc32_ieee(&[]), 0x0000_0000);
+    }
+
+    #[test]
+    fn crc32_ieee_known_value() {
+        // CRC-32 of "123456789" = 0xCBF43926
+        let val = crc32_ieee(b"123456789");
+        assert_eq!(val, 0xCBF4_3926);
+    }
+
+    // ── MirPot / MirTarget ─────────────────────────────────────────────
+
+    #[test]
+    fn mir_pot_values() {
+        assert_eq!(MirPot::Reserves as u8, 0);
+        assert_eq!(MirPot::Treasury as u8, 1);
+    }
+
+    #[test]
+    fn mir_target_send_to_opposite_pot() {
+        let target = MirTarget::SendToOppositePot(1_000_000);
+        if let MirTarget::SendToOppositePot(amt) = target {
+            assert_eq!(amt, 1_000_000);
+        }
+    }
+
+    // ── DRep ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn drep_variants() {
+        let d1 = DRep::KeyHash([0x01; 28]);
+        let d2 = DRep::ScriptHash([0x02; 28]);
+        let d3 = DRep::AlwaysAbstain;
+        let d4 = DRep::AlwaysNoConfidence;
+        assert_ne!(d1, d2);
+        assert_ne!(d3, d4);
+    }
+
+    #[test]
+    fn drep_ord() {
+        // AlwaysAbstain < AlwaysNoConfidence by derive ordering
+        assert!(DRep::AlwaysAbstain < DRep::AlwaysNoConfidence);
+    }
+
+    // ── DCert variant construction ─────────────────────────────────────
+
+    #[test]
+    fn dcert_account_registration() {
+        let cred = StakeCredential::AddrKeyHash([0x10; 28]);
+        let cert = DCert::AccountRegistration(cred);
+        if let DCert::AccountRegistration(c) = cert {
+            assert_eq!(c, cred);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn dcert_pool_retirement() {
+        let cert = DCert::PoolRetirement([0xaa; 28], EpochNo(100));
+        if let DCert::PoolRetirement(pool, epoch) = cert {
+            assert_eq!(pool, [0xaa; 28]);
+            assert_eq!(epoch, EpochNo(100));
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn dcert_drep_registration_with_anchor() {
+        let anchor = Anchor {
+            url: "https://example.com".to_string(),
+            data_hash: [0x01; 32],
+        };
+        let cert = DCert::DrepRegistration(
+            StakeCredential::AddrKeyHash([0x01; 28]),
+            2_000_000,
+            Some(anchor.clone()),
+        );
+        if let DCert::DrepRegistration(_, deposit, anc) = cert {
+            assert_eq!(deposit, 2_000_000);
+            assert_eq!(anc.unwrap().url, anchor.url);
+        }
+    }
+
+    // ── UnitInterval ───────────────────────────────────────────────────
+
+    #[test]
+    fn unit_interval_fields() {
+        let ui = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
+        assert_eq!(ui.numerator, 1);
+        assert_eq!(ui.denominator, 2);
+    }
+
+    // ── Anchor ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn anchor_fields() {
+        let a = Anchor {
+            url: "https://metadata.example".to_string(),
+            data_hash: [0xff; 32],
+        };
+        assert_eq!(a.url.len(), 24);
+        assert_eq!(a.data_hash, [0xff; 32]);
+    }
+
+    // ── PoolParams ─────────────────────────────────────────────────────
+
+    #[test]
+    fn pool_params_construction() {
+        let pp = PoolParams {
+            operator: [0x01; 28],
+            vrf_keyhash: [0x02; 32],
+            pledge: 500_000_000,
+            cost: 340_000_000,
+            margin: UnitInterval { numerator: 1, denominator: 100 },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0x03; 28]),
+            },
+            pool_owners: vec![[0x04; 28]],
+            relays: vec![Relay::MultiHostName("relay.example.com".to_string())],
+            pool_metadata: Some(PoolMetadata {
+                url: "https://pool.example".to_string(),
+                metadata_hash: [0x05; 32],
+            }),
+        };
+        assert_eq!(pp.pledge, 500_000_000);
+        assert_eq!(pp.pool_owners.len(), 1);
+        assert_eq!(pp.relays.len(), 1);
+        assert!(pp.pool_metadata.is_some());
+    }
+
+    // ── Relay ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn relay_variants() {
+        let r1 = Relay::SingleHostAddr(Some(3001), Some([127, 0, 0, 1]), None);
+        let r2 = Relay::SingleHostName(Some(3001), "relay.example.com".to_string());
+        let r3 = Relay::MultiHostName("pool.example.com".to_string());
+        assert_ne!(r1, r2);
+        assert_ne!(r2, r3);
+    }
+
+    // ── PoolMetadata ───────────────────────────────────────────────────
+
+    #[test]
+    fn pool_metadata_fields() {
+        let pm = PoolMetadata {
+            url: "https://meta.pool".to_string(),
+            metadata_hash: [0xab; 32],
+        };
+        assert_eq!(pm.url, "https://meta.pool");
+    }
+}

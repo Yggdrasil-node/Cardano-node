@@ -798,6 +798,7 @@ fn add_multi_asset(dst: &mut MultiAsset, src: &MultiAsset) {
 ///
 /// For each policy+asset: `consumed + minted == produced`.
 /// `MintAsset` uses `i64` so negative values represent burning.
+#[allow(clippy::type_complexity)]
 fn check_multi_asset_preservation(
     consumed: &MultiAsset,
     produced: &MultiAsset,
@@ -864,4 +865,459 @@ fn check_multi_asset_preservation(
     }
 
     Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eras::byron::{ByronTx, ByronTxIn, ByronTxOut};
+
+    fn sample_txin(id_byte: u8, index: u16) -> ShelleyTxIn {
+        ShelleyTxIn {
+            transaction_id: [id_byte; 32],
+            index,
+        }
+    }
+
+    fn sample_shelley_out(amount: u64) -> ShelleyTxOut {
+        ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount,
+        }
+    }
+
+    fn sample_multi_era_out(amount: u64) -> MultiEraTxOut {
+        MultiEraTxOut::Shelley(sample_shelley_out(amount))
+    }
+
+    // ── MultiEraUtxo basic operations ──────────────────────────────────
+
+    #[test]
+    fn new_utxo_is_empty() {
+        let utxo = MultiEraUtxo::new();
+        assert!(utxo.is_empty());
+        assert_eq!(utxo.len(), 0);
+    }
+
+    #[test]
+    fn insert_and_get() {
+        let mut utxo = MultiEraUtxo::new();
+        let txin = sample_txin(0x01, 0);
+        let txout = sample_multi_era_out(1_000_000);
+        utxo.insert(txin.clone(), txout.clone());
+        assert_eq!(utxo.len(), 1);
+        assert!(!utxo.is_empty());
+        assert_eq!(utxo.get(&txin), Some(&txout));
+    }
+
+    #[test]
+    fn insert_shelley_convenience() {
+        let mut utxo = MultiEraUtxo::new();
+        let txin = sample_txin(0x02, 0);
+        let txout = sample_shelley_out(500_000);
+        utxo.insert_shelley(txin.clone(), txout.clone());
+        assert_eq!(utxo.get(&txin), Some(&MultiEraTxOut::Shelley(txout)));
+    }
+
+    #[test]
+    fn get_missing_returns_none() {
+        let utxo = MultiEraUtxo::new();
+        assert!(utxo.get(&sample_txin(0xff, 0)).is_none());
+    }
+
+    #[test]
+    fn from_shelley_utxo() {
+        let mut shelley = ShelleyUtxo::new();
+        let txin = sample_txin(0x01, 0);
+        let txout = sample_shelley_out(2_000_000);
+        shelley.insert(txin.clone(), txout.clone());
+        let multi = MultiEraUtxo::from_shelley_utxo(&shelley);
+        assert_eq!(multi.len(), 1);
+        assert_eq!(multi.get(&txin), Some(&MultiEraTxOut::Shelley(txout)));
+    }
+
+    #[test]
+    fn iter_yields_all_entries() {
+        let mut utxo = MultiEraUtxo::new();
+        utxo.insert(sample_txin(0x01, 0), sample_multi_era_out(100));
+        utxo.insert(sample_txin(0x02, 0), sample_multi_era_out(200));
+        let collected: Vec<_> = utxo.iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    // ── MultiEraTxOut accessors ────────────────────────────────────────
+
+    #[test]
+    fn multi_era_txout_coin_shelley() {
+        let out = MultiEraTxOut::Shelley(sample_shelley_out(3_000_000));
+        assert_eq!(out.coin(), 3_000_000);
+    }
+
+    #[test]
+    fn multi_era_txout_address() {
+        let out = sample_multi_era_out(100);
+        assert_eq!(out.address(), &[0x61; 29]);
+    }
+
+    #[test]
+    fn multi_era_txout_script_ref_none_for_shelley() {
+        let out = sample_multi_era_out(100);
+        assert!(out.script_ref().is_none());
+    }
+
+    // ── CBOR round-trips ───────────────────────────────────────────────
+
+    #[test]
+    fn multi_era_txout_shelley_cbor_round_trip() {
+        let out = sample_multi_era_out(5_000_000);
+        let bytes = out.to_cbor_bytes();
+        let decoded = MultiEraTxOut::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn multi_era_utxo_cbor_round_trip() {
+        let mut utxo = MultiEraUtxo::new();
+        utxo.insert(sample_txin(0x01, 0), sample_multi_era_out(1_000));
+        utxo.insert(sample_txin(0x02, 1), sample_multi_era_out(2_000));
+        let bytes = utxo.to_cbor_bytes();
+        let decoded = MultiEraUtxo::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, utxo);
+    }
+
+    #[test]
+    fn multi_era_utxo_empty_cbor_round_trip() {
+        let utxo = MultiEraUtxo::new();
+        let bytes = utxo.to_cbor_bytes();
+        let decoded = MultiEraUtxo::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, utxo);
+    }
+
+    // ── apply_shelley_tx ───────────────────────────────────────────────
+
+    fn seed_utxo_shelley(id_byte: u8, amount: u64) -> (MultiEraUtxo, ShelleyTxIn) {
+        let mut utxo = MultiEraUtxo::new();
+        let txin = sample_txin(id_byte, 0);
+        utxo.insert_shelley(txin.clone(), sample_shelley_out(amount));
+        (utxo, txin)
+    }
+
+    #[test]
+    fn apply_shelley_tx_valid() {
+        let (mut utxo, input) = seed_utxo_shelley(0x01, 3_000_000);
+        let body = ShelleyTxBody {
+            inputs: vec![input],
+            outputs: vec![sample_shelley_out(2_800_000)],
+            fee: 200_000,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let result = utxo.apply_shelley_tx([0xaa; 32], &body, 50);
+        assert!(result.is_ok());
+        assert_eq!(utxo.len(), 1);
+        let new_txin = ShelleyTxIn { transaction_id: [0xaa; 32], index: 0 };
+        assert_eq!(utxo.get(&new_txin).unwrap().coin(), 2_800_000);
+    }
+
+    #[test]
+    fn apply_shelley_tx_expired() {
+        let (mut utxo, input) = seed_utxo_shelley(0x01, 3_000_000);
+        let body = ShelleyTxBody {
+            inputs: vec![input],
+            outputs: vec![sample_shelley_out(2_800_000)],
+            fee: 200_000,
+            ttl: 10,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let err = utxo.apply_shelley_tx([0xaa; 32], &body, 50);
+        assert!(matches!(err, Err(LedgerError::TxExpired { ttl: 10, slot: 50 })));
+    }
+
+    #[test]
+    fn apply_shelley_tx_value_not_preserved() {
+        let (mut utxo, input) = seed_utxo_shelley(0x01, 3_000_000);
+        let body = ShelleyTxBody {
+            inputs: vec![input],
+            outputs: vec![sample_shelley_out(3_000_000)], // no room for fee
+            fee: 200_000,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let err = utxo.apply_shelley_tx([0xaa; 32], &body, 50);
+        assert!(matches!(err, Err(LedgerError::ValueNotPreserved { .. })));
+    }
+
+    #[test]
+    fn apply_shelley_tx_missing_input() {
+        let mut utxo = MultiEraUtxo::new();
+        let body = ShelleyTxBody {
+            inputs: vec![sample_txin(0xff, 0)],
+            outputs: vec![sample_shelley_out(1_000_000)],
+            fee: 100,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        assert!(matches!(
+            utxo.apply_shelley_tx([0xaa; 32], &body, 50),
+            Err(LedgerError::InputNotInUtxo)
+        ));
+    }
+
+    #[test]
+    fn apply_shelley_tx_no_inputs() {
+        let mut utxo = MultiEraUtxo::new();
+        let body = ShelleyTxBody {
+            inputs: vec![],
+            outputs: vec![sample_shelley_out(1_000_000)],
+            fee: 100,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        assert!(matches!(
+            utxo.apply_shelley_tx([0xaa; 32], &body, 50),
+            Err(LedgerError::NoInputs)
+        ));
+    }
+
+    #[test]
+    fn apply_shelley_tx_no_outputs() {
+        let (mut utxo, input) = seed_utxo_shelley(0x01, 3_000_000);
+        let body = ShelleyTxBody {
+            inputs: vec![input],
+            outputs: vec![],
+            fee: 3_000_000,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        assert!(matches!(
+            utxo.apply_shelley_tx([0xaa; 32], &body, 50),
+            Err(LedgerError::NoOutputs)
+        ));
+    }
+
+    // ── apply_allegra_tx ───────────────────────────────────────────────
+
+    #[test]
+    fn apply_allegra_tx_optional_ttl_none() {
+        let (mut utxo, input) = seed_utxo_shelley(0x01, 2_000_000);
+        let body = AllegraTxBody {
+            inputs: vec![input],
+            outputs: vec![sample_shelley_out(1_800_000)],
+            fee: 200_000,
+            ttl: None,
+            validity_interval_start: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        assert!(utxo.apply_allegra_tx([0xbb; 32], &body, 999_999).is_ok());
+    }
+
+    #[test]
+    fn apply_allegra_tx_not_yet_valid() {
+        let (mut utxo, input) = seed_utxo_shelley(0x01, 2_000_000);
+        let body = AllegraTxBody {
+            inputs: vec![input],
+            outputs: vec![sample_shelley_out(1_800_000)],
+            fee: 200_000,
+            ttl: None,
+            validity_interval_start: Some(100),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let err = utxo.apply_allegra_tx([0xbb; 32], &body, 50);
+        assert!(matches!(err, Err(LedgerError::TxNotYetValid { start: 100, slot: 50 })));
+    }
+
+    // ── apply_byron_tx ─────────────────────────────────────────────────
+
+    #[test]
+    fn apply_byron_tx_valid() {
+        let mut utxo = MultiEraUtxo::new();
+        let seed_txid = [0x01; 32];
+        let txin = ShelleyTxIn { transaction_id: seed_txid, index: 0 };
+        utxo.insert_shelley(txin, sample_shelley_out(5_000_000));
+
+        let byron_tx = ByronTx {
+            inputs: vec![ByronTxIn { txid: seed_txid, index: 0 }],
+            outputs: vec![ByronTxOut { address: vec![0x82; 10], amount: 4_500_000 }],
+            attributes: vec![0xa0], // empty map
+        };
+        assert!(utxo.apply_byron_tx(&byron_tx).is_ok());
+        assert_eq!(utxo.len(), 1); // old input removed, new output added
+    }
+
+    #[test]
+    fn apply_byron_tx_empty_inputs() {
+        let mut utxo = MultiEraUtxo::new();
+        let byron_tx = ByronTx {
+            inputs: vec![],
+            outputs: vec![ByronTxOut { address: vec![0x82; 10], amount: 100 }],
+            attributes: vec![0xa0],
+        };
+        assert!(matches!(utxo.apply_byron_tx(&byron_tx), Err(LedgerError::NoInputs)));
+    }
+
+    #[test]
+    fn apply_byron_tx_empty_outputs() {
+        let mut utxo = MultiEraUtxo::new();
+        let txin = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        utxo.insert_shelley(txin, sample_shelley_out(1_000));
+        let byron_tx = ByronTx {
+            inputs: vec![ByronTxIn { txid: [0x01; 32], index: 0 }],
+            outputs: vec![],
+            attributes: vec![0xa0],
+        };
+        assert!(matches!(utxo.apply_byron_tx(&byron_tx), Err(LedgerError::NoOutputs)));
+    }
+
+    #[test]
+    fn apply_byron_tx_negative_fee_rejected() {
+        let mut utxo = MultiEraUtxo::new();
+        let txin = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        utxo.insert_shelley(txin, sample_shelley_out(1_000));
+        let byron_tx = ByronTx {
+            inputs: vec![ByronTxIn { txid: [0x01; 32], index: 0 }],
+            outputs: vec![ByronTxOut { address: vec![0x82; 10], amount: 2_000 }],
+            attributes: vec![0xa0],
+        };
+        assert!(matches!(utxo.apply_byron_tx(&byron_tx), Err(LedgerError::ValueNotPreserved { .. })));
+    }
+
+    // ── validate_reference_inputs ──────────────────────────────────────
+
+    #[test]
+    fn validate_reference_inputs_all_present() {
+        let mut utxo = MultiEraUtxo::new();
+        let txin = sample_txin(0x01, 0);
+        utxo.insert(txin.clone(), sample_multi_era_out(100));
+        assert!(utxo.validate_reference_inputs(&[txin]).is_ok());
+    }
+
+    #[test]
+    fn validate_reference_inputs_missing() {
+        let utxo = MultiEraUtxo::new();
+        let txin = sample_txin(0x01, 0);
+        assert!(matches!(
+            utxo.validate_reference_inputs(&[txin]),
+            Err(LedgerError::ReferenceInputNotInUtxo)
+        ));
+    }
+
+    #[test]
+    fn validate_reference_inputs_empty_is_ok() {
+        let utxo = MultiEraUtxo::new();
+        assert!(utxo.validate_reference_inputs(&[]).is_ok());
+    }
+
+    // ── utxo_delta_for_tx ──────────────────────────────────────────────
+
+    #[test]
+    fn utxo_delta_consumed_and_produced() {
+        let mut utxo = MultiEraUtxo::new();
+        let txin = sample_txin(0x01, 0);
+        utxo.insert(txin.clone(), sample_multi_era_out(1_000));
+
+        let new_txin = sample_txin(0x02, 0);
+        let new_txout = sample_multi_era_out(900);
+        let outputs = vec![(new_txin.clone(), new_txout.clone())];
+
+        let (consumed, produced) = utxo.utxo_delta_for_tx(&[txin.clone()], &outputs);
+        assert_eq!(consumed.len(), 1);
+        assert_eq!(consumed[0].0, &txin);
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0, &new_txin);
+    }
+
+    // ── free-standing helpers ──────────────────────────────────────────
+
+    #[test]
+    fn check_coin_preservation_valid() {
+        assert!(check_coin_preservation(1_000_000, 800_000, 200_000).is_ok());
+    }
+
+    #[test]
+    fn check_coin_preservation_mismatch() {
+        assert!(check_coin_preservation(1_000_000, 800_000, 100_000).is_err());
+    }
+
+    #[test]
+    fn validate_nonempty_both_empty() {
+        let empty_inputs: Vec<ShelleyTxIn> = vec![];
+        let outputs = vec![sample_shelley_out(100)];
+        assert!(matches!(validate_nonempty(&empty_inputs, &outputs), Err(LedgerError::NoInputs)));
+    }
+
+    #[test]
+    fn validate_nonempty_outputs_empty() {
+        let inputs = vec![sample_txin(0x01, 0)];
+        let empty_outputs: Vec<ShelleyTxOut> = vec![];
+        assert!(matches!(validate_nonempty(&inputs, &empty_outputs), Err(LedgerError::NoOutputs)));
+    }
+
+    #[test]
+    fn check_multi_asset_preservation_balanced() {
+        let mut consumed = MultiAsset::new();
+        consumed.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 100);
+        let mut produced = MultiAsset::new();
+        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 100);
+        assert!(check_multi_asset_preservation(&consumed, &produced, &None).is_ok());
+    }
+
+    #[test]
+    fn check_multi_asset_preservation_with_mint() {
+        let consumed = MultiAsset::new();
+        let mut produced = MultiAsset::new();
+        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 50);
+        let mut mint = std::collections::BTreeMap::new();
+        let mut policy_assets = std::collections::BTreeMap::new();
+        policy_assets.insert(b"token".to_vec(), 50i64);
+        mint.insert([0xaa; 28], policy_assets);
+        assert!(check_multi_asset_preservation(&consumed, &produced, &Some(mint)).is_ok());
+    }
+
+    #[test]
+    fn check_multi_asset_preservation_imbalanced() {
+        let consumed = MultiAsset::new();
+        let mut produced = MultiAsset::new();
+        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 50);
+        assert!(check_multi_asset_preservation(&consumed, &produced, &None).is_err());
+    }
+
+    #[test]
+    fn check_multi_asset_preservation_burn() {
+        let mut consumed = MultiAsset::new();
+        consumed.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 100);
+        let mut produced = MultiAsset::new();
+        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 70);
+        let mut mint = std::collections::BTreeMap::new();
+        let mut policy_assets = std::collections::BTreeMap::new();
+        policy_assets.insert(b"token".to_vec(), -30i64);
+        mint.insert([0xaa; 28], policy_assets);
+        assert!(check_multi_asset_preservation(&consumed, &produced, &Some(mint)).is_ok());
+    }
 }
