@@ -20,7 +20,7 @@ use yggdrasil_node::{
     SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer,
     recover_ledger_state_chaindb,
     run_governor_loop,
-    resume_reconnecting_verified_sync_service_shared_chaindb,
+    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer,
     seed_peer_registry,
     run_inbound_accept_loop,
 };
@@ -1064,9 +1064,10 @@ async fn run_node(
     .with_mempool(Some(shared_mempool.clone()));
 
     let mut sync_shutdown = shutdown_rx.clone();
-    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb(
+    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(
         &chain_db,
         request,
+        &tracer,
         async move {
             if *sync_shutdown.borrow() {
                 return;

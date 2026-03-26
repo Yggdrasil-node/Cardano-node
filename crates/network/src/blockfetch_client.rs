@@ -93,18 +93,25 @@ impl BlockFetchClient {
 
     async fn send_msg(&mut self, msg: &BlockFetchMessage) -> Result<(), BlockFetchClientError> {
         self.state = self.state.transition(msg)?;
+        let cbor = msg.to_cbor();
+        eprintln!("[DEBUG BF send] {} bytes: {:02x?}", cbor.len(), &cbor[..cbor.len().min(80)]);
         self.channel
-            .send(msg.to_cbor())
+            .send(cbor)
             .await
             .map_err(BlockFetchClientError::Mux)
     }
 
     async fn recv_msg(&mut self) -> Result<BlockFetchMessage, BlockFetchClientError> {
+        eprintln!("[DEBUG BF recv] waiting for data...");
         let raw = self
             .channel
             .recv()
-            .await
-            .ok_or(BlockFetchClientError::ConnectionClosed)?;
+            .await;
+        match &raw {
+            Some(data) => eprintln!("[DEBUG BF recv] got {} bytes: {:02x?}", data.len(), &data[..data.len().min(80)]),
+            None => eprintln!("[DEBUG BF recv] channel returned None (closed)"),
+        }
+        let raw = raw.ok_or(BlockFetchClientError::ConnectionClosed)?;
         let msg = BlockFetchMessage::from_cbor(&raw)
             .map_err(|e| BlockFetchClientError::Decode(e.to_string()))?;
         self.state = self.state.transition(&msg)?;

@@ -14,7 +14,7 @@ use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo,
     ByronBlock, CborEncode, Era, HeaderHash, LedgerError, LedgerState, MultiEraSubmittedTx,
     Point, Encoder, PoolParams, Relay, RewardAccount, ShelleyTx, ShelleyTxBody, ShelleyTxIn,
-    ShelleyTxOut, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value,
+    ShelleyTxOut, ShelleyWitnessSet, SlotNo, StakeCredential, Tip, TxId, UnitInterval, Value,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_node::{
@@ -53,8 +53,8 @@ async fn spawn_responder(magic: u32) -> SocketAddr {
             let msg = ChainSyncMessage::from_cbor(&raw).expect("cs decode");
             assert_eq!(msg, ChainSyncMessage::MsgRequestNext);
             let reply = ChainSyncMessage::MsgRollForward {
-                header: b"hdr".to_vec(),
-                tip: b"tip".to_vec(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: vec![0x01],
             };
             cs.send(reply.to_cbor()).await.expect("cs send");
         }
@@ -120,10 +120,11 @@ async fn spawn_verified_batch_responder(
         let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
         assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
 
+        let tip_obj = Tip::Tip(tip, BlockNo(0));
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"byron-hdr".to_vec(),
-                tip: tip.to_cbor_bytes(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: tip_obj.to_cbor_bytes(),
             }
             .to_cbor(),
         )
@@ -186,10 +187,11 @@ async fn spawn_verified_batch_responder_from_point(
         let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
         assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
 
+        let tip_obj = Tip::Tip(tip.clone(), BlockNo(0));
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"byron-hdr".to_vec(),
-                tip: tip.to_cbor_bytes(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: tip_obj.to_cbor_bytes(),
             }
             .to_cbor(),
         )

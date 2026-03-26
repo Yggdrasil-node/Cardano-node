@@ -9,7 +9,7 @@
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
-use yggdrasil_ledger::{CborDecode, CborEncode, Point};
+use yggdrasil_ledger::{CborDecode, CborEncode, Point, Tip};
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -240,6 +240,12 @@ impl ChainSyncClient {
             .map_err(|e| ChainSyncClientError::PointDecode(e.to_string()))
     }
 
+    fn decode_tip(raw: &[u8]) -> Result<Point, ChainSyncClientError> {
+        Tip::from_cbor_bytes(raw)
+            .map(|t| t.point())
+            .map_err(|e| ChainSyncClientError::PointDecode(e.to_string()))
+    }
+
     fn decode_header<H: CborDecode>(raw: &[u8]) -> Result<H, ChainSyncClientError> {
         H::from_cbor_bytes(raw)
             .map_err(|e| ChainSyncClientError::HeaderDecode(e.to_string()))
@@ -281,10 +287,10 @@ impl ChainSyncClient {
         match self.find_intersect(encoded).await? {
             IntersectResponse::Found { point, tip } => Ok(TypedIntersectResponse::Found {
                 point: Self::decode_point(&point)?,
-                tip: Self::decode_point(&tip)?,
+                tip: Self::decode_tip(&tip)?,
             }),
             IntersectResponse::NotFound { tip } => Ok(TypedIntersectResponse::NotFound {
-                tip: Self::decode_point(&tip)?,
+                tip: Self::decode_tip(&tip)?,
             }),
         }
     }
@@ -330,22 +336,22 @@ impl ChainSyncClient {
         match self.request_next().await? {
             NextResponse::RollForward { header, tip } => Ok(TypedNextResponse::RollForward {
                 header,
-                tip: Self::decode_point(&tip)?,
+                tip: Self::decode_tip(&tip)?,
             }),
             NextResponse::RollBackward { point, tip } => Ok(TypedNextResponse::RollBackward {
                 point: Self::decode_point(&point)?,
-                tip: Self::decode_point(&tip)?,
+                tip: Self::decode_tip(&tip)?,
             }),
             NextResponse::AwaitRollForward { header, tip } => {
                 Ok(TypedNextResponse::AwaitRollForward {
                     header,
-                    tip: Self::decode_point(&tip)?,
+                    tip: Self::decode_tip(&tip)?,
                 })
             }
             NextResponse::AwaitRollBackward { point, tip } => {
                 Ok(TypedNextResponse::AwaitRollBackward {
                     point: Self::decode_point(&point)?,
-                    tip: Self::decode_point(&tip)?,
+                    tip: Self::decode_tip(&tip)?,
                 })
             }
         }

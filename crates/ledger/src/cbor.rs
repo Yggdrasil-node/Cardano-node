@@ -173,6 +173,15 @@ impl Encoder {
         self.buf.extend_from_slice(data);
         self
     }
+
+    /// Writes a CBOR-in-CBOR wrapped item: `TAG(24) BYTES(data)`.
+    ///
+    /// This matches the Haskell `wrapCBORinCBOR` encoding used by
+    /// Ouroboros for byte-string-wrapped protocol fields.
+    pub fn wrapped(&mut self, data: &[u8]) -> &mut Self {
+        self.tag(24).bytes(data);
+        self
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -397,6 +406,22 @@ impl<'a> Decoder<'a> {
         self.expect_major(MAJOR_TAG)
     }
 
+    /// Decodes a CBOR-in-CBOR wrapped item: `TAG(24) BYTES(data)`.
+    ///
+    /// This matches the Haskell `unwrapCBORinCBOR` decoding used by
+    /// Ouroboros for byte-string-wrapped protocol fields.  Returns
+    /// the inner byte string contents.
+    pub fn wrapped(&mut self) -> Result<&'a [u8], LedgerError> {
+        let t = self.tag()?;
+        if t != 24 {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: 24,
+                actual: t as u8,
+            });
+        }
+        self.bytes()
+    }
+
     /// Decodes a CBOR boolean (simple value 20 = false, 21 = true).
     pub fn bool(&mut self) -> Result<bool, LedgerError> {
         let b = self.read_byte()?;
@@ -457,6 +482,16 @@ impl<'a> Decoder<'a> {
         }
         Ok(())
     }
+
+    /// Reads one complete CBOR data item and returns the raw bytes that
+    /// comprise it.  This is useful for capturing inline CBOR values
+    /// (e.g. tip or point structures) that should be stored as opaque
+    /// byte vectors.
+    pub fn raw_value(&mut self) -> Result<&'a [u8], LedgerError> {
+        let start = self.pos;
+        self.skip()?;
+        self.slice(start, self.pos)
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -499,7 +534,8 @@ pub trait CborDecode: Sized {
 use crate::eras::Era;
 use crate::types::{
     Anchor, BlockNo, DCert, DRep, EpochNo, HeaderHash, MirPot, MirTarget, Nonce, Point,
-    PoolMetadata, PoolParams, Relay, RewardAccount, SlotNo, StakeCredential, TxId, UnitInterval,
+    PoolMetadata, PoolParams, Relay, RewardAccount, SlotNo, StakeCredential, Tip, TxId,
+    UnitInterval,
 };
 
 // -- Era -------------------------------------------------------------------
@@ -640,6 +676,46 @@ impl CborDecode for Point {
                 let slot = SlotNo::decode_cbor(dec)?;
                 let hash = HeaderHash::decode_cbor(dec)?;
                 Ok(Self::BlockPoint(slot, hash))
+            }
+            _ => Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            }),
+        }
+    }
+}
+
+// -- Tip -------------------------------------------------------------------
+//
+// Encoding matches upstream `ChainSync.Codec.encodeTip`:
+//   TipGenesis  → array(0)
+//   Tip(pt, bn) → array(2, point_cbor, blockNo)
+// where point_cbor is the CBOR encoding of a Point ([] or [slot, hash]).
+
+impl CborEncode for Tip {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self {
+            Self::TipGenesis => {
+                enc.array(0);
+            }
+            Self::Tip(point, bn) => {
+                enc.array(2);
+                point.encode_cbor(enc);
+                bn.encode_cbor(enc);
+            }
+        }
+    }
+}
+
+impl CborDecode for Tip {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        match len {
+            0 => Ok(Self::TipGenesis),
+            2 => {
+                let point = Point::decode_cbor(dec)?;
+                let block_no = BlockNo::decode_cbor(dec)?;
+                Ok(Self::Tip(point, block_no))
             }
             _ => Err(LedgerError::CborInvalidLength {
                 expected: 2,

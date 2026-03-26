@@ -108,6 +108,40 @@ impl Point {
     }
 }
 
+/// A chain tip: either the genesis tip or a specific point with a block
+/// number, matching the upstream `Tip` type in
+/// `Ouroboros.Network.Block`.
+///
+/// Wire encoding:
+/// - `[]` — genesis tip
+/// - `[slot, hash, blockNo]` — specific tip
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub enum Tip {
+    /// The genesis tip (no blocks yet).
+    TipGenesis,
+    /// A specific tip at the given point with the given block number.
+    Tip(Point, BlockNo),
+}
+
+impl Tip {
+    /// Returns the `Point` component of this tip.
+    pub fn point(&self) -> Point {
+        match self {
+            Self::TipGenesis => Point::Origin,
+            Self::Tip(p, _) => *p,
+        }
+    }
+
+    /// Returns the block number, or `None` for genesis.
+    pub fn block_no(&self) -> Option<BlockNo> {
+        match self {
+            Self::TipGenesis => None,
+            Self::Tip(_, bn) => Some(*bn),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

@@ -85,7 +85,7 @@ pub use types::{
     AddrKeyHash, Address, Anchor, BaseAddress, BlockNo, DCert, DRep, EnterpriseAddress, EpochNo,
     GenesisDelegateHash, GenesisHash, HeaderHash, MirPot, MirTarget, Nonce, Point,
     PointerAddress, PoolKeyHash, PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash,
-    SlotNo, StakeCredential, TxId, UnitInterval, VrfKeyHash,
+    SlotNo, StakeCredential, Tip, TxId, UnitInterval, VrfKeyHash,
 };
 
 // -- Plutus re-exports --------------------------------------------------------

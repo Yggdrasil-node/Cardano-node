@@ -9,7 +9,7 @@ use yggdrasil_ledger::{
     CborEncode, ConwayBlock, ConwayTxBody, Encoder, HeaderHash, LedgerState, Nonce, Point,
     PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
-    ShelleyWitnessSet, SlotNo, StakeCredential, Tx, TxId,
+    ShelleyWitnessSet, SlotNo, StakeCredential, Tip, Tx, TxId,
     Era,
     compute_block_body_hash,
 };
@@ -82,8 +82,8 @@ async fn spawn_rollforward_responder(magic: u32) -> SocketAddr {
 
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"hdr-1".to_vec(),
-                tip: b"tip-1".to_vec(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: vec![0x81, 0x01],
             }
             .to_cbor(),
         )
@@ -94,8 +94,8 @@ async fn spawn_rollforward_responder(magic: u32) -> SocketAddr {
         let bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
         match bf_msg {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, b"origin".to_vec());
-                assert_eq!(range.upper, b"tip-1".to_vec());
+                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                assert_eq!(range.upper, vec![0x81, 0x01]);
             }
             other => panic!("unexpected blockfetch request: {other:?}"),
         }
@@ -153,8 +153,8 @@ async fn spawn_rollback_responder(magic: u32) -> SocketAddr {
 
         cs.send(
             ChainSyncMessage::MsgRollBackward {
-                point: b"rollback-point".to_vec(),
-                tip: b"tip-after-rollback".to_vec(),
+                point: vec![0x82, 0x05, 0x07],
+                tip: vec![0x82, 0x05, 0x06],
             }
             .to_cbor(),
         )
@@ -195,8 +195,8 @@ async fn spawn_two_step_responder(magic: u32) -> SocketAddr {
         assert_eq!(cs_msg_1, ChainSyncMessage::MsgRequestNext);
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"hdr-1".to_vec(),
-                tip: b"tip-1".to_vec(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: vec![0x81, 0x01],
             }
             .to_cbor(),
         )
@@ -207,8 +207,8 @@ async fn spawn_two_step_responder(magic: u32) -> SocketAddr {
         let bf_msg_1 = BlockFetchMessage::from_cbor(&bf_req_1).expect("decode bf request 1");
         match bf_msg_1 {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, b"origin".to_vec());
-                assert_eq!(range.upper, b"tip-1".to_vec());
+                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                assert_eq!(range.upper, vec![0x81, 0x01]);
             }
             other => panic!("unexpected blockfetch request step 1: {other:?}"),
         }
@@ -234,8 +234,8 @@ async fn spawn_two_step_responder(magic: u32) -> SocketAddr {
         assert_eq!(cs_msg_2, ChainSyncMessage::MsgRequestNext);
         cs.send(
             ChainSyncMessage::MsgRollBackward {
-                point: b"tip-0".to_vec(),
-                tip: b"tip-2".to_vec(),
+                point: vec![0x81, 0x00],
+                tip: vec![0x81, 0x02],
             }
             .to_cbor(),
         )
@@ -278,10 +278,14 @@ async fn spawn_verified_batch_responder(
         let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
         assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
 
+        let tip_cbor = match tip {
+            Point::Origin => Tip::TipGenesis.to_cbor_bytes(),
+            Point::BlockPoint(s, h) => Tip::Tip(Point::BlockPoint(s, h), BlockNo(0)).to_cbor_bytes(),
+        };
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"byron-hdr".to_vec(),
-                tip: tip.to_cbor_bytes(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: tip_cbor,
             }
             .to_cbor(),
         )
@@ -329,7 +333,7 @@ async fn sync_step_rollforward_fetches_blocks() {
     let step = sync_step(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect("sync step");
@@ -337,8 +341,8 @@ async fn sync_step_rollforward_fetches_blocks() {
     assert_eq!(
         step,
         SyncStep::RollForward {
-            header: b"hdr-1".to_vec(),
-            tip: b"tip-1".to_vec(),
+            header: vec![0x82, 0x00, 0x01],
+            tip: vec![0x81, 0x01],
             blocks: vec![b"block-1".to_vec(), b"block-2".to_vec()],
         }
     );
@@ -431,7 +435,7 @@ async fn sync_step_rollback_skips_blockfetch() {
     let step = sync_step(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect("sync step");
@@ -439,8 +443,8 @@ async fn sync_step_rollback_skips_blockfetch() {
     assert_eq!(
         step,
         SyncStep::RollBackward {
-            point: b"rollback-point".to_vec(),
-            tip: b"tip-after-rollback".to_vec(),
+            point: vec![0x82, 0x05, 0x07],
+            tip: vec![0x82, 0x05, 0x06],
         }
     );
 
@@ -463,28 +467,28 @@ async fn sync_steps_tracks_progress_and_point() {
     let progress = sync_steps(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
         2,
     )
     .await
     .expect("sync steps");
 
     assert_eq!(progress.fetched_blocks, 1);
-    assert_eq!(progress.current_point, b"tip-0".to_vec());
+    assert_eq!(progress.current_point, vec![0x81, 0x00]);
     assert_eq!(progress.steps.len(), 2);
     assert_eq!(
         progress.steps[0],
         SyncStep::RollForward {
-            header: b"hdr-1".to_vec(),
-            tip: b"tip-1".to_vec(),
+            header: vec![0x82, 0x00, 0x01],
+            tip: vec![0x81, 0x01],
             blocks: vec![b"block-1".to_vec()],
         }
     );
     assert_eq!(
         progress.steps[1],
         SyncStep::RollBackward {
-            point: b"tip-0".to_vec(),
-            tip: b"tip-2".to_vec(),
+            point: vec![0x81, 0x00],
+            tip: vec![0x81, 0x02],
         }
     );
 
@@ -596,8 +600,8 @@ async fn spawn_decoded_rollforward_responder(magic: u32, block_bytes: Vec<u8>) -
 
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"hdr-decode".to_vec(),
-                tip: b"tip-decode".to_vec(),
+                header: vec![0x82, 0x00, 0x04],
+                tip: vec![0x82, 0x06, 0x06],
             }
             .to_cbor(),
         )
@@ -608,8 +612,8 @@ async fn spawn_decoded_rollforward_responder(magic: u32, block_bytes: Vec<u8>) -
         let bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
         match bf_msg {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, b"origin".to_vec());
-                assert_eq!(range.upper, b"tip-decode".to_vec());
+                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                assert_eq!(range.upper, vec![0x82, 0x06, 0x06]);
             }
             other => panic!("unexpected blockfetch request: {other:?}"),
         }
@@ -829,7 +833,7 @@ async fn sync_step_decoded_rollforward_decodes_shelley_blocks() {
     let step = sync_step_decoded(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect("decoded sync step");
@@ -840,8 +844,8 @@ async fn sync_step_decoded_rollforward_decodes_shelley_blocks() {
             tip,
             blocks,
         } => {
-            assert_eq!(header, b"hdr-decode".to_vec());
-            assert_eq!(tip, b"tip-decode".to_vec());
+            assert_eq!(header, vec![0x82, 0x00, 0x04]);
+            assert_eq!(tip, vec![0x82, 0x06, 0x06]);
             assert_eq!(blocks.len(), 1);
             assert_eq!(blocks[0].header.body.block_number, 1);
             assert_eq!(blocks[0].header.body.slot, 500);
@@ -868,7 +872,7 @@ async fn sync_step_decoded_reports_decode_error_on_invalid_block_bytes() {
     let err = sync_step_decoded(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect_err("expected decode error");
@@ -894,7 +898,7 @@ async fn sync_step_typed_rollforward_decodes_header_tip_and_blocks() {
     let addr = spawn_typed_rollforward_responder(
         magic,
         header.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
     )
     .await;
@@ -939,7 +943,7 @@ async fn sync_step_typed_rollback_decodes_points() {
     let tip = Point::BlockPoint(SlotNo(222), HeaderHash([0x22; 32]));
 
     let addr =
-        spawn_typed_rollback_responder(magic, point.to_cbor_bytes(), tip.to_cbor_bytes()).await;
+        spawn_typed_rollback_responder(magic, point.to_cbor_bytes(), Tip::Tip(tip, BlockNo(0)).to_cbor_bytes()).await;
 
     let config = NodeConfig {
         peer_addr: addr,
@@ -982,10 +986,10 @@ async fn sync_steps_typed_tracks_progress_and_rollbacks() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1030,10 +1034,10 @@ async fn sync_until_typed_stops_at_target_point() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1077,10 +1081,10 @@ async fn apply_typed_progress_to_volatile_applies_forwards_and_rollbacks() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1245,7 +1249,7 @@ async fn typed_find_intersect_found() {
     let addr = spawn_intersect_found_responder(
         magic,
         intersect.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1280,7 +1284,7 @@ async fn typed_find_intersect_not_found() {
     let magic = 201;
     let tip = Point::BlockPoint(SlotNo(999), HeaderHash([0xFF; 32]));
 
-    let addr = spawn_intersect_not_found_responder(magic, tip.to_cbor_bytes()).await;
+    let addr = spawn_intersect_not_found_responder(magic, Tip::Tip(tip, BlockNo(0)).to_cbor_bytes()).await;
 
     let config = NodeConfig {
         peer_addr: addr,
@@ -1319,10 +1323,10 @@ async fn sync_batch_apply_updates_volatile_store() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1477,7 +1481,7 @@ async fn run_sync_service_shutdown_after_batches() {
     let addr = spawn_service_responder(
         magic,
         header.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         1,
     )
@@ -1856,7 +1860,7 @@ async fn sync_step_multi_era_rollforward() {
     let addr = spawn_typed_rollforward_responder(
         magic,
         header.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
         block_bytes,
     )
     .await;
