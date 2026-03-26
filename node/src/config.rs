@@ -202,7 +202,12 @@ pub struct NodeConfigFile {
     pub trace_options: BTreeMap<String, TraceNamespaceConfig>,
         /// Relative path to the Shelley genesis file.  Matches `ShelleyGenesisFile`
         /// in the official Cardano node configuration.
-        #[serde(rename = "ShelleyGenesisFile", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "ShelleyGenesisFile",
+            alias = "GenesisFile",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         pub shelley_genesis_file: Option<String>,
         /// Relative path to the Alonzo genesis file.  Matches `AlonzoGenesisFile`
         /// in the official Cardano node configuration.
@@ -983,6 +988,22 @@ mod tests {
                 .expect("checkpoint trace options")
                 .max_frequency,
             Some(1.0)
+        );
+    }
+
+    #[test]
+    fn legacy_genesis_file_alias_maps_to_shelley_genesis_file() {
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "GenesisFile": "legacy-shelley-genesis.json"
+        }"#;
+
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse legacy genesis alias");
+        assert_eq!(
+            cfg.shelley_genesis_file.as_deref(),
+            Some("legacy-shelley-genesis.json")
         );
     }
 
