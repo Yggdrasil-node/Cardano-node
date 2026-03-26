@@ -1,911 +1,1069 @@
-//! Parameterized cost model for UPLC evaluation budget tracking.
+//! Cost model for UPLC evaluation budget tracking.
 //!
-//! Implements per-builtin cost functions that scale with argument sizes,
-//! matching the upstream Plutus cost model structure from
-//! `plutus-core/cost-model`.
+//! Provides a CEK cost model that charges per-step machine costs **and**
+//! per-builtin costs derived from the upstream Cardano named-parameter maps.
+//!
+//! ## Cost function shapes
+//!
+//! The Cardano cost model associates each builtin with one of several costing
+//! function shapes. This module supports:
+//!
+//! | Variant           | Formula                                          |
+//! |-------------------|--------------------------------------------------|
+//! | `Constant`        | `intercept`                                      |
+//! | `LinearInX`       | `intercept + slope * size(arg[0])`               |
+//! | `LinearInY`       | `intercept + slope * size(arg[1])`               |
+//! | `LinearInZ`       | `intercept + slope * size(arg[2])`               |
+//! | `LinearForm`      | `intercept + x*size0 + y*size1 + z*size2`        |
+//! | `AddedSizes`      | `intercept + slope * (size[0]+size[1])`          |
+//! | `MaxSize`         | `intercept + slope * max(size[0],size[1])`       |
+//! | `MinSize`         | `intercept + slope * min(size[0],size[1])`       |
+//! | `SubtractedSizes` | `max(min, intercept + slope*(size[0]-size[1]))`  |
+//!
+//! Argument sizes follow the upstream Plutus `ExMemoryUsage` type class:
+//! integers are measured in 64-bit words, byte strings in bytes, etc.
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model>
-//! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/ExBudgetingDefaults.hs>
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::types::{Constant, DefaultFun, ExBudget, Value};
+use crate::types::{DefaultFun, ExBudget, Value};
 
-/// Errors returned while building a cost model from upstream parameters.
+// ---------------------------------------------------------------------------
+// Step kinds — per-operation costs
+// ---------------------------------------------------------------------------
+
+/// CEK machine operation kinds, each charged a distinct step cost.
+///
+/// Matches upstream `StepKind` from the Haskell CEK machine:
+/// <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek/Internal.hs>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StepKind {
+    Constant,
+    Var,
+    LamAbs,
+    Apply,
+    Delay,
+    Force,
+    Builtin,
+    Constr,
+    Case,
+}
+
+/// Per-step-kind CPU and memory costs.
+#[derive(Clone, Debug)]
+pub struct StepCosts {
+    pub var_cpu: i64,
+    pub var_mem: i64,
+    pub constant_cpu: i64,
+    pub constant_mem: i64,
+    pub lam_cpu: i64,
+    pub lam_mem: i64,
+    pub apply_cpu: i64,
+    pub apply_mem: i64,
+    pub delay_cpu: i64,
+    pub delay_mem: i64,
+    pub force_cpu: i64,
+    pub force_mem: i64,
+    pub builtin_cpu: i64,
+    pub builtin_mem: i64,
+    pub constr_cpu: i64,
+    pub constr_mem: i64,
+    pub case_cpu: i64,
+    pub case_mem: i64,
+}
+
+impl Default for StepCosts {
+    fn default() -> Self {
+        Self {
+            var_cpu: 100, var_mem: 100,
+            constant_cpu: 100, constant_mem: 100,
+            lam_cpu: 100, lam_mem: 100,
+            apply_cpu: 100, apply_mem: 100,
+            delay_cpu: 100, delay_mem: 100,
+            force_cpu: 100, force_mem: 100,
+            builtin_cpu: 100, builtin_mem: 100,
+            constr_cpu: 100, constr_mem: 100,
+            case_cpu: 100, case_mem: 100,
+        }
+    }
+}
+
+impl StepCosts {
+    /// Return the CPU and memory cost for a particular step kind.
+    pub fn cost(&self, kind: StepKind) -> ExBudget {
+        match kind {
+            StepKind::Var      => ExBudget::new(self.var_cpu, self.var_mem),
+            StepKind::Constant => ExBudget::new(self.constant_cpu, self.constant_mem),
+            StepKind::LamAbs   => ExBudget::new(self.lam_cpu, self.lam_mem),
+            StepKind::Apply    => ExBudget::new(self.apply_cpu, self.apply_mem),
+            StepKind::Delay    => ExBudget::new(self.delay_cpu, self.delay_mem),
+            StepKind::Force    => ExBudget::new(self.force_cpu, self.force_mem),
+            StepKind::Builtin  => ExBudget::new(self.builtin_cpu, self.builtin_mem),
+            StepKind::Constr   => ExBudget::new(self.constr_cpu, self.constr_mem),
+            StepKind::Case     => ExBudget::new(self.case_cpu, self.case_mem),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+/// Errors returned while deriving a CEK cost model from upstream named params.
 #[derive(Debug, Error)]
 pub enum CostModelError {
     /// A required named parameter was absent.
     #[error("missing cost-model parameter: {0}")]
     MissingParameter(&'static str),
-    /// A required named parameter was present but the value was invalid.
-    #[error("invalid cost-model parameter {name}: {value}")]
-    InvalidParameter { name: &'static str, value: i64 },
-}
-
-// ---------------------------------------------------------------------------
-// Cost function types
-// ---------------------------------------------------------------------------
-
-/// A cost function over N argument sizes.
-///
-/// Argument sizes are measured in "words" (64-bit units) for integers and
-/// bytes for bytestrings/strings. Each `CostFun` variant encodes a different
-/// scaling shape matching the upstream `ModelOneArgument` / `ModelTwoArguments`
-/// / `ModelThreeArguments` types from the Haskell evaluator.
-///
-/// Argument slots:
-/// - `x` = first argument size (index 0)
-/// - `y` = second argument size (index 1)
-/// - `z` = third argument size (index 2)
-#[derive(Clone, Debug)]
-pub enum CostFun {
-    /// Fixed cost, no argument-size scaling.
-    Constant(i64),
-
-    /// Linear in the first argument size: `intercept + slope * x`.
-    LinearInX { intercept: i64, slope: i64 },
-
-    /// Linear in the second argument size: `intercept + slope * y`.
-    LinearInY { intercept: i64, slope: i64 },
-
-    /// Linear in the third argument size: `intercept + slope * z`.
-    LinearInZ { intercept: i64, slope: i64 },
-
-    /// Linear in x + y: `intercept + slope * (x + y)`.
-    LinearInXAndY { intercept: i64, slope: i64 },
-
-    /// Linear in max(x, y): `intercept + slope * max(x, y)`.
-    LinearInMaxXY { intercept: i64, slope: i64 },
-
-    /// Linear in min(x, y): `intercept + slope * min(x, y)`.
-    LinearInMinXY { intercept: i64, slope: i64 },
-
-    /// Linear in x * y: `intercept + slope * x * y`.
-    MultipliedSizes { intercept: i64, slope: i64 },
-
-    /// Linear in y + z: `intercept + slope * (y + z)`.
-    LinearInYAndZ { intercept: i64, slope: i64 },
-
-    /// Constant below the diagonal, linear in (x − y) above.
-    ///
-    /// - When `x <= y`: cost = `constant`
-    /// - When `x > y`: cost = `model_intercept + model_slope * (x − y)`
-    ///
-    /// Used for integer division / modulo CPU costs.
-    ConstAboveDiagonal {
-        constant: i64,
-        model_intercept: i64,
-        model_slope: i64,
-    },
-
-    /// Minimum-floored subtracted sizes.
-    ///
-    /// - When `x <= y`: cost = `minimum`
-    /// - When `x > y`: cost = `max(intercept + slope * (x − y), minimum)`
-    ///
-    /// Used for integer division / modulo memory costs.
-    SubtractedSizesWithMin {
-        intercept: i64,
-        slope: i64,
-        minimum: i64,
-    },
-
-    /// Constant above the diagonal (equality-like operations).
-    ///
-    /// - When `x != y`: cost = `constant`
-    /// - When `x == y`: cost = `model_intercept + model_slope * x`
-    ///
-    /// Used for `equalsByteString` and `equalsString` CPU costs.
-    ConstOffDiagonalLinearOnDiagonal {
-        constant: i64,
-        model_intercept: i64,
-        model_slope: i64,
+    /// A required named parameter was present but negative.
+    #[error("invalid negative cost-model parameter {name}: {value}")]
+    NegativeParameter {
+        name: &'static str,
+        value: i64,
     },
 }
 
-impl CostFun {
-    /// Evaluate the cost function given a slice of argument sizes.
-    ///
-    /// Missing argument sizes default to 1.
-    pub fn eval(&self, sizes: &[i64]) -> i64 {
-        let x = sizes.first().copied().unwrap_or(1);
-        let y = sizes.get(1).copied().unwrap_or(1);
-        let z = sizes.get(2).copied().unwrap_or(1);
-
-        match self {
-            Self::Constant(c) => *c,
-            Self::LinearInX { intercept, slope } => intercept + slope * x,
-            Self::LinearInY { intercept, slope } => intercept + slope * y,
-            Self::LinearInZ { intercept, slope } => intercept + slope * z,
-            Self::LinearInXAndY { intercept, slope } => intercept + slope * (x + y),
-            Self::LinearInMaxXY { intercept, slope } => intercept + slope * x.max(y),
-            Self::LinearInMinXY { intercept, slope } => intercept + slope * x.min(y),
-            Self::MultipliedSizes { intercept, slope } => intercept + slope * x * y,
-            Self::LinearInYAndZ { intercept, slope } => intercept + slope * (y + z),
-            Self::ConstAboveDiagonal {
-                constant,
-                model_intercept,
-                model_slope,
-            } => {
-                if x <= y {
-                    *constant
-                } else {
-                    model_intercept + model_slope * (x - y)
-                }
-            }
-            Self::SubtractedSizesWithMin {
-                intercept,
-                slope,
-                minimum,
-            } => {
-                if x <= y {
-                    *minimum
-                } else {
-                    (intercept + slope * (x - y)).max(*minimum)
-                }
-            }
-            Self::ConstOffDiagonalLinearOnDiagonal {
-                constant,
-                model_intercept,
-                model_slope,
-            } => {
-                if x != y {
-                    *constant
-                } else {
-                    model_intercept + model_slope * x
-                }
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Per-builtin cost entry
+// ExMemory — argument size measurement
 // ---------------------------------------------------------------------------
 
-/// CPU and memory cost functions for one builtin function.
-#[derive(Clone, Debug)]
-pub struct BuiltinCostEntry {
-    /// CPU cost function evaluated against argument sizes.
-    pub cpu: CostFun,
-    /// Memory cost function evaluated against argument sizes.
-    pub mem: CostFun,
-}
-
-impl BuiltinCostEntry {
-    fn new(cpu: CostFun, mem: CostFun) -> Self {
-        Self { cpu, mem }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Argument size measurement
-// ---------------------------------------------------------------------------
-
-/// Compute the "size" of a `Value` in cost-model units.
+/// Compute the ExMemory size of a CEK runtime value.
 ///
-/// Follows the upstream Plutus size semantics:
-/// - Integers: number of 64-bit words needed to represent the absolute value (min 1)
-/// - ByteStrings: raw byte length
-/// - Strings: UTF-8 byte length
-/// - Other: 1 (unit size)
-fn arg_size(val: &Value) -> i64 {
-    match val {
-        Value::Constant(c) => const_size(c),
-        _ => 1,
+/// Matches the upstream Plutus `ExMemoryUsage` type class:
+/// - Integers: 64-bit words needed for the absolute value (minimum 1).
+/// - ByteStrings / Strings: byte length.
+/// - Bool / Unit: 1.
+/// - Pair: 1 + size(fst) + size(snd).
+/// - List: 1 + Σ element sizes.
+/// - Data: recursive node cost (4 per node).
+/// - BLS elements: fixed word counts (6 / 12 / 6 for G1 / G2 / MlResult).
+/// - Non-data runtime values (lambda, delay, partial builtin): 0.
+pub fn ex_memory(value: &Value) -> i64 {
+    match value {
+        Value::Constant(c) => constant_ex_memory(c),
+        _ => 0,
     }
 }
 
-fn const_size(c: &Constant) -> i64 {
+fn constant_ex_memory(c: &crate::types::Constant) -> i64 {
+    use crate::types::Constant::*;
     match c {
-        Constant::Integer(n) => integer_size(*n),
-        // Upstream `memoryUsage` for ByteString is the raw byte length with no minimum.
-        Constant::ByteString(bs) => bs.len() as i64,
-        Constant::String(s) => s.len() as i64,
-        Constant::Unit => 1,
-        Constant::Bool(_) => 1,
-        Constant::Data(_) => 32, // conservative estimate; full recursive sizing is expensive
-        Constant::ProtoList(_, items) => items.len().max(1) as i64,
-        Constant::ProtoPair(..) => 1,
-        // BLS elements have fixed sizes matching upstream
-        Constant::Bls12_381_G1_Element(_) => 12, // 96 bytes compressed = 12 words
-        Constant::Bls12_381_G2_Element(_) => 24, // 192 bytes compressed = 24 words
-        Constant::Bls12_381_MlResult(_) => 72,   // 576 bytes = 72 words
+        Integer(n)                  => integer_ex_memory(*n),
+        ByteString(bs)              => bs.len() as i64,
+        String(s)                   => s.len() as i64,
+        Unit                        => 1,
+        Bool(_)                     => 1,
+        ProtoList(_, elems)         => 1 + elems.iter().map(constant_ex_memory).sum::<i64>(),
+        ProtoPair(_, _, a, b)       => 1 + constant_ex_memory(a) + constant_ex_memory(b),
+        Data(d)                     => data_ex_memory(d),
+        // G1=48B=6 words, G2=96B=12 words, MlResult=48B=6 words
+        Bls12_381_G1_Element(_)     => 6,
+        Bls12_381_G2_Element(_)     => 12,
+        Bls12_381_MlResult(_)       => 6,
     }
 }
 
-/// Number of 64-bit words required to represent the absolute value of `n`.
+/// Compute the ExMemory size of an integer value.
 ///
-/// Matches the upstream `memoryUsage` for `Integer`:
-/// `ceiling(bitLength(n) / 64)`, minimum 1.
-fn integer_size(n: i128) -> i64 {
+/// size = ceil(bit_length(|n|) / 64), minimum 1.
+/// Matches Haskell `nWords` in `ExMemoryUsage Integer`.
+pub fn integer_ex_memory(n: i128) -> i64 {
     if n == 0 {
         return 1;
     }
-    let bits = 128u32.saturating_sub(n.unsigned_abs().leading_zeros());
-    ((bits + 63) / 64).max(1) as i64
+    let bits = 128u32 - n.unsigned_abs().leading_zeros();
+    ((bits as i64) + 63) / 64
+}
+
+/// Compute the ExMemory size of a `PlutusData` value.
+///
+/// Matches upstream `dataSize` with a base cost of 4 per node.
+fn data_ex_memory(d: &yggdrasil_ledger::plutus::PlutusData) -> i64 {
+    use yggdrasil_ledger::plutus::PlutusData::*;
+    match d {
+        Constr(_, fields) => 4 + fields.iter().map(data_ex_memory).sum::<i64>(),
+        Map(pairs)        => 4 + pairs.iter()
+                                .map(|(k, v)| data_ex_memory(k) + data_ex_memory(v))
+                                .sum::<i64>(),
+        List(items)       => 4 + items.iter().map(data_ex_memory).sum::<i64>(),
+        Integer(n)        => 4 + integer_ex_memory(*n),
+        Bytes(bs)         => 4 + bs.len() as i64,
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Cost model
+// Cost expression shapes
 // ---------------------------------------------------------------------------
 
-/// Full parameterized cost model for the CEK machine.
+/// A single-dimension cost expression (CPU or memory) for a builtin.
 ///
-/// Carries both machine-step costs (charged per CEK reduction step) and
-/// per-builtin cost functions (charged when a saturated builtin is applied).
+/// Each variant mirrors one upstream Haskell `CostingFun` shape.
+#[derive(Clone, Debug)]
+pub enum CostExpr {
+    /// Fixed cost regardless of argument sizes: `intercept`.
+    Constant(i64),
+    /// `intercept + slope * size(arg[0])`.
+    LinearInX { intercept: i64, slope: i64 },
+    /// `intercept + slope * size(arg[1])`.
+    LinearInY { intercept: i64, slope: i64 },
+    /// `intercept + slope * size(arg[2])`.
+    LinearInZ { intercept: i64, slope: i64 },
+    /// `intercept + x*size(arg[0]) + y*size(arg[1]) + z*size(arg[2])`.
+    LinearForm { intercept: i64, x: i64, y: i64, z: i64 },
+    /// `intercept + slope * (size(arg[0]) + size(arg[1]))`.
+    AddedSizes { intercept: i64, slope: i64 },
+    /// `intercept + slope * max(size(arg[0]), size(arg[1]))`.
+    MaxSize { intercept: i64, slope: i64 },
+    /// `intercept + slope * min(size(arg[0]), size(arg[1]))`.
+    MinSize { intercept: i64, slope: i64 },
+    /// `max(minimum, intercept + slope * max(0, size(arg[0]) - size(arg[1])))`.
+    SubtractedSizes { intercept: i64, slope: i64, minimum: i64 },
+    /// `intercept + slope * max(size(arg[1]), size(arg[2]))`.
+    ///
+    /// Used by and/or/xorByteString memory costing where the first arg is a
+    /// boolean padding flag and the two bytestring operands are args 1 and 2.
+    MaxSizeYZ { intercept: i64, slope: i64 },
+    /// `c00 + c11 * (y * z) + c12 * (y * z²)` where y = size(arg[1]),
+    /// z = size(arg[2]).
+    ///
+    /// Upstream `expModInteger` CPU model from the Plutus R benchmarks.
+    ExpModCost { c00: i64, c11: i64, c12: i64 },
+}
+
+impl CostExpr {
+    /// Evaluate the cost expression given the pre-computed per-argument sizes.
+    ///
+    /// Missing argument sizes default to 1 (conservative). Results are clamped
+    /// to 0 from below.
+    pub fn evaluate(&self, sizes: &[i64]) -> i64 {
+        let sz = |idx: usize| sizes.get(idx).copied().unwrap_or(1).max(0);
+        let raw = match self {
+            Self::Constant(c)                          => *c,
+            Self::LinearInX { intercept, slope }       => intercept.saturating_add(slope.saturating_mul(sz(0))),
+            Self::LinearInY { intercept, slope }       => intercept.saturating_add(slope.saturating_mul(sz(1))),
+            Self::LinearInZ { intercept, slope }       => intercept.saturating_add(slope.saturating_mul(sz(2))),
+            Self::LinearForm { intercept, x, y, z }    => {
+                intercept
+                    .saturating_add(x.saturating_mul(sz(0)))
+                    .saturating_add(y.saturating_mul(sz(1)))
+                    .saturating_add(z.saturating_mul(sz(2)))
+            }
+            Self::AddedSizes { intercept, slope }      => intercept.saturating_add(slope.saturating_mul(sz(0).saturating_add(sz(1)))),
+            Self::MaxSize { intercept, slope }         => intercept.saturating_add(slope.saturating_mul(sz(0).max(sz(1)))),
+            Self::MinSize { intercept, slope }         => intercept.saturating_add(slope.saturating_mul(sz(0).min(sz(1)))),
+            Self::SubtractedSizes { intercept, slope, minimum } => {
+                (*minimum).max(intercept.saturating_add(slope.saturating_mul((sz(0) - sz(1)).max(0))))
+            }
+            Self::MaxSizeYZ { intercept, slope } => intercept.saturating_add(slope.saturating_mul(sz(1).max(sz(2)))),
+            Self::ExpModCost { c00, c11, c12 } => {
+                let y = sz(1);
+                let z = sz(2);
+                let yz = y.saturating_mul(z);
+                c00.saturating_add(c11.saturating_mul(yz))
+                   .saturating_add(c12.saturating_mul(yz.saturating_mul(z)))
+            }
+        };
+        raw.max(0)
+    }
+}
+
+/// Per-builtin costing entry containing CPU and memory `CostExpr` values.
+#[derive(Clone, Debug)]
+pub struct BuiltinCostEntry {
+    pub cpu: CostExpr,
+    pub mem: CostExpr,
+}
+
+impl BuiltinCostEntry {
+    fn constant(cpu: i64, mem: i64) -> Self {
+        Self { cpu: CostExpr::Constant(cpu), mem: CostExpr::Constant(mem) }
+    }
+
+    /// Evaluate against real argument values, returning an `ExBudget`.
+    pub fn evaluate(&self, args: &[Value]) -> ExBudget {
+        let sizes: Vec<i64> = args.iter().map(ex_memory).collect();
+        ExBudget::new(self.cpu.evaluate(&sizes), self.mem.evaluate(&sizes))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CostModel
+// ---------------------------------------------------------------------------
+
+/// Cost model used by the CEK machine for budget accounting.
 ///
-/// Matches the upstream `EvaluationContext` + `CostingFun` structure from
-/// `PlutusCore.Evaluation.Machine.ExBudgetingDefaults`.
+/// Stores per-step machine costs **and** per-builtin costing entries derived
+/// from the upstream Cardano named-parameter maps.
+///
+/// Use [`CostModel::from_alonzo_genesis_params`] to build from the
+/// `costModels.PlutusV1` / `costModels.PlutusV2` maps in `alonzo-genesis.json`.
+/// Use [`CostModel::default`] for tests.
 #[derive(Clone, Debug)]
 pub struct CostModel {
-    /// CPU units charged per CEK machine step (max across all step types).
-    step_cpu: i64,
-    /// Memory units charged per CEK machine step (max across all step types).
-    step_mem: i64,
-    /// CPU fallback for builtins not present in the per-builtin table.
-    default_builtin_cpu: i64,
-    /// Memory fallback for builtins not present in the per-builtin table.
-    default_builtin_mem: i64,
-    /// Per-builtin parameterized cost entries.
-    builtins: BTreeMap<DefaultFun, BuiltinCostEntry>,
+    /// Per-operation step costs matching upstream CEK machine step kinds.
+    pub step_costs: StepCosts,
+    /// One-time startup cost charged at the beginning of evaluation.
+    ///
+    /// Upstream: `cekStartupCost-exBudgetCPU` / `cekStartupCost-exBudgetMemory`.
+    pub startup_cost: ExBudget,
+    /// Flat-fallback CPU cost per builtin (used when no per-builtin entry exists).
+    pub builtin_cpu: i64,
+    /// Flat-fallback memory cost per builtin.
+    pub builtin_mem: i64,
+    /// Per-builtin parameterized costing entries.
+    ///
+    /// When a `DefaultFun` key is present here, its `BuiltinCostEntry` is
+    /// evaluated against actual argument sizes. When absent, the flat
+    /// `builtin_cpu` / `builtin_mem` fallback is used instead.
+    pub builtin_costs: HashMap<DefaultFun, BuiltinCostEntry>,
 }
 
 impl Default for CostModel {
-    /// Conservative defaults suitable for tests and simple scripts.
+    /// Conservative default suitable for unit tests.
     ///
-    /// Production use MUST supply the cost model from the protocol parameters
-    /// (via [`CostModel::from_alonzo_genesis_params`]).
+    /// Production nodes MUST supply real cost models from protocol parameters.
     fn default() -> Self {
         Self {
-            step_cpu: 29_773,
-            step_mem: 100,
-            default_builtin_cpu: 29_773,
-            default_builtin_mem: 100,
-            builtins: BTreeMap::new(),
+            step_costs: StepCosts::default(),
+            startup_cost: ExBudget::new(100, 100),
+            builtin_cpu: 1_000,
+            builtin_mem: 1_000,
+            builtin_costs: HashMap::new(),
         }
     }
 }
 
 impl CostModel {
-    /// Cost charged per CEK machine step.
+    /// Derive a cost model from an upstream Alonzo / Babbage named Plutus
+    /// cost-model map (`costModels.PlutusV1` or `costModels.PlutusV2` from
+    /// `alonzo-genesis.json`).
+    ///
+    /// **Machine step costs**: per-operation costs matching upstream CEK
+    /// step kinds (`Var`, `Const`, `Lam`, `Delay`, `Force`, `Apply`,
+    /// `Builtin`, `Constr`, `Case`).
+    ///
+    /// **Per-builtin costs**: each `DefaultFun` is mapped to a
+    /// [`BuiltinCostEntry`] based on the key patterns found in the map.
+    /// Unknown or partially-specified entries are silently skipped so that
+    /// future cost-model extensions don't break older node versions.
+    ///
+    /// `cekBuiltinCost-*` is optional when per-builtin entries cover all builtins;
+    /// it acts as a flat fallback for any builtin not present in `builtin_costs`.
+    pub fn from_alonzo_genesis_params(
+        params: &BTreeMap<String, i64>,
+    ) -> Result<Self, CostModelError> {
+        let var_cpu = named_value(params, "cekVarCost-exBudgetCPU")?;
+        let var_mem = named_value(params, "cekVarCost-exBudgetMemory")?;
+        let constant_cpu = named_value(params, "cekConstCost-exBudgetCPU")?;
+        let constant_mem = named_value(params, "cekConstCost-exBudgetMemory")?;
+        let lam_cpu = named_value(params, "cekLamCost-exBudgetCPU")?;
+        let lam_mem = named_value(params, "cekLamCost-exBudgetMemory")?;
+        let apply_cpu = named_value(params, "cekApplyCost-exBudgetCPU")?;
+        let apply_mem = named_value(params, "cekApplyCost-exBudgetMemory")?;
+        let delay_cpu = named_value(params, "cekDelayCost-exBudgetCPU")?;
+        let delay_mem = named_value(params, "cekDelayCost-exBudgetMemory")?;
+        let force_cpu = named_value(params, "cekForceCost-exBudgetCPU")?;
+        let force_mem = named_value(params, "cekForceCost-exBudgetMemory")?;
+        // cekBuiltinCost as the node-level step cost for encountering a Builtin term
+        let builtin_step_cpu = params.get("cekBuiltinCost-exBudgetCPU").copied().unwrap_or(var_cpu);
+        let builtin_step_mem = params.get("cekBuiltinCost-exBudgetMemory").copied().unwrap_or(var_mem);
+        // Constr/Case are optional (PlutusV3+), default to Apply cost
+        let constr_cpu = params.get("cekConstrCost-exBudgetCPU").copied().unwrap_or(apply_cpu);
+        let constr_mem = params.get("cekConstrCost-exBudgetMemory").copied().unwrap_or(apply_mem);
+        let case_cpu = params.get("cekCaseCost-exBudgetCPU").copied().unwrap_or(apply_cpu);
+        let case_mem = params.get("cekCaseCost-exBudgetMemory").copied().unwrap_or(apply_mem);
+
+        let step_costs = StepCosts {
+            var_cpu, var_mem,
+            constant_cpu, constant_mem,
+            lam_cpu, lam_mem,
+            apply_cpu, apply_mem,
+            delay_cpu, delay_mem,
+            force_cpu, force_mem,
+            builtin_cpu: builtin_step_cpu, builtin_mem: builtin_step_mem,
+            constr_cpu, constr_mem,
+            case_cpu, case_mem,
+        };
+
+        let builtin_cpu = params.get("cekBuiltinCost-exBudgetCPU").copied().unwrap_or(1_000);
+        let builtin_mem = params.get("cekBuiltinCost-exBudgetMemory").copied().unwrap_or(1_000);
+        let builtin_costs = build_per_builtin_costs(params);
+
+        // Startup cost charged once at the beginning of evaluation.
+        let startup_cpu = params.get("cekStartupCost-exBudgetCPU").copied().unwrap_or(0);
+        let startup_mem = params.get("cekStartupCost-exBudgetMemory").copied().unwrap_or(0);
+        let startup_cost = ExBudget::new(startup_cpu, startup_mem);
+
+        Ok(Self { step_costs, startup_cost, builtin_cpu, builtin_mem, builtin_costs })
+    }
+
+    /// Cost charged for a specific CEK machine step kind.
+    pub fn step_cost(&self, kind: StepKind) -> ExBudget {
+        self.step_costs.cost(kind)
+    }
+
+    /// Cost charged per CEK machine step (maximum across all step kinds).
+    ///
+    /// Retained for backward compatibility; prefer `step_cost(kind)`.
     pub fn machine_step_cost(&self) -> ExBudget {
-        ExBudget::new(self.step_cpu, self.step_mem)
+        let s = &self.step_costs;
+        let max_cpu = [s.var_cpu, s.constant_cpu, s.lam_cpu, s.apply_cpu,
+                       s.delay_cpu, s.force_cpu, s.builtin_cpu, s.constr_cpu,
+                       s.case_cpu].into_iter().max().unwrap_or(100);
+        let max_mem = [s.var_mem, s.constant_mem, s.lam_mem, s.apply_mem,
+                       s.delay_mem, s.force_mem, s.builtin_mem, s.constr_mem,
+                       s.case_mem].into_iter().max().unwrap_or(100);
+        ExBudget::new(max_cpu, max_mem)
     }
 
     /// Cost charged for invoking a saturated builtin.
     ///
-    /// Looks up the per-builtin parameterized cost function and evaluates it
-    /// against the actual argument sizes. Falls back to the default flat cost
-    /// for builtins not present in the table.
+    /// Uses the per-builtin [`BuiltinCostEntry`] when available, evaluated
+    /// against the actual argument sizes. Falls back to the flat
+    /// `builtin_cpu` / `builtin_mem` costs for any builtin with no entry.
     pub fn builtin_cost(&self, fun: DefaultFun, args: &[Value]) -> ExBudget {
-        if let Some(entry) = self.builtins.get(&fun) {
-            let sizes: Vec<i64> = args.iter().map(arg_size).collect();
-            let cpu = entry.cpu.eval(&sizes).max(0);
-            let mem = entry.mem.eval(&sizes).max(0);
-            ExBudget::new(cpu, mem)
+        if let Some(entry) = self.builtin_costs.get(&fun) {
+            entry.evaluate(args)
         } else {
-            ExBudget::new(self.default_builtin_cpu, self.default_builtin_mem)
+            ExBudget::new(self.builtin_cpu, self.builtin_mem)
         }
     }
-
-    /// Derive a cost model from an upstream Alonzo/Babbage named cost-model map.
-    ///
-    /// The map uses string keys in the format `{builtin}-{cpu|memory}-arguments[-{suffix}]`
-    /// as found in `alonzo-genesis.json` (PlutusV1 section) and Babbage protocol-parameter
-    /// updates (PlutusV2 section).
-    ///
-    /// Machine step costs are extracted from `cek*Cost-exBudget{CPU,Memory}` keys.
-    /// Per-builtin costs are parsed using hardcoded cost-function shapes that match
-    /// the upstream `DefaultBuiltinCostModel` in `ExBudgetingDefaults.hs`.
-    pub fn from_alonzo_genesis_params(
-        params: &BTreeMap<String, i64>,
-    ) -> Result<Self, CostModelError> {
-        // --- Machine step costs ---
-        const STEP_CPU_KEYS: [&str; 6] = [
-            "cekVarCost-exBudgetCPU",
-            "cekConstCost-exBudgetCPU",
-            "cekLamCost-exBudgetCPU",
-            "cekDelayCost-exBudgetCPU",
-            "cekForceCost-exBudgetCPU",
-            "cekApplyCost-exBudgetCPU",
-        ];
-        const STEP_MEM_KEYS: [&str; 6] = [
-            "cekVarCost-exBudgetMemory",
-            "cekConstCost-exBudgetMemory",
-            "cekLamCost-exBudgetMemory",
-            "cekDelayCost-exBudgetMemory",
-            "cekForceCost-exBudgetMemory",
-            "cekApplyCost-exBudgetMemory",
-        ];
-
-        let step_cpu = max_named(params, &STEP_CPU_KEYS)?;
-        let step_mem = max_named(params, &STEP_MEM_KEYS)?;
-        let default_builtin_cpu = get_named(params, "cekBuiltinCost-exBudgetCPU")?;
-        let default_builtin_mem = get_named(params, "cekBuiltinCost-exBudgetMemory")?;
-
-        // --- Per-builtin costs ---
-        let builtins = parse_builtin_costs(params);
-
-        Ok(Self {
-            step_cpu,
-            step_mem,
-            default_builtin_cpu,
-            default_builtin_mem,
-            builtins,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
-// Named-parameter helpers
+// Per-builtin cost table construction
 // ---------------------------------------------------------------------------
 
-fn get_named(params: &BTreeMap<String, i64>, key: &'static str) -> Result<i64, CostModelError> {
-    params
-        .get(key)
-        .copied()
-        .ok_or(CostModelError::MissingParameter(key))
-}
-
-fn get_named_opt(params: &BTreeMap<String, i64>, key: &str) -> Option<i64> {
-    params.get(key).copied()
-}
-
-fn max_named(
+/// Build the per-builtin HashMap from a named Alonzo cost-model parameter map.
+///
+/// Tries each key pattern for each builtin; skips entries that are missing or
+/// incomplete. Unknown genesis keys are silently ignored.
+fn build_per_builtin_costs(
     params: &BTreeMap<String, i64>,
-    keys: &[&'static str],
-) -> Result<i64, CostModelError> {
-    let mut max = 0i64;
-    for key in keys {
-        max = max.max(get_named(params, key)?);
-    }
-    Ok(max)
-}
-
-// ---------------------------------------------------------------------------
-// Per-builtin cost parsing
-// ---------------------------------------------------------------------------
-
-/// Parse all known builtin cost entries from the named parameter map.
-///
-/// Each builtin has a fixed cost-function shape (constant, linear, etc.)
-/// determined by the upstream `DefaultBuiltinCostModel` record. The shape is
-/// not encoded in the key names; it is hardcoded here to match upstream.
-///
-/// Missing keys result in the builtin being absent from the returned map;
-/// the caller's `default_builtin_*` fallback then applies.
-fn parse_builtin_costs(p: &BTreeMap<String, i64>) -> BTreeMap<DefaultFun, BuiltinCostEntry> {
+) -> HashMap<DefaultFun, BuiltinCostEntry> {
     use DefaultFun::*;
 
-    let mut m: BTreeMap<DefaultFun, BuiltinCostEntry> = BTreeMap::new();
+    let get = |key: &str| -> Option<i64> { params.get(key).copied() };
 
-    // Helper closures
-    let constant = |key: &str| -> Option<i64> { get_named_opt(p, key) };
+    let mut map: HashMap<DefaultFun, BuiltinCostEntry> = HashMap::new();
 
-    let linear = |prefix: &str, resource: &str| -> Option<(i64, i64)> {
-        let i = constant(&format!("{prefix}-{resource}-arguments-intercept"))?;
-        let s = constant(&format!("{prefix}-{resource}-arguments-slope"))?;
-        Some((i, s))
-    };
+    // ------------------------------------------------------------------
+    // Integer arithmetic
+    // ------------------------------------------------------------------
 
-    let const_entry = |cpu_key: &str, mem_key: &str| -> Option<BuiltinCostEntry> {
-        let cpu = constant(cpu_key)?;
-        let mem = constant(mem_key)?;
-        Some(BuiltinCostEntry::new(CostFun::Constant(cpu), CostFun::Constant(mem)))
-    };
-
-    // Macro-like helper: insert only when all params are present
-    macro_rules! ins {
-        ($fun:expr, $entry:expr) => {
-            if let Some(e) = $entry {
-                m.insert($fun, e);
-            }
-        };
-    }
-
-    // -- Integer arithmetic --------------------------------------------------
-
-    // addInteger / subtractInteger: cpu=LinearInMaxXY, mem=LinearInMaxXY
-    for (fun, prefix) in [
-        (AddInteger, "addInteger"),
-        (SubtractInteger, "subtractInteger"),
-    ] {
-        ins!(fun, (|| {
-            let (ci, cs) = linear(prefix, "cpu")?;
-            let (mi, ms) = linear(prefix, "memory")?;
-            Some(BuiltinCostEntry::new(
-                CostFun::LinearInMaxXY { intercept: ci, slope: cs },
-                CostFun::LinearInMaxXY { intercept: mi, slope: ms },
-            ))
-        })());
-    }
-
-    // multiplyInteger: cpu=LinearInXAndY (intercept + slope*(x+y)), mem=LinearInXAndY
-    ins!(MultiplyInteger, (|| {
-        let (ci, cs) = linear("multiplyInteger", "cpu")?;
-        let (mi, ms) = linear("multiplyInteger", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInXAndY { intercept: ci, slope: cs },
-            CostFun::LinearInXAndY { intercept: mi, slope: ms },
-        ))
-    })());
-
-    // divideInteger / quotientInteger / remainderInteger / modInteger:
-    // cpu=ConstAboveDiagonal, mem=SubtractedSizesWithMin
-    for (fun, prefix) in [
-        (DivideInteger, "divideInteger"),
-        (QuotientInteger, "quotientInteger"),
-        (RemainderInteger, "remainderInteger"),
-        (ModInteger, "modInteger"),
-    ] {
-        ins!(fun, (|| {
-            let cc = constant(&format!("{prefix}-cpu-arguments-constant"))?;
-            let mi_key = format!("{prefix}-cpu-arguments-model-arguments-intercept");
-            let ms_key = format!("{prefix}-cpu-arguments-model-arguments-slope");
-            let ci = get_named_opt(p, &mi_key)?;
-            let cs = get_named_opt(p, &ms_key)?;
-            let mem_i = constant(&format!("{prefix}-memory-arguments-intercept"))?;
-            let mem_min = constant(&format!("{prefix}-memory-arguments-minimum"))?;
-            let mem_s = constant(&format!("{prefix}-memory-arguments-slope"))?;
-            Some(BuiltinCostEntry::new(
-                CostFun::ConstAboveDiagonal {
-                    constant: cc,
-                    model_intercept: ci,
-                    model_slope: cs,
-                },
-                CostFun::SubtractedSizesWithMin {
-                    intercept: mem_i,
-                    slope: mem_s,
-                    minimum: mem_min,
-                },
-            ))
-        })());
-    }
-
-    // equalsInteger / lessThanInteger / lessThanEqualsInteger: cpu=LinearInMinXY, mem=Constant
-    for (fun, prefix) in [
-        (EqualsInteger, "equalsInteger"),
-        (LessThanInteger, "lessThanInteger"),
-        (LessThanEqualsInteger, "lessThanEqualsInteger"),
-    ] {
-        ins!(fun, (|| {
-            let (ci, cs) = linear(prefix, "cpu")?;
-            let mem = constant(&format!("{prefix}-memory-arguments"))?;
-            Some(BuiltinCostEntry::new(
-                CostFun::LinearInMinXY { intercept: ci, slope: cs },
-                CostFun::Constant(mem),
-            ))
-        })());
-    }
-
-    // -- ByteString ----------------------------------------------------------
-
-    // appendByteString: cpu=LinearInXAndY, mem=LinearInXAndY
-    ins!(AppendByteString, (|| {
-        let (ci, cs) = linear("appendByteString", "cpu")?;
-        let (mi, ms) = linear("appendByteString", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInXAndY { intercept: ci, slope: cs },
-            CostFun::LinearInXAndY { intercept: mi, slope: ms },
-        ))
-    })());
-
-    // consByteString: cpu=LinearInY (slope on content), mem=LinearInY
-    ins!(ConsByteString, (|| {
-        let (ci, cs) = linear("consByteString", "cpu")?;
-        let (mi, ms) = linear("consByteString", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInY { intercept: ci, slope: cs },
-            CostFun::LinearInY { intercept: mi, slope: ms },
-        ))
-    })());
-
-    // sliceByteString: cpu=LinearInZ (z = length to slice), mem=LinearInZ
-    ins!(SliceByteString, (|| {
-        let (ci, cs) = linear("sliceByteString", "cpu")?;
-        let (mi, ms) = linear("sliceByteString", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInZ { intercept: ci, slope: cs },
-            CostFun::LinearInZ { intercept: mi, slope: ms },
-        ))
-    })());
-
-    // lengthOfByteString: cpu=Constant, mem=Constant
-    ins!(LengthOfByteString, const_entry(
-        "lengthOfByteString-cpu-arguments",
-        "lengthOfByteString-memory-arguments",
-    ));
-
-    // indexByteString: cpu=Constant, mem=Constant
-    ins!(IndexByteString, const_entry(
-        "indexByteString-cpu-arguments",
-        "indexByteString-memory-arguments",
-    ));
-
-    // equalsByteString: cpu=ConstOffDiagonalLinearOnDiagonal, mem=Constant
-    ins!(EqualsByteString, (|| {
-        let cc = constant("equalsByteString-cpu-arguments-constant")?;
-        let ci = constant("equalsByteString-cpu-arguments-intercept")?;
-        let cs = constant("equalsByteString-cpu-arguments-slope")?;
-        let mem = constant("equalsByteString-memory-arguments")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::ConstOffDiagonalLinearOnDiagonal {
-                constant: cc,
-                model_intercept: ci,
-                model_slope: cs,
-            },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    // lessThanByteString / lessThanEqualsByteString: cpu=LinearInX, mem=Constant
-    // Note: LessThanEqualsByteString was removed from UPLC and is not in DefaultFun;
-    // the genesis key "lessThanEqualsByteString" is ignored.
-    ins!(LessThanByteString, (|| {
-        let (ci, cs) = linear("lessThanByteString", "cpu")?;
-        let mem = constant("lessThanByteString-memory-arguments")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    // -- Hashing -------------------------------------------------------------
-
-    // sha2_256 / sha3_256: cpu=LinearInX, mem=Constant
-    // Genesis key uses "sha2_256" for sha2_256 and "sha3_256" for sha3_256.
-    ins!(Sha2_256, (|| {
-        let (ci, cs) = linear("sha2_256", "cpu")?;
-        let mem = constant("sha2_256-memory-arguments")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    ins!(Sha3_256, (|| {
-        let (ci, cs) = linear("sha3_256", "cpu")?;
-        let mem = constant("sha3_256-memory-arguments")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    // blake2b_256: genesis key "blake2b" (old name in V1), also try "blake2b_256"
-    ins!(Blake2b_256, (|| {
-        // Try new name first, fall back to old genesis name
-        let prefix = if p.contains_key("blake2b_256-cpu-arguments-intercept") {
-            "blake2b_256"
-        } else {
-            "blake2b"
-        };
-        let (ci, cs) = linear(prefix, "cpu")?;
-        let mem = constant(&format!("{prefix}-memory-arguments"))?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    // keccak_256 / blake2b_224 / ripemd_160 (PlutusV3): cpu=LinearInX, mem=Constant
-    for (fun, prefix) in [
-        (Keccak_256, "keccak_256"),
-        (Blake2b_224, "blake2b_224"),
-        (Ripemd_160, "ripemd_160"),
-    ] {
-        ins!(fun, (|| {
-            let (ci, cs) = linear(prefix, "cpu")?;
-            let mem = constant(&format!("{prefix}-memory-arguments"))?;
-            Some(BuiltinCostEntry::new(
-                CostFun::LinearInX { intercept: ci, slope: cs },
-                CostFun::Constant(mem),
-            ))
-        })());
-    }
-
-    // -- Signature verification ----------------------------------------------
-
-    // verifyEd25519Signature (genesis: "verifySignature"): cpu=LinearInY (message size), mem=Constant
-    ins!(VerifyEd25519Signature, (|| {
-        // Try V2 name first, then V1 name
-        let prefix = if p.contains_key("verifyEd25519Signature-cpu-arguments-intercept") {
-            "verifyEd25519Signature"
-        } else {
-            "verifySignature"
-        };
-        let (ci, cs) = linear(prefix, "cpu")?;
-        let mem = constant(&format!("{prefix}-memory-arguments"))?;
-        // Message is the second argument (Y)
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInY { intercept: ci, slope: cs },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    // verifyEcdsaSecp256k1Signature: cpu=Constant, mem=Constant (PlutusV2)
-    ins!(VerifyEcdsaSecp256k1Signature, const_entry(
-        "verifyEcdsaSecp256k1Signature-cpu-arguments",
-        "verifyEcdsaSecp256k1Signature-memory-arguments",
-    ));
-
-    // verifySchnorrSecp256k1Signature: cpu=LinearInY (message), mem=Constant (PlutusV2)
-    ins!(VerifySchnorrSecp256k1Signature, (|| {
-        let (ci, cs) = linear("verifySchnorrSecp256k1Signature", "cpu")?;
-        let mem = constant("verifySchnorrSecp256k1Signature-memory-arguments")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInY { intercept: ci, slope: cs },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    // -- String --------------------------------------------------------------
-
-    // appendString: cpu=LinearInXAndY, mem=LinearInXAndY
-    ins!(AppendString, (|| {
-        let (ci, cs) = linear("appendString", "cpu")?;
-        let (mi, ms) = linear("appendString", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInXAndY { intercept: ci, slope: cs },
-            CostFun::LinearInXAndY { intercept: mi, slope: ms },
-        ))
-    })());
-
-    // equalsString: cpu=ConstOffDiagonalLinearOnDiagonal, mem=Constant
-    ins!(EqualsString, (|| {
-        let cc = constant("equalsString-cpu-arguments-constant")?;
-        let ci = constant("equalsString-cpu-arguments-intercept")?;
-        let cs = constant("equalsString-cpu-arguments-slope")?;
-        let mem = constant("equalsString-memory-arguments")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::ConstOffDiagonalLinearOnDiagonal {
-                constant: cc,
-                model_intercept: ci,
-                model_slope: cs,
-            },
-            CostFun::Constant(mem),
-        ))
-    })());
-
-    // encodeUtf8 / decodeUtf8: cpu=LinearInX, mem=LinearInX
-    for (fun, prefix) in [
-        (EncodeUtf8, "encodeUtf8"),
-        (DecodeUtf8, "decodeUtf8"),
-    ] {
-        ins!(fun, (|| {
-            let (ci, cs) = linear(prefix, "cpu")?;
-            let (mi, ms) = linear(prefix, "memory")?;
-            Some(BuiltinCostEntry::new(
-                CostFun::LinearInX { intercept: ci, slope: cs },
-                CostFun::LinearInX { intercept: mi, slope: ms },
-            ))
-        })());
-    }
-
-    // -- Constant builtins (all Constant cost) --------------------------------
-
-    for (fun, cpu_key, mem_key) in [
-        (IfThenElse,    "ifThenElse-cpu-arguments",    "ifThenElse-memory-arguments"),
-        (ChooseUnit,    "chooseUnit-cpu-arguments",    "chooseUnit-memory-arguments"),
-        (Trace,         "trace-cpu-arguments",         "trace-memory-arguments"),
-        (FstPair,       "fstPair-cpu-arguments",       "fstPair-memory-arguments"),
-        (SndPair,       "sndPair-cpu-arguments",       "sndPair-memory-arguments"),
-        (ChooseList,    "chooseList-cpu-arguments",    "chooseList-memory-arguments"),
-        (MkCons,        "mkCons-cpu-arguments",        "mkCons-memory-arguments"),
-        (HeadList,      "headList-cpu-arguments",      "headList-memory-arguments"),
-        (TailList,      "tailList-cpu-arguments",      "tailList-memory-arguments"),
-        (NullList,      "nullList-cpu-arguments",      "nullList-memory-arguments"),
-        (ChooseData,    "chooseData-cpu-arguments",    "chooseData-memory-arguments"),
-        (ConstrData,    "constrData-cpu-arguments",    "constrData-memory-arguments"),
-        (MapData,       "mapData-cpu-arguments",       "mapData-memory-arguments"),
-        (ListData,      "listData-cpu-arguments",      "listData-memory-arguments"),
-        (IData,         "iData-cpu-arguments",         "iData-memory-arguments"),
-        (BData,         "bData-cpu-arguments",         "bData-memory-arguments"),
-        (UnConstrData,  "unConstrData-cpu-arguments",  "unConstrData-memory-arguments"),
-        (UnMapData,     "unMapData-cpu-arguments",     "unMapData-memory-arguments"),
-        (UnListData,    "unListData-cpu-arguments",    "unListData-memory-arguments"),
-        (UnIData,       "unIData-cpu-arguments",       "unIData-memory-arguments"),
-        (UnBData,       "unBData-cpu-arguments",       "unBData-memory-arguments"),
-        (MkPairData,    "mkPairData-cpu-arguments",    "mkPairData-memory-arguments"),
-        (MkNilData,     "mkNilData-cpu-arguments",     "mkNilData-memory-arguments"),
-        (MkNilPairData, "mkNilPairData-cpu-arguments", "mkNilPairData-memory-arguments"),
-        (IndexByteString, "indexByteString-cpu-arguments", "indexByteString-memory-arguments"),
-        (LengthOfByteString, "lengthOfByteString-cpu-arguments", "lengthOfByteString-memory-arguments"),
-    ] {
-        // Only insert if not already present from a more specific parse above
-        if !m.contains_key(&fun) {
-            ins!(fun, const_entry(cpu_key, mem_key));
+    // addInteger / subtractInteger: MaxSize for both dimensions
+    for (fun, prefix) in [(AddInteger, "addInteger"), (SubtractInteger, "subtractInteger")] {
+        let ci = get(&format!("{prefix}-cpu-arguments-intercept"));
+        let cs = get(&format!("{prefix}-cpu-arguments-slope"));
+        let mi = get(&format!("{prefix}-memory-arguments-intercept"));
+        let ms = get(&format!("{prefix}-memory-arguments-slope"));
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::MaxSize { intercept: ci, slope: cs },
+                mem: CostExpr::MaxSize { intercept: mi, slope: ms },
+            });
         }
     }
 
-    // equalsData: cpu=LinearInMinXY (scales with smaller data), mem=Constant
-    ins!(EqualsData, (|| {
-        let (ci, cs) = linear("equalsData", "cpu")?;
-        let mem = constant("equalsData-memory-arguments")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInMinXY { intercept: ci, slope: cs },
-            CostFun::Constant(mem),
-        ))
-    })());
+    // multiplyInteger: AddedSizes for both dimensions
+    {
+        let ci = get("multiplyInteger-cpu-arguments-intercept");
+        let cs = get("multiplyInteger-cpu-arguments-slope");
+        let mi = get("multiplyInteger-memory-arguments-intercept");
+        let ms = get("multiplyInteger-memory-arguments-slope");
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(MultiplyInteger, BuiltinCostEntry {
+                cpu: CostExpr::AddedSizes { intercept: ci, slope: cs },
+                mem: CostExpr::AddedSizes { intercept: mi, slope: ms },
+            });
+        }
+    }
 
-    // serialiseData (PlutusV2+): cpu=LinearInX, mem=LinearInX
-    ins!(SerialiseData, (|| {
-        let (ci, cs) = linear("serialiseData", "cpu")?;
-        let (mi, ms) = linear("serialiseData", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::LinearInX { intercept: mi, slope: ms },
-        ))
-    })());
+    // divideInteger / modInteger / quotientInteger / remainderInteger:
+    // cpu = SubtractedSizes (via model-arguments form); mem = SubtractedSizes
+    for (fun, p) in [
+        (DivideInteger,    "divideInteger"),
+        (ModInteger,       "modInteger"),
+        (QuotientInteger,  "quotientInteger"),
+        (RemainderInteger, "remainderInteger"),
+    ] {
+        let cpu = if let (Some(ci), Some(cs)) = (
+            get(&format!("{p}-cpu-arguments-model-arguments-intercept")),
+            get(&format!("{p}-cpu-arguments-model-arguments-slope")),
+        ) {
+            Some(CostExpr::SubtractedSizes { intercept: ci, slope: cs, minimum: 0 })
+        } else {
+            get(&format!("{p}-cpu-arguments-constant")).map(CostExpr::Constant)
+        };
+        let mem = if let (Some(mi), Some(ms)) = (
+            get(&format!("{p}-memory-arguments-intercept")),
+            get(&format!("{p}-memory-arguments-slope")),
+        ) {
+            let minimum = get(&format!("{p}-memory-arguments-minimum")).unwrap_or(0);
+            Some(CostExpr::SubtractedSizes { intercept: mi, slope: ms, minimum })
+        } else {
+            get(&format!("{p}-memory-arguments-intercept")).map(CostExpr::Constant)
+        };
+        if let (Some(cpu), Some(mem)) = (cpu, mem) {
+            map.insert(fun, BuiltinCostEntry { cpu, mem });
+        }
+    }
 
-    // -- PlutusV3: integer/bytestring conversions ----------------------------
+    // equalsInteger / lessThanInteger / lessThanEqualsInteger: MinSize / constant-mem
+    for (fun, p) in [
+        (EqualsInteger,         "equalsInteger"),
+        (LessThanInteger,       "lessThanInteger"),
+        (LessThanEqualsInteger, "lessThanEqualsInteger"),
+    ] {
+        let cpu = if let (Some(ci), Some(cs)) = (
+            get(&format!("{p}-cpu-arguments-intercept")),
+            get(&format!("{p}-cpu-arguments-slope")),
+        ) {
+            Some(CostExpr::MinSize { intercept: ci, slope: cs })
+        } else {
+            get(&format!("{p}-cpu-arguments")).map(CostExpr::Constant)
+        };
+        let mem = get(&format!("{p}-memory-arguments"))
+            .map(CostExpr::Constant)
+            .unwrap_or(CostExpr::Constant(1));
+        if let Some(cpu) = cpu {
+            map.insert(fun, BuiltinCostEntry { cpu, mem });
+        }
+    }
 
-    // integerToByteString (3 args: signed flag, output_size, input): cpu=LinearInY (output_size), mem=LinearInY
-    ins!(IntegerToByteString, (|| {
-        let (ci, cs) = linear("integerToByteString", "cpu")?;
-        let (mi, ms) = linear("integerToByteString", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInY { intercept: ci, slope: cs },
-            CostFun::LinearInY { intercept: mi, slope: ms },
-        ))
-    })());
+    // ------------------------------------------------------------------
+    // ByteString operations
+    // ------------------------------------------------------------------
 
-    // byteStringToInteger (2 args: signed flag, input): cpu=LinearInY (input size), mem=LinearInY
-    ins!(ByteStringToInteger, (|| {
-        let (ci, cs) = linear("byteStringToInteger", "cpu")?;
-        let (mi, ms) = linear("byteStringToInteger", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInY { intercept: ci, slope: cs },
-            CostFun::LinearInY { intercept: mi, slope: ms },
-        ))
-    })());
+    // appendByteString: AddedSizes
+    {
+        let ci = get("appendByteString-cpu-arguments-intercept");
+        let cs = get("appendByteString-cpu-arguments-slope");
+        let mi = get("appendByteString-memory-arguments-intercept");
+        let ms = get("appendByteString-memory-arguments-slope");
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(AppendByteString, BuiltinCostEntry {
+                cpu: CostExpr::AddedSizes { intercept: ci, slope: cs },
+                mem: CostExpr::AddedSizes { intercept: mi, slope: ms },
+            });
+        }
+    }
 
-    // -- PlutusV3: bitwise operations ----------------------------------------
+    // consByteString: LinearInY (output byte-string length = input + 1)
+    {
+        let ci = get("consByteString-cpu-arguments-intercept");
+        let cs = get("consByteString-cpu-arguments-slope");
+        let mi = get("consByteString-memory-arguments-intercept");
+        let ms = get("consByteString-memory-arguments-slope");
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(ConsByteString, BuiltinCostEntry {
+                cpu: CostExpr::LinearInY { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInY { intercept: mi, slope: ms },
+            });
+        }
+    }
 
-    // andByteString / orByteString / xorByteString (3 args: lsb_first?, bs1, bs2)
-    // cpu=LinearInYAndZ (bs sizes), mem=LinearInYAndZ
+    // sliceByteString: LinearInZ (slice-length arg)
+    {
+        let ci = get("sliceByteString-cpu-arguments-intercept");
+        let cs = get("sliceByteString-cpu-arguments-slope");
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mi = get("sliceByteString-memory-arguments-intercept").unwrap_or(4);
+            let ms = get("sliceByteString-memory-arguments-slope").unwrap_or(0);
+            map.insert(SliceByteString, BuiltinCostEntry {
+                cpu: CostExpr::LinearInZ { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInZ { intercept: mi, slope: ms },
+            });
+        }
+    }
+
+    // equalsByteString: LinearInX / constant-mem
+    {
+        let ci = get("equalsByteString-cpu-arguments-intercept");
+        let cs = get("equalsByteString-cpu-arguments-slope");
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get("equalsByteString-memory-arguments").unwrap_or(1);
+            map.insert(EqualsByteString, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        }
+    }
+
+    // lessThanByteString
+    {
+        let ci = get("lessThanByteString-cpu-arguments-intercept");
+        let cs = get("lessThanByteString-cpu-arguments-slope");
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get("lessThanByteString-memory-arguments").unwrap_or(1);
+            map.insert(LessThanByteString, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        }
+    }
+
+    // lessThanEqualsByteString
+    {
+        let ci = get("lessThanEqualsByteString-cpu-arguments-intercept");
+        let cs = get("lessThanEqualsByteString-cpu-arguments-slope");
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get("lessThanEqualsByteString-memory-arguments").unwrap_or(1);
+            map.insert(LessThanEqualsByteString, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        } else if let Some(entry) = map.get(&LessThanByteString) {
+            // Fall back to LessThanByteString costs if LessThanEqualsByteString absent.
+            map.insert(LessThanEqualsByteString, entry.clone());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Cryptographic hashing — LinearInX / constant-mem
+    // ------------------------------------------------------------------
+
+    for (fun, p, mem_key) in [
+        (Sha2_256, "sha2_256", "sha2_256-memory-arguments"),
+        (Sha3_256, "sha3_256", "sha3_256-memory-arguments"),
+    ] {
+        let ci = get(&format!("{p}-cpu-arguments-intercept"));
+        let cs = get(&format!("{p}-cpu-arguments-slope"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get(mem_key).unwrap_or(4);
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        }
+    }
+
+    // blake2b: Alonzo genesis key is "blake2b", later genesis uses "blake2b_256"
+    for p in ["blake2b", "blake2b_256"] {
+        if map.contains_key(&Blake2b_256) { break; }
+        let ci = get(&format!("{p}-cpu-arguments-intercept"));
+        let cs = get(&format!("{p}-cpu-arguments-slope"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get(&format!("{p}-memory-arguments")).unwrap_or(4);
+            map.insert(Blake2b_256, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        }
+    }
+
+    // verifyEd25519Signature: Alonzo key is "verifySignature"
+    // cpu = LinearInY (message-length arg), mem = constant
+    for p in ["verifyEd25519Signature", "verifySignature"] {
+        if map.contains_key(&VerifyEd25519Signature) { break; }
+        let ci = get(&format!("{p}-cpu-arguments-intercept"));
+        let cs = get(&format!("{p}-cpu-arguments-slope"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get(&format!("{p}-memory-arguments")).unwrap_or(1);
+            map.insert(VerifyEd25519Signature, BuiltinCostEntry {
+                cpu: CostExpr::LinearInY { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // String operations
+    // ------------------------------------------------------------------
+
+    // appendString: AddedSizes
+    {
+        let ci = get("appendString-cpu-arguments-intercept");
+        let cs = get("appendString-cpu-arguments-slope");
+        let mi = get("appendString-memory-arguments-intercept");
+        let ms = get("appendString-memory-arguments-slope");
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(AppendString, BuiltinCostEntry {
+                cpu: CostExpr::AddedSizes { intercept: ci, slope: cs },
+                mem: CostExpr::AddedSizes { intercept: mi, slope: ms },
+            });
+        }
+    }
+
+    // equalsString: LinearInX / constant-mem
+    {
+        let ci = get("equalsString-cpu-arguments-intercept");
+        let cs = get("equalsString-cpu-arguments-slope");
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get("equalsString-memory-arguments").unwrap_or(1);
+            map.insert(EqualsString, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        }
+    }
+
+    // encodeUtf8 / decodeUtf8: LinearInX for both dimensions
+    for (fun, p) in [(EncodeUtf8, "encodeUtf8"), (DecodeUtf8, "decodeUtf8")] {
+        let ci = get(&format!("{p}-cpu-arguments-intercept"));
+        let cs = get(&format!("{p}-cpu-arguments-slope"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mi = get(&format!("{p}-memory-arguments-intercept")).unwrap_or(0);
+            let ms = get(&format!("{p}-memory-arguments-slope")).unwrap_or(1);
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInX { intercept: mi, slope: ms },
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Simple constant-cost builtins (single cpu-arguments key each)
+    // ------------------------------------------------------------------
+    const CONSTANT_BUILTINS: &[(&str, DefaultFun)] = &[
+        ("ifThenElse",         IfThenElse),
+        ("chooseUnit",         ChooseUnit),
+        ("trace",              Trace),
+        ("fstPair",            FstPair),
+        ("sndPair",            SndPair),
+        ("chooseList",         ChooseList),
+        ("mkCons",             MkCons),
+        ("headList",           HeadList),
+        ("tailList",           TailList),
+        ("nullList",           NullList),
+        ("chooseData",         ChooseData),
+        ("constrData",         ConstrData),
+        ("mapData",            MapData),
+        ("listData",           ListData),
+        ("iData",              IData),
+        ("bData",              BData),
+        ("unConstrData",       UnConstrData),
+        ("unMapData",          UnMapData),
+        ("unListData",         UnListData),
+        ("unIData",            UnIData),
+        ("unBData",            UnBData),
+        ("mkPairData",         MkPairData),
+        ("mkNilData",          MkNilData),
+        ("mkNilPairData",      MkNilPairData),
+        ("lengthOfByteString", LengthOfByteString),
+        ("indexByteString",    IndexByteString),
+    ];
+    for (prefix, fun) in CONSTANT_BUILTINS {
+        if map.contains_key(fun) { continue; }
+        if let Some(c) = get(&format!("{prefix}-cpu-arguments")) {
+            let m = get(&format!("{prefix}-memory-arguments")).unwrap_or(1);
+            map.insert(*fun, BuiltinCostEntry::constant(c, m));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Data builtins
+    // ------------------------------------------------------------------
+
+    // equalsData: LinearInX / constant-mem
+    {
+        let ci = get("equalsData-cpu-arguments-intercept");
+        let cs = get("equalsData-cpu-arguments-slope");
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mem = get("equalsData-memory-arguments").unwrap_or(1);
+            map.insert(EqualsData, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(mem),
+            });
+        }
+    }
+
+    // serialiseData: LinearInX for both dimensions
+    {
+        let ci = get("serialiseData-cpu-arguments-intercept");
+        let cs = get("serialiseData-cpu-arguments-slope");
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let mi = get("serialiseData-memory-arguments-intercept").unwrap_or(0);
+            let ms = get("serialiseData-memory-arguments-slope").unwrap_or(2);
+            map.insert(SerialiseData, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInX { intercept: mi, slope: ms },
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Secp256k1 signature verification
+    // ------------------------------------------------------------------
+    for (fun, p) in [
+        (VerifyEcdsaSecp256k1Signature,   "verifyEcdsaSecp256k1Signature"),
+        (VerifySchnorrSecp256k1Signature, "verifySchnorrSecp256k1Signature"),
+    ] {
+        if let (Some(ci), Some(cs)) = (
+            get(&format!("{p}-cpu-arguments-intercept")),
+            get(&format!("{p}-cpu-arguments-slope")),
+        ) {
+            let m = get(&format!("{p}-memory-arguments")).unwrap_or(10);
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInY { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(m),
+            });
+        } else if let Some(c) = get(&format!("{p}-cpu-arguments")) {
+            let m = get(&format!("{p}-memory-arguments")).unwrap_or(10);
+            map.insert(fun, BuiltinCostEntry::constant(c, m));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // BLS12-381 builtins (PlutusV3)
+    // ------------------------------------------------------------------
+
+    // Constant-cost BLS group operations
+    for (fun, p) in [
+        (Bls12_381_G1_Add,        "bls12_381_G1_add"),
+        (Bls12_381_G1_Neg,        "bls12_381_G1_neg"),
+        (Bls12_381_G1_Equal,      "bls12_381_G1_equal"),
+        (Bls12_381_G1_Compress,   "bls12_381_G1_compress"),
+        (Bls12_381_G1_Uncompress, "bls12_381_G1_uncompress"),
+        (Bls12_381_G2_Add,        "bls12_381_G2_add"),
+        (Bls12_381_G2_Neg,        "bls12_381_G2_neg"),
+        (Bls12_381_G2_Equal,      "bls12_381_G2_equal"),
+        (Bls12_381_G2_Compress,   "bls12_381_G2_compress"),
+        (Bls12_381_G2_Uncompress, "bls12_381_G2_uncompress"),
+        (Bls12_381_MillerLoop,    "bls12_381_millerLoop"),
+        (Bls12_381_MulMlResult,   "bls12_381_mulMlResult"),
+        (Bls12_381_FinalVerify,   "bls12_381_finalVerify"),
+    ] {
+        if let Some(c) = get(&format!("{p}-cpu-arguments")) {
+            let m = get(&format!("{p}-memory-arguments")).unwrap_or(6);
+            map.insert(fun, BuiltinCostEntry::constant(c, m));
+        }
+    }
+
+    // scalarMul: LinearInX (scalar word-size)
+    for (fun, p) in [
+        (Bls12_381_G1_ScalarMul, "bls12_381_G1_scalarMul"),
+        (Bls12_381_G2_ScalarMul, "bls12_381_G2_scalarMul"),
+    ] {
+        let ci = get(&format!("{p}-cpu-arguments-intercept"));
+        let cs = get(&format!("{p}-cpu-arguments-slope"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let m = get(&format!("{p}-memory-arguments")).unwrap_or(6);
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(m),
+            });
+        }
+    }
+
+    // hashToGroup: LinearInX (message byte-length)
+    for (fun, p) in [
+        (Bls12_381_G1_HashToGroup, "bls12_381_G1_hashToGroup"),
+        (Bls12_381_G2_HashToGroup, "bls12_381_G2_hashToGroup"),
+    ] {
+        let ci = get(&format!("{p}-cpu-arguments-intercept"));
+        let cs = get(&format!("{p}-cpu-arguments-slope"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let m = get(&format!("{p}-memory-arguments")).unwrap_or(6);
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(m),
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // PlutusV3 additional hashing builtins
+    // ------------------------------------------------------------------
+    for (fun, p) in [
+        (Keccak_256,  "keccak_256"),
+        (Blake2b_224, "blake2b_224"),
+        (Ripemd_160,  "ripemd_160"),
+    ] {
+        let ci = get(&format!("{p}-cpu-arguments-intercept"));
+        let cs = get(&format!("{p}-cpu-arguments-slope"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            let m = get(&format!("{p}-memory-arguments")).unwrap_or(4);
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(m),
+            });
+        }
+    }
+
+    // Integer / ByteString conversion (Conway V3 array surface)
+    // `integerToByteString` and `byteStringToInteger` expose coefficient-style
+    // CPU models in upstream V3 maps. We treat the first coefficient as an
+    // intercept term and the remaining coefficients as argument-size weights.
+    {
+        let c0 = get("integerToByteString-cpu-arguments-c0");
+        let c1 = get("integerToByteString-cpu-arguments-c1");
+        let c2 = get("integerToByteString-cpu-arguments-c2");
+        let mi = get("integerToByteString-memory-arguments-intercept");
+        let ms = get("integerToByteString-memory-arguments-slope");
+        if let (Some(c0), Some(c1), Some(c2), Some(mi), Some(ms)) = (c0, c1, c2, mi, ms) {
+            map.insert(IntegerToByteString, BuiltinCostEntry {
+                cpu: CostExpr::LinearForm { intercept: c0, x: 0, y: c1, z: c2 },
+                mem: CostExpr::LinearInZ { intercept: mi, slope: ms },
+            });
+        }
+    }
+
+    {
+        let c0 = get("byteStringToInteger-cpu-arguments-c0");
+        let c1 = get("byteStringToInteger-cpu-arguments-c1");
+        let c2 = get("byteStringToInteger-cpu-arguments-c2");
+        let mi = get("byteStringToInteger-memory-arguments-intercept");
+        let ms = get("byteStringToInteger-memory-arguments-slope");
+        if let (Some(c0), Some(c1), Some(c2), Some(mi), Some(ms)) = (c0, c1, c2, mi, ms) {
+            map.insert(ByteStringToInteger, BuiltinCostEntry {
+                cpu: CostExpr::LinearForm { intercept: c0, x: c1, y: c2, z: 0 },
+                mem: CostExpr::LinearInY { intercept: mi, slope: ms },
+            });
+        }
+    }
+
+    // expModInteger: polynomial CPU (`c00 + c11*(y*z) + c12*(y*z²)`),
+    // linear-in-z memory (`intercept + slope * size(modulus)`).
+    {
+        let c00 = get("expModInteger-cpu-arguments-coefficient00");
+        let c11 = get("expModInteger-cpu-arguments-coefficient11");
+        let c12 = get("expModInteger-cpu-arguments-coefficient12");
+        let mi = get("expModInteger-memory-arguments-intercept");
+        let ms = get("expModInteger-memory-arguments-slope");
+        if let (Some(c00), Some(c11), Some(c12), Some(mi), Some(ms)) = (c00, c11, c12, mi, ms) {
+            map.insert(ExpModInteger, BuiltinCostEntry {
+                cpu: CostExpr::ExpModCost { c00, c11, c12 },
+                mem: CostExpr::LinearInZ { intercept: mi, slope: ms },
+            });
+        } else if let Some(c) = get("expModInteger-cpu-arguments") {
+            // Flat fallback for legacy/incomplete parameter maps.
+            let m = get("expModInteger-memory-arguments").unwrap_or(1);
+            map.insert(ExpModInteger, BuiltinCostEntry::constant(c, m));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Bitwise builtins (PlutusV3 / CIP-0058, CIP-0123)
+    // ------------------------------------------------------------------
+
+    // andByteString, orByteString, xorByteString:
+    // CPU = intercept + slope1*size(arg[1]) + slope2*size(arg[2])
+    // Memory = intercept + slope*max(size(arg[1]), size(arg[2]))
     for (fun, prefix) in [
         (AndByteString, "andByteString"),
         (OrByteString, "orByteString"),
         (XorByteString, "xorByteString"),
     ] {
-        ins!(fun, (|| {
-            let (ci, cs) = linear(prefix, "cpu")?;
-            let (mi, ms) = linear(prefix, "memory")?;
-            Some(BuiltinCostEntry::new(
-                CostFun::LinearInYAndZ { intercept: ci, slope: cs },
-                CostFun::LinearInYAndZ { intercept: mi, slope: ms },
-            ))
-        })());
+        let ci = get(&format!("{prefix}-cpu-arguments-intercept"));
+        let cs1 = get(&format!("{prefix}-cpu-arguments-slope1"));
+        let cs2 = get(&format!("{prefix}-cpu-arguments-slope2"));
+        let mi = get(&format!("{prefix}-memory-arguments-intercept"));
+        let ms = get(&format!("{prefix}-memory-arguments-slope"));
+        if let (Some(ci), Some(cs1), Some(cs2), Some(mi), Some(ms)) = (ci, cs1, cs2, mi, ms) {
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearForm { intercept: ci, x: 0, y: cs1, z: cs2 },
+                mem: CostExpr::MaxSizeYZ { intercept: mi, slope: ms },
+            });
+        }
     }
 
-    // complementByteString: cpu=LinearInX, mem=LinearInX
-    ins!(ComplementByteString, (|| {
-        let (ci, cs) = linear("complementByteString", "cpu")?;
-        let (mi, ms) = linear("complementByteString", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::LinearInX { intercept: mi, slope: ms },
-        ))
-    })());
+    // complementByteString: LinearInX for both CPU and memory.
+    {
+        let ci = get("complementByteString-cpu-arguments-intercept");
+        let cs = get("complementByteString-cpu-arguments-slope");
+        let mi = get("complementByteString-memory-arguments-intercept");
+        let ms = get("complementByteString-memory-arguments-slope");
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(ComplementByteString, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInX { intercept: mi, slope: ms },
+            });
+        }
+    }
 
-    // readBit (2 args: bs, index): cpu=Constant, mem=Constant
-    ins!(ReadBit, const_entry(
-        "readBit-cpu-arguments",
-        "readBit-memory-arguments",
-    ));
+    // readBit: constant for both.
+    {
+        let c = get("readBit-cpu-arguments");
+        let m = get("readBit-memory-arguments");
+        if let (Some(c), Some(m)) = (c, m) {
+            map.insert(ReadBit, BuiltinCostEntry::constant(c, m));
+        }
+    }
 
-    // writeBits (3 args: bs, indices_list, bits_list): cpu=LinearInX, mem=LinearInX
-    ins!(WriteBits, (|| {
-        let (ci, cs) = linear("writeBits", "cpu")?;
-        let (mi, ms) = linear("writeBits", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::LinearInX { intercept: mi, slope: ms },
-        ))
-    })());
+    // writeBits: CPU linear in Y (list length), memory linear in X (bytestring size).
+    {
+        let ci = get("writeBits-cpu-arguments-intercept");
+        let cs = get("writeBits-cpu-arguments-slope");
+        let mi = get("writeBits-memory-arguments-intercept");
+        let ms = get("writeBits-memory-arguments-slope");
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(WriteBits, BuiltinCostEntry {
+                cpu: CostExpr::LinearInY { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInX { intercept: mi, slope: ms },
+            });
+        }
+    }
 
-    // replicateByte (2 args: count, byte): cpu=LinearInX, mem=LinearInX
-    ins!(ReplicateByte, (|| {
-        let (ci, cs) = linear("replicateByte", "cpu")?;
-        let (mi, ms) = linear("replicateByte", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInX { intercept: ci, slope: cs },
-            CostFun::LinearInX { intercept: mi, slope: ms },
-        ))
-    })());
+    // replicateByte: LinearInX for both.
+    {
+        let ci = get("replicateByte-cpu-arguments-intercept");
+        let cs = get("replicateByte-cpu-arguments-slope");
+        let mi = get("replicateByte-memory-arguments-intercept");
+        let ms = get("replicateByte-memory-arguments-slope");
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(ReplicateByte, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInX { intercept: mi, slope: ms },
+            });
+        }
+    }
 
-    // shiftByteString / rotateByteString (2 args: bs, shift): cpu=LinearInX, mem=LinearInX
+    // shiftByteString, rotateByteString: LinearInX for both.
     for (fun, prefix) in [
         (ShiftByteString, "shiftByteString"),
         (RotateByteString, "rotateByteString"),
     ] {
-        ins!(fun, (|| {
-            let (ci, cs) = linear(prefix, "cpu")?;
-            let (mi, ms) = linear(prefix, "memory")?;
-            Some(BuiltinCostEntry::new(
-                CostFun::LinearInX { intercept: ci, slope: cs },
-                CostFun::LinearInX { intercept: mi, slope: ms },
-            ))
-        })());
+        let ci = get(&format!("{prefix}-cpu-arguments-intercept"));
+        let cs = get(&format!("{prefix}-cpu-arguments-slope"));
+        let mi = get(&format!("{prefix}-memory-arguments-intercept"));
+        let ms = get(&format!("{prefix}-memory-arguments-slope"));
+        if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::LinearInX { intercept: mi, slope: ms },
+            });
+        }
     }
 
-    // countSetBits / findFirstSetBit: cpu=LinearInX, mem=Constant
+    // countSetBits, findFirstSetBit: CPU LinearInX, memory constant.
     for (fun, prefix) in [
         (CountSetBits, "countSetBits"),
         (FindFirstSetBit, "findFirstSetBit"),
     ] {
-        ins!(fun, (|| {
-            let (ci, cs) = linear(prefix, "cpu")?;
-            let mem = constant(&format!("{prefix}-memory-arguments"))?;
-            Some(BuiltinCostEntry::new(
-                CostFun::LinearInX { intercept: ci, slope: cs },
-                CostFun::Constant(mem),
-            ))
-        })());
-    }
-
-    // expModInteger (3 args: base, exp, mod): cpu=LinearInZ (mod size drives cost), mem=LinearInZ
-    ins!(ExpModInteger, (|| {
-        let (ci, cs) = linear("expModInteger", "cpu")?;
-        let (mi, ms) = linear("expModInteger", "memory")?;
-        Some(BuiltinCostEntry::new(
-            CostFun::LinearInZ { intercept: ci, slope: cs },
-            CostFun::LinearInZ { intercept: mi, slope: ms },
-        ))
-    })());
-
-    // -- PlutusV3: BLS12-381 -------------------------------------------------
-    // All BLS operations use constant costs (elliptic curve ops are fixed-size)
-
-    for (fun, cpu_key, mem_key) in [
-        (Bls12_381_G1_Add,          "bls12_381_G1_add-cpu-arguments",           "bls12_381_G1_add-memory-arguments"),
-        (Bls12_381_G1_Neg,          "bls12_381_G1_neg-cpu-arguments",           "bls12_381_G1_neg-memory-arguments"),
-        (Bls12_381_G1_ScalarMul,    "bls12_381_G1_scalarMul-cpu-arguments",     "bls12_381_G1_scalarMul-memory-arguments"),
-        (Bls12_381_G1_Equal,        "bls12_381_G1_equal-cpu-arguments",         "bls12_381_G1_equal-memory-arguments"),
-        (Bls12_381_G1_HashToGroup,  "bls12_381_G1_hashToGroup-cpu-arguments",   "bls12_381_G1_hashToGroup-memory-arguments"),
-        (Bls12_381_G1_Compress,     "bls12_381_G1_compress-cpu-arguments",      "bls12_381_G1_compress-memory-arguments"),
-        (Bls12_381_G1_Uncompress,   "bls12_381_G1_uncompress-cpu-arguments",    "bls12_381_G1_uncompress-memory-arguments"),
-        (Bls12_381_G2_Add,          "bls12_381_G2_add-cpu-arguments",           "bls12_381_G2_add-memory-arguments"),
-        (Bls12_381_G2_Neg,          "bls12_381_G2_neg-cpu-arguments",           "bls12_381_G2_neg-memory-arguments"),
-        (Bls12_381_G2_ScalarMul,    "bls12_381_G2_scalarMul-cpu-arguments",     "bls12_381_G2_scalarMul-memory-arguments"),
-        (Bls12_381_G2_Equal,        "bls12_381_G2_equal-cpu-arguments",         "bls12_381_G2_equal-memory-arguments"),
-        (Bls12_381_G2_HashToGroup,  "bls12_381_G2_hashToGroup-cpu-arguments",   "bls12_381_G2_hashToGroup-memory-arguments"),
-        (Bls12_381_G2_Compress,     "bls12_381_G2_compress-cpu-arguments",      "bls12_381_G2_compress-memory-arguments"),
-        (Bls12_381_G2_Uncompress,   "bls12_381_G2_uncompress-cpu-arguments",    "bls12_381_G2_uncompress-memory-arguments"),
-        (Bls12_381_MillerLoop,      "bls12_381_millerLoop-cpu-arguments",       "bls12_381_millerLoop-memory-arguments"),
-        (Bls12_381_MulMlResult,     "bls12_381_mulMlResult-cpu-arguments",      "bls12_381_mulMlResult-memory-arguments"),
-        (Bls12_381_FinalVerify,     "bls12_381_finalVerify-cpu-arguments",      "bls12_381_finalVerify-memory-arguments"),
-    ] {
-        if !m.contains_key(&fun) {
-            // BLS costs can be either single constant or linear-in-X (for hash-to-group)
-            if let (Some(cpu), Some(mem)) = (constant(cpu_key), constant(mem_key)) {
-                m.insert(fun, BuiltinCostEntry::new(CostFun::Constant(cpu), CostFun::Constant(mem)));
-            } else {
-                // Try linear form (for hashToGroup which scales with the DST size)
-                if let (Some((ci, cs)), Some(mem)) = (
-                    // hashToGroup uses "-cpu-arguments-intercept" / "-slope"
-                    (|| {
-                        let pfx = cpu_key.strip_suffix("-cpu-arguments")?;
-                        let ci = constant(&format!("{pfx}-cpu-arguments-intercept"))?;
-                        let cs = constant(&format!("{pfx}-cpu-arguments-slope"))?;
-                        Some((ci, cs))
-                    })(),
-                    constant(mem_key),
-                ) {
-                    m.insert(fun, BuiltinCostEntry::new(
-                        CostFun::LinearInX { intercept: ci, slope: cs },
-                        CostFun::Constant(mem),
-                    ));
-                }
-            }
+        let ci = get(&format!("{prefix}-cpu-arguments-intercept"));
+        let cs = get(&format!("{prefix}-cpu-arguments-slope"));
+        let m = get(&format!("{prefix}-memory-arguments"));
+        if let (Some(ci), Some(cs)) = (ci, cs) {
+            map.insert(fun, BuiltinCostEntry {
+                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                mem: CostExpr::Constant(m.unwrap_or(1)),
+            });
         }
     }
 
-    m
+    map
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+fn named_value(
+    params: &BTreeMap<String, i64>,
+    key: &'static str,
+) -> Result<i64, CostModelError> {
+    let value = *params
+        .get(key)
+        .ok_or(CostModelError::MissingParameter(key))?;
+    if value < 0 {
+        return Err(CostModelError::NegativeParameter { name: key, value });
+    }
+    Ok(value)
 }
 
 // ---------------------------------------------------------------------------
@@ -916,213 +1074,294 @@ fn parse_builtin_costs(p: &BTreeMap<String, i64>) -> BTreeMap<DefaultFun, Builti
 mod tests {
     use super::*;
 
-    fn v1_params() -> BTreeMap<String, i64> {
+    fn sample_params() -> BTreeMap<String, i64> {
         BTreeMap::from([
-            // Machine steps
-            ("cekVarCost-exBudgetCPU".into(),     29_773),
-            ("cekConstCost-exBudgetCPU".into(),   29_773),
-            ("cekLamCost-exBudgetCPU".into(),     29_773),
-            ("cekDelayCost-exBudgetCPU".into(),   29_773),
-            ("cekForceCost-exBudgetCPU".into(),   29_773),
-            ("cekApplyCost-exBudgetCPU".into(),   29_773),
-            ("cekVarCost-exBudgetMemory".into(),  100),
-            ("cekConstCost-exBudgetMemory".into(), 100),
-            ("cekLamCost-exBudgetMemory".into(),  100),
-            ("cekDelayCost-exBudgetMemory".into(), 100),
-            ("cekForceCost-exBudgetMemory".into(), 100),
-            ("cekApplyCost-exBudgetMemory".into(), 100),
-            ("cekBuiltinCost-exBudgetCPU".into(), 29_773),
-            ("cekBuiltinCost-exBudgetMemory".into(), 100),
-            ("cekStartupCost-exBudgetCPU".into(), 100),
-            ("cekStartupCost-exBudgetMemory".into(), 100),
-            // addInteger
-            ("addInteger-cpu-arguments-intercept".into(), 197_209),
-            ("addInteger-cpu-arguments-slope".into(),     0),
-            ("addInteger-memory-arguments-intercept".into(), 1),
-            ("addInteger-memory-arguments-slope".into(),     1),
-            // sha2_256
-            ("sha2_256-cpu-arguments-intercept".into(), 2_477_736),
-            ("sha2_256-cpu-arguments-slope".into(),     29_175),
-            ("sha2_256-memory-arguments".into(),        4),
-            // blake2b
-            ("blake2b-cpu-arguments-intercept".into(), 2_477_736),
-            ("blake2b-cpu-arguments-slope".into(),     29_175),
-            ("blake2b-memory-arguments".into(),        4),
-            // divideInteger
-            ("divideInteger-cpu-arguments-constant".into(),                   148_000),
-            ("divideInteger-cpu-arguments-model-arguments-intercept".into(),  425_507),
-            ("divideInteger-cpu-arguments-model-arguments-slope".into(),      118),
-            ("divideInteger-memory-arguments-intercept".into(), 0),
-            ("divideInteger-memory-arguments-minimum".into(),   1),
-            ("divideInteger-memory-arguments-slope".into(),     1),
-            // equalsData
-            ("equalsData-cpu-arguments-intercept".into(), 150_000),
-            ("equalsData-cpu-arguments-slope".into(),     10_000),
-            ("equalsData-memory-arguments".into(),        1),
-            // chooseData
-            ("chooseData-cpu-arguments".into(),    150_000),
-            ("chooseData-memory-arguments".into(), 32),
-            // equalsByteString
-            ("equalsByteString-cpu-arguments-constant".into(),   150_000),
-            ("equalsByteString-cpu-arguments-intercept".into(),  112_536),
-            ("equalsByteString-cpu-arguments-slope".into(),      247),
-            ("equalsByteString-memory-arguments".into(),         1),
-            // verifySignature (old V1 name for VerifyEd25519Signature)
-            ("verifySignature-cpu-arguments-intercept".into(), 3_345_831),
-            ("verifySignature-cpu-arguments-slope".into(),     1),
-            ("verifySignature-memory-arguments".into(),        1),
+            // Machine step costs
+            ("cekVarCost-exBudgetCPU".to_owned(),      29_773),
+            ("cekConstCost-exBudgetCPU".to_owned(),    29_773),
+            ("cekLamCost-exBudgetCPU".to_owned(),      29_773),
+            ("cekDelayCost-exBudgetCPU".to_owned(),    29_773),
+            ("cekForceCost-exBudgetCPU".to_owned(),    29_773),
+            ("cekApplyCost-exBudgetCPU".to_owned(),    29_773),
+            ("cekVarCost-exBudgetMemory".to_owned(),   100),
+            ("cekConstCost-exBudgetMemory".to_owned(), 100),
+            ("cekLamCost-exBudgetMemory".to_owned(),   100),
+            ("cekDelayCost-exBudgetMemory".to_owned(), 100),
+            ("cekForceCost-exBudgetMemory".to_owned(), 100),
+            ("cekApplyCost-exBudgetMemory".to_owned(), 100),
+            ("cekBuiltinCost-exBudgetCPU".to_owned(),  29_773),
+            ("cekBuiltinCost-exBudgetMemory".to_owned(), 100),
+            ("cekStartupCost-exBudgetCPU".to_owned(),  100),
+            ("cekStartupCost-exBudgetMemory".to_owned(), 100),
+            ("cekConstrCost-exBudgetCPU".to_owned(),  30_001),
+            ("cekConstrCost-exBudgetMemory".to_owned(), 101),
+            ("cekCaseCost-exBudgetCPU".to_owned(),  30_002),
+            ("cekCaseCost-exBudgetMemory".to_owned(), 102),
+            // addInteger — MaxSize, slope=0 (effectively constant per arg)
+            ("addInteger-cpu-arguments-intercept".to_owned(), 197_209),
+            ("addInteger-cpu-arguments-slope".to_owned(),     0),
+            ("addInteger-memory-arguments-intercept".to_owned(), 1),
+            ("addInteger-memory-arguments-slope".to_owned(),     1),
+            // sha2_256 — LinearInX
+            ("sha2_256-cpu-arguments-intercept".to_owned(), 2_477_736),
+            ("sha2_256-cpu-arguments-slope".to_owned(),     29_175),
+            ("sha2_256-memory-arguments".to_owned(),        4),
+            // multiplyInteger — AddedSizes
+            ("multiplyInteger-cpu-arguments-intercept".to_owned(), 61_516),
+            ("multiplyInteger-cpu-arguments-slope".to_owned(),     11_218),
+            ("multiplyInteger-memory-arguments-intercept".to_owned(), 0),
+            ("multiplyInteger-memory-arguments-slope".to_owned(),     1),
+            // ifThenElse — constant
+            ("ifThenElse-cpu-arguments".to_owned(), 1),
+            ("ifThenElse-memory-arguments".to_owned(), 1),
+            // verifyEd25519Signature — LinearInY
+            ("verifyEd25519Signature-cpu-arguments-intercept".to_owned(), 5_000),
+            ("verifyEd25519Signature-cpu-arguments-slope".to_owned(), 10),
+            ("verifyEd25519Signature-memory-arguments".to_owned(), 1),
+            // verifySchnorrSecp256k1Signature — LinearInY in V3 maps
+            ("verifySchnorrSecp256k1Signature-cpu-arguments-intercept".to_owned(), 7_000),
+            ("verifySchnorrSecp256k1Signature-cpu-arguments-slope".to_owned(), 20),
+            ("verifySchnorrSecp256k1Signature-memory-arguments".to_owned(), 10),
         ])
     }
 
     #[test]
-    fn parses_machine_step_costs() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        assert_eq!(model.machine_step_cost().cpu, 29_773);
-        assert_eq!(model.machine_step_cost().mem, 100);
+    fn derives_per_step_kind_costs_from_named_params() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+        // Var/Const/Lam/Delay/Force/Apply all = 29_773 CPU, 100 MEM in sample
+        assert_eq!(model.step_costs.var_cpu, 29_773);
+        assert_eq!(model.step_costs.var_mem, 100);
+        assert_eq!(model.step_costs.constant_cpu, 29_773);
+        assert_eq!(model.step_costs.lam_cpu, 29_773);
+        assert_eq!(model.step_costs.apply_cpu, 29_773);
+        assert_eq!(model.step_costs.delay_cpu, 29_773);
+        assert_eq!(model.step_costs.force_cpu, 29_773);
+        // Constr/Case have distinct values in sample
+        assert_eq!(model.step_costs.constr_cpu, 30_001);
+        assert_eq!(model.step_costs.constr_mem, 101);
+        assert_eq!(model.step_costs.case_cpu, 30_002);
+        assert_eq!(model.step_costs.case_mem, 102);
+        // Backward-compat: machine_step_cost() returns max
+        assert_eq!(model.machine_step_cost().cpu, 30_002);
+        assert_eq!(model.machine_step_cost().mem, 102);
+        // Per-builtin fallback
+        assert_eq!(model.builtin_cpu, 29_773);
+        assert_eq!(model.builtin_mem, 100);
     }
 
     #[test]
-    fn add_integer_charges_max_of_arg_sizes() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        // intercept=197209, slope=0 → always 197209 regardless of sizes
-        let args = [
-            Value::Constant(Constant::Integer(1)),
-            Value::Constant(Constant::Integer(i128::MAX)),
-        ];
-        let cost = model.builtin_cost(DefaultFun::AddInteger, &args);
-        // With slope=0: cost = intercept + 0 * max(1, 2) = 197209
-        assert_eq!(cost.cpu, 197_209);
-    }
-
-    #[test]
-    fn sha2_256_scales_with_input_size() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        // Empty bytestring: size=0 → cpu = intercept + slope * 0 = 2_477_736
-        let empty = [Value::Constant(Constant::ByteString(vec![]))];
-        let small = [Value::Constant(Constant::ByteString(vec![0u8; 32]))];
-        let large = [Value::Constant(Constant::ByteString(vec![0u8; 1024]))];
-        let cost_empty = model.builtin_cost(DefaultFun::Sha2_256, &empty);
-        let cost_small = model.builtin_cost(DefaultFun::Sha2_256, &small);
-        let cost_large = model.builtin_cost(DefaultFun::Sha2_256, &large);
-        // cpu = 2_477_736 + 29_175 * len_bytes
-        assert_eq!(cost_empty.cpu, 2_477_736);
-        assert_eq!(cost_small.cpu, 2_477_736 + 29_175 * 32);
-        assert_eq!(cost_large.cpu, 2_477_736 + 29_175 * 1024);
-        assert!(cost_large.cpu > cost_small.cpu, "larger input should cost more");
-    }
-
-    #[test]
-    fn divide_integer_constant_below_diagonal() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        // dividend < divisor → below diagonal → constant = 148000
-        let args = [
-            Value::Constant(Constant::Integer(3)),   // |3| = 1 word
-            Value::Constant(Constant::Integer(1_000_000_000_000_000_000i128)), // large
-        ];
-        let cost = model.builtin_cost(DefaultFun::DivideInteger, &args);
-        // x=1 word, y=1 word (both fit in i64 → 1 word); x <= y → constant
-        assert_eq!(cost.cpu, 148_000);
-    }
-
-    #[test]
-    fn equals_bytestring_constant_off_diagonal() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        // Different lengths → off diagonal → constant cost
-        let args = [
-            Value::Constant(Constant::ByteString(vec![0u8; 10])),
-            Value::Constant(Constant::ByteString(vec![0u8; 20])),
-        ];
-        let cost = model.builtin_cost(DefaultFun::EqualsByteString, &args);
-        assert_eq!(cost.cpu, 150_000); // constant (off diagonal)
-    }
-
-    #[test]
-    fn equals_bytestring_linear_on_diagonal() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        // Same lengths → on diagonal → linear in x = 32
-        let args = [
-            Value::Constant(Constant::ByteString(vec![0u8; 32])),
-            Value::Constant(Constant::ByteString(vec![0u8; 32])),
-        ];
-        let cost = model.builtin_cost(DefaultFun::EqualsByteString, &args);
-        // model_intercept=112536, model_slope=247, x=y=32
-        assert_eq!(cost.cpu, 112_536 + 247 * 32);
-    }
-
-    #[test]
-    fn choosedata_is_constant() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        let args: Vec<Value> = (0..6)
-            .map(|_| Value::Constant(Constant::Unit))
-            .collect();
-        let cost = model.builtin_cost(DefaultFun::ChooseData, &args);
-        assert_eq!(cost.cpu, 150_000);
-        assert_eq!(cost.mem, 32);
-    }
-
-    #[test]
-    fn verify_ed25519_scales_with_message_size() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        let vk  = Value::Constant(Constant::ByteString(vec![0u8; 32]));
-        let sig = Value::Constant(Constant::ByteString(vec![0u8; 64]));
-        let small_msg = Value::Constant(Constant::ByteString(vec![0u8; 32]));
-        let large_msg = Value::Constant(Constant::ByteString(vec![0u8; 512]));
-        let cost_small = model.builtin_cost(
-            DefaultFun::VerifyEd25519Signature, &[vk.clone(), small_msg, sig.clone()]);
-        let cost_large = model.builtin_cost(
-            DefaultFun::VerifyEd25519Signature, &[vk, large_msg, sig]);
-        // intercept=3345831, slope=1; scales with Y (message, arg index 1)
-        assert_eq!(cost_small.cpu, 3_345_831 + 1 * 32);
-        assert_eq!(cost_large.cpu, 3_345_831 + 1 * 512);
-        assert!(cost_large.cpu > cost_small.cpu);
-    }
-
-    #[test]
-    fn unknown_builtin_falls_back_to_default() {
-        let model = CostModel::from_alonzo_genesis_params(&v1_params())
-            .expect("should parse");
-        // ExpModInteger not in our sample params → falls back to default
-        let args = [
-            Value::Constant(Constant::Integer(2)),
-            Value::Constant(Constant::Integer(10)),
-            Value::Constant(Constant::Integer(1000)),
-        ];
-        let cost = model.builtin_cost(DefaultFun::ExpModInteger, &args);
-        assert_eq!(cost.cpu, 29_773);
-        assert_eq!(cost.mem, 100);
-    }
-
-    #[test]
-    fn integer_size_measurement() {
-        assert_eq!(integer_size(0), 1);
-        assert_eq!(integer_size(1), 1);
-        // 2^63 = 9223372036854775808 still fits in one 64-bit word
-        assert_eq!(integer_size((1i128 << 63) - 1), 1);
-        assert_eq!(integer_size(1i128 << 63), 1);
-        // 2^64 requires two 64-bit words
-        assert_eq!(integer_size(1i128 << 64), 2);
-        assert_eq!(integer_size(-1), 1);
-        assert_eq!(integer_size(i128::MIN), 2);
-        assert_eq!(integer_size(i128::MAX), 2);
-    }
-
-    #[test]
-    fn backwards_compatible_from_old_genesis_params() {
-        // The original 4-key test from the previous flat implementation
-        let mut params = v1_params();
-        // Add a diverging step cost to verify max is taken
-        params.insert("cekApplyCost-exBudgetCPU".into(), 40_000);
+    fn per_step_kind_costs_differentiated() {
+        let mut params = sample_params();
+        params.insert("cekApplyCost-exBudgetCPU".to_owned(), 40_000);
+        params.insert("cekConstrCost-exBudgetMemory".to_owned(), 111);
         let model = CostModel::from_alonzo_genesis_params(&params)
-            .expect("should parse");
+            .expect("derive cost model");
+        assert_eq!(model.step_costs.apply_cpu, 40_000);
+        assert_eq!(model.step_costs.constr_mem, 111);
+        // Other step kinds unchanged
+        assert_eq!(model.step_costs.var_cpu, 29_773);
+        // machine_step_cost max should reflect highest
         assert_eq!(model.machine_step_cost().cpu, 40_000);
-        assert_eq!(model.machine_step_cost().mem, 100);
+        assert_eq!(model.machine_step_cost().mem, 111);
+    }
+
+    /// `cekBuiltinCost` is now optional — per-builtin entries replace it.
+    #[test]
+    fn rejects_missing_parameter() {
+        let mut params = sample_params();
+        params.remove("cekBuiltinCost-exBudgetCPU");
+        let model = CostModel::from_alonzo_genesis_params(&params);
+        assert!(model.is_ok(), "optional cekBuiltinCost must not fail parsing");
+    }
+
+    #[test]
+    fn per_builtin_add_integer_parsed() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+        assert!(
+            model.builtin_costs.contains_key(&DefaultFun::AddInteger),
+            "AddInteger must have a per-builtin entry after parsing"
+        );
+    }
+
+    #[test]
+    fn per_builtin_sha2_256_linear_cost() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+        let entry = model.builtin_costs.get(&DefaultFun::Sha2_256)
+            .expect("Sha2_256 must have a per-builtin entry");
+
+        // Empty input → intercept only
+        let cost_empty = entry.evaluate(&[Value::Constant(
+            crate::types::Constant::ByteString(vec![]),
+        )]);
+        assert_eq!(cost_empty.cpu, 2_477_736, "empty input: cpu should equal intercept");
+
+        // 1-byte input → intercept + 1 * slope
+        let cost_one = entry.evaluate(&[Value::Constant(
+            crate::types::Constant::ByteString(vec![0u8]),
+        )]);
+        assert_eq!(cost_one.cpu, 2_477_736 + 29_175, "1-byte input: cpu = intercept + slope");
+    }
+
+    #[test]
+    fn per_builtin_if_then_else_constant() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+        let entry = model.builtin_costs.get(&DefaultFun::IfThenElse)
+            .expect("IfThenElse must have a per-builtin entry");
+        let cost = entry.evaluate(&[]);
+        assert_eq!(cost.cpu, 1);
+        assert_eq!(cost.mem, 1);
+    }
+
+    #[test]
+    fn builtin_cost_uses_per_builtin_entry() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+        // sha2_256 on empty input — per-builtin entry must win over flat fallback
+        let cost = model.builtin_cost(
+            DefaultFun::Sha2_256,
+            &[Value::Constant(crate::types::Constant::ByteString(vec![]))],
+        );
+        assert_eq!(cost.cpu, 2_477_736,
+            "builtin_cost must use per-builtin entry, not flat fallback");
+    }
+
+    #[test]
+    fn verify_ed25519_cost_tracks_message_length() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+
+        let short = model.builtin_cost(
+            DefaultFun::VerifyEd25519Signature,
+            &[
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 1])),
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
+            ],
+        );
+        let long = model.builtin_cost(
+            DefaultFun::VerifyEd25519Signature,
+            &[
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 9])),
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
+            ],
+        );
+
+        assert_eq!(short.cpu, 5_010);
+        assert_eq!(long.cpu, 5_090);
+    }
+
+    #[test]
+    fn verify_schnorr_cost_parses_v3_linear_form() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+
+        let cost = model.builtin_cost(
+            DefaultFun::VerifySchnorrSecp256k1Signature,
+            &[
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 3])),
+                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
+            ],
+        );
+
+        assert_eq!(cost.cpu, 7_060);
+        assert_eq!(cost.mem, 10);
+    }
+
+    #[test]
+    fn builtin_cost_falls_back_for_unknown_builtin() {
+        // Default model has no per-builtin entries — flat fallback applies.
+        let model = CostModel::default();
+        let cost = model.builtin_cost(DefaultFun::AddInteger, &[]);
+        assert_eq!(cost.cpu, model.builtin_cpu);
+        assert_eq!(cost.mem, model.builtin_mem);
+    }
+
+    #[test]
+    fn integer_ex_memory_zero_is_one() {
+        assert_eq!(integer_ex_memory(0), 1);
+    }
+
+    #[test]
+    fn integer_ex_memory_small_values() {
+        assert_eq!(integer_ex_memory(1), 1);
+        assert_eq!(integer_ex_memory(u64::MAX as i128), 1);       // 64 bits → 1 word
+        assert_eq!(integer_ex_memory(u64::MAX as i128 + 1), 2);   // 65 bits → 2 words
+        assert_eq!(integer_ex_memory(-1), 1);                      // abs(-1) = 1
+        assert_eq!(integer_ex_memory(i64::MIN as i128), 1);        // 63 bits → 1 word
+    }
+
+    #[test]
+    fn ex_memory_bytestring_is_byte_length() {
+        let v = Value::Constant(crate::types::Constant::ByteString(vec![0u8; 100]));
+        assert_eq!(ex_memory(&v), 100);
+    }
+
+    #[test]
+    fn ex_memory_empty_bytestring_is_zero() {
+        let v = Value::Constant(crate::types::Constant::ByteString(vec![]));
+        assert_eq!(ex_memory(&v), 0);
+    }
+
+    #[test]
+    fn ex_memory_bool_is_one() {
+        assert_eq!(ex_memory(&Value::Constant(crate::types::Constant::Bool(true))), 1);
+        assert_eq!(ex_memory(&Value::Constant(crate::types::Constant::Bool(false))), 1);
+    }
+
+    #[test]
+    fn ex_memory_unit_is_one() {
+        assert_eq!(ex_memory(&Value::Constant(crate::types::Constant::Unit)), 1);
+    }
+
+    // ---- MaxSizeYZ / ExpModCost ----
+
+    #[test]
+    fn max_size_yz_picks_larger_second_arg() {
+        let expr = CostExpr::MaxSizeYZ { intercept: 100, slope: 5 };
+        // sizes: [ignored, 10, 20] — arg0 ignored (e.g. boolean padding flag)
+        let cost = expr.evaluate(&[0, 10, 20]);
+        // max(10, 20) = 20 → 100 + 5 * 20 = 200
+        assert_eq!(cost, 200);
+    }
+
+    #[test]
+    fn max_size_yz_symmetric() {
+        let expr = CostExpr::MaxSizeYZ { intercept: 0, slope: 1 };
+        assert_eq!(expr.evaluate(&[0, 30, 15]), expr.evaluate(&[0, 15, 30]));
+        assert_eq!(expr.evaluate(&[0, 30, 15]), 30);
+    }
+
+    #[test]
+    fn exp_mod_cost_evaluates_polynomial() {
+        let expr = CostExpr::ExpModCost { c00: 1000, c11: 10, c12: 2 };
+        // sizes: [base_ignored, y=3, z=4]
+        // c00 + c11 * y * z + c12 * y * z^2 = 1000 + 10*3*4 + 2*3*16 = 1000 + 120 + 96 = 1216
+        let cost = expr.evaluate(&[5, 3, 4]);
+        assert_eq!(cost, 1216);
+    }
+
+    #[test]
+    fn exp_mod_cost_zero_exponent() {
+        let expr = CostExpr::ExpModCost { c00: 500, c11: 100, c12: 50 };
+        // y = 0 → all y-dependent terms vanish: 500 + 0 + 0 = 500
+        assert_eq!(expr.evaluate(&[5, 0, 10]), 500);
+    }
+
+    #[test]
+    fn cost_expr_saturates_instead_of_overflow() {
+        // ExpModCost with huge sizes must saturate to i64::MAX, not panic.
+        let expr = CostExpr::ExpModCost { c00: 0, c11: i64::MAX, c12: i64::MAX };
+        let cost = expr.evaluate(&[0, i64::MAX, i64::MAX]);
+        assert_eq!(cost, i64::MAX);
+
+        // Linear expressions also saturate.
+        let lin = CostExpr::LinearInX { intercept: i64::MAX, slope: i64::MAX };
+        assert_eq!(lin.evaluate(&[i64::MAX]), i64::MAX);
     }
 }

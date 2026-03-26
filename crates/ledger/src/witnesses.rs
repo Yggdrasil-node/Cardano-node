@@ -71,6 +71,41 @@ pub fn verify_vkey_signatures(
     Ok(())
 }
 
+/// Verifies bootstrap witness signatures and attributes against the tx body hash.
+pub fn verify_bootstrap_witnesses(
+    tx_body_hash: &[u8; 32],
+    witnesses: &[crate::eras::shelley::BootstrapWitness],
+) -> Result<(), LedgerError> {
+    for witness in witnesses {
+        let mut dec = crate::cbor::Decoder::new(&witness.attributes);
+        let map_len = dec.map().map_err(|_| {
+            LedgerError::InvalidBootstrapWitnessAttributes(witness.attributes.clone())
+        })?;
+        for _ in 0..map_len {
+            dec.skip().map_err(|_| {
+                LedgerError::InvalidBootstrapWitnessAttributes(witness.attributes.clone())
+            })?;
+            dec.skip().map_err(|_| {
+                LedgerError::InvalidBootstrapWitnessAttributes(witness.attributes.clone())
+            })?;
+        }
+        if dec.position() != witness.attributes.len() {
+            return Err(LedgerError::InvalidBootstrapWitnessAttributes(
+                witness.attributes.clone(),
+            ));
+        }
+
+        let vk = yggdrasil_crypto::ed25519::VerificationKey::from_bytes(witness.public_key);
+        let sig = yggdrasil_crypto::ed25519::Signature::from_bytes(witness.signature);
+        vk.verify(tx_body_hash, &sig).map_err(|_| {
+            LedgerError::InvalidBootstrapWitnessSignature {
+                hash: vkey_hash(&witness.public_key),
+            }
+        })?;
+    }
+    Ok(())
+}
+
 /// Collects the VKey hashes required to authorize a certificate.
 ///
 /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `witsVKeyNeeded`.
@@ -138,6 +173,8 @@ pub fn required_vkey_hashes_from_cert(
         // Simple registration does not require a witness in Shelley
         DCert::AccountRegistration(_)
         | DCert::AccountRegistrationDeposit(_, _) => {}
+        // MIR certs are signed by genesis delegates (not validated here)
+        DCert::MoveInstantaneousReward(_, _) => {}
     }
 }
 

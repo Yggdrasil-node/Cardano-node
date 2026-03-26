@@ -1,60 +1,36 @@
-//! LocalTxMonitor mini-protocol — node-to-client mempool monitoring.
-//!
-//! Allows a client to observe the current contents of the node's mempool.
-//! The client acquires a snapshot of the mempool at a specific slot, then
-//! iterates through pending transactions or queries membership and capacity.
-//!
-//! ## State Machine
-//!
-//! ```text
-//!  StIdle ──MsgAcquire──► StAcquiring ──MsgAcquired──► StAcquired
-//!    │                          │                           │
-//!    └──MsgDone──► StDone       │ (await loop)              ├──MsgNextTx──► StBusy ──MsgReplyNextTx──► StAcquired
-//!                               │                           ├──MsgHasTx──► StBusy ──MsgReplyHasTx──► StAcquired
-//!                               │                           ├──MsgGetSizes──► StBusy ──MsgReplyGetSizes──► StAcquired
-//!  StAcquired ──MsgAwaitAcquire──► StAcquiring (re-acquire) └──MsgRelease──► StIdle
-//! ```
-//!
-//! Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Type`
-//! <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxMonitor>
-
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
-use yggdrasil_ledger::LedgerError;
-
-// ---------------------------------------------------------------------------
-// States
-// ---------------------------------------------------------------------------
-
-/// States of the LocalTxMonitor mini-protocol.
+/// States of the LocalTxMonitor mini-protocol state machine.
+///
+/// The LocalTxMonitor protocol allows local clients (wallets, tooling) to
+/// inspect the node's mempool over the Node-to-Client socket.  A client
+/// first *acquires* a consistent snapshot of the mempool, then can iterate
+/// over transactions (`NextTx`), check membership (`HasTx`), or query
+/// aggregate sizes (`GetSizes`) before releasing.
+///
+/// ```text
+///  StIdle ──MsgAcquire──► StAcquiring ──MsgAcquired──► StAcquired
+///                                                       │  ▲
+///       ┌───────────── MsgRelease ──────────────────────┘  │
+///       ▼                                                  │
+///  StIdle                                                  │
+///       │   MsgNextTx / MsgReplyNextTx ────────────────────┤
+///       │   MsgHasTx  / MsgReplyHasTx  ────────────────────┤
+///       │   MsgGetSizes / MsgReplyGetSizes ────────────────┘
+///       │
+///       └──MsgDone──► StDone
+/// ```
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Type`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalTxMonitorState {
-    /// Client agency — may send `MsgAcquire`, `MsgDone`.
+    /// Client agency — may send `MsgAcquire` or `MsgDone`.
     StIdle,
-    /// Server agency — acquiring or awaiting a new mempool snapshot.
+    /// Server agency — must reply with `MsgAcquired`.
     StAcquiring,
-    /// Client agency — may query the snapshot.
+    /// Client agency — may send `MsgNextTx`, `MsgHasTx`, `MsgGetSizes`,
+    /// `MsgAwaitAcquire`, or `MsgRelease`.
     StAcquired,
-    /// Server agency — responding to a query.
-    StBusy,
     /// Terminal state — no further messages.
     StDone,
-}
-
-// ---------------------------------------------------------------------------
-// Mempool sizes
-// ---------------------------------------------------------------------------
-
-/// Mempool capacity and current usage, as reported by `MsgReplyGetSizes`.
-///
-/// Reference: `LocalTxMonitor.Type.MempoolSizeAndCapacity`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MempoolSizeAndCapacity {
-    /// Maximum number of bytes the mempool can hold.
-    pub capacity_in_bytes: u32,
-    /// Current total byte size of all transactions in the mempool.
-    pub size_in_bytes: u32,
-    /// Number of transactions currently in the mempool.
-    pub number_of_txs: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -63,35 +39,34 @@ pub struct MempoolSizeAndCapacity {
 
 /// Messages of the LocalTxMonitor mini-protocol.
 ///
-/// CBOR wire tags (from upstream CDDL):
+/// CDDL wire tags (from upstream `local-tx-monitor.cddl`):
 ///
-/// | Tag | Message               |
-/// |-----|-----------------------|
-/// |  0  | `MsgAcquire`          |
-/// |  1  | `MsgAcquired`         |
-/// |  2  | `MsgAwaitAcquire`     |
-/// |  3  | `MsgRelease`          |
-/// |  4  | `MsgNextTx`           |
-/// |  5  | `MsgReplyNextTx`      |
-/// |  6  | `MsgHasTx`            |
-/// |  7  | `MsgReplyHasTx`       |
-/// |  8  | `MsgGetSizes`         |
-/// |  9  | `MsgReplyGetSizes`    |
-/// | 10  | `MsgDone`             |
+/// | Tag | Message              |
+/// |-----|----------------------|
+/// |  0  | `MsgAcquire`         |
+/// |  1  | `MsgAcquired`        |
+/// |  2  | `MsgNextTx`          |
+/// |  3  | `MsgReplyNextTx`     |
+/// |  4  | `MsgHasTx`           |
+/// |  5  | `MsgReplyHasTx`      |
+/// |  6  | `MsgGetSizes`        |
+/// |  7  | `MsgReplyGetSizes`   |
+/// |  8  | `MsgRelease`         |
+/// |  9  | `MsgDone`            |
 ///
-/// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Type.Message`.
+/// Transaction identifiers and bodies remain opaque at this layer.
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Type` — `Message`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocalTxMonitorMessage {
-    /// `[0]` — client requests a new mempool snapshot.
+    /// `[0]` — client requests a mempool snapshot.
     ///
-    /// Transition: `StIdle → StAcquiring`.
+    /// Also used for re-acquiring (`MsgAwaitAcquire`) from `StAcquired`.
+    ///
+    /// Transition: `StIdle → StAcquiring` or `StAcquired → StAcquiring`.
     MsgAcquire,
 
-    /// `[1, slot_no]` — server has acquired a snapshot.
-    ///
-    /// Carries the slot number at which the snapshot was taken. Size/capacity
-    /// information is returned separately by `MsgReplyGetSizes`, matching the
-    /// upstream LocalTxMonitor wire format.
+    /// `[1, slot_no]` — server confirms snapshot acquired at a given slot.
     ///
     /// Transition: `StAcquiring → StAcquired`.
     MsgAcquired {
@@ -99,227 +74,276 @@ pub enum LocalTxMonitorMessage {
         slot_no: u64,
     },
 
-    /// `[2]` — client asks the server to wait until the mempool changes and
-    /// then re-acquire.
+    /// `[2]` — client requests the next transaction in the snapshot.
     ///
-    /// Transition: `StAcquired → StAcquiring`.
-    MsgAwaitAcquire,
+    /// Transition: `StAcquired → StAcquired` (server replies with
+    /// `MsgReplyNextTx`).
+    MsgNextTx,
 
-    /// `[3]` — client releases the current snapshot.
+    /// `[3, maybe_tx]` — server replies with the next tx or `None`.
+    ///
+    /// When the iterator is exhausted, `tx` is `None`.
+    ///
+    /// Transition: `StAcquired → StAcquired`.
+    MsgReplyNextTx {
+        /// `Some(cbor_bytes)` for the next transaction, or `None` when done.
+        tx: Option<Vec<u8>>,
+    },
+
+    /// `[4, tx_id]` — client asks whether a tx id is in the snapshot.
+    ///
+    /// Transition: `StAcquired → StAcquired` (server replies with
+    /// `MsgReplyHasTx`).
+    MsgHasTx {
+        /// Transaction identifier (32-byte Blake2b-256 hash).
+        tx_id: Vec<u8>,
+    },
+
+    /// `[5, bool]` — server replies whether the tx was found.
+    ///
+    /// Transition: `StAcquired → StAcquired`.
+    MsgReplyHasTx {
+        /// `true` if the transaction is in the mempool snapshot.
+        has_tx: bool,
+    },
+
+    /// `[6]` — client requests aggregate mempool sizes.
+    ///
+    /// Transition: `StAcquired → StAcquired` (server replies with
+    /// `MsgReplyGetSizes`).
+    MsgGetSizes,
+
+    /// `[7, [capacity, size, num_txs]]` — server replies with mempool metrics.
+    ///
+    /// Transition: `StAcquired → StAcquired`.
+    MsgReplyGetSizes {
+        /// Maximum mempool capacity in bytes.
+        capacity_in_bytes: u32,
+        /// Current aggregate size of all mempool transactions in bytes.
+        size_in_bytes: u32,
+        /// Number of transactions currently in the mempool.
+        num_txs: u32,
+    },
+
+    /// `[8]` — client releases the acquired snapshot and returns to idle.
     ///
     /// Transition: `StAcquired → StIdle`.
     MsgRelease,
 
-    /// `[4]` — client asks for the next transaction in the snapshot.
-    ///
-    /// Transition: `StAcquired → StBusy`.
-    MsgNextTx,
-
-    /// `[5, maybe_tx]` — server replies with the next transaction.
-    ///
-    /// `tx` is `None` when there are no more transactions in the snapshot.
-    ///
-    /// Transition: `StBusy → StAcquired`.
-    MsgReplyNextTx {
-        /// The next pending transaction, or `None` if the snapshot is exhausted.
-        tx: Option<Vec<u8>>,
-    },
-
-    /// `[6, tx_id]` — client asks whether a specific transaction is in the snapshot.
-    ///
-    /// Transition: `StAcquired → StBusy`.
-    MsgHasTx {
-        /// Transaction ID to query (raw bytes).
-        tx_id: Vec<u8>,
-    },
-
-    /// `[7, has_tx]` — server replies whether the transaction is present.
-    ///
-    /// Transition: `StBusy → StAcquired`.
-    MsgReplyHasTx {
-        /// `true` if the transaction is in the current snapshot.
-        has_tx: bool,
-    },
-
-    /// `[8]` — client requests mempool size and capacity information.
-    ///
-    /// Transition: `StAcquired → StBusy`.
-    MsgGetSizes,
-
-    /// `[9, sizes]` — server replies with mempool size/capacity.
-    ///
-    /// Transition: `StBusy → StAcquired`.
-    MsgReplyGetSizes {
-        /// Mempool size and capacity.
-        sizes: MempoolSizeAndCapacity,
-    },
-
-    /// `[10]` — client terminates the protocol.
+    /// `[9]` — client terminates the protocol.
     ///
     /// Transition: `StIdle → StDone`.
     MsgDone,
 }
 
+// ---------------------------------------------------------------------------
+// Transition validation
+// ---------------------------------------------------------------------------
+
+/// Errors arising from illegal LocalTxMonitor state transitions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum LocalTxMonitorTransitionError {
+    /// A message was received that is not legal in the current state.
+    #[error("illegal local-tx-monitor transition from {from:?} via {msg_tag}")]
+    IllegalTransition {
+        /// State the machine was in.
+        from: LocalTxMonitorState,
+        /// Human-readable tag of the offending message.
+        msg_tag: &'static str,
+    },
+}
+
+impl LocalTxMonitorState {
+    /// Compute the next state given a message, or return an error if the
+    /// transition is illegal in the current state.
+    pub fn transition(
+        self,
+        msg: &LocalTxMonitorMessage,
+    ) -> Result<Self, LocalTxMonitorTransitionError> {
+        match (self, msg) {
+            // StIdle → StAcquiring (MsgAcquire)
+            (Self::StIdle, LocalTxMonitorMessage::MsgAcquire) => Ok(Self::StAcquiring),
+            // StIdle → StDone (MsgDone)
+            (Self::StIdle, LocalTxMonitorMessage::MsgDone) => Ok(Self::StDone),
+            // StAcquiring → StAcquired (MsgAcquired)
+            (Self::StAcquiring, LocalTxMonitorMessage::MsgAcquired { .. }) => Ok(Self::StAcquired),
+            // StAcquired → StAcquired (query / reply)
+            (Self::StAcquired, LocalTxMonitorMessage::MsgNextTx) => Ok(Self::StAcquired),
+            (Self::StAcquired, LocalTxMonitorMessage::MsgReplyNextTx { .. }) => {
+                Ok(Self::StAcquired)
+            }
+            (Self::StAcquired, LocalTxMonitorMessage::MsgHasTx { .. }) => Ok(Self::StAcquired),
+            (Self::StAcquired, LocalTxMonitorMessage::MsgReplyHasTx { .. }) => {
+                Ok(Self::StAcquired)
+            }
+            (Self::StAcquired, LocalTxMonitorMessage::MsgGetSizes) => Ok(Self::StAcquired),
+            (Self::StAcquired, LocalTxMonitorMessage::MsgReplyGetSizes { .. }) => {
+                Ok(Self::StAcquired)
+            }
+            // StAcquired → StIdle (MsgRelease)
+            (Self::StAcquired, LocalTxMonitorMessage::MsgRelease) => Ok(Self::StIdle),
+            // StAcquired → StAcquiring (MsgAcquire = re-acquire / await)
+            (Self::StAcquired, LocalTxMonitorMessage::MsgAcquire) => Ok(Self::StAcquiring),
+            // Everything else is illegal.
+            (from, msg) => Err(LocalTxMonitorTransitionError::IllegalTransition {
+                from,
+                msg_tag: msg.tag_name(),
+            }),
+        }
+    }
+}
+
 impl LocalTxMonitorMessage {
-    /// CBOR array tag for this message.
-    pub fn tag(&self) -> u64 {
+    /// Human-readable name for the message variant (for error reporting).
+    pub fn tag_name(&self) -> &'static str {
         match self {
-            Self::MsgAcquire             => 0,
-            Self::MsgAcquired { .. }     => 1,
-            Self::MsgAwaitAcquire        => 2,
-            Self::MsgRelease             => 3,
-            Self::MsgNextTx              => 4,
-            Self::MsgReplyNextTx { .. }  => 5,
-            Self::MsgHasTx { .. }        => 6,
-            Self::MsgReplyHasTx { .. }   => 7,
-            Self::MsgGetSizes            => 8,
-            Self::MsgReplyGetSizes { .. } => 9,
-            Self::MsgDone               => 10,
-        }
-    }
-
-    /// State transition: returns the new state after sending this message.
-    pub fn apply(&self, current: LocalTxMonitorState) -> Option<LocalTxMonitorState> {
-        use LocalTxMonitorState::*;
-        match (self, current) {
-            (Self::MsgAcquire,               StIdle)     => Some(StAcquiring),
-            (Self::MsgAcquired { .. },       StAcquiring) => Some(StAcquired),
-            (Self::MsgAwaitAcquire,          StAcquired) => Some(StAcquiring),
-            (Self::MsgRelease,               StAcquired) => Some(StIdle),
-            (Self::MsgNextTx,                StAcquired) => Some(StBusy),
-            (Self::MsgReplyNextTx { .. },    StBusy)     => Some(StAcquired),
-            (Self::MsgHasTx { .. },          StAcquired) => Some(StBusy),
-            (Self::MsgReplyHasTx { .. },     StBusy)     => Some(StAcquired),
-            (Self::MsgGetSizes,              StAcquired) => Some(StBusy),
-            (Self::MsgReplyGetSizes { .. },  StBusy)     => Some(StAcquired),
-            (Self::MsgDone,                  StIdle)     => Some(StDone),
-            _ => None,
-        }
-    }
-
-    /// Encode this message to CBOR bytes.
-    pub fn encode_cbor(&self) -> Vec<u8> {
-        let mut enc = Encoder::new();
-        match self {
-            Self::MsgAcquire => {
-                enc.array(1).unsigned(0);
-            }
-            Self::MsgAcquired { slot_no } => {
-                enc.array(2).unsigned(1).unsigned(*slot_no);
-            }
-            Self::MsgAwaitAcquire => {
-                enc.array(1).unsigned(2);
-            }
-            Self::MsgRelease => {
-                enc.array(1).unsigned(3);
-            }
-            Self::MsgNextTx => {
-                enc.array(1).unsigned(4);
-            }
-            Self::MsgReplyNextTx { tx } => {
-                match tx {
-                    None => {
-                        enc.array(2).unsigned(5).null();
-                    }
-                    Some(bytes) => {
-                        enc.array(2).unsigned(5).bytes(bytes);
-                    }
-                }
-            }
-            Self::MsgHasTx { tx_id } => {
-                enc.array(2).unsigned(6).bytes(tx_id);
-            }
-            Self::MsgReplyHasTx { has_tx } => {
-                enc.array(2).unsigned(7).bool(*has_tx);
-            }
-            Self::MsgGetSizes => {
-                enc.array(1).unsigned(8);
-            }
-            Self::MsgReplyGetSizes { sizes } => {
-                enc.array(4)
-                    .unsigned(9)
-                    .unsigned(sizes.capacity_in_bytes as u64)
-                    .unsigned(sizes.size_in_bytes as u64)
-                    .unsigned(sizes.number_of_txs as u64);
-            }
-            Self::MsgDone => {
-                enc.array(1).unsigned(10);
-            }
-        }
-        enc.into_bytes()
-    }
-
-    /// Decode a message from CBOR bytes.
-    pub fn decode_cbor(data: &[u8]) -> Result<Self, LocalTxMonitorError> {
-        let cbor_err = |e: LedgerError| LocalTxMonitorError::Cbor(e.to_string());
-        let mut dec = Decoder::new(data);
-        let _len = dec.array().map_err(cbor_err)?;
-        let tag = dec.unsigned().map_err(cbor_err)?;
-        match tag {
-            0  => Ok(Self::MsgAcquire),
-            1  => {
-                let slot_no = dec.unsigned().map_err(cbor_err)?;
-                Ok(Self::MsgAcquired { slot_no })
-            }
-            2  => Ok(Self::MsgAwaitAcquire),
-            3  => Ok(Self::MsgRelease),
-            4  => Ok(Self::MsgNextTx),
-            5  => {
-                // None if next is unit/null, Some if next is bytes
-                let tx = if dec.peek_is_null() {
-                    dec.null().map_err(cbor_err)?;
-                    None
-                } else {
-                    Some(dec.bytes().map_err(cbor_err)?.to_vec())
-                };
-                Ok(Self::MsgReplyNextTx { tx })
-            }
-            6  => {
-                Ok(Self::MsgHasTx {
-                    tx_id: dec.bytes().map_err(cbor_err)?.to_vec(),
-                })
-            }
-            7  => {
-                let has = dec.bool().map_err(cbor_err)?;
-                Ok(Self::MsgReplyHasTx { has_tx: has })
-            }
-            8  => Ok(Self::MsgGetSizes),
-            9  => {
-                let cap = dec.unsigned().map_err(cbor_err)? as u32;
-                let sz = dec.unsigned().map_err(cbor_err)? as u32;
-                let ntx = dec.unsigned().map_err(cbor_err)? as u32;
-                Ok(Self::MsgReplyGetSizes {
-                    sizes: MempoolSizeAndCapacity {
-                        capacity_in_bytes: cap,
-                        size_in_bytes: sz,
-                        number_of_txs: ntx,
-                    },
-                })
-            }
-            10 => Ok(Self::MsgDone),
-            _  => Err(LocalTxMonitorError::UnknownTag(tag)),
+            Self::MsgAcquire => "MsgAcquire",
+            Self::MsgAcquired { .. } => "MsgAcquired",
+            Self::MsgNextTx => "MsgNextTx",
+            Self::MsgReplyNextTx { .. } => "MsgReplyNextTx",
+            Self::MsgHasTx { .. } => "MsgHasTx",
+            Self::MsgReplyHasTx { .. } => "MsgReplyHasTx",
+            Self::MsgGetSizes => "MsgGetSizes",
+            Self::MsgReplyGetSizes { .. } => "MsgReplyGetSizes",
+            Self::MsgRelease => "MsgRelease",
+            Self::MsgDone => "MsgDone",
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Error type
+// CBOR wire codec
 // ---------------------------------------------------------------------------
 
-/// Errors produced by the LocalTxMonitor protocol driver.
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum LocalTxMonitorError {
-    #[error("CBOR codec error: {0}")]
-    Cbor(String),
-    #[error("unknown message tag: {0}")]
-    UnknownTag(u64),
-    #[error("invalid state transition for message tag {tag} in state {state:?}")]
-    InvalidTransition {
-        tag: u64,
-        state: LocalTxMonitorState,
-    },
-    #[error("channel closed (peer disconnected)")]
-    ChannelClosed,
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::LedgerError;
+
+impl LocalTxMonitorMessage {
+    /// Encode this message to CBOR bytes.
+    ///
+    /// Wire format (matching upstream CDDL):
+    /// - `MsgAcquire`          → `[0]`
+    /// - `MsgAcquired`         → `[1, slot_no]`
+    /// - `MsgNextTx`           → `[2]`
+    /// - `MsgReplyNextTx`      → `[3, [era, tx]]` or `[3]`
+    /// - `MsgHasTx`            → `[4, tx_id]`
+    /// - `MsgReplyHasTx`       → `[5, bool]`
+    /// - `MsgGetSizes`         → `[6]`
+    /// - `MsgReplyGetSizes`    → `[7, [cap, size, n]]`
+    /// - `MsgRelease`          → `[8]`
+    /// - `MsgDone`             → `[9]`
+    pub fn to_cbor(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        match self {
+            Self::MsgAcquire => {
+                enc.array(1);
+                enc.unsigned(0);
+            }
+            Self::MsgAcquired { slot_no } => {
+                enc.array(2);
+                enc.unsigned(1);
+                enc.unsigned(*slot_no);
+            }
+            Self::MsgNextTx => {
+                enc.array(1);
+                enc.unsigned(2);
+            }
+            Self::MsgReplyNextTx { tx: Some(tx_bytes) } => {
+                enc.array(2);
+                enc.unsigned(3);
+                enc.bytes(tx_bytes);
+            }
+            Self::MsgReplyNextTx { tx: None } => {
+                enc.array(1);
+                enc.unsigned(3);
+            }
+            Self::MsgHasTx { tx_id } => {
+                enc.array(2);
+                enc.unsigned(4);
+                enc.bytes(tx_id);
+            }
+            Self::MsgReplyHasTx { has_tx } => {
+                enc.array(2);
+                enc.unsigned(5);
+                enc.bool(*has_tx);
+            }
+            Self::MsgGetSizes => {
+                enc.array(1);
+                enc.unsigned(6);
+            }
+            Self::MsgReplyGetSizes {
+                capacity_in_bytes,
+                size_in_bytes,
+                num_txs,
+            } => {
+                enc.array(2);
+                enc.unsigned(7);
+                enc.array(3);
+                enc.unsigned(*capacity_in_bytes as u64);
+                enc.unsigned(*size_in_bytes as u64);
+                enc.unsigned(*num_txs as u64);
+            }
+            Self::MsgRelease => {
+                enc.array(1);
+                enc.unsigned(8);
+            }
+            Self::MsgDone => {
+                enc.array(1);
+                enc.unsigned(9);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a CBOR-encoded message from wire bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, LedgerError> {
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array()?;
+        let tag = dec.unsigned()?;
+        match tag {
+            0 => Ok(Self::MsgAcquire),
+            1 => {
+                let slot_no = dec.unsigned()?;
+                Ok(Self::MsgAcquired { slot_no })
+            }
+            2 => Ok(Self::MsgNextTx),
+            3 => {
+                if len > 1 {
+                    let tx_bytes = dec.bytes()?.to_vec();
+                    Ok(Self::MsgReplyNextTx {
+                        tx: Some(tx_bytes),
+                    })
+                } else {
+                    Ok(Self::MsgReplyNextTx { tx: None })
+                }
+            }
+            4 => {
+                let tx_id = dec.bytes()?.to_vec();
+                Ok(Self::MsgHasTx { tx_id })
+            }
+            5 => {
+                let has_tx = dec.bool()?;
+                Ok(Self::MsgReplyHasTx { has_tx })
+            }
+            6 => Ok(Self::MsgGetSizes),
+            7 => {
+                let _inner_len = dec.array()?;
+                let capacity_in_bytes = dec.unsigned()? as u32;
+                let size_in_bytes = dec.unsigned()? as u32;
+                let num_txs = dec.unsigned()? as u32;
+                Ok(Self::MsgReplyGetSizes {
+                    capacity_in_bytes,
+                    size_in_bytes,
+                    num_txs,
+                })
+            }
+            8 => Ok(Self::MsgRelease),
+            9 => Ok(Self::MsgDone),
+            tag => Err(LedgerError::CborDecodeError(format!(
+                "unknown LocalTxMonitor message tag: {tag}"
+            ))),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -331,90 +355,184 @@ mod tests {
     use super::*;
 
     #[test]
-    fn msg_acquire_round_trip() {
+    fn acquire_roundtrip() {
         let msg = LocalTxMonitorMessage::MsgAcquire;
-        let decoded = LocalTxMonitorMessage::decode_cbor(&msg.encode_cbor()).unwrap();
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
     }
 
     #[test]
-    fn msg_acquired_round_trip() {
-        let msg = LocalTxMonitorMessage::MsgAcquired {
-            slot_no: 10_000_000,
-        };
-        let decoded = LocalTxMonitorMessage::decode_cbor(&msg.encode_cbor()).unwrap();
+    fn acquired_roundtrip() {
+        let msg = LocalTxMonitorMessage::MsgAcquired { slot_no: 42_000_000 };
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
     }
 
     #[test]
-    fn msg_next_tx_some_round_trip() {
+    fn next_tx_roundtrip() {
+        let msg = LocalTxMonitorMessage::MsgNextTx;
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn reply_next_tx_some_roundtrip() {
         let msg = LocalTxMonitorMessage::MsgReplyNextTx {
-            tx: Some(vec![0x82, 0x01, 0x02]),
+            tx: Some(vec![0xDE, 0xAD, 0xBE, 0xEF]),
         };
-        let decoded = LocalTxMonitorMessage::decode_cbor(&msg.encode_cbor()).unwrap();
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
     }
 
     #[test]
-    fn msg_next_tx_none_round_trip() {
+    fn reply_next_tx_none_roundtrip() {
         let msg = LocalTxMonitorMessage::MsgReplyNextTx { tx: None };
-        let encoded = msg.encode_cbor();
-        let decoded = LocalTxMonitorMessage::decode_cbor(&encoded).unwrap();
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
     }
 
     #[test]
-    fn msg_has_tx_round_trip() {
-        let msg = LocalTxMonitorMessage::MsgHasTx { tx_id: vec![0xabu8; 32] };
-        let decoded = LocalTxMonitorMessage::decode_cbor(&msg.encode_cbor()).unwrap();
+    fn has_tx_roundtrip() {
+        let msg = LocalTxMonitorMessage::MsgHasTx {
+            tx_id: vec![0xAB; 32],
+        };
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
     }
 
     #[test]
-    fn msg_reply_has_tx_round_trip() {
-        for b in [true, false] {
-            let msg = LocalTxMonitorMessage::MsgReplyHasTx { has_tx: b };
-            let decoded = LocalTxMonitorMessage::decode_cbor(&msg.encode_cbor()).unwrap();
+    fn reply_has_tx_roundtrip() {
+        for val in [true, false] {
+            let msg = LocalTxMonitorMessage::MsgReplyHasTx { has_tx: val };
+            let encoded = msg.to_cbor();
+            let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
             assert_eq!(decoded, msg);
         }
     }
 
     #[test]
-    fn msg_get_sizes_round_trip() {
-        let msg = LocalTxMonitorMessage::MsgReplyGetSizes {
-            sizes: MempoolSizeAndCapacity {
-                capacity_in_bytes: 4_000_000,
-                size_in_bytes: 12_288,
-                number_of_txs: 3,
-            },
-        };
-        let decoded = LocalTxMonitorMessage::decode_cbor(&msg.encode_cbor()).unwrap();
+    fn get_sizes_roundtrip() {
+        let msg = LocalTxMonitorMessage::MsgGetSizes;
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
     }
 
     #[test]
-    fn state_transitions() {
-        use LocalTxMonitorState::*;
-        assert_eq!(LocalTxMonitorMessage::MsgAcquire.apply(StIdle), Some(StAcquiring));
-        assert_eq!(
-            LocalTxMonitorMessage::MsgAcquired { slot_no: 0 }.apply(StAcquiring),
-            Some(StAcquired)
-        );
-        assert_eq!(LocalTxMonitorMessage::MsgNextTx.apply(StAcquired), Some(StBusy));
-        assert_eq!(
-            LocalTxMonitorMessage::MsgReplyNextTx { tx: None }.apply(StBusy),
-            Some(StAcquired)
-        );
-        assert_eq!(LocalTxMonitorMessage::MsgGetSizes.apply(StAcquired), Some(StBusy));
-        assert_eq!(
-            LocalTxMonitorMessage::MsgReplyGetSizes {
-                sizes: MempoolSizeAndCapacity { capacity_in_bytes: 0, size_in_bytes: 0, number_of_txs: 0 }
-            }.apply(StBusy),
-            Some(StAcquired)
-        );
-        assert_eq!(LocalTxMonitorMessage::MsgRelease.apply(StAcquired), Some(StIdle));
-        assert_eq!(LocalTxMonitorMessage::MsgDone.apply(StIdle), Some(StDone));
-        // Invalid
-        assert_eq!(LocalTxMonitorMessage::MsgAcquired { slot_no: 0 }.apply(StIdle), None);
+    fn reply_get_sizes_roundtrip() {
+        let msg = LocalTxMonitorMessage::MsgReplyGetSizes {
+            capacity_in_bytes: 1_048_576,
+            size_in_bytes: 524_288,
+            num_txs: 42,
+        };
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn release_roundtrip() {
+        let msg = LocalTxMonitorMessage::MsgRelease;
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn done_roundtrip() {
+        let msg = LocalTxMonitorMessage::MsgDone;
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    // -- State machine transition tests --
+
+    #[test]
+    fn idle_acquire() {
+        let state = LocalTxMonitorState::StIdle;
+        let next = state.transition(&LocalTxMonitorMessage::MsgAcquire).unwrap();
+        assert_eq!(next, LocalTxMonitorState::StAcquiring);
+    }
+
+    #[test]
+    fn idle_done() {
+        let state = LocalTxMonitorState::StIdle;
+        let next = state.transition(&LocalTxMonitorMessage::MsgDone).unwrap();
+        assert_eq!(next, LocalTxMonitorState::StDone);
+    }
+
+    #[test]
+    fn acquiring_acquired() {
+        let state = LocalTxMonitorState::StAcquiring;
+        let next = state
+            .transition(&LocalTxMonitorMessage::MsgAcquired { slot_no: 1 })
+            .unwrap();
+        assert_eq!(next, LocalTxMonitorState::StAcquired);
+    }
+
+    #[test]
+    fn acquired_next_tx() {
+        let state = LocalTxMonitorState::StAcquired;
+        let next = state.transition(&LocalTxMonitorMessage::MsgNextTx).unwrap();
+        assert_eq!(next, LocalTxMonitorState::StAcquired);
+    }
+
+    #[test]
+    fn acquired_has_tx() {
+        let state = LocalTxMonitorState::StAcquired;
+        let next = state
+            .transition(&LocalTxMonitorMessage::MsgHasTx {
+                tx_id: vec![0; 32],
+            })
+            .unwrap();
+        assert_eq!(next, LocalTxMonitorState::StAcquired);
+    }
+
+    #[test]
+    fn acquired_get_sizes() {
+        let state = LocalTxMonitorState::StAcquired;
+        let next = state
+            .transition(&LocalTxMonitorMessage::MsgGetSizes)
+            .unwrap();
+        assert_eq!(next, LocalTxMonitorState::StAcquired);
+    }
+
+    #[test]
+    fn acquired_release() {
+        let state = LocalTxMonitorState::StAcquired;
+        let next = state
+            .transition(&LocalTxMonitorMessage::MsgRelease)
+            .unwrap();
+        assert_eq!(next, LocalTxMonitorState::StIdle);
+    }
+
+    #[test]
+    fn acquired_reacquire() {
+        let state = LocalTxMonitorState::StAcquired;
+        let next = state
+            .transition(&LocalTxMonitorMessage::MsgAcquire)
+            .unwrap();
+        assert_eq!(next, LocalTxMonitorState::StAcquiring);
+    }
+
+    #[test]
+    fn illegal_done_from_acquired() {
+        let state = LocalTxMonitorState::StAcquired;
+        let result = state.transition(&LocalTxMonitorMessage::MsgDone);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn illegal_next_tx_from_idle() {
+        let state = LocalTxMonitorState::StIdle;
+        let result = state.transition(&LocalTxMonitorMessage::MsgNextTx);
+        assert!(result.is_err());
     }
 }

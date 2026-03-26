@@ -173,6 +173,15 @@ impl Encoder {
         self.buf.extend_from_slice(data);
         self
     }
+
+    /// Writes a CBOR-in-CBOR wrapped item: `TAG(24) BYTES(data)`.
+    ///
+    /// This matches the Haskell `wrapCBORinCBOR` encoding used by
+    /// Ouroboros for byte-string-wrapped protocol fields.
+    pub fn wrapped(&mut self, data: &[u8]) -> &mut Self {
+        self.tag(24).bytes(data);
+        self
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -397,6 +406,22 @@ impl<'a> Decoder<'a> {
         self.expect_major(MAJOR_TAG)
     }
 
+    /// Decodes a CBOR-in-CBOR wrapped item: `TAG(24) BYTES(data)`.
+    ///
+    /// This matches the Haskell `unwrapCBORinCBOR` decoding used by
+    /// Ouroboros for byte-string-wrapped protocol fields.  Returns
+    /// the inner byte string contents.
+    pub fn wrapped(&mut self) -> Result<&'a [u8], LedgerError> {
+        let t = self.tag()?;
+        if t != 24 {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: 24,
+                actual: t as u8,
+            });
+        }
+        self.bytes()
+    }
+
     /// Decodes a CBOR boolean (simple value 20 = false, 21 = true).
     pub fn bool(&mut self) -> Result<bool, LedgerError> {
         let b = self.read_byte()?;
@@ -457,6 +482,16 @@ impl<'a> Decoder<'a> {
         }
         Ok(())
     }
+
+    /// Reads one complete CBOR data item and returns the raw bytes that
+    /// comprise it.  This is useful for capturing inline CBOR values
+    /// (e.g. tip or point structures) that should be stored as opaque
+    /// byte vectors.
+    pub fn raw_value(&mut self) -> Result<&'a [u8], LedgerError> {
+        let start = self.pos;
+        self.skip()?;
+        self.slice(start, self.pos)
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -498,8 +533,9 @@ pub trait CborDecode: Sized {
 
 use crate::eras::Era;
 use crate::types::{
-    Anchor, BlockNo, DCert, DRep, EpochNo, HeaderHash, Nonce, Point, PoolMetadata, PoolParams,
-    Relay, RewardAccount, SlotNo, StakeCredential, TxId, UnitInterval,
+    Anchor, BlockNo, DCert, DRep, EpochNo, HeaderHash, MirPot, MirTarget, Nonce, Point,
+    PoolMetadata, PoolParams, Relay, RewardAccount, SlotNo, StakeCredential, Tip, TxId,
+    UnitInterval,
 };
 
 // -- Era -------------------------------------------------------------------
@@ -640,6 +676,46 @@ impl CborDecode for Point {
                 let slot = SlotNo::decode_cbor(dec)?;
                 let hash = HeaderHash::decode_cbor(dec)?;
                 Ok(Self::BlockPoint(slot, hash))
+            }
+            _ => Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            }),
+        }
+    }
+}
+
+// -- Tip -------------------------------------------------------------------
+//
+// Encoding matches upstream `ChainSync.Codec.encodeTip`:
+//   TipGenesis  → array(0)
+//   Tip(pt, bn) → array(2, point_cbor, blockNo)
+// where point_cbor is the CBOR encoding of a Point ([] or [slot, hash]).
+
+impl CborEncode for Tip {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        match self {
+            Self::TipGenesis => {
+                enc.array(0);
+            }
+            Self::Tip(point, bn) => {
+                enc.array(2);
+                point.encode_cbor(enc);
+                bn.encode_cbor(enc);
+            }
+        }
+    }
+}
+
+impl CborDecode for Tip {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        match len {
+            0 => Ok(Self::TipGenesis),
+            2 => {
+                let point = Point::decode_cbor(dec)?;
+                let block_no = BlockNo::decode_cbor(dec)?;
+                Ok(Self::Tip(point, block_no))
             }
             _ => Err(LedgerError::CborInvalidLength {
                 expected: 2,
@@ -1253,6 +1329,23 @@ impl CborEncode for DCert {
                 enc.array(4).unsigned(5);
                 enc.bytes(genesis).bytes(deleg).bytes(vrf);
             }
+            Self::MoveInstantaneousReward(pot, target) => {
+                enc.array(2).unsigned(6);
+                // Inner: move_instantaneous_reward = [pot, target]
+                enc.array(2).unsigned(*pot as u64);
+                match target {
+                    MirTarget::StakeCredentials(map) => {
+                        enc.map(map.len() as u64);
+                        for (cred, delta) in map {
+                            cred.encode_cbor(enc);
+                            enc.integer(*delta);
+                        }
+                    }
+                    MirTarget::SendToOppositePot(coin) => {
+                        enc.unsigned(*coin);
+                    }
+                }
+            }
             Self::AccountRegistrationDeposit(cred, coin) => {
                 enc.array(3).unsigned(7);
                 cred.encode_cbor(enc);
@@ -1357,6 +1450,35 @@ impl CborDecode for DCert {
                 let vrf = decode_hash32(dec)?;
                 Ok(Self::GenesisDelegation(genesis, deleg, vrf))
             }
+            6 => {
+                // move_instantaneous_rewards_cert = [6, move_instantaneous_reward]
+                // move_instantaneous_reward = [pot, { * stake_credential => delta_coin } / coin]
+                let _mir_len = dec.array()?;
+                let pot_raw = dec.unsigned()?;
+                let pot = match pot_raw {
+                    0 => MirPot::Reserves,
+                    1 => MirPot::Treasury,
+                    _ => {
+                        return Err(LedgerError::CborTypeMismatch {
+                            expected: 1,
+                            actual: pot_raw as u8,
+                        });
+                    }
+                };
+                let target = if dec.peek_major()? == MAJOR_MAP {
+                    let n = dec.map()?;
+                    let mut map = std::collections::BTreeMap::new();
+                    for _ in 0..n {
+                        let cred = StakeCredential::decode_cbor(dec)?;
+                        let delta = dec.integer()?;
+                        map.insert(cred, delta);
+                    }
+                    MirTarget::StakeCredentials(map)
+                } else {
+                    MirTarget::SendToOppositePot(dec.unsigned()?)
+                };
+                Ok(Self::MoveInstantaneousReward(pot, target))
+            }
             // Conway tags 7–18
             7 => {
                 let cred = StakeCredential::decode_cbor(dec)?;
@@ -1429,5 +1551,687 @@ impl CborDecode for DCert {
                 actual: tag as u8,
             }),
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Encoder / Decoder round-trip: unsigned ──────────────────────────
+
+    #[test]
+    fn unsigned_zero() {
+        let mut enc = Encoder::new();
+        enc.unsigned(0);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes, [0x00]);
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.unsigned().unwrap(), 0);
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn unsigned_23_one_byte_boundary() {
+        let mut enc = Encoder::new();
+        enc.unsigned(23);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 1);
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), 23);
+    }
+
+    #[test]
+    fn unsigned_24_two_byte_boundary() {
+        let mut enc = Encoder::new();
+        enc.unsigned(24);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 2); // initial byte + 1 arg byte
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), 24);
+    }
+
+    #[test]
+    fn unsigned_255_u8_max() {
+        let mut enc = Encoder::new();
+        enc.unsigned(255);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 2);
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), 255);
+    }
+
+    #[test]
+    fn unsigned_256_u16_boundary() {
+        let mut enc = Encoder::new();
+        enc.unsigned(256);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 3); // initial byte + 2 arg bytes
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), 256);
+    }
+
+    #[test]
+    fn unsigned_65535_u16_max() {
+        let mut enc = Encoder::new();
+        enc.unsigned(65535);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 3);
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), 65535);
+    }
+
+    #[test]
+    fn unsigned_65536_u32_boundary() {
+        let mut enc = Encoder::new();
+        enc.unsigned(65536);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 5); // initial byte + 4 arg bytes
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), 65536);
+    }
+
+    #[test]
+    fn unsigned_u32_max() {
+        let mut enc = Encoder::new();
+        enc.unsigned(u32::MAX as u64);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 5);
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), u32::MAX as u64);
+    }
+
+    #[test]
+    fn unsigned_u32_max_plus_one_u64_boundary() {
+        let mut enc = Encoder::new();
+        enc.unsigned(u32::MAX as u64 + 1);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 9); // initial byte + 8 arg bytes
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), u32::MAX as u64 + 1);
+    }
+
+    #[test]
+    fn unsigned_u64_max() {
+        let mut enc = Encoder::new();
+        enc.unsigned(u64::MAX);
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes.len(), 9);
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), u64::MAX);
+    }
+
+    // ── Encoder / Decoder round-trip: negative ─────────────────────────
+
+    #[test]
+    fn negative_zero_means_minus_one() {
+        let mut enc = Encoder::new();
+        enc.negative(0);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.negative().unwrap(), 0); // raw arg
+        // Through integer(): -(1+0) = -1
+        let mut dec2 = Decoder::new(&bytes);
+        assert_eq!(dec2.integer().unwrap(), -1);
+    }
+
+    #[test]
+    fn integer_positive_round_trip() {
+        let mut enc = Encoder::new();
+        enc.integer(42);
+        let bytes = enc.into_bytes();
+        assert_eq!(Decoder::new(&bytes).integer().unwrap(), 42);
+    }
+
+    #[test]
+    fn integer_negative_round_trip() {
+        let mut enc = Encoder::new();
+        enc.integer(-100);
+        let bytes = enc.into_bytes();
+        assert_eq!(Decoder::new(&bytes).integer().unwrap(), -100);
+    }
+
+    #[test]
+    fn integer_i64_min() {
+        let mut enc = Encoder::new();
+        enc.integer(i64::MIN);
+        let bytes = enc.into_bytes();
+        assert_eq!(Decoder::new(&bytes).integer().unwrap(), i64::MIN);
+    }
+
+    // ── bytes ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn bytes_empty() {
+        let mut enc = Encoder::new();
+        enc.bytes(&[]);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.bytes().unwrap(), &[] as &[u8]);
+    }
+
+    #[test]
+    fn bytes_round_trip() {
+        let data = b"hello world";
+        let mut enc = Encoder::new();
+        enc.bytes(data);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.bytes().unwrap(), data);
+    }
+
+    // ── text ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn text_round_trip() {
+        let mut enc = Encoder::new();
+        enc.text("Cardano");
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.text().unwrap(), "Cardano");
+    }
+
+    #[test]
+    fn text_empty() {
+        let mut enc = Encoder::new();
+        enc.text("");
+        let bytes = enc.into_bytes();
+        assert_eq!(Decoder::new(&bytes).text().unwrap(), "");
+    }
+
+    // ── bool ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn bool_true_round_trip() {
+        let mut enc = Encoder::new();
+        enc.bool(true);
+        let bytes = enc.into_bytes();
+        assert_eq!(Decoder::new(&bytes).bool().unwrap(), true);
+    }
+
+    #[test]
+    fn bool_false_round_trip() {
+        let mut enc = Encoder::new();
+        enc.bool(false);
+        let bytes = enc.into_bytes();
+        assert_eq!(Decoder::new(&bytes).bool().unwrap(), false);
+    }
+
+    // ── null ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn null_round_trip() {
+        let mut enc = Encoder::new();
+        enc.null();
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert!(dec.peek_is_null());
+        dec.null().unwrap();
+        assert!(dec.is_empty());
+    }
+
+    // ── array ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn array_round_trip() {
+        let mut enc = Encoder::new();
+        enc.array(3).unsigned(1).unsigned(2).unsigned(3);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.array().unwrap(), 3);
+        assert_eq!(dec.unsigned().unwrap(), 1);
+        assert_eq!(dec.unsigned().unwrap(), 2);
+        assert_eq!(dec.unsigned().unwrap(), 3);
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn array_empty() {
+        let mut enc = Encoder::new();
+        enc.array(0);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.array().unwrap(), 0);
+        assert!(dec.is_empty());
+    }
+
+    // ── map ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn map_round_trip() {
+        let mut enc = Encoder::new();
+        enc.map(1).unsigned(42).text("value");
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.map().unwrap(), 1);
+        assert_eq!(dec.unsigned().unwrap(), 42);
+        assert_eq!(dec.text().unwrap(), "value");
+    }
+
+    // ── tag ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn tag_round_trip() {
+        let mut enc = Encoder::new();
+        enc.tag(24).bytes(b"inner");
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.tag().unwrap(), 24);
+        assert_eq!(dec.bytes().unwrap(), b"inner");
+    }
+
+    // ── peek_major ──────────────────────────────────────────────────────
+
+    #[test]
+    fn peek_major_does_not_consume() {
+        let mut enc = Encoder::new();
+        enc.unsigned(10);
+        let bytes = enc.into_bytes();
+        let dec = Decoder::new(&bytes);
+        assert_eq!(dec.peek_major().unwrap(), 0); // MAJOR_UNSIGNED
+        assert_eq!(dec.remaining(), bytes.len());
+    }
+
+    // ── skip ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn skip_unsigned() {
+        let mut enc = Encoder::new();
+        enc.unsigned(999).text("after");
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        dec.skip().unwrap();
+        assert_eq!(dec.text().unwrap(), "after");
+    }
+
+    #[test]
+    fn skip_nested_array() {
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(1).array(1).unsigned(2);
+        enc.text("sentinel");
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        dec.skip().unwrap(); // skip entire array(2, 1, array(1, 2))
+        assert_eq!(dec.text().unwrap(), "sentinel");
+    }
+
+    #[test]
+    fn skip_map() {
+        let mut enc = Encoder::new();
+        enc.map(1).unsigned(0).bytes(b"x");
+        enc.null();
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        dec.skip().unwrap(); // skip the map
+        dec.null().unwrap();
+    }
+
+    #[test]
+    fn skip_tag() {
+        let mut enc = Encoder::new();
+        enc.tag(30).array(2).unsigned(1).unsigned(2);
+        enc.bool(true);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        dec.skip().unwrap(); // skip tagged item
+        assert_eq!(dec.bool().unwrap(), true);
+    }
+
+    // ── slice ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn slice_captures_range() {
+        let mut enc = Encoder::new();
+        enc.unsigned(1).unsigned(2).unsigned(3);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let start = dec.position();
+        dec.unsigned().unwrap();
+        let end = dec.position();
+        let captured = dec.slice(start, end).unwrap();
+        assert_eq!(captured, &[0x01]);
+    }
+
+    #[test]
+    fn slice_out_of_range_error() {
+        let bytes = [0x01];
+        let dec = Decoder::new(&bytes);
+        assert!(dec.slice(0, 10).is_err());
+    }
+
+    // ── position / remaining / is_empty ─────────────────────────────────
+
+    #[test]
+    fn position_remaining_is_empty() {
+        let mut enc = Encoder::new();
+        enc.unsigned(5);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.position(), 0);
+        assert_eq!(dec.remaining(), 1);
+        assert!(!dec.is_empty());
+        dec.unsigned().unwrap();
+        assert_eq!(dec.position(), 1);
+        assert_eq!(dec.remaining(), 0);
+        assert!(dec.is_empty());
+    }
+
+    // ── with_capacity ───────────────────────────────────────────────────
+
+    #[test]
+    fn encoder_with_capacity() {
+        let enc = Encoder::with_capacity(128);
+        assert!(enc.as_bytes().is_empty());
+    }
+
+    // ── raw ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn raw_passthrough() {
+        let mut enc = Encoder::new();
+        let inner = {
+            let mut e2 = Encoder::new();
+            e2.unsigned(42);
+            e2.into_bytes()
+        };
+        enc.raw(&inner);
+        let bytes = enc.into_bytes();
+        assert_eq!(Decoder::new(&bytes).unsigned().unwrap(), 42);
+    }
+
+    // ── Error conditions ────────────────────────────────────────────────
+
+    #[test]
+    fn decode_empty_input_eof() {
+        let mut dec = Decoder::new(&[]);
+        assert!(dec.unsigned().is_err());
+    }
+
+    #[test]
+    fn decode_type_mismatch_unsigned_vs_bytes() {
+        let mut enc = Encoder::new();
+        enc.bytes(b"data");
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert!(dec.unsigned().is_err());
+    }
+
+    #[test]
+    fn decode_type_mismatch_text_vs_unsigned() {
+        let mut enc = Encoder::new();
+        enc.unsigned(42);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        assert!(dec.text().is_err());
+    }
+
+    #[test]
+    fn decode_truncated_bytes() {
+        // byte string header says length 10 but only 2 bytes follow
+        let bytes = [0x4a, 0x01, 0x02];
+        let mut dec = Decoder::new(&bytes);
+        assert!(dec.bytes().is_err());
+    }
+
+    #[test]
+    fn from_cbor_bytes_rejects_trailing() {
+        let mut enc = Encoder::new();
+        enc.unsigned(1).unsigned(2);
+        let bytes = enc.into_bytes();
+        // SlotNo::from_cbor_bytes should reject the trailing unsigned(2)
+        assert!(SlotNo::from_cbor_bytes(&bytes).is_err());
+    }
+
+    // ── CborEncode / CborDecode trait round-trips ───────────────────────
+
+    #[test]
+    fn era_round_trip_all_variants() {
+        for (tag, era) in [
+            (0u64, Era::Byron),
+            (1, Era::Shelley),
+            (2, Era::Allegra),
+            (3, Era::Mary),
+            (4, Era::Alonzo),
+            (5, Era::Babbage),
+            (6, Era::Conway),
+        ] {
+            let encoded = era.to_cbor_bytes();
+            let decoded = Era::from_cbor_bytes(&encoded).unwrap();
+            assert_eq!(decoded, era, "Era tag {tag}");
+        }
+    }
+
+    #[test]
+    fn slot_no_round_trip() {
+        let slot = SlotNo(123_456_789);
+        let decoded = SlotNo::from_cbor_bytes(&slot.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, slot);
+    }
+
+    #[test]
+    fn block_no_round_trip() {
+        let bn = BlockNo(42);
+        assert_eq!(BlockNo::from_cbor_bytes(&bn.to_cbor_bytes()).unwrap(), bn);
+    }
+
+    #[test]
+    fn epoch_no_round_trip() {
+        let en = EpochNo(500);
+        assert_eq!(EpochNo::from_cbor_bytes(&en.to_cbor_bytes()).unwrap(), en);
+    }
+
+    #[test]
+    fn header_hash_round_trip() {
+        let hh = HeaderHash([0xab; 32]);
+        assert_eq!(HeaderHash::from_cbor_bytes(&hh.to_cbor_bytes()).unwrap(), hh);
+    }
+
+    #[test]
+    fn tx_id_round_trip() {
+        let txid = TxId([0xcd; 32]);
+        assert_eq!(TxId::from_cbor_bytes(&txid.to_cbor_bytes()).unwrap(), txid);
+    }
+
+    #[test]
+    fn point_origin_round_trip() {
+        let pt = Point::Origin;
+        assert_eq!(Point::from_cbor_bytes(&pt.to_cbor_bytes()).unwrap(), pt);
+    }
+
+    #[test]
+    fn point_block_round_trip() {
+        let pt = Point::BlockPoint(SlotNo(100), HeaderHash([0x11; 32]));
+        assert_eq!(Point::from_cbor_bytes(&pt.to_cbor_bytes()).unwrap(), pt);
+    }
+
+    #[test]
+    fn nonce_neutral_round_trip() {
+        let n = Nonce::Neutral;
+        assert_eq!(Nonce::from_cbor_bytes(&n.to_cbor_bytes()).unwrap(), n);
+    }
+
+    #[test]
+    fn nonce_hash_round_trip() {
+        let n = Nonce::Hash([0xff; 32]);
+        assert_eq!(Nonce::from_cbor_bytes(&n.to_cbor_bytes()).unwrap(), n);
+    }
+
+    #[test]
+    fn stake_credential_keyhash_round_trip() {
+        let cred = StakeCredential::AddrKeyHash([0x01; 28]);
+        assert_eq!(StakeCredential::from_cbor_bytes(&cred.to_cbor_bytes()).unwrap(), cred);
+    }
+
+    #[test]
+    fn stake_credential_scripthash_round_trip() {
+        let cred = StakeCredential::ScriptHash([0x02; 28]);
+        assert_eq!(StakeCredential::from_cbor_bytes(&cred.to_cbor_bytes()).unwrap(), cred);
+    }
+
+    #[test]
+    fn reward_account_round_trip() {
+        let ra = RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0x0a; 28]),
+        };
+        assert_eq!(RewardAccount::from_cbor_bytes(&ra.to_cbor_bytes()).unwrap(), ra);
+    }
+
+    #[test]
+    fn anchor_round_trip() {
+        let a = Anchor {
+            url: "https://example.com".to_string(),
+            data_hash: [0xee; 32],
+        };
+        assert_eq!(Anchor::from_cbor_bytes(&a.to_cbor_bytes()).unwrap(), a);
+    }
+
+    #[test]
+    fn unit_interval_round_trip() {
+        let ui = UnitInterval {
+            numerator: 1,
+            denominator: 3,
+        };
+        assert_eq!(UnitInterval::from_cbor_bytes(&ui.to_cbor_bytes()).unwrap(), ui);
+    }
+
+    #[test]
+    fn relay_single_host_addr_round_trip() {
+        let r = Relay::SingleHostAddr(Some(3001), Some([127, 0, 0, 1]), None);
+        assert_eq!(Relay::from_cbor_bytes(&r.to_cbor_bytes()).unwrap(), r);
+    }
+
+    #[test]
+    fn relay_single_host_name_round_trip() {
+        let r = Relay::SingleHostName(Some(3001), "relay.example.com".to_string());
+        assert_eq!(Relay::from_cbor_bytes(&r.to_cbor_bytes()).unwrap(), r);
+    }
+
+    #[test]
+    fn relay_multi_host_name_round_trip() {
+        let r = Relay::MultiHostName("pool.example.com".to_string());
+        assert_eq!(Relay::from_cbor_bytes(&r.to_cbor_bytes()).unwrap(), r);
+    }
+
+    #[test]
+    fn pool_metadata_round_trip() {
+        let pm = PoolMetadata {
+            url: "https://meta.pool.io".to_string(),
+            metadata_hash: [0xdd; 32],
+        };
+        assert_eq!(PoolMetadata::from_cbor_bytes(&pm.to_cbor_bytes()).unwrap(), pm);
+    }
+
+    #[test]
+    fn pool_params_round_trip() {
+        let pp = PoolParams {
+            operator: [0x01; 28],
+            vrf_keyhash: [0x02; 32],
+            pledge: 1_000_000,
+            cost: 340_000_000,
+            margin: UnitInterval { numerator: 1, denominator: 100 },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0x03; 28]),
+            },
+            pool_owners: vec![[0x04; 28]],
+            relays: vec![Relay::SingleHostName(Some(3001), "r.io".to_string())],
+            pool_metadata: None,
+        };
+        assert_eq!(PoolParams::from_cbor_bytes(&pp.to_cbor_bytes()).unwrap(), pp);
+    }
+
+    #[test]
+    fn drep_all_variants_round_trip() {
+        for drep in [
+            DRep::KeyHash([0x01; 28]),
+            DRep::ScriptHash([0x02; 28]),
+            DRep::AlwaysAbstain,
+            DRep::AlwaysNoConfidence,
+        ] {
+            let decoded = DRep::from_cbor_bytes(&drep.to_cbor_bytes()).unwrap();
+            assert_eq!(decoded, drep);
+        }
+    }
+
+    #[test]
+    fn dcert_shelley_tags_round_trip() {
+        let cred = StakeCredential::AddrKeyHash([0x0a; 28]);
+        let pool = [0x0b; 28];
+        let certs = vec![
+            DCert::AccountRegistration(cred),
+            DCert::AccountUnregistration(cred),
+            DCert::DelegationToStakePool(cred, pool),
+            DCert::PoolRetirement(pool, EpochNo(100)),
+            DCert::GenesisDelegation([0x01; 28], [0x02; 28], [0x03; 32]),
+        ];
+        for cert in certs {
+            let decoded = DCert::from_cbor_bytes(&cert.to_cbor_bytes()).unwrap();
+            assert_eq!(decoded, cert);
+        }
+    }
+
+    #[test]
+    fn dcert_conway_tags_round_trip() {
+        let cred = StakeCredential::AddrKeyHash([0x0a; 28]);
+        let pool = [0x0b; 28];
+        let drep = DRep::KeyHash([0x0c; 28]);
+        let anchor = Some(Anchor {
+            url: "https://example.com".to_string(),
+            data_hash: [0xee; 32],
+        });
+        let certs = vec![
+            DCert::AccountRegistrationDeposit(cred, 2_000_000),
+            DCert::AccountUnregistrationDeposit(cred, 2_000_000),
+            DCert::DelegationToDrep(cred, drep),
+            DCert::DelegationToStakePoolAndDrep(cred, pool, drep),
+            DCert::AccountRegistrationDelegationToStakePool(cred, pool, 2_000_000),
+            DCert::AccountRegistrationDelegationToDrep(cred, drep, 2_000_000),
+            DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, pool, drep, 2_000_000),
+            DCert::CommitteeAuthorization(cred, StakeCredential::ScriptHash([0x0d; 28])),
+            DCert::CommitteeResignation(cred, anchor.clone()),
+            DCert::DrepRegistration(cred, 500_000_000, anchor.clone()),
+            DCert::DrepUnregistration(cred, 500_000_000),
+            DCert::DrepUpdate(cred, None),
+        ];
+        for cert in certs {
+            let decoded = DCert::from_cbor_bytes(&cert.to_cbor_bytes()).unwrap();
+            assert_eq!(decoded, cert);
+        }
+    }
+
+    #[test]
+    fn dcert_mir_stake_credentials_round_trip() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(StakeCredential::AddrKeyHash([0x01; 28]), 100i64);
+        map.insert(StakeCredential::ScriptHash([0x02; 28]), -50i64);
+        let cert = DCert::MoveInstantaneousReward(MirPot::Reserves, MirTarget::StakeCredentials(map));
+        let decoded = DCert::from_cbor_bytes(&cert.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, cert);
+    }
+
+    #[test]
+    fn dcert_mir_send_to_pot_round_trip() {
+        let cert = DCert::MoveInstantaneousReward(MirPot::Treasury, MirTarget::SendToOppositePot(1_000_000));
+        let decoded = DCert::from_cbor_bytes(&cert.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, cert);
+    }
+
+    #[test]
+    fn header_hash_wrong_length_rejected() {
+        let mut enc = Encoder::new();
+        enc.bytes(&[0u8; 16]); // 16 bytes, not 32
+        let bytes = enc.into_bytes();
+        assert!(HeaderHash::from_cbor_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn era_invalid_tag_rejected() {
+        let mut enc = Encoder::new();
+        enc.unsigned(99);
+        let bytes = enc.into_bytes();
+        assert!(Era::from_cbor_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn point_invalid_length_rejected() {
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(0);
+        let bytes = enc.into_bytes();
+        assert!(Point::from_cbor_bytes(&bytes).is_err());
     }
 }

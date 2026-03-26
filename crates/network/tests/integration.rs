@@ -10,8 +10,11 @@ use yggdrasil_network::{
     TcpBearer, TxIdAndSize, TxServerRequest, TxSubmissionClient, TxSubmissionMessage,
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
+    LocalRootConfig, LocalRootTargets, PeerAccessPoint, PeerAttemptState,
+    PeerBootstrapTargets, PeerDiffusionMode, PeerRegistry, PeerRegistryEntry,
+    PeerSource, PeerStatus,
 };
-use yggdrasil_ledger::{AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, CborDecode, CborEncode, HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId, Value};
+use yggdrasil_ledger::{AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, BlockNo, CborDecode, CborEncode, HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, Tip, TxId, Value};
 
 fn sample_vrf_cert(seed: u8) -> ShelleyVrfCert {
     ShelleyVrfCert {
@@ -598,9 +601,13 @@ fn chainsync_cbor_await_reply_round_trip() {
 
 #[test]
 fn chainsync_cbor_roll_forward_round_trip() {
+    // header is inline CBOR (must be a valid CBOR item); tip is also inline CBOR
     let msg = ChainSyncMessage::MsgRollForward {
-        header: vec![1, 2, 3, 4],
-        tip: vec![5, 6, 7],
+        header: vec![0x84, 0x01, 0x02, 0x03, 0x04],
+        tip: vec![0x83, 0x18, 0x2A, 0x58, 0x20,
+                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                  0x01], // [42, h'00..00', 1]
     };
     let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
     assert_eq!(msg, decoded);
@@ -608,9 +615,10 @@ fn chainsync_cbor_roll_forward_round_trip() {
 
 #[test]
 fn chainsync_cbor_roll_backward_round_trip() {
+    // point and tip are inline CBOR
     let msg = ChainSyncMessage::MsgRollBackward {
-        point: vec![10, 20],
-        tip: vec![30, 40, 50],
+        point: vec![0x80],        // [] (Origin)
+        tip: vec![0x82, 0x01, 0x02], // [1, 2]
     };
     let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
     assert_eq!(msg, decoded);
@@ -618,8 +626,9 @@ fn chainsync_cbor_roll_backward_round_trip() {
 
 #[test]
 fn chainsync_cbor_find_intersect_round_trip() {
+    // points are inline CBOR
     let msg = ChainSyncMessage::MsgFindIntersect {
-        points: vec![vec![1, 2], vec![3, 4, 5], vec![]],
+        points: vec![vec![0x80], vec![0x82, 0x01, 0x02], vec![0x01]],
     };
     let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
     assert_eq!(msg, decoded);
@@ -627,9 +636,10 @@ fn chainsync_cbor_find_intersect_round_trip() {
 
 #[test]
 fn chainsync_cbor_intersect_found_round_trip() {
+    // point and tip are inline CBOR
     let msg = ChainSyncMessage::MsgIntersectFound {
-        point: vec![0xAA, 0xBB],
-        tip: vec![0xCC],
+        point: vec![0x82, 0x01, 0x02], // [1, 2]
+        tip: vec![0x80],               // []
     };
     let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
     assert_eq!(msg, decoded);
@@ -637,8 +647,9 @@ fn chainsync_cbor_intersect_found_round_trip() {
 
 #[test]
 fn chainsync_cbor_intersect_not_found_round_trip() {
+    // tip is inline CBOR
     let msg = ChainSyncMessage::MsgIntersectNotFound {
-        tip: vec![0xDD, 0xEE, 0xFF],
+        tip: vec![0x82, 0x03, 0x04], // [3, 4]
     };
     let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
     assert_eq!(msg, decoded);
@@ -657,9 +668,10 @@ fn chainsync_cbor_done_round_trip() {
 
 #[test]
 fn blockfetch_cbor_request_range_round_trip() {
+    // lower/upper are opaque point bytes (wrapped via TAG 24 on the wire)
     let msg = BlockFetchMessage::MsgRequestRange(ChainRange {
-        lower: vec![1, 2, 3],
-        upper: vec![4, 5, 6],
+        lower: vec![0x82, 0x01, 0x02], // [1, 2]
+        upper: vec![0x82, 0x03, 0x04], // [3, 4]
     });
     let decoded = BlockFetchMessage::from_cbor(&msg.to_cbor()).expect("decode");
     assert_eq!(msg, decoded);
@@ -1903,8 +1915,8 @@ async fn chainsync_client_request_next_roll_forward() {
         assert_eq!(msg, ChainSyncMessage::MsgRequestNext);
 
         let reply = ChainSyncMessage::MsgRollForward {
-            header: b"header-1".to_vec(),
-            tip: b"tip-1".to_vec(),
+            header: vec![0x82, 0x00, 0x01],
+            tip: vec![0x81, 0x01],
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
@@ -1913,8 +1925,8 @@ async fn chainsync_client_request_next_roll_forward() {
     assert_eq!(
         resp,
         NextResponse::RollForward {
-            header: b"header-1".to_vec(),
-            tip: b"tip-1".to_vec(),
+            header: vec![0x82, 0x00, 0x01],
+            tip: vec![0x81, 0x01],
         }
     );
     assert_eq!(client.state(), ChainSyncState::StIdle);
@@ -1934,8 +1946,8 @@ async fn chainsync_client_request_next_roll_backward() {
         let mut sh = s_handle;
         let _raw = sh.recv().await.expect("recv request");
         let reply = ChainSyncMessage::MsgRollBackward {
-            point: b"point-0".to_vec(),
-            tip: b"tip-0".to_vec(),
+            point: vec![0x82, 0x00, 0x00],
+            tip: vec![0x81, 0x00],
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
@@ -1944,8 +1956,8 @@ async fn chainsync_client_request_next_roll_backward() {
     assert_eq!(
         resp,
         NextResponse::RollBackward {
-            point: b"point-0".to_vec(),
-            tip: b"tip-0".to_vec(),
+            point: vec![0x82, 0x00, 0x00],
+            tip: vec![0x81, 0x00],
         }
     );
 
@@ -1971,8 +1983,8 @@ async fn chainsync_client_request_next_await_reply() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
         let reply = ChainSyncMessage::MsgRollForward {
-            header: b"awaited-header".to_vec(),
-            tip: b"awaited-tip".to_vec(),
+            header: vec![0x82, 0x00, 0x03],
+            tip: vec![0x82, 0x0A, 0x14],
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
@@ -1981,8 +1993,8 @@ async fn chainsync_client_request_next_await_reply() {
     assert_eq!(
         resp,
         NextResponse::AwaitRollForward {
-            header: b"awaited-header".to_vec(),
-            tip: b"awaited-tip".to_vec(),
+            header: vec![0x82, 0x00, 0x03],
+            tip: vec![0x82, 0x0A, 0x14],
         }
     );
     assert_eq!(client.state(), ChainSyncState::StIdle);
@@ -1999,13 +2011,14 @@ async fn chainsync_client_request_next_typed_decodes_points() {
     let mut client = ChainSyncClient::new(c_handle);
     let point = Point::BlockPoint(SlotNo(12), HeaderHash([0x12; 32]));
     let tip = Point::BlockPoint(SlotNo(15), HeaderHash([0x15; 32]));
+    let tip_obj = Tip::Tip(tip.clone(), BlockNo(15));
 
     let server = tokio::spawn(async move {
         let mut sh = s_handle;
         let _raw = sh.recv().await.expect("recv request");
         let reply = ChainSyncMessage::MsgRollBackward {
             point: point.to_cbor_bytes(),
-            tip: tip.to_cbor_bytes(),
+            tip: tip_obj.to_cbor_bytes(),
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
@@ -2028,6 +2041,7 @@ async fn chainsync_client_request_next_decoded_header_decodes_shelley_header() {
     let mut client = ChainSyncClient::new(c_handle);
     let header = sample_shelley_header();
     let tip = Point::BlockPoint(SlotNo(500), HeaderHash([0xCC; 32]));
+    let tip_obj = Tip::Tip(tip.clone(), BlockNo(500));
     let expected_header = header.clone();
 
     let server = tokio::spawn(async move {
@@ -2035,7 +2049,7 @@ async fn chainsync_client_request_next_decoded_header_decodes_shelley_header() {
         let _raw = sh.recv().await.expect("recv request");
         let reply = ChainSyncMessage::MsgRollForward {
             header: header.to_cbor_bytes(),
-            tip: tip.to_cbor_bytes(),
+            tip: tip_obj.to_cbor_bytes(),
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
@@ -2100,21 +2114,21 @@ async fn chainsync_client_find_intersect_found() {
         }
 
         let reply = ChainSyncMessage::MsgIntersectFound {
-            point: b"found-point".to_vec(),
-            tip: b"found-tip".to_vec(),
+            point: vec![0x82, 0x03, 0x05],
+            tip: vec![0x82, 0x03, 0x04],
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
 
     let resp = client
-        .find_intersect(vec![b"pt-a".to_vec(), b"pt-b".to_vec()])
+        .find_intersect(vec![vec![0x82, 0x0A, 0x01], vec![0x82, 0x0B, 0x01]])
         .await
         .expect("find_intersect");
     assert_eq!(
         resp,
         IntersectResponse::Found {
-            point: b"found-point".to_vec(),
-            tip: b"found-tip".to_vec(),
+            point: vec![0x82, 0x03, 0x05],
+            tip: vec![0x82, 0x03, 0x04],
         }
     );
     assert_eq!(client.state(), ChainSyncState::StIdle);
@@ -2134,19 +2148,19 @@ async fn chainsync_client_find_intersect_not_found() {
         let mut sh = s_handle;
         let _raw = sh.recv().await.expect("recv");
         let reply = ChainSyncMessage::MsgIntersectNotFound {
-            tip: b"not-found-tip".to_vec(),
+            tip: vec![0x82, 0x04, 0x04],
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
 
     let resp = client
-        .find_intersect(vec![b"nonexistent".to_vec()])
+        .find_intersect(vec![vec![0x82, 0x18, 0xFF, 0x01]])
         .await
         .expect("find_intersect");
     assert_eq!(
         resp,
         IntersectResponse::NotFound {
-            tip: b"not-found-tip".to_vec(),
+            tip: vec![0x82, 0x04, 0x04],
         }
     );
 
@@ -2162,6 +2176,7 @@ async fn chainsync_client_find_intersect_points_decodes_points() {
     let mut client = ChainSyncClient::new(c_handle);
     let wanted = Point::BlockPoint(SlotNo(99), HeaderHash([0x99; 32]));
     let tip = Point::BlockPoint(SlotNo(120), HeaderHash([0xAB; 32]));
+    let tip_obj = Tip::Tip(tip.clone(), BlockNo(120));
 
     let server = tokio::spawn(async move {
         let mut sh = s_handle;
@@ -2176,7 +2191,7 @@ async fn chainsync_client_find_intersect_points_decodes_points() {
 
         let reply = ChainSyncMessage::MsgIntersectFound {
             point: wanted.to_cbor_bytes(),
-            tip: tip.to_cbor_bytes(),
+            tip: tip_obj.to_cbor_bytes(),
         };
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
@@ -2224,24 +2239,24 @@ async fn chainsync_client_full_sync_sequence() {
         // 1. FindIntersect
         let _raw = sh.recv().await.expect("recv find_intersect");
         let reply = ChainSyncMessage::MsgIntersectFound {
-            point: b"genesis".to_vec(),
-            tip: b"tip-3".to_vec(),
+            point: vec![0x80],
+            tip: vec![0x81, 0x03],
         };
         sh.send(reply.to_cbor()).await.expect("send intersect");
 
         // 2. RequestNext -> RollForward
         let _raw = sh.recv().await.expect("recv request1");
         let reply = ChainSyncMessage::MsgRollForward {
-            header: b"block-1".to_vec(),
-            tip: b"tip-3".to_vec(),
+            header: vec![0x82, 0x00, 0x01],
+            tip: vec![0x81, 0x03],
         };
         sh.send(reply.to_cbor()).await.expect("send rf1");
 
         // 3. RequestNext -> RollForward
         let _raw = sh.recv().await.expect("recv request2");
         let reply = ChainSyncMessage::MsgRollForward {
-            header: b"block-2".to_vec(),
-            tip: b"tip-3".to_vec(),
+            header: vec![0x82, 0x00, 0x02],
+            tip: vec![0x81, 0x03],
         };
         sh.send(reply.to_cbor()).await.expect("send rf2");
 
@@ -2252,8 +2267,8 @@ async fn chainsync_client_full_sync_sequence() {
             .expect("send await");
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         let reply = ChainSyncMessage::MsgRollForward {
-            header: b"block-3".to_vec(),
-            tip: b"tip-3".to_vec(),
+            header: vec![0x82, 0x00, 0x03],
+            tip: vec![0x81, 0x03],
         };
         sh.send(reply.to_cbor()).await.expect("send rf3");
 
@@ -2263,7 +2278,7 @@ async fn chainsync_client_full_sync_sequence() {
 
     // Client side: full sync sequence.
     let intersect = client
-        .find_intersect(vec![b"genesis".to_vec()])
+        .find_intersect(vec![vec![0x80]])
         .await
         .expect("find_intersect");
     assert!(matches!(intersect, IntersectResponse::Found { .. }));
@@ -2340,8 +2355,8 @@ async fn blockfetch_client_request_range_no_blocks() {
 
     let resp = client
         .request_range(ChainRange {
-            lower: b"pt-a".to_vec(),
-            upper: b"pt-b".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("request_range");
@@ -2381,8 +2396,8 @@ async fn blockfetch_client_request_range_single_block() {
 
     let resp = client
         .request_range(ChainRange {
-            lower: b"a".to_vec(),
-            upper: b"b".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("request_range");
@@ -2428,8 +2443,8 @@ async fn blockfetch_client_recv_block_decoded_decodes_shelley_block() {
 
     let resp = client
         .request_range(ChainRange {
-            lower: b"a".to_vec(),
-            upper: b"b".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("request_range");
@@ -2479,8 +2494,8 @@ async fn blockfetch_client_recv_block_decoded_rejects_invalid_block() {
 
     let resp = client
         .request_range(ChainRange {
-            lower: b"a".to_vec(),
-            upper: b"b".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("request_range");
@@ -2521,8 +2536,8 @@ async fn blockfetch_client_recv_block_raw_with_returns_raw_and_decoded() {
 
     let resp = client
         .request_range(ChainRange {
-            lower: b"a".to_vec(),
-            upper: b"b".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("request_range");
@@ -2573,8 +2588,8 @@ async fn blockfetch_client_request_range_collect_decoded_collects_full_batch() {
 
     let blocks = client
         .request_range_collect_decoded::<ShelleyBlock>(ChainRange {
-            lower: b"a".to_vec(),
-            upper: b"b".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("request_range_collect_decoded");
@@ -2695,8 +2710,8 @@ async fn blockfetch_client_request_range_multiple_blocks() {
 
     let resp = client
         .request_range(ChainRange {
-            lower: b"lo".to_vec(),
-            upper: b"hi".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("request_range");
@@ -2803,8 +2818,8 @@ async fn blockfetch_client_multi_range_session() {
     // Range 1: 2 blocks.
     let r1 = client
         .request_range(ChainRange {
-            lower: b"lo1".to_vec(),
-            upper: b"hi1".to_vec(),
+            lower: vec![0x82, 0x0A, 0x01],
+            upper: vec![0x82, 0x0B, 0x02],
         })
         .await
         .expect("range 1");
@@ -2822,8 +2837,8 @@ async fn blockfetch_client_multi_range_session() {
     // Range 2: no blocks.
     let r2 = client
         .request_range(ChainRange {
-            lower: b"lo2".to_vec(),
-            upper: b"hi2".to_vec(),
+            lower: vec![0x82, 0x0C, 0x03],
+            upper: vec![0x82, 0x0D, 0x04],
         })
         .await
         .expect("range 2");
@@ -2832,8 +2847,8 @@ async fn blockfetch_client_multi_range_session() {
     // Range 3: 1 block.
     let r3 = client
         .request_range(ChainRange {
-            lower: b"lo3".to_vec(),
-            upper: b"hi3".to_vec(),
+            lower: vec![0x82, 0x0E, 0x05],
+            upper: vec![0x82, 0x0F, 0x06],
         })
         .await
         .expect("range 3");
@@ -3706,4 +3721,174 @@ async fn txsubmission_client_rejects_unrequested_typed_tx_reply() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     c_mux.abort();
     s_mux.abort();
+}
+
+// ---------------------------------------------------------------------------
+// PeerRegistry tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn peer_registry_len_tracks_entries() {
+    let mut reg = PeerRegistry::default();
+    assert_eq!(reg.len(), 0);
+    assert!(reg.is_empty());
+
+    let addr_a: std::net::SocketAddr = "127.0.0.1:3001".parse().expect("parse addr_a");
+    let addr_b: std::net::SocketAddr = "127.0.0.2:3001".parse().expect("parse addr_b");
+    let addr_c: std::net::SocketAddr = "127.0.0.3:3001".parse().expect("parse addr_c");
+
+    reg.insert_source(addr_a, PeerSource::PeerSourceLocalRoot);
+    assert_eq!(reg.len(), 1);
+
+    reg.insert_source(addr_b, PeerSource::PeerSourcePublicRoot);
+    assert_eq!(reg.len(), 2);
+
+    // Inserting a second source for the same peer should NOT increase len.
+    reg.insert_source(addr_a, PeerSource::PeerSourceBootstrap);
+    assert_eq!(reg.len(), 2);
+
+    reg.insert_source(addr_c, PeerSource::PeerSourceLedger);
+    assert_eq!(reg.len(), 3);
+    assert!(!reg.is_empty());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_local() {
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourceLocalRoot]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_public() {
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourcePublicRoot]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_ledger() {
+    // Ledger peers are considered root peers by the current implementation
+    // (matches PeerSourceLedger in is_root_peer). Only PeerShare is excluded.
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourceLedger]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+
+    // PeerShare is the only non-root source.
+    let peer_share_only = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourcePeerShare]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(!peer_share_only.is_root_peer());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_mixed_sources() {
+    // An entry with Ledger + LocalRoot should be a root peer.
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([
+            PeerSource::PeerSourceLedger,
+            PeerSource::PeerSourceLocalRoot,
+        ]),
+        status: PeerStatus::PeerWarm,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+
+    // Even PeerShare mixed with LocalRoot should be a root peer.
+    let mixed = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([
+            PeerSource::PeerSourcePeerShare,
+            PeerSource::PeerSourceLocalRoot,
+        ]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(mixed.is_root_peer());
+}
+
+// ---------------------------------------------------------------------------
+// Governor tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn local_root_targets_from_config() {
+    let config = LocalRootConfig {
+        access_points: vec![
+            PeerAccessPoint { address: "127.0.0.1".to_owned(), port: 3001 },
+            PeerAccessPoint { address: "127.0.0.2".to_owned(), port: 3002 },
+        ],
+        advertise: false,
+        trustable: true,
+        hot_valency: 2,
+        warm_valency: Some(4),
+        diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+    };
+
+    let resolved: Vec<std::net::SocketAddr> = vec![
+        "127.0.0.1:3001".parse().expect("parse resolved_a"),
+        "127.0.0.2:3002".parse().expect("parse resolved_b"),
+    ];
+
+    let targets = LocalRootTargets::from_config(&config, resolved.clone());
+
+    assert_eq!(targets.peers, resolved);
+    assert_eq!(targets.hot_valency, 2);
+    // warm_valency should come from effective_warm_valency() which returns
+    // the explicit warm_valency (4) when present.
+    assert_eq!(targets.warm_valency, 4);
+}
+
+#[test]
+fn local_root_targets_from_config_defaults_warm_to_hot() {
+    let config = LocalRootConfig {
+        access_points: vec![
+            PeerAccessPoint { address: "127.0.0.1".to_owned(), port: 3001 },
+        ],
+        advertise: false,
+        trustable: false,
+        hot_valency: 3,
+        warm_valency: None,
+        diffusion_mode: PeerDiffusionMode::InitiatorOnlyDiffusionMode,
+    };
+
+    let resolved: Vec<std::net::SocketAddr> = vec![
+        "127.0.0.1:3001".parse().expect("parse resolved"),
+    ];
+
+    let targets = LocalRootTargets::from_config(&config, resolved.clone());
+
+    assert_eq!(targets.peers, resolved);
+    assert_eq!(targets.hot_valency, 3);
+    // When warm_valency is None, effective_warm_valency() falls back to
+    // hot_valency.
+    assert_eq!(targets.warm_valency, 3);
+}
+
+// ---------------------------------------------------------------------------
+// PeerSelection tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn peer_attempt_state_targets_returns_bootstrap_targets() {
+    let primary: std::net::SocketAddr = "127.0.0.10:3001".parse().expect("parse primary");
+    let fallback_a: std::net::SocketAddr = "127.0.0.11:3001".parse().expect("parse fallback_a");
+    let fallback_b: std::net::SocketAddr = "127.0.0.12:3001".parse().expect("parse fallback_b");
+
+    let bt = PeerBootstrapTargets::new(primary, &[fallback_a, fallback_b]);
+    let state = PeerAttemptState::new(bt);
+
+    let targets = state.targets();
+    assert_eq!(targets.primary_peer(), primary);
+    assert_eq!(targets.fallback_peers(), &[fallback_a, fallback_b]);
 }

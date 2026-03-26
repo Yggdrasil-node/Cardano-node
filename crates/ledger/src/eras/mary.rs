@@ -502,3 +502,213 @@ impl CborDecode for MaryTxBody {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_txin(idx: u16) -> ShelleyTxIn {
+        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+    }
+
+    fn mk_policy() -> PolicyId {
+        [0xBB; 28]
+    }
+
+    fn mk_multi_asset() -> MultiAsset {
+        let mut assets = BTreeMap::new();
+        assets.insert(b"token_a".to_vec(), 100);
+        let mut ma = BTreeMap::new();
+        ma.insert(mk_policy(), assets);
+        ma
+    }
+
+    fn mk_mint_asset() -> MintAsset {
+        let mut assets = BTreeMap::new();
+        assets.insert(b"minted".to_vec(), 50);
+        assets.insert(b"burned".to_vec(), -10);
+        let mut ma = BTreeMap::new();
+        ma.insert(mk_policy(), assets);
+        ma
+    }
+
+    // ── Value round-trips ──────────────────────────────────────────────
+
+    #[test]
+    fn value_coin_round_trip() {
+        let v = Value::Coin(5_000_000);
+        let decoded = Value::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn value_coin_and_assets_round_trip() {
+        let v = Value::CoinAndAssets(3_000_000, mk_multi_asset());
+        let decoded = Value::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn value_coin_accessor() {
+        assert_eq!(Value::Coin(42).coin(), 42);
+        assert_eq!(Value::CoinAndAssets(99, mk_multi_asset()).coin(), 99);
+    }
+
+    #[test]
+    fn value_multi_asset_accessor() {
+        assert!(Value::Coin(1).multi_asset().is_none());
+        let ma = mk_multi_asset();
+        let v = Value::CoinAndAssets(1, ma.clone());
+        assert_eq!(v.multi_asset(), Some(&ma));
+    }
+
+    #[test]
+    fn value_coin_vs_coin_and_assets_differ() {
+        let a = Value::Coin(1_000_000);
+        let b = Value::CoinAndAssets(1_000_000, BTreeMap::new());
+        assert_ne!(a.to_cbor_bytes(), b.to_cbor_bytes());
+    }
+
+    // ── MaryTxOut round-trips ──────────────────────────────────────────
+
+    #[test]
+    fn txout_coin_only_round_trip() {
+        let out = MaryTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+        };
+        let decoded = MaryTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn txout_with_assets_round_trip() {
+        let out = MaryTxOut {
+            address: vec![0x01; 57],
+            amount: Value::CoinAndAssets(5_000_000, mk_multi_asset()),
+        };
+        let decoded = MaryTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    // ── MaryTxBody round-trips ─────────────────────────────────────────
+
+    #[test]
+    fn tx_body_minimal_round_trip() {
+        let body = MaryTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![MaryTxOut {
+                address: vec![0x61; 29],
+                amount: Value::Coin(2_000_000),
+            }],
+            fee: 200_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+        };
+        let decoded = MaryTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_mint_round_trip() {
+        let body = MaryTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![MaryTxOut {
+                address: vec![0x61; 29],
+                amount: Value::CoinAndAssets(3_000_000, mk_multi_asset()),
+            }],
+            fee: 300_000,
+            ttl: Some(1000),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: Some(50),
+            mint: Some(mk_mint_asset()),
+        };
+        let decoded = MaryTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_mint_absent_vs_present_differ() {
+        let base = MaryTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![MaryTxOut {
+                address: vec![0x61; 29],
+                amount: Value::Coin(1_000_000),
+            }],
+            fee: 100_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+        };
+        let with_mint = MaryTxBody {
+            mint: Some(mk_mint_asset()),
+            ..base.clone()
+        };
+        assert_ne!(base.to_cbor_bytes(), with_mint.to_cbor_bytes());
+    }
+
+    // ── Multi-asset CBOR helpers ───────────────────────────────────────
+
+    #[test]
+    fn multi_asset_encode_decode_round_trip() {
+        let ma = mk_multi_asset();
+        let mut enc = Encoder::new();
+        encode_multi_asset(&mut enc, &ma);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let decoded = decode_multi_asset_unsigned(&mut dec).unwrap();
+        assert_eq!(decoded, ma);
+    }
+
+    #[test]
+    fn mint_asset_encode_decode_round_trip() {
+        let ma = mk_mint_asset();
+        let mut enc = Encoder::new();
+        encode_mint_asset(&mut enc, &ma);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let decoded = decode_mint_asset(&mut dec).unwrap();
+        assert_eq!(decoded, ma);
+    }
+
+    #[test]
+    fn multi_asset_empty_round_trip() {
+        let ma: MultiAsset = BTreeMap::new();
+        let mut enc = Encoder::new();
+        encode_multi_asset(&mut enc, &ma);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let decoded = decode_multi_asset_unsigned(&mut dec).unwrap();
+        assert_eq!(decoded, ma);
+    }
+
+    #[test]
+    fn multi_asset_multiple_policies() {
+        let mut ma = MultiAsset::new();
+        let mut a1 = BTreeMap::new();
+        a1.insert(b"coin_x".to_vec(), 10);
+        ma.insert([0x01; 28], a1);
+        let mut a2 = BTreeMap::new();
+        a2.insert(b"coin_y".to_vec(), 20);
+        ma.insert([0x02; 28], a2);
+
+        let mut enc = Encoder::new();
+        encode_multi_asset(&mut enc, &ma);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let decoded = decode_multi_asset_unsigned(&mut dec).unwrap();
+        assert_eq!(decoded, ma);
+    }
+}

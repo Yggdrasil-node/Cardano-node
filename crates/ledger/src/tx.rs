@@ -2,7 +2,7 @@ use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::Era;
 use crate::eras::{
     AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, MaryTxBody, ShelleyTx,
-    ShelleyWitnessSet,
+    ShelleyTxIn, ShelleyWitnessSet,
 };
 use crate::error::LedgerError;
 use crate::types::{BlockNo, HeaderHash, SlotNo, TxId};
@@ -34,6 +34,13 @@ pub struct Tx {
     /// witness sufficiency validation during block application.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witnesses: Option<Vec<u8>>,
+    /// Optional auxiliary data (metadata) carried by this transaction,
+    /// stored as raw CBOR bytes from the block-level auxiliary data map.
+    ///
+    /// Populated during block conversion from era-specific blocks.
+    /// Used by the ledger to validate `auxiliary_data_hash` integrity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary_data: Option<Vec<u8>>,
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:
@@ -302,6 +309,24 @@ impl MultiEraSubmittedTx {
         }
     }
 
+    /// Return the UTxO inputs consumed by this transaction.
+    ///
+    /// This is used by the mempool for double-spend conflict detection:
+    /// two transactions conflict if their input sets overlap, meaning both
+    /// attempt to spend the same UTxO output.
+    ///
+    /// Reference: `Cardano.Ledger.Core` — `inputs txb`.
+    pub fn inputs(&self) -> Vec<ShelleyTxIn> {
+        match self {
+            Self::Shelley(tx) => tx.body.inputs.clone(),
+            Self::Allegra(tx) => tx.body.inputs.clone(),
+            Self::Mary(tx) => tx.body.inputs.clone(),
+            Self::Alonzo(tx) => tx.body.inputs.clone(),
+            Self::Babbage(tx) => tx.body.inputs.clone(),
+            Self::Conway(tx) => tx.body.inputs.clone(),
+        }
+    }
+
     /// Return the canonical CBOR bytes of the transaction body.
     pub fn body_cbor(&self) -> Vec<u8> {
         match self {
@@ -415,4 +440,310 @@ pub struct Block {
     /// or recovered from legacy storage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_cbor: Option<Vec<u8>>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eras::ShelleyTxBody;
+
+    // ── compute_tx_id ──────────────────────────────────────────────────
+
+    #[test]
+    fn compute_tx_id_deterministic() {
+        let body = b"some_body_bytes";
+        let id1 = compute_tx_id(body);
+        let id2 = compute_tx_id(body);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn compute_tx_id_different_inputs_differ() {
+        let id1 = compute_tx_id(b"body_a");
+        let id2 = compute_tx_id(b"body_b");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn compute_tx_id_is_32_bytes() {
+        let id = compute_tx_id(b"payload");
+        assert_eq!(id.0.len(), 32);
+    }
+
+    // ── Tx struct ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tx_struct_fields() {
+        let body = b"test_body".to_vec();
+        let id = compute_tx_id(&body);
+        let tx = Tx {
+            id,
+            body: body.clone(),
+            witnesses: None,
+            auxiliary_data: None,
+        };
+        assert_eq!(tx.id, id);
+        assert_eq!(tx.body, body);
+        assert!(tx.witnesses.is_none());
+        assert!(tx.auxiliary_data.is_none());
+    }
+
+    #[test]
+    fn tx_with_witnesses_and_aux_data() {
+        let body = b"test_body".to_vec();
+        let tx = Tx {
+            id: compute_tx_id(&body),
+            body,
+            witnesses: Some(vec![0xa0]),
+            auxiliary_data: Some(vec![0xa1, 0x01, 0x02]),
+        };
+        assert!(tx.witnesses.is_some());
+        assert!(tx.auxiliary_data.is_some());
+    }
+
+    // ── ShelleyCompatibleSubmittedTx ───────────────────────────────────
+
+    #[test]
+    fn shelley_submitted_tx_round_trip() {
+        let body = ShelleyTxBody {
+            inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+            outputs: vec![crate::eras::shelley::ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 2_000_000,
+            }],
+            fee: 200_000,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let stx = ShelleyCompatibleSubmittedTx::new(body.clone(), ws.clone(), None);
+        let tx_id = stx.tx_id();
+        assert_eq!(tx_id, compute_tx_id(&body.to_cbor_bytes()));
+
+        // CBOR round-trip
+        let encoded = stx.to_cbor_bytes();
+        let decoded =
+            ShelleyCompatibleSubmittedTx::<ShelleyTxBody>::from_cbor_bytes(&encoded).unwrap();
+        assert_eq!(decoded.body, body);
+        assert_eq!(decoded.auxiliary_data, None);
+    }
+
+    // ── AlonzoCompatibleSubmittedTx ────────────────────────────────────
+
+    #[test]
+    fn alonzo_submitted_tx_round_trip() {
+        let body = AlonzoTxBody {
+            inputs: vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }],
+            outputs: vec![crate::eras::alonzo::AlonzoTxOut {
+                address: vec![0x61; 29],
+                amount: crate::eras::mary::Value::Coin(1_000_000),
+                datum_hash: None,
+            }],
+            fee: 300_000,
+            ttl: None,
+            validity_interval_start: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        };
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let stx = AlonzoCompatibleSubmittedTx::new(body.clone(), ws, true, None);
+        assert!(stx.is_valid);
+        let tx_id = stx.tx_id();
+        assert_eq!(tx_id, compute_tx_id(&body.to_cbor_bytes()));
+
+        let encoded = stx.to_cbor_bytes();
+        let decoded =
+            AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(&encoded).unwrap();
+        assert_eq!(decoded.body, body);
+        assert!(decoded.is_valid);
+    }
+
+    #[test]
+    fn alonzo_submitted_tx_invalid_array_length_rejected() {
+        // Construct a 3-element array (wrong for Alonzo which requires 4)
+        let mut enc = crate::cbor::Encoder::new();
+        enc.array(3).unsigned(0).unsigned(0).null();
+        let bytes = enc.into_bytes();
+        let result = AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(&bytes);
+        assert!(result.is_err());
+    }
+
+    // ── MultiEraSubmittedTx ────────────────────────────────────────────
+
+    #[test]
+    fn multi_era_submitted_tx_byron_unsupported() {
+        let result = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Byron, &[0x00]);
+        assert!(matches!(result, Err(LedgerError::UnsupportedEra(Era::Byron))));
+    }
+
+    #[test]
+    fn multi_era_submitted_tx_era_accessor() {
+        // Build a minimal Shelley submitted tx
+        let body = ShelleyTxBody {
+            inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+            outputs: vec![crate::eras::shelley::ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1_000_000,
+            }],
+            fee: 100,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let stx = ShelleyCompatibleSubmittedTx::new(body, ws, None);
+        let cbor = stx.to_cbor_bytes();
+        let mstx = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Shelley, &cbor).unwrap();
+        assert_eq!(mstx.era(), Era::Shelley);
+    }
+
+    #[test]
+    fn multi_era_submitted_tx_fee_and_inputs() {
+        let body = ShelleyTxBody {
+            inputs: vec![
+                ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+                ShelleyTxIn { transaction_id: [0x02; 32], index: 1 },
+            ],
+            outputs: vec![crate::eras::shelley::ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1_000_000,
+            }],
+            fee: 175_000,
+            ttl: 200,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let stx = ShelleyCompatibleSubmittedTx::new(body, ws, None);
+        let cbor = stx.to_cbor_bytes();
+        let mstx = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Shelley, &cbor).unwrap();
+        assert_eq!(mstx.fee(), 175_000);
+        assert_eq!(mstx.inputs().len(), 2);
+        assert_eq!(mstx.expires_at(), Some(SlotNo(200)));
+    }
+
+    // ── BlockHeader / Block ────────────────────────────────────────────
+
+    #[test]
+    fn block_header_fields() {
+        let header = BlockHeader {
+            hash: HeaderHash([0x01; 32]),
+            prev_hash: HeaderHash([0x00; 32]),
+            slot_no: SlotNo(42),
+            block_no: BlockNo(1),
+            issuer_vkey: [0xab; 32],
+        };
+        assert_eq!(header.slot_no, SlotNo(42));
+        assert_eq!(header.block_no, BlockNo(1));
+    }
+
+    #[test]
+    fn block_struct() {
+        let block = Block {
+            era: Era::Shelley,
+            header: BlockHeader {
+                hash: HeaderHash([0x01; 32]),
+                prev_hash: HeaderHash([0x00; 32]),
+                slot_no: SlotNo(1),
+                block_no: BlockNo(1),
+                issuer_vkey: [0x00; 32],
+            },
+            transactions: vec![],
+            raw_cbor: None,
+        };
+        assert_eq!(block.era, Era::Shelley);
+        assert!(block.transactions.is_empty());
+        assert!(block.raw_cbor.is_none());
+    }
+
+    // ── encode/decode helpers ──────────────────────────────────────────
+
+    #[test]
+    fn encode_optional_raw_cbor_none() {
+        let mut enc = crate::cbor::Encoder::new();
+        encode_optional_raw_cbor(&mut enc, &None);
+        let bytes = enc.into_bytes();
+        // Should be CBOR null
+        assert_eq!(bytes, [0xf6]);
+    }
+
+    #[test]
+    fn encode_optional_raw_cbor_some() {
+        let raw = vec![0x01, 0x02];
+        let mut enc = crate::cbor::Encoder::new();
+        encode_optional_raw_cbor(&mut enc, &Some(raw.clone()));
+        let bytes = enc.into_bytes();
+        assert_eq!(bytes, raw);
+    }
+
+    #[test]
+    fn decode_optional_raw_cbor_null() {
+        let bytes = [0xf6]; // CBOR null
+        let mut dec = crate::cbor::Decoder::new(&bytes);
+        assert_eq!(decode_optional_raw_cbor(&mut dec).unwrap(), None);
+    }
+
+    #[test]
+    fn decode_optional_raw_cbor_present() {
+        let mut enc = crate::cbor::Encoder::new();
+        enc.unsigned(42);
+        let bytes = enc.into_bytes();
+        let mut dec = crate::cbor::Decoder::new(&bytes);
+        let result = decode_optional_raw_cbor(&mut dec).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), bytes);
+    }
 }

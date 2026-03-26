@@ -32,8 +32,8 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - TxSubmission-facing snapshot support is now exposed via upstream-aligned `TxSubmissionMempoolReader` and `MempoolSnapshot` terminology, with a monotonic `MempoolIdx` cursor kept separate from fee ordering. `SharedMempool` and `SharedTxSubmissionMempoolReader` provide concurrent snapshot access for long-lived TxSubmission services without coupling networking to queue internals.
 - `remove_by_id`, `contains`, `len`, `is_empty`, `size_bytes`, `iter`, and `remove_confirmed` are implemented.
 - Block-application eviction via `remove_confirmed` enables post-sync snipping of confirmed transactions.
-- TTL-aware admission via `insert_checked(entry, current_slot)` rejects transactions whose TTL has expired.
+- TTL-aware admission via `insert_checked(entry, current_slot, protocol_params)` rejects transactions whose TTL has expired and, when protocol parameters are supplied, re-validates transaction body size and minimum fee thresholds (`maxTxSize`, `minFeeA`, `minFeeB`) at mempool admission time.
 - Periodic TTL expiry purge via `purge_expired(current_slot)` removes all stale entries.
 - Node-side `evict_confirmed_from_mempool` in `node/src/sync.rs` wires mempool eviction into the sync pipeline.
 - Fee ordering remains a queue policy concern; TxSubmission snapshot traversal uses insertion-order indices so networking does not depend on fee-priority layout.
-- Next: integrate shared mempool intake with ledger validation for full admission checks and broader network submission sourcing.
+- Shared mempool intake now carries protocol-parameter-aware admission checks through node runtime call paths; next work is broader network submission sourcing and any additional policy harmonization with upstream mempool revalidation behavior.

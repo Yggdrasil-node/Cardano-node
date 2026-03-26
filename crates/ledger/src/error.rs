@@ -25,13 +25,22 @@ pub enum LedgerError {
     #[error("CBOR: {0} trailing bytes after value")]
     CborTrailingBytes(usize),
 
+    #[error("CBOR: {0}")]
+    CborDecodeError(String),
+
     // -- UTxO validation errors ---------------------------------------------
+
+    #[error("block slot {block_slot} does not advance past current tip slot {tip_slot}")]
+    SlotNotIncreasing { tip_slot: u64, block_slot: u64 },
 
     #[error("transaction expired: TTL {ttl} < current slot {slot}")]
     TxExpired { ttl: u64, slot: u64 },
 
     #[error("input not found in UTxO set")]
     InputNotInUtxo,
+
+    #[error("reference input not found in UTxO set")]
+    ReferenceInputNotInUtxo,
 
     #[error(
         "value not preserved: consumed {consumed} lovelace != produced {produced} + fee {fee}"
@@ -53,6 +62,26 @@ pub enum LedgerError {
 
     #[error("stake pool not registered: {0:02x?}")]
     PoolNotRegistered(PoolKeyHash),
+
+    #[error("pool cost {cost} is below minPoolCost {min_pool_cost}")]
+    PoolCostTooLow { cost: u64, min_pool_cost: u64 },
+
+    #[error("pool margin numerator {numerator} exceeds denominator {denominator}")]
+    PoolMarginInvalid { numerator: u64, denominator: u64 },
+
+    #[error("pool reward account network {actual} does not match expected {expected}")]
+    PoolRewardAccountNetworkMismatch { actual: u8, expected: u8 },
+
+    #[error("pool metadata URL too long: {length} bytes (max 64)")]
+    PoolMetadataUrlTooLong { length: usize },
+
+    #[error("pool retirement epoch {retirement_epoch} exceeds maximum {max_epoch} (current {current_epoch} + eMax {e_max})")]
+    PoolRetirementTooFar {
+        retirement_epoch: u64,
+        current_epoch: u64,
+        e_max: u64,
+        max_epoch: u64,
+    },
 
     #[error("stake credential already registered: {0:?}")]
     StakeCredentialAlreadyRegistered(StakeCredential),
@@ -85,6 +114,18 @@ pub enum LedgerError {
 
     #[error("invalid reward account bytes: {0:02x?}")]
     InvalidRewardAccountBytes(Vec<u8>),
+
+    #[error("invalid address bytes: {0:02x?}")]
+    InvalidAddressBytes(Vec<u8>),
+
+    #[error("invalid address network id: {0}")]
+    InvalidAddressNetworkId(u8),
+
+    #[error("invalid Byron address structure: {0:02x?}")]
+    InvalidByronAddressStructure(Vec<u8>),
+
+    #[error("invalid Byron address CRC32 checksum")]
+    InvalidByronAddressChecksum,
 
     #[error("proposal deposit incorrect: supplied {supplied}, expected {expected}")]
     ProposalDepositIncorrect { supplied: u64, expected: u64 },
@@ -131,6 +172,14 @@ pub enum LedgerError {
     #[error("committee update proposal uses expiration epochs that are not after the current epoch: {0:?}")]
     ExpirationEpochTooSmall(Vec<(StakeCredential, EpochNo)>),
 
+    #[error(
+        "committee update proposal uses expiration epochs beyond the committee term limit (max {max_epoch:?}): {members:?}"
+    )]
+    ExpirationEpochTooLarge {
+        members: Vec<(StakeCredential, EpochNo)>,
+        max_epoch: EpochNo,
+    },
+
     #[error("proposal references an invalid previous governance action: {0:?}")]
     InvalidPrevGovActionId(crate::eras::conway::ProposalProcedure),
 
@@ -146,6 +195,9 @@ pub enum LedgerError {
         expected: (u64, u64),
     },
 
+    #[error("hard-fork proposal cannot be validated without a current protocol-version baseline: {0:?}")]
+    MissingProtocolVersionForHardFork(crate::eras::conway::ProposalProcedure),
+
     #[error(
         "withdrawal exceeds reward balance for {account:?}: requested {requested}, available {available}"
     )]
@@ -157,6 +209,12 @@ pub enum LedgerError {
 
     #[error("unsupported certificate kind in this ledger slice: {0}")]
     UnsupportedCertificate(&'static str),
+
+    #[error("unsupported plutus purpose in this context: {0}")]
+    UnsupportedPlutusPurpose(&'static str),
+
+    #[error("unsupported plutus context feature in this context: {0}")]
+    UnsupportedPlutusContext(&'static str),
 
     #[error(
         "multi-asset not preserved for policy {policy:02x?} / asset {asset_name:02x?}: \
@@ -245,6 +303,27 @@ pub enum LedgerError {
     BlockTooLarge { actual: usize, max: usize },
 
     #[error(
+        "era regression: ledger is in {ledger_era:?} (ordinal {ledger_ordinal}), \
+         but received block in earlier era {block_era:?} (ordinal {block_ordinal})"
+    )]
+    /// Hard-fork combinator invariant violated: an incoming block is from an
+    /// era that precedes the current ledger era.  Once the ledger advances
+    /// past a hard-fork boundary it must never receive blocks from earlier
+    /// eras.
+    ///
+    /// Reference: `Ouroboros.Consensus.HardFork.Combinator` — foreground check.
+    BlockEraRegression {
+        /// The current ledger era before this block was applied.
+        ledger_era: super::eras::Era,
+        /// Ordinal of the current ledger era.
+        ledger_ordinal: u8,
+        /// The era reported by the incoming block.
+        block_era: super::eras::Era,
+        /// Ordinal of the incoming block's era.
+        block_ordinal: u8,
+    },
+
+    #[error(
         "block execution units exceed limit: mem {block_mem}/{max_mem}, \
          steps {block_steps}/{max_steps}"
     )]
@@ -263,8 +342,270 @@ pub enum LedgerError {
     #[error("VKey witness signature verification failed for hash {hash:02x?}")]
     InvalidVKeyWitnessSignature { hash: [u8; 28] },
 
+    #[error("bootstrap witness signature verification failed for hash {hash:02x?}")]
+    InvalidBootstrapWitnessSignature { hash: [u8; 28] },
+
+    #[error("bootstrap witness attributes are not valid CBOR map bytes: {0:02x?}")]
+    InvalidBootstrapWitnessAttributes(Vec<u8>),
+
+    // -- Auxiliary data validation errors ------------------------------------
+
+    #[error(
+        "auxiliary data hash mismatch: declared {declared:02x?}, computed {computed:02x?}"
+    )]
+    AuxiliaryDataHashMismatch {
+        declared: [u8; 32],
+        computed: [u8; 32],
+    },
+
+    #[error("auxiliary data hash declared but no auxiliary data present in block")]
+    AuxiliaryDataMissing,
+
     // -- Epoch boundary errors ----------------------------------------------
 
     #[error("protocol parameters are required but missing")]
     MissingProtocolParameters,
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eras::Era;
+
+    #[test]
+    fn unsupported_era_display() {
+        let e = LedgerError::UnsupportedEra(Era::Byron);
+        assert!(e.to_string().contains("unsupported era"));
+    }
+
+    #[test]
+    fn cbor_unexpected_eof_display() {
+        let e = LedgerError::CborUnexpectedEof;
+        assert_eq!(e.to_string(), "CBOR: unexpected end of input");
+    }
+
+    #[test]
+    fn cbor_type_mismatch_display() {
+        let e = LedgerError::CborTypeMismatch { expected: 0, actual: 2 };
+        let s = e.to_string();
+        assert!(s.contains("expected major 0"));
+        assert!(s.contains("got 2"));
+    }
+
+    #[test]
+    fn cbor_invalid_additional_info_display() {
+        let e = LedgerError::CborInvalidAdditionalInfo(31);
+        assert!(e.to_string().contains("31"));
+    }
+
+    #[test]
+    fn cbor_invalid_length_display() {
+        let e = LedgerError::CborInvalidLength { expected: 3, actual: 5 };
+        let s = e.to_string();
+        assert!(s.contains("expected 3"));
+        assert!(s.contains("got 5"));
+    }
+
+    #[test]
+    fn cbor_trailing_bytes_display() {
+        let e = LedgerError::CborTrailingBytes(10);
+        assert!(e.to_string().contains("10 trailing bytes"));
+    }
+
+    #[test]
+    fn cbor_decode_error_display() {
+        let e = LedgerError::CborDecodeError("custom error".into());
+        assert!(e.to_string().contains("custom error"));
+    }
+
+    #[test]
+    fn tx_expired_display() {
+        let e = LedgerError::TxExpired { ttl: 100, slot: 200 };
+        let s = e.to_string();
+        assert!(s.contains("TTL 100"));
+        assert!(s.contains("slot 200"));
+    }
+
+    #[test]
+    fn input_not_in_utxo_display() {
+        let e = LedgerError::InputNotInUtxo;
+        assert_eq!(e.to_string(), "input not found in UTxO set");
+    }
+
+    #[test]
+    fn value_not_preserved_display() {
+        let e = LedgerError::ValueNotPreserved {
+            consumed: 100,
+            produced: 80,
+            fee: 10,
+        };
+        let s = e.to_string();
+        assert!(s.contains("100"));
+        assert!(s.contains("80"));
+        assert!(s.contains("10"));
+    }
+
+    #[test]
+    fn no_inputs_display() {
+        assert_eq!(LedgerError::NoInputs.to_string(), "no inputs in transaction");
+    }
+
+    #[test]
+    fn no_outputs_display() {
+        assert_eq!(LedgerError::NoOutputs.to_string(), "no outputs in transaction");
+    }
+
+    #[test]
+    fn pool_not_registered_display() {
+        let e = LedgerError::PoolNotRegistered([0xaa; 28]);
+        assert!(e.to_string().contains("stake pool not registered"));
+    }
+
+    #[test]
+    fn stake_credential_already_registered_display() {
+        let cred = StakeCredential::AddrKeyHash([0x01; 28]);
+        let e = LedgerError::StakeCredentialAlreadyRegistered(cred);
+        assert!(e.to_string().contains("already registered"));
+    }
+
+    #[test]
+    fn stake_credential_not_registered_display() {
+        let cred = StakeCredential::ScriptHash([0x02; 28]);
+        let e = LedgerError::StakeCredentialNotRegistered(cred);
+        assert!(e.to_string().contains("not registered"));
+    }
+
+    #[test]
+    fn drep_already_registered_display() {
+        let e = LedgerError::DrepAlreadyRegistered(DRep::AlwaysAbstain);
+        assert!(e.to_string().contains("drep already registered"));
+    }
+
+    #[test]
+    fn drep_not_registered_display() {
+        let e = LedgerError::DrepNotRegistered(DRep::AlwaysNoConfidence);
+        assert!(e.to_string().contains("drep not registered"));
+    }
+
+    #[test]
+    fn fee_too_small_display() {
+        let e = LedgerError::FeeTooSmall { minimum: 200_000, declared: 100_000 };
+        let s = e.to_string();
+        assert!(s.contains("200000"));
+        assert!(s.contains("100000"));
+    }
+
+    #[test]
+    fn output_too_small_display() {
+        let e = LedgerError::OutputTooSmall { minimum: 1_000_000, actual: 500_000 };
+        assert!(e.to_string().contains("1000000"));
+    }
+
+    #[test]
+    fn missing_protocol_parameters_display() {
+        let e = LedgerError::MissingProtocolParameters;
+        assert!(e.to_string().contains("protocol parameters"));
+    }
+
+    #[test]
+    fn error_equality() {
+        let e1 = LedgerError::CborUnexpectedEof;
+        let e2 = LedgerError::CborUnexpectedEof;
+        assert_eq!(e1, e2);
+
+        let e3 = LedgerError::InputNotInUtxo;
+        assert_ne!(e1, e3);
+    }
+
+    #[test]
+    fn proposal_deposit_incorrect_display() {
+        let e = LedgerError::ProposalDepositIncorrect { supplied: 500, expected: 1000 };
+        let s = e.to_string();
+        assert!(s.contains("supplied 500"));
+        assert!(s.contains("expected 1000"));
+    }
+
+    #[test]
+    fn block_too_large_display() {
+        let e = LedgerError::BlockTooLarge { actual: 100_000, max: 65_536 };
+        assert!(e.to_string().contains("100000"));
+    }
+
+    #[test]
+    fn no_collateral_inputs_display() {
+        let e = LedgerError::NoCollateralInputs;
+        assert!(e.to_string().contains("no collateral inputs"));
+    }
+
+    #[test]
+    fn auxiliary_data_hash_mismatch_display() {
+        let e = LedgerError::AuxiliaryDataHashMismatch {
+            declared: [0x01; 32],
+            computed: [0x02; 32],
+        };
+        assert!(e.to_string().contains("auxiliary data hash mismatch"));
+    }
+
+    #[test]
+    fn pool_cost_too_low_display() {
+        let e = LedgerError::PoolCostTooLow { cost: 100, min_pool_cost: 340_000_000 };
+        let s = e.to_string();
+        assert!(s.contains("100"));
+        assert!(s.contains("340000000"));
+    }
+
+    #[test]
+    fn block_era_regression_display() {
+        let e = LedgerError::BlockEraRegression {
+            ledger_era: Era::Conway,
+            ledger_ordinal: 6,
+            block_era: Era::Shelley,
+            block_ordinal: 1,
+        };
+        assert!(e.to_string().contains("era regression"));
+    }
+
+    #[test]
+    fn missing_vkey_witness_display() {
+        let e = LedgerError::MissingVKeyWitness { hash: [0xab; 28] };
+        assert!(e.to_string().contains("missing required VKey witness"));
+    }
+
+    #[test]
+    fn withdrawal_exceeds_balance_display() {
+        let ra = RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0x01; 28]),
+        };
+        let e = LedgerError::WithdrawalExceedsBalance {
+            account: ra,
+            requested: 100,
+            available: 50,
+        };
+        let s = e.to_string();
+        assert!(s.contains("withdrawal"));
+        assert!(s.contains("100"));
+        assert!(s.contains("50"));
+    }
+
+    #[test]
+    fn multi_asset_not_preserved_display() {
+        let e = LedgerError::MultiAssetNotPreserved {
+            policy: [0x01; 28],
+            asset_name: vec![0x02],
+            expected: 100,
+            produced: 90,
+        };
+        assert!(e.to_string().contains("multi-asset not preserved"));
+    }
+
+    #[test]
+    fn error_is_debug() {
+        let e = LedgerError::CborUnexpectedEof;
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("CborUnexpectedEof"));
+    }
 }

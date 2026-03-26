@@ -63,4 +63,95 @@ pub enum ConsensusError {
         /// The block number that was received.
         got: u64,
     },
+    /// The VRF leader eligibility check failed — the block issuer's VRF
+    /// output does not meet the leader threshold for their relative stake.
+    #[error("VRF leader eligibility check failed")]
+    VrfLeaderCheckFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_rollback_too_deep() {
+        let e = ConsensusError::RollbackTooDeep {
+            requested: 100,
+            max: 10,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("100"));
+        assert!(s.contains("10"));
+    }
+
+    #[test]
+    fn display_non_contiguous() {
+        let e = ConsensusError::NonContiguousBlock {
+            expected: 42,
+            got: 99,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("42"));
+        assert!(s.contains("99"));
+    }
+
+    #[test]
+    fn display_kes_period_too_early() {
+        let e = ConsensusError::KesPeriodTooEarly {
+            current: 5,
+            cert_start: 10,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("5"));
+        assert!(s.contains("10"));
+    }
+
+    #[test]
+    fn display_kes_period_expired() {
+        let e = ConsensusError::KesPeriodExpired {
+            current: 100,
+            cert_end: 50,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("100"));
+        assert!(s.contains("50"));
+    }
+
+    #[test]
+    fn display_rollback_point_not_found() {
+        let e = ConsensusError::RollbackPointNotFound {
+            slot: 42,
+            hash: HeaderHash([0xAB; 32]),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("42"));
+    }
+
+    #[test]
+    fn all_variants_are_displayable() {
+        let variants: Vec<ConsensusError> = vec![
+            ConsensusError::InvalidActiveSlotCoeff,
+            ConsensusError::InvalidVrfProof,
+            ConsensusError::InvalidOpCertSignature,
+            ConsensusError::InvalidKesSignature,
+            ConsensusError::KesPeriodOverflow,
+            ConsensusError::InvalidSlotsPerKesPeriod,
+            ConsensusError::VrfLeaderCheckFailed,
+        ];
+        for v in &variants {
+            assert!(!format!("{v}").is_empty());
+        }
+    }
+
+    #[test]
+    fn error_is_eq() {
+        assert_eq!(
+            ConsensusError::InvalidVrfProof,
+            ConsensusError::InvalidVrfProof
+        );
+        assert_ne!(
+            ConsensusError::InvalidVrfProof,
+            ConsensusError::InvalidKesSignature
+        );
+    }
 }

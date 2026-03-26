@@ -59,6 +59,17 @@ pub mod peersharing_client;
 /// PeerSharing server driver — typed, state-machine-correct responder loop.
 pub mod peersharing_server;
 
+// -- Node-to-Client (NtC) server drivers ----------------------------------
+
+/// LocalTxSubmission server driver — NtC transaction intake from local clients.
+pub mod local_tx_submission_server;
+
+/// LocalTxMonitor server driver — NtC mempool monitoring for local clients.
+pub mod local_tx_monitor_server;
+
+/// LocalStateQuery server driver — NtC ledger state query responder.
+pub mod local_state_query_server;
+
 // -- Bearer re-exports --------------------------------------------------------
 pub use bearer::{Bearer, BearerError, Sdu, TcpBearer, MAX_SDU_PAYLOAD};
 
@@ -75,6 +86,8 @@ pub use multiplexer::{
 
 // -- Mux re-exports -----------------------------------------------------------
 pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as start_mux, MAX_SEGMENT_SIZE};
+#[cfg(unix)]
+pub use mux::start_unix as start_mux_unix;
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
@@ -110,36 +123,31 @@ pub use peer_selection::{
     resolve_peer_access_points,
 };
 
-/// Node-to-client connection lifecycle — Unix socket handshake and protocol setup.
-pub mod ntc_peer;
-/// LocalStateQuery client driver (node-to-client).
-pub mod local_state_query_client;
-/// LocalTxMonitor client driver (node-to-client).
-pub mod local_tx_monitor_client;
-/// LocalTxSubmission client driver (node-to-client).
-pub mod local_tx_submission_client;
-
 // -- Protocol re-exports ------------------------------------------------------
 pub use protocols::{
-    AcquireFailure, AcquireTarget, LocalStateQueryError, LocalStateQueryMessage,
-    LocalStateQueryState,
-    LocalTxMonitorError, LocalTxMonitorMessage, LocalTxMonitorState, MempoolSizeAndCapacity,
-    LocalTxSubmissionError, LocalTxSubmissionMessage, LocalTxSubmissionState,
     BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
     ChainSyncMessage, ChainSyncState, ChainSyncTransitionError,
     KeepAliveMessage, KeepAliveState, KeepAliveTransitionError,
+    AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
+    LocalStateQueryTransitionError,
+    LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,
+    LocalTxSubmissionMessage, LocalTxSubmissionState, LocalTxSubmissionTransitionError,
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
 
-// -- NtC re-exports -----------------------------------------------------------
-pub use ntc_peer::{
-    NodeToClientVersionData, NtcPeerConnection, NtcPeerError,
-    ntc_connect, ntc_accept,
+// -- NtC server driver re-exports ---------------------------------------------
+pub use local_tx_submission_server::{
+    LocalTxRequest, LocalTxSubmissionServer, LocalTxSubmissionServerError,
 };
-pub use local_state_query_client::{LocalStateQueryClient, LocalStateQueryClientError};
-pub use local_tx_monitor_client::{LocalTxMonitorClient, LocalTxMonitorClientError};
-pub use local_tx_submission_client::{LocalTxSubmissionClient, LocalTxSubmissionClientError};
+pub use local_tx_monitor_server::{
+    LocalTxMonitorAcquiredRequest, LocalTxMonitorIdleRequest,
+    LocalTxMonitorServer, LocalTxMonitorServerError,
+};
+pub use local_state_query_server::{
+    LocalStateQueryAcquiredRequest, LocalStateQueryIdleRequest,
+    LocalStateQueryServer, LocalStateQueryServerError,
+};
 
 // -- ChainSync client re-exports ----------------------------------------------
 pub use chainsync_client::{
@@ -185,12 +193,8 @@ pub use txsubmission_server::{
 // -- Governor re-exports ------------------------------------------------------
 pub use governor::{
     ChurnConfig, GovernorAction, GovernorState, GovernorTargets, LocalRootTargets,
-    evaluate_cold_to_warm_big_ledger_promotions,
     enforce_local_root_valency, evaluate_cold_to_warm_promotions,
-    evaluate_hot_to_warm_big_ledger_demotions,
     evaluate_hot_to_warm_demotions, evaluate_warm_to_cold_demotions,
-    evaluate_warm_to_cold_big_ledger_demotions,
-    evaluate_warm_to_hot_big_ledger_promotions,
     evaluate_warm_to_hot_promotions, governor_tick,
 };
 

@@ -158,6 +158,36 @@ pub fn start(
     buffer_size: usize,
 ) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle) {
     let (read_half, write_half) = stream.into_split();
+    start_from_halves(read_half, write_half, role, protocols, buffer_size)
+}
+
+/// Start the multiplexer over a Unix-domain socket.
+///
+/// Identical to [`start`] but accepts a [`tokio::net::UnixStream`] instead
+/// of a [`tokio::net::TcpStream`].  Used by the Node-to-Client local server.
+#[cfg(unix)]
+pub fn start_unix(
+    stream: tokio::net::UnixStream,
+    role: MiniProtocolDir,
+    protocols: &[MiniProtocolNum],
+    buffer_size: usize,
+) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle) {
+    let (read_half, write_half) = stream.into_split();
+    start_from_halves(read_half, write_half, role, protocols, buffer_size)
+}
+
+/// Internal generic entry-point: split read/write halves into mux/demux loops.
+fn start_from_halves<R, W>(
+    read_half: R,
+    write_half: W,
+    role: MiniProtocolDir,
+    protocols: &[MiniProtocolNum],
+    buffer_size: usize,
+) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
 
     // Shared egress channel: all protocol handles send tagged payloads here.
     let (egress_tx, egress_rx) = mpsc::channel::<(MiniProtocolNum, Vec<u8>)>(buffer_size);
@@ -195,8 +225,8 @@ pub fn start(
 
 /// Read SDU frames from the transport and dispatch payloads to the
 /// per-protocol ingress channels.
-async fn demux_loop(
-    mut reader: tokio::net::tcp::OwnedReadHalf,
+async fn demux_loop<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
     ingress: HashMap<MiniProtocolNum, mpsc::Sender<Vec<u8>>>,
 ) -> Result<(), MuxError> {
     loop {
@@ -247,8 +277,8 @@ async fn demux_loop(
 
 /// Collect tagged payloads from protocol handles and write them as SDU
 /// frames on the transport.
-async fn mux_loop(
-    mut writer: tokio::net::tcp::OwnedWriteHalf,
+async fn mux_loop<W: tokio::io::AsyncWrite + Unpin>(
+    mut writer: W,
     mut egress: mpsc::Receiver<(MiniProtocolNum, Vec<u8>)>,
     role: MiniProtocolDir,
 ) -> Result<(), MuxError> {

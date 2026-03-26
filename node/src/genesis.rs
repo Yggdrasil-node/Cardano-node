@@ -23,7 +23,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use yggdrasil_ledger::ProtocolParameters;
+use yggdrasil_crypto::blake2b::hash_bytes_256;
+use yggdrasil_ledger::{
+    Address, AddrKeyHash, Anchor, EnactState, GenesisDelegateHash, GenesisHash, PoolKeyHash,
+    ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
+};
 use yggdrasil_ledger::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::eras::alonzo::ExUnits;
@@ -49,6 +53,13 @@ pub enum GenesisLoadError {
         path: std::path::PathBuf,
         #[source]
         source: serde_json::Error,
+    },
+    /// A genesis field contained an invalid encoded value.
+    #[error("invalid genesis field {field}: {message} ({value})")]
+    InvalidField {
+        field: &'static str,
+        value: String,
+        message: String,
     },
 }
 
@@ -97,9 +108,62 @@ pub struct ShelleyGenesis {
     #[serde(default = "default_security_param")]
     pub security_param: u64,
 
+    /// Network name from Shelley genesis (`Mainnet` or `Testnet`).
+    #[serde(default)]
+    pub network_id: Option<String>,
+
+    /// Network magic from Shelley genesis.
+    #[serde(default)]
+    pub network_magic: Option<u32>,
+
+    /// Genesis delegation map keyed by genesis key hash.
+    #[serde(default)]
+    pub gen_delegs: BTreeMap<String, ShelleyGenesisDelegation>,
+
+    /// Genesis initial funds keyed by raw address bytes encoded as hex.
+    #[serde(default)]
+    pub initial_funds: BTreeMap<String, u64>,
+
+    /// Static genesis staking map for pure Shelley networks.
+    #[serde(default)]
+    pub staking: ShelleyGenesisStaking,
+
     /// Initial Shelley protocol parameters embedded in the genesis file.
     #[serde(default)]
     pub protocol_params: ShelleyGenesisProtocolParams,
+}
+
+/// Genesis delegation entry from `genDelegs`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ShelleyGenesisDelegation {
+    pub delegate: String,
+    pub vrf: String,
+}
+
+/// Raw genesis staking section.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ShelleyGenesisStaking {
+    #[serde(default)]
+    pub pools: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub stake: BTreeMap<String, String>,
+}
+
+/// Parsed bootstrap data required to activate Shelley genesis state during
+/// Byron-to-Shelley replay.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShelleyGenesisBootstrap {
+    pub initial_funds: Vec<(ShelleyTxIn, ShelleyTxOut)>,
+    pub gen_delegs: BTreeMap<GenesisHash, ParsedShelleyGenesisDelegation>,
+    /// Static genesis stake delegations keyed by stake credential hash.
+    pub staking: BTreeMap<AddrKeyHash, PoolKeyHash>,
+}
+
+/// Parsed genesis delegation entry with fixed-width hashes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParsedShelleyGenesisDelegation {
+    pub delegate: GenesisDelegateHash,
+    pub vrf: VrfKeyHash,
 }
 
 /// The `protocolParams` object from `shelley-genesis.json`.
@@ -342,6 +406,42 @@ pub struct ConwayGenesis {
     /// Minimum reference script cost per byte (Babbage+, lovelace).
     #[serde(default)]
     pub min_fee_ref_script_cost_per_byte: Option<u64>,
+
+    /// Conway Plutus V3 cost model in ordered-array form.
+    ///
+    /// Upstream Conway genesis serialises this as an array (`plutusV3CostModel`)
+    /// rather than the named map used by Alonzo genesis.
+    #[serde(default, rename = "plutusV3CostModel")]
+    pub plutus_v3_cost_model: Option<Vec<i64>>,
+
+    /// Genesis constitution with anchor and optional guardrails script hash.
+    #[serde(default)]
+    pub constitution: Option<GenesisConstitution>,
+}
+
+/// Constitution as serialised in `conway-genesis.json`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GenesisConstitution {
+    /// Anchor containing a URL and data-hash.
+    #[serde(default)]
+    pub anchor: Option<GenesisConstitutionAnchor>,
+
+    /// Guardrails script hash (hex-encoded 28-byte script hash).
+    #[serde(default)]
+    pub script: Option<String>,
+}
+
+/// Anchor inside the genesis constitution.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenesisConstitutionAnchor {
+    /// URL of the constitution document.
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// Blake2b-256 hash of the constitution document.
+    #[serde(default)]
+    pub data_hash: Option<String>,
 }
 
 /// Pool voting thresholds as serialised in `conway-genesis.json`.
@@ -476,6 +576,96 @@ pub fn build_protocol_parameters(
     }
 }
 
+/// Build the initial [`EnactState`] from the Conway genesis constitution.
+///
+/// If the Conway genesis file contains a `constitution` section with an anchor
+/// and/or a guardrails script hash, the returned `EnactState` will carry those
+/// values so that governance validation has the correct initial constitution
+/// against which to check proposals.
+pub fn build_genesis_enact_state(
+    conway: Option<&ConwayGenesis>,
+) -> Result<Option<EnactState>, GenesisLoadError> {
+    let Some(gc) = conway.and_then(|c| c.constitution.as_ref()) else {
+        return Ok(None);
+    };
+
+    let anchor = if let Some(a) = &gc.anchor {
+        Anchor {
+            url: a.url.clone().unwrap_or_default(),
+            data_hash: match &a.data_hash {
+                Some(h) => decode_fixed_hash::<32>(h, "constitution.anchor.dataHash")?,
+                None => [0u8; 32],
+            },
+        }
+    } else {
+        Anchor {
+            url: String::new(),
+            data_hash: [0u8; 32],
+        }
+    };
+
+    let guardrails_script_hash = match &gc.script {
+        Some(h) => Some(decode_fixed_hash::<28>(h, "constitution.script")?),
+        None => None,
+    };
+
+    let mut enact = EnactState::default();
+    enact.constitution = yggdrasil_ledger::eras::conway::Constitution {
+        anchor,
+        guardrails_script_hash,
+    };
+    Ok(Some(enact))
+}
+
+/// Build the Shelley bootstrap bundle used to activate genesis initial funds
+/// when replay first reaches a Shelley-family block.
+pub fn build_shelley_genesis_bootstrap(
+    shelley: &ShelleyGenesis,
+) -> Result<ShelleyGenesisBootstrap, GenesisLoadError> {
+    let mut initial_funds = Vec::with_capacity(shelley.initial_funds.len());
+    for (address_hex, amount) in &shelley.initial_funds {
+        let address = decode_hex_bytes(address_hex, "initialFunds")?;
+        Address::validate_bytes(&address).map_err(|error| GenesisLoadError::InvalidField {
+            field: "initialFunds",
+            value: address_hex.clone(),
+            message: error.to_string(),
+        })?;
+
+        initial_funds.push((
+            initial_funds_pseudo_txin(&address),
+            ShelleyTxOut {
+                address,
+                amount: *amount,
+            },
+        ));
+    }
+
+    let mut gen_delegs = BTreeMap::new();
+    for (genesis_hash, delegation) in &shelley.gen_delegs {
+        gen_delegs.insert(
+            decode_fixed_hash::<28>(genesis_hash, "genDelegs")?,
+            ParsedShelleyGenesisDelegation {
+                delegate: decode_fixed_hash::<28>(&delegation.delegate, "genDelegs.delegate")?,
+                vrf: decode_fixed_hash::<32>(&delegation.vrf, "genDelegs.vrf")?,
+            },
+        );
+    }
+
+    let mut staking = BTreeMap::new();
+    for (stake_hash, pool_hash) in &shelley.staking.stake {
+        staking.insert(
+            decode_fixed_hash::<28>(stake_hash, "staking.stake")?,
+            decode_fixed_hash::<28>(pool_hash, "staking.stake")?,
+        );
+    }
+
+    Ok(ShelleyGenesisBootstrap {
+        initial_funds,
+        gen_delegs,
+        staking,
+    })
+}
+
 /// Build the current simplified CEK [`CostModel`] from the Alonzo genesis
 /// named Plutus cost-model map.
 ///
@@ -485,6 +675,7 @@ pub fn build_protocol_parameters(
 /// expose it with stable upstream key names.
 pub fn build_plutus_cost_model(
     alonzo: &AlonzoGenesis,
+    conway: Option<&ConwayGenesis>,
 ) -> Result<Option<CostModel>, CostModelError> {
     let named_params = alonzo
         .cost_models
@@ -493,8 +684,341 @@ pub fn build_plutus_cost_model(
 
     match named_params {
         Some(params) => Ok(Some(CostModel::from_alonzo_genesis_params(params)?)),
-        None => Ok(None),
+        None => {
+            let Some(v3_array) = conway.and_then(|c| c.plutus_v3_cost_model.as_ref()) else {
+                return Ok(None);
+            };
+
+            let named = conway_v3_named_params(v3_array);
+            if named.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(CostModel::from_alonzo_genesis_params(&named)?))
+        }
     }
+}
+
+/// Ordered Conway `plutusV3CostModel` parameter names.
+///
+/// The live mainnet/preprod/preview Conway configs expose 251 parameters
+/// (indices 0–250) ending at `byteStringToInteger-memory-arguments-slope`.
+/// Indices 251–301 cover bitwise builtins, RIPEMD-160, and ExpModInteger;
+/// these are defined upstream but may not yet appear in all network genesis
+/// files. The mapping gracefully handles shorter arrays by only zipping
+/// as many values as provided.
+const CONWAY_V3_PARAM_NAMES: &[&str] = &[
+    "addInteger-cpu-arguments-intercept",
+    "addInteger-cpu-arguments-slope",
+    "addInteger-memory-arguments-intercept",
+    "addInteger-memory-arguments-slope",
+    "appendByteString-cpu-arguments-intercept",
+    "appendByteString-cpu-arguments-slope",
+    "appendByteString-memory-arguments-intercept",
+    "appendByteString-memory-arguments-slope",
+    "appendString-cpu-arguments-intercept",
+    "appendString-cpu-arguments-slope",
+    "appendString-memory-arguments-intercept",
+    "appendString-memory-arguments-slope",
+    "bData-cpu-arguments",
+    "bData-memory-arguments",
+    "blake2b_256-cpu-arguments-intercept",
+    "blake2b_256-cpu-arguments-slope",
+    "blake2b_256-memory-arguments",
+    "cekApplyCost-exBudgetCPU",
+    "cekApplyCost-exBudgetMemory",
+    "cekBuiltinCost-exBudgetCPU",
+    "cekBuiltinCost-exBudgetMemory",
+    "cekConstCost-exBudgetCPU",
+    "cekConstCost-exBudgetMemory",
+    "cekDelayCost-exBudgetCPU",
+    "cekDelayCost-exBudgetMemory",
+    "cekForceCost-exBudgetCPU",
+    "cekForceCost-exBudgetMemory",
+    "cekLamCost-exBudgetCPU",
+    "cekLamCost-exBudgetMemory",
+    "cekStartupCost-exBudgetCPU",
+    "cekStartupCost-exBudgetMemory",
+    "cekVarCost-exBudgetCPU",
+    "cekVarCost-exBudgetMemory",
+    "chooseData-cpu-arguments",
+    "chooseData-memory-arguments",
+    "chooseList-cpu-arguments",
+    "chooseList-memory-arguments",
+    "chooseUnit-cpu-arguments",
+    "chooseUnit-memory-arguments",
+    "consByteString-cpu-arguments-intercept",
+    "consByteString-cpu-arguments-slope",
+    "consByteString-memory-arguments-intercept",
+    "consByteString-memory-arguments-slope",
+    "constrData-cpu-arguments",
+    "constrData-memory-arguments",
+    "decodeUtf8-cpu-arguments-intercept",
+    "decodeUtf8-cpu-arguments-slope",
+    "decodeUtf8-memory-arguments-intercept",
+    "decodeUtf8-memory-arguments-slope",
+    "divideInteger-cpu-arguments-constant",
+    "divideInteger-cpu-arguments-model-arguments-c00",
+    "divideInteger-cpu-arguments-model-arguments-c01",
+    "divideInteger-cpu-arguments-model-arguments-c02",
+    "divideInteger-cpu-arguments-model-arguments-c10",
+    "divideInteger-cpu-arguments-model-arguments-c11",
+    "divideInteger-cpu-arguments-model-arguments-c20",
+    "divideInteger-cpu-arguments-model-arguments-minimum",
+    "divideInteger-memory-arguments-intercept",
+    "divideInteger-memory-arguments-minimum",
+    "divideInteger-memory-arguments-slope",
+    "encodeUtf8-cpu-arguments-intercept",
+    "encodeUtf8-cpu-arguments-slope",
+    "encodeUtf8-memory-arguments-intercept",
+    "encodeUtf8-memory-arguments-slope",
+    "equalsByteString-cpu-arguments-constant",
+    "equalsByteString-cpu-arguments-intercept",
+    "equalsByteString-cpu-arguments-slope",
+    "equalsByteString-memory-arguments",
+    "equalsData-cpu-arguments-intercept",
+    "equalsData-cpu-arguments-slope",
+    "equalsData-memory-arguments",
+    "equalsInteger-cpu-arguments-intercept",
+    "equalsInteger-cpu-arguments-slope",
+    "equalsInteger-memory-arguments",
+    "equalsString-cpu-arguments-constant",
+    "equalsString-cpu-arguments-intercept",
+    "equalsString-cpu-arguments-slope",
+    "equalsString-memory-arguments",
+    "fstPair-cpu-arguments",
+    "fstPair-memory-arguments",
+    "headList-cpu-arguments",
+    "headList-memory-arguments",
+    "iData-cpu-arguments",
+    "iData-memory-arguments",
+    "ifThenElse-cpu-arguments",
+    "ifThenElse-memory-arguments",
+    "indexByteString-cpu-arguments",
+    "indexByteString-memory-arguments",
+    "lengthOfByteString-cpu-arguments",
+    "lengthOfByteString-memory-arguments",
+    "lessThanByteString-cpu-arguments-intercept",
+    "lessThanByteString-cpu-arguments-slope",
+    "lessThanByteString-memory-arguments",
+    "lessThanEqualsByteString-cpu-arguments-intercept",
+    "lessThanEqualsByteString-cpu-arguments-slope",
+    "lessThanEqualsByteString-memory-arguments",
+    "lessThanEqualsInteger-cpu-arguments-intercept",
+    "lessThanEqualsInteger-cpu-arguments-slope",
+    "lessThanEqualsInteger-memory-arguments",
+    "lessThanInteger-cpu-arguments-intercept",
+    "lessThanInteger-cpu-arguments-slope",
+    "lessThanInteger-memory-arguments",
+    "listData-cpu-arguments",
+    "listData-memory-arguments",
+    "mapData-cpu-arguments",
+    "mapData-memory-arguments",
+    "mkCons-cpu-arguments",
+    "mkCons-memory-arguments",
+    "mkNilData-cpu-arguments",
+    "mkNilData-memory-arguments",
+    "mkNilPairData-cpu-arguments",
+    "mkNilPairData-memory-arguments",
+    "mkPairData-cpu-arguments",
+    "mkPairData-memory-arguments",
+    "modInteger-cpu-arguments-constant",
+    "modInteger-cpu-arguments-model-arguments-c00",
+    "modInteger-cpu-arguments-model-arguments-c01",
+    "modInteger-cpu-arguments-model-arguments-c02",
+    "modInteger-cpu-arguments-model-arguments-c10",
+    "modInteger-cpu-arguments-model-arguments-c11",
+    "modInteger-cpu-arguments-model-arguments-c20",
+    "modInteger-cpu-arguments-model-arguments-minimum",
+    "modInteger-memory-arguments-intercept",
+    "modInteger-memory-arguments-slope",
+    "multiplyInteger-cpu-arguments-intercept",
+    "multiplyInteger-cpu-arguments-slope",
+    "multiplyInteger-memory-arguments-intercept",
+    "multiplyInteger-memory-arguments-slope",
+    "nullList-cpu-arguments",
+    "nullList-memory-arguments",
+    "quotientInteger-cpu-arguments-constant",
+    "quotientInteger-cpu-arguments-model-arguments-c00",
+    "quotientInteger-cpu-arguments-model-arguments-c01",
+    "quotientInteger-cpu-arguments-model-arguments-c02",
+    "quotientInteger-cpu-arguments-model-arguments-c10",
+    "quotientInteger-cpu-arguments-model-arguments-c11",
+    "quotientInteger-cpu-arguments-model-arguments-c20",
+    "quotientInteger-cpu-arguments-model-arguments-minimum",
+    "quotientInteger-memory-arguments-intercept",
+    "quotientInteger-memory-arguments-minimum",
+    "quotientInteger-memory-arguments-slope",
+    "remainderInteger-cpu-arguments-constant",
+    "remainderInteger-cpu-arguments-model-arguments-c00",
+    "remainderInteger-cpu-arguments-model-arguments-c01",
+    "remainderInteger-cpu-arguments-model-arguments-c02",
+    "remainderInteger-cpu-arguments-model-arguments-c10",
+    "remainderInteger-cpu-arguments-model-arguments-c11",
+    "remainderInteger-cpu-arguments-model-arguments-c20",
+    "remainderInteger-cpu-arguments-model-arguments-minimum",
+    "remainderInteger-memory-arguments-intercept",
+    "remainderInteger-memory-arguments-slope",
+    "serialiseData-cpu-arguments-intercept",
+    "serialiseData-cpu-arguments-slope",
+    "serialiseData-memory-arguments-intercept",
+    "serialiseData-memory-arguments-slope",
+    "sha2_256-cpu-arguments-intercept",
+    "sha2_256-cpu-arguments-slope",
+    "sha2_256-memory-arguments",
+    "sha3_256-cpu-arguments-intercept",
+    "sha3_256-cpu-arguments-slope",
+    "sha3_256-memory-arguments",
+    "sliceByteString-cpu-arguments-intercept",
+    "sliceByteString-cpu-arguments-slope",
+    "sliceByteString-memory-arguments-intercept",
+    "sliceByteString-memory-arguments-slope",
+    "sndPair-cpu-arguments",
+    "sndPair-memory-arguments",
+    "subtractInteger-cpu-arguments-intercept",
+    "subtractInteger-cpu-arguments-slope",
+    "subtractInteger-memory-arguments-intercept",
+    "subtractInteger-memory-arguments-slope",
+    "tailList-cpu-arguments",
+    "tailList-memory-arguments",
+    "trace-cpu-arguments",
+    "trace-memory-arguments",
+    "unBData-cpu-arguments",
+    "unBData-memory-arguments",
+    "unConstrData-cpu-arguments",
+    "unConstrData-memory-arguments",
+    "unIData-cpu-arguments",
+    "unIData-memory-arguments",
+    "unListData-cpu-arguments",
+    "unListData-memory-arguments",
+    "unMapData-cpu-arguments",
+    "unMapData-memory-arguments",
+    "verifyEcdsaSecp256k1Signature-cpu-arguments",
+    "verifyEcdsaSecp256k1Signature-memory-arguments",
+    "verifyEd25519Signature-cpu-arguments-intercept",
+    "verifyEd25519Signature-cpu-arguments-slope",
+    "verifyEd25519Signature-memory-arguments",
+    "verifySchnorrSecp256k1Signature-cpu-arguments-intercept",
+    "verifySchnorrSecp256k1Signature-cpu-arguments-slope",
+    "verifySchnorrSecp256k1Signature-memory-arguments",
+    "cekConstrCost-exBudgetCPU",
+    "cekConstrCost-exBudgetMemory",
+    "cekCaseCost-exBudgetCPU",
+    "cekCaseCost-exBudgetMemory",
+    "bls12_381_G1_add-cpu-arguments",
+    "bls12_381_G1_add-memory-arguments",
+    "bls12_381_G1_compress-cpu-arguments",
+    "bls12_381_G1_compress-memory-arguments",
+    "bls12_381_G1_equal-cpu-arguments",
+    "bls12_381_G1_equal-memory-arguments",
+    "bls12_381_G1_hashToGroup-cpu-arguments-intercept",
+    "bls12_381_G1_hashToGroup-cpu-arguments-slope",
+    "bls12_381_G1_hashToGroup-memory-arguments",
+    "bls12_381_G1_neg-cpu-arguments",
+    "bls12_381_G1_neg-memory-arguments",
+    "bls12_381_G1_scalarMul-cpu-arguments-intercept",
+    "bls12_381_G1_scalarMul-cpu-arguments-slope",
+    "bls12_381_G1_scalarMul-memory-arguments",
+    "bls12_381_G1_uncompress-cpu-arguments",
+    "bls12_381_G1_uncompress-memory-arguments",
+    "bls12_381_G2_add-cpu-arguments",
+    "bls12_381_G2_add-memory-arguments",
+    "bls12_381_G2_compress-cpu-arguments",
+    "bls12_381_G2_compress-memory-arguments",
+    "bls12_381_G2_equal-cpu-arguments",
+    "bls12_381_G2_equal-memory-arguments",
+    "bls12_381_G2_hashToGroup-cpu-arguments-intercept",
+    "bls12_381_G2_hashToGroup-cpu-arguments-slope",
+    "bls12_381_G2_hashToGroup-memory-arguments",
+    "bls12_381_G2_neg-cpu-arguments",
+    "bls12_381_G2_neg-memory-arguments",
+    "bls12_381_G2_scalarMul-cpu-arguments-intercept",
+    "bls12_381_G2_scalarMul-cpu-arguments-slope",
+    "bls12_381_G2_scalarMul-memory-arguments",
+    "bls12_381_G2_uncompress-cpu-arguments",
+    "bls12_381_G2_uncompress-memory-arguments",
+    "bls12_381_finalVerify-cpu-arguments",
+    "bls12_381_finalVerify-memory-arguments",
+    "bls12_381_millerLoop-cpu-arguments",
+    "bls12_381_millerLoop-memory-arguments",
+    "bls12_381_mulMlResult-cpu-arguments",
+    "bls12_381_mulMlResult-memory-arguments",
+    "keccak_256-cpu-arguments-intercept",
+    "keccak_256-cpu-arguments-slope",
+    "keccak_256-memory-arguments",
+    "blake2b_224-cpu-arguments-intercept",
+    "blake2b_224-cpu-arguments-slope",
+    "blake2b_224-memory-arguments",
+    "integerToByteString-cpu-arguments-c0",
+    "integerToByteString-cpu-arguments-c1",
+    "integerToByteString-cpu-arguments-c2",
+    "integerToByteString-memory-arguments-intercept",
+    "integerToByteString-memory-arguments-slope",
+    "byteStringToInteger-cpu-arguments-c0",
+    "byteStringToInteger-cpu-arguments-c1",
+    "byteStringToInteger-cpu-arguments-c2",
+    "byteStringToInteger-memory-arguments-intercept",
+    "byteStringToInteger-memory-arguments-slope",
+    // -- Indices 251+: bitwise, ripemd_160, expModInteger (CIP-0058/0123) --
+    "andByteString-cpu-arguments-intercept",          // 251
+    "andByteString-cpu-arguments-slope1",             // 252
+    "andByteString-cpu-arguments-slope2",             // 253
+    "andByteString-memory-arguments-intercept",       // 254
+    "andByteString-memory-arguments-slope",           // 255
+    "orByteString-cpu-arguments-intercept",           // 256
+    "orByteString-cpu-arguments-slope1",              // 257
+    "orByteString-cpu-arguments-slope2",              // 258
+    "orByteString-memory-arguments-intercept",        // 259
+    "orByteString-memory-arguments-slope",            // 260
+    "xorByteString-cpu-arguments-intercept",          // 261
+    "xorByteString-cpu-arguments-slope1",             // 262
+    "xorByteString-cpu-arguments-slope2",             // 263
+    "xorByteString-memory-arguments-intercept",       // 264
+    "xorByteString-memory-arguments-slope",           // 265
+    "complementByteString-cpu-arguments-intercept",   // 266
+    "complementByteString-cpu-arguments-slope",       // 267
+    "complementByteString-memory-arguments-intercept", // 268
+    "complementByteString-memory-arguments-slope",    // 269
+    "readBit-cpu-arguments",                          // 270
+    "readBit-memory-arguments",                       // 271
+    "writeBits-cpu-arguments-intercept",              // 272
+    "writeBits-cpu-arguments-slope",                  // 273
+    "writeBits-memory-arguments-intercept",           // 274
+    "writeBits-memory-arguments-slope",               // 275
+    "replicateByte-cpu-arguments-intercept",          // 276
+    "replicateByte-cpu-arguments-slope",              // 277
+    "replicateByte-memory-arguments-intercept",       // 278
+    "replicateByte-memory-arguments-slope",           // 279
+    "shiftByteString-cpu-arguments-intercept",        // 280
+    "shiftByteString-cpu-arguments-slope",            // 281
+    "shiftByteString-memory-arguments-intercept",     // 282
+    "shiftByteString-memory-arguments-slope",         // 283
+    "rotateByteString-cpu-arguments-intercept",       // 284
+    "rotateByteString-cpu-arguments-slope",           // 285
+    "rotateByteString-memory-arguments-intercept",    // 286
+    "rotateByteString-memory-arguments-slope",        // 287
+    "countSetBits-cpu-arguments-intercept",           // 288
+    "countSetBits-cpu-arguments-slope",               // 289
+    "countSetBits-memory-arguments",                  // 290
+    "findFirstSetBit-cpu-arguments-intercept",        // 291
+    "findFirstSetBit-cpu-arguments-slope",            // 292
+    "findFirstSetBit-memory-arguments",               // 293
+    "ripemd_160-cpu-arguments-intercept",             // 294
+    "ripemd_160-cpu-arguments-slope",                 // 295
+    "ripemd_160-memory-arguments",                    // 296
+    "expModInteger-cpu-arguments-coefficient00",      // 297
+    "expModInteger-cpu-arguments-coefficient11",      // 298
+    "expModInteger-cpu-arguments-coefficient12",      // 299
+    "expModInteger-memory-arguments-intercept",       // 300
+    "expModInteger-memory-arguments-slope",           // 301
+];
+
+/// Build a named-parameter map from Conway `plutusV3CostModel` array values.
+fn conway_v3_named_params(values: &[i64]) -> BTreeMap<String, i64> {
+    CONWAY_V3_PARAM_NAMES
+        .iter()
+        .zip(values.iter())
+        .map(|(name, value)| ((*name).to_owned(), *value))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +1042,14 @@ fn load_json<T: serde::de::DeserializeOwned>(
 /// Load `shelley-genesis.json` from the given path.
 pub fn load_shelley_genesis(path: &Path) -> Result<ShelleyGenesis, GenesisLoadError> {
     load_json(path)
+}
+
+/// Load and parse the Shelley bootstrap bundle from a Shelley genesis file.
+pub fn load_shelley_genesis_bootstrap(
+    path: &Path,
+) -> Result<ShelleyGenesisBootstrap, GenesisLoadError> {
+    let genesis = load_shelley_genesis(path)?;
+    build_shelley_genesis_bootstrap(&genesis)
 }
 
 /// Load `alonzo-genesis.json` from the given path.
@@ -558,6 +1090,64 @@ fn default_max_value_size() -> u32 { 5_000 }
 fn default_collateral_percentage() -> u64 { 150 }
 fn default_max_collateral_inputs() -> u32 { 3 }
 
+fn decode_hex_bytes(value: &str, field: &'static str) -> Result<Vec<u8>, GenesisLoadError> {
+    if value.len() % 2 != 0 {
+        return Err(GenesisLoadError::InvalidField {
+            field,
+            value: value.to_owned(),
+            message: "hex string must have even length".to_owned(),
+        });
+    }
+
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let raw = value.as_bytes();
+    let mut index = 0usize;
+    while index < raw.len() {
+        let hi = decode_hex_nibble(raw[index]).ok_or_else(|| GenesisLoadError::InvalidField {
+            field,
+            value: value.to_owned(),
+            message: "invalid hex digit".to_owned(),
+        })?;
+        let lo = decode_hex_nibble(raw[index + 1]).ok_or_else(|| GenesisLoadError::InvalidField {
+            field,
+            value: value.to_owned(),
+            message: "invalid hex digit".to_owned(),
+        })?;
+        bytes.push((hi << 4) | lo);
+        index += 2;
+    }
+    Ok(bytes)
+}
+
+fn decode_fixed_hash<const N: usize>(
+    value: &str,
+    field: &'static str,
+) -> Result<[u8; N], GenesisLoadError> {
+    let bytes = decode_hex_bytes(value, field)?;
+    bytes.try_into().map_err(|_: Vec<u8>| GenesisLoadError::InvalidField {
+        field,
+        value: value.to_owned(),
+        message: format!("expected {N} bytes"),
+    })
+}
+
+fn decode_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Compute the pseudo `TxIn` used for Shelley genesis initial funds.
+pub fn initial_funds_pseudo_txin(address: &[u8]) -> ShelleyTxIn {
+    ShelleyTxIn {
+        transaction_id: hash_bytes_256(address).0,
+        index: 0,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -573,6 +1163,11 @@ mod tests {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
             security_param: 2_160,
+            network_id: Some("Testnet".to_owned()),
+            network_magic: Some(1),
+            gen_delegs: BTreeMap::new(),
+            initial_funds: BTreeMap::new(),
+            staking: ShelleyGenesisStaking::default(),
             protocol_params: ShelleyGenesisProtocolParams {
                 min_fee_a: 44,
                 min_fee_b: 155_381,
@@ -664,6 +1259,14 @@ mod tests {
             d_rep_deposit: Some(500_000_000),
             d_rep_activity: Some(20),
             min_fee_ref_script_cost_per_byte: Some(15),
+            plutus_v3_cost_model: None,
+            constitution: Some(GenesisConstitution {
+                anchor: Some(GenesisConstitutionAnchor {
+                    url: Some("ipfs://example".to_owned()),
+                    data_hash: Some("ca41a91f399259bcefe57f9858e91f6d00e1a38d6d9c63d4052914ea7bd70cb2".to_owned()),
+                }),
+                script: Some("fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64".to_owned()),
+            }),
         }
     }
 
@@ -736,21 +1339,138 @@ mod tests {
     }
 
     #[test]
+    fn build_genesis_enact_state_parses_constitution() {
+        let conway = sample_conway();
+        let enact = build_genesis_enact_state(Some(&conway))
+            .expect("parse ok")
+            .expect("enact state present");
+
+        assert_eq!(enact.constitution.anchor.url, "ipfs://example");
+        assert_ne!(enact.constitution.anchor.data_hash, [0u8; 32]);
+        let hash = enact.constitution.guardrails_script_hash.expect("script hash");
+        // First byte of "fa24fb..." is 0xfa.
+        assert_eq!(hash[0], 0xfa);
+        assert_eq!(hash.len(), 28);
+    }
+
+    #[test]
+    fn build_genesis_enact_state_none_without_constitution() {
+        let mut conway = sample_conway();
+        conway.constitution = None;
+        let result = build_genesis_enact_state(Some(&conway)).expect("parse ok");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn build_shelley_genesis_bootstrap_parses_initial_funds() {
+        let mut shelley = sample_shelley();
+        let mut address = vec![0x60];
+        address.extend_from_slice(&[0x11; 28]);
+        let address_hex = address.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        shelley.initial_funds.insert(address_hex, 123);
+
+        let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
+        assert_eq!(bootstrap.initial_funds.len(), 1);
+        let (txin, txout) = &bootstrap.initial_funds[0];
+        assert_eq!(txin, &initial_funds_pseudo_txin(&address));
+        assert_eq!(txout.address, address);
+        assert_eq!(txout.amount, 123);
+    }
+
+    #[test]
+    fn build_shelley_genesis_bootstrap_rejects_invalid_initial_fund_address() {
+        let mut shelley = sample_shelley();
+        shelley.initial_funds.insert("00".to_owned(), 1);
+
+        let error = build_shelley_genesis_bootstrap(&shelley).expect_err("invalid address");
+        match error {
+            GenesisLoadError::InvalidField { field, .. } => assert_eq!(field, "initialFunds"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_shelley_genesis_bootstrap_parses_stake_delegations() {
+        let mut shelley = sample_shelley();
+        shelley.staking.stake.insert("11".repeat(28), "22".repeat(28));
+
+        let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
+        assert_eq!(bootstrap.staking.len(), 1);
+        assert_eq!(bootstrap.staking.get(&[0x11; 28]), Some(&[0x22; 28]));
+    }
+
+    #[test]
     fn build_plutus_cost_model_from_alonzo_named_params() {
         let alonzo = sample_alonzo();
-        let model = build_plutus_cost_model(&alonzo)
+        let model = build_plutus_cost_model(&alonzo, None)
             .expect("build cost model")
             .expect("plutus v1 cost model");
-        // Verify machine step costs via the public API.
-        let step = model.machine_step_cost();
-        assert_eq!(step.cpu, 29_773);
-        assert_eq!(step.mem, 100);
-        // The sample fixture only provides CEK step cost keys; no per-builtin
-        // params are present, so builtins fall back to the default cost.
-        use yggdrasil_plutus::types::{Constant, DefaultFun, Value};
-        let args = [Value::Constant(Constant::ByteString(vec![]))];
-        let bc = model.builtin_cost(DefaultFun::Sha2_256, &args);
-        assert_eq!(bc.cpu, 29_773); // fallback to default builtin cost
+        assert_eq!(model.step_costs.var_cpu, 29_773);
+        assert_eq!(model.step_costs.var_mem, 100);
+        assert_eq!(model.builtin_cpu, 29_773);
+        assert_eq!(model.builtin_mem, 100);
+    }
+
+    #[test]
+    fn build_plutus_cost_model_from_conway_v3_array_fallback() {
+        let mut alonzo = sample_alonzo();
+        alonzo.cost_models.clear();
+
+        // With a 251-value array (current mainnet size), only indices 0-250 are mapped.
+        let named = conway_v3_named_params(&(0..251).map(|n| n as i64).collect::<Vec<_>>());
+        assert_eq!(CONWAY_V3_PARAM_NAMES.len(), 302);
+        assert_eq!(named.len(), 251); // only 251 values zipped
+        assert_eq!(named.get("addInteger-cpu-arguments-intercept"), Some(&0));
+        assert_eq!(named.get("cekApplyCost-exBudgetCPU"), Some(&17));
+        assert_eq!(named.get("byteStringToInteger-memory-arguments-slope"), Some(&250));
+
+        let mut conway = sample_conway();
+        conway.plutus_v3_cost_model = Some((0..251).map(|n| n as i64).collect());
+
+        let model = build_plutus_cost_model(&alonzo, Some(&conway))
+            .expect("build cost model")
+            .expect("v3 fallback cost model");
+
+        // Per-step-kind costs: cekApplyCost is key 17 in Conway array.
+        assert_eq!(model.step_costs.apply_cpu, 17);
+        // cekConstrCost/cekCaseCost are keys 193-196 in Conway array.
+        assert_eq!(model.step_costs.constr_cpu, 193);
+        assert_eq!(model.step_costs.case_cpu, 195);
+        assert_eq!(model.step_costs.case_mem, 196);
+        assert_eq!(model.builtin_cpu, 19);
+        assert_eq!(model.builtin_mem, 20);
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::VerifySchnorrSecp256k1Signature));
+    }
+
+    #[test]
+    fn conway_v3_302_entry_array_maps_bitwise_params() {
+        let mut alonzo = sample_alonzo();
+        alonzo.cost_models.clear();
+
+        // Simulate a 302-entry array (future protocol version with bitwise params).
+        let named = conway_v3_named_params(&(0..302).map(|n| n as i64).collect::<Vec<_>>());
+        assert_eq!(named.len(), 302);
+        // Verify bitwise parameter keys appear at expected indices.
+        assert_eq!(named.get("andByteString-cpu-arguments-intercept"), Some(&251));
+        assert_eq!(named.get("complementByteString-cpu-arguments-intercept"), Some(&266));
+        assert_eq!(named.get("readBit-cpu-arguments"), Some(&270));
+        assert_eq!(named.get("countSetBits-memory-arguments"), Some(&290));
+        assert_eq!(named.get("expModInteger-cpu-arguments-coefficient00"), Some(&297));
+        assert_eq!(named.get("expModInteger-memory-arguments-slope"), Some(&301));
+
+        // Build cost model and verify bitwise builtins have proper entries.
+        let mut conway = sample_conway();
+        conway.plutus_v3_cost_model = Some((0..302).map(|n| n as i64).collect());
+
+        let model = build_plutus_cost_model(&alonzo, Some(&conway))
+            .expect("build cost model")
+            .expect("v3 cost model from 302-entry array");
+
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::AndByteString));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ComplementByteString));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ReadBit));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::CountSetBits));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ExpModInteger));
     }
 
     #[test]

@@ -174,3 +174,294 @@ impl ChainState {
         &self.entries
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_entry(block_no: u64, slot: u64) -> ChainEntry {
+        let mut hash = [0u8; 32];
+        hash[0] = block_no as u8;
+        hash[1] = slot as u8;
+        ChainEntry {
+            hash: HeaderHash(hash),
+            slot: SlotNo(slot),
+            block_no: BlockNo(block_no),
+        }
+    }
+
+    // ── Constructor / accessors ──────────────────────────────────────
+
+    #[test]
+    fn new_chain_state_is_empty() {
+        let cs = ChainState::new(SecurityParam(10));
+        assert!(cs.is_empty());
+        assert_eq!(cs.volatile_len(), 0);
+        assert_eq!(cs.tip(), Point::Origin);
+        assert_eq!(cs.tip_block_no(), None);
+        assert_eq!(cs.security_param(), SecurityParam(10));
+    }
+
+    // ── roll_forward ─────────────────────────────────────────────────
+
+    #[test]
+    fn roll_forward_first_block_any_block_no() {
+        let mut cs = ChainState::new(SecurityParam(5));
+        // First block can be any block_no (no predecessor check).
+        let entry = mk_entry(42, 100);
+        cs.roll_forward(entry.clone()).unwrap();
+        assert_eq!(cs.volatile_len(), 1);
+        assert_eq!(cs.tip(), Point::BlockPoint(SlotNo(100), entry.hash));
+        assert_eq!(cs.tip_block_no(), Some(BlockNo(42)));
+    }
+
+    #[test]
+    fn roll_forward_contiguous_blocks() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        for i in 0..5 {
+            cs.roll_forward(mk_entry(i, i * 20)).unwrap();
+        }
+        assert_eq!(cs.volatile_len(), 5);
+        assert_eq!(cs.tip_block_no(), Some(BlockNo(4)));
+    }
+
+    #[test]
+    fn roll_forward_rejects_non_contiguous() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.roll_forward(mk_entry(0, 0)).unwrap();
+        let err = cs.roll_forward(mk_entry(5, 20)).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::NonContiguousBlock {
+                expected: 1,
+                got: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn roll_forward_rejects_same_block_no() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.roll_forward(mk_entry(3, 10)).unwrap();
+        let err = cs.roll_forward(mk_entry(3, 20)).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::NonContiguousBlock {
+                expected: 4,
+                got: 3,
+            }
+        );
+    }
+
+    // ── roll_backward ────────────────────────────────────────────────
+
+    #[test]
+    fn roll_backward_to_origin_clears_chain() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        for i in 0..3 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        cs.roll_backward(&Point::Origin).unwrap();
+        assert!(cs.is_empty());
+        assert_eq!(cs.tip(), Point::Origin);
+    }
+
+    #[test]
+    fn roll_backward_to_origin_exceeds_k() {
+        let mut cs = ChainState::new(SecurityParam(2));
+        for i in 0..5 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        let err = cs.roll_backward(&Point::Origin).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::RollbackTooDeep {
+                requested: 5,
+                max: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn roll_backward_to_block_point() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        let entries: Vec<_> = (0..5).map(|i| mk_entry(i, i * 10)).collect();
+        for e in &entries {
+            cs.roll_forward(e.clone()).unwrap();
+        }
+        // Roll back to entry 2
+        let target = Point::BlockPoint(entries[2].slot, entries[2].hash);
+        cs.roll_backward(&target).unwrap();
+        assert_eq!(cs.volatile_len(), 3);
+        assert_eq!(cs.tip_block_no(), Some(BlockNo(2)));
+    }
+
+    #[test]
+    fn roll_backward_to_tip_is_noop() {
+        let mut cs = ChainState::new(SecurityParam(5));
+        for i in 0..3 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        let e2 = mk_entry(2, 20);
+        let target = Point::BlockPoint(e2.slot, e2.hash);
+        cs.roll_backward(&target).unwrap();
+        assert_eq!(cs.volatile_len(), 3);
+    }
+
+    #[test]
+    fn roll_backward_exceeds_k() {
+        let mut cs = ChainState::new(SecurityParam(2));
+        let entries: Vec<_> = (0..5).map(|i| mk_entry(i, i * 10)).collect();
+        for e in &entries {
+            cs.roll_forward(e.clone()).unwrap();
+        }
+        // Rolling back to entry 0 = depth 4, but k=2
+        let target = Point::BlockPoint(entries[0].slot, entries[0].hash);
+        let err = cs.roll_backward(&target).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::RollbackTooDeep {
+                requested: 4,
+                max: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn roll_backward_point_not_found() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.roll_forward(mk_entry(0, 0)).unwrap();
+        let bogus_hash = HeaderHash([0xFF; 32]);
+        let target = Point::BlockPoint(SlotNo(999), bogus_hash);
+        let err = cs.roll_backward(&target).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::RollbackPointNotFound {
+                slot: 999,
+                hash: bogus_hash,
+            }
+        );
+    }
+
+    // ── stable_count / drain_stable ──────────────────────────────────
+
+    #[test]
+    fn stable_count_zero_when_under_k() {
+        let mut cs = ChainState::new(SecurityParam(5));
+        for i in 0..3 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        assert_eq!(cs.stable_count(), 0);
+    }
+
+    #[test]
+    fn stable_count_positive_when_over_k() {
+        let mut cs = ChainState::new(SecurityParam(3));
+        for i in 0..7 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        // 7 entries, k=3 → 4 stable
+        assert_eq!(cs.stable_count(), 4);
+    }
+
+    #[test]
+    fn drain_stable_removes_oldest() {
+        let mut cs = ChainState::new(SecurityParam(2));
+        for i in 0..5 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        let stable = cs.drain_stable();
+        assert_eq!(stable.len(), 3);
+        assert_eq!(stable[0].block_no, BlockNo(0));
+        assert_eq!(stable[1].block_no, BlockNo(1));
+        assert_eq!(stable[2].block_no, BlockNo(2));
+        assert_eq!(cs.volatile_len(), 2);
+        assert_eq!(cs.tip_block_no(), Some(BlockNo(4)));
+    }
+
+    #[test]
+    fn drain_stable_empty_when_nothing_stable() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.roll_forward(mk_entry(0, 0)).unwrap();
+        let stable = cs.drain_stable();
+        assert!(stable.is_empty());
+        assert_eq!(cs.volatile_len(), 1);
+    }
+
+    #[test]
+    fn drain_stable_repeated_drains() {
+        let mut cs = ChainState::new(SecurityParam(1));
+        for i in 0..4 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        let s1 = cs.drain_stable();
+        assert_eq!(s1.len(), 3);
+        assert_eq!(cs.volatile_len(), 1);
+        // Add more blocks
+        cs.roll_forward(mk_entry(4, 40)).unwrap();
+        cs.roll_forward(mk_entry(5, 50)).unwrap();
+        let s2 = cs.drain_stable();
+        assert_eq!(s2.len(), 2);
+        assert_eq!(cs.volatile_len(), 1);
+    }
+
+    // ── volatile_entries ─────────────────────────────────────────────
+
+    #[test]
+    fn volatile_entries_ordered_oldest_first() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        for i in 0..3 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        let entries = cs.volatile_entries();
+        assert_eq!(entries[0].block_no, BlockNo(0));
+        assert_eq!(entries[1].block_no, BlockNo(1));
+        assert_eq!(entries[2].block_no, BlockNo(2));
+    }
+
+    // ── roll_forward after rollback ──────────────────────────────────
+
+    #[test]
+    fn roll_forward_after_rollback() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        let entries: Vec<_> = (0..5).map(|i| mk_entry(i, i * 10)).collect();
+        for e in &entries {
+            cs.roll_forward(e.clone()).unwrap();
+        }
+        let target = Point::BlockPoint(entries[2].slot, entries[2].hash);
+        cs.roll_backward(&target).unwrap();
+        // Now tip is block_no=2, next must be 3
+        let new_entry = mk_entry(3, 35);
+        cs.roll_forward(new_entry).unwrap();
+        assert_eq!(cs.volatile_len(), 4);
+        assert_eq!(cs.tip_block_no(), Some(BlockNo(3)));
+    }
+
+    // ── edge: k=0 ───────────────────────────────────────────────────
+
+    #[test]
+    fn k_zero_every_block_is_stable() {
+        let mut cs = ChainState::new(SecurityParam(0));
+        for i in 0..3 {
+            cs.roll_forward(mk_entry(i, i * 10)).unwrap();
+        }
+        assert_eq!(cs.stable_count(), 3);
+        let stable = cs.drain_stable();
+        assert_eq!(stable.len(), 3);
+        assert_eq!(cs.volatile_len(), 0);
+    }
+
+    #[test]
+    fn k_zero_rollback_to_origin_fails() {
+        let mut cs = ChainState::new(SecurityParam(0));
+        cs.roll_forward(mk_entry(0, 0)).unwrap();
+        let err = cs.roll_backward(&Point::Origin).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::RollbackTooDeep {
+                requested: 1,
+                max: 0,
+            }
+        );
+    }
+}

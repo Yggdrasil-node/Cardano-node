@@ -840,7 +840,9 @@ struct DecodedBatchCompatProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_vectors::vrf_praos_test_vectors;
+    use crate::test_vectors::{vrf_praos_test_vectors, vrf_praos_batchcompat_test_vectors};
+
+    // ── Proof decoding (existing) ────────────────────────────────────────
 
     #[test]
     fn standard_proof_decoding_extracts_challenge_and_response() {
@@ -853,5 +855,402 @@ mod tests {
         assert_eq!(decoded.gamma.compress().to_bytes(), vector.proof[..32]);
         assert_eq!(decoded.challenge, vector.proof[32..48]);
         assert_eq!(decoded.response.to_bytes(), vector.proof[48..80]);
+    }
+
+    // ── VrfSecretKey construction ────────────────────────────────────────
+
+    #[test]
+    fn secret_key_from_seed_roundtrip() {
+        let seed = [0x42; VRF_SEED_SIZE];
+        let sk = VrfSecretKey::from_seed(seed);
+        assert_eq!(sk.seed_bytes(), seed);
+    }
+
+    #[test]
+    fn secret_key_from_bytes_roundtrip() {
+        let bytes = [0xAB; VRF_SIGNING_KEY_SIZE];
+        let sk = VrfSecretKey::from_bytes(bytes);
+        assert_eq!(sk.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn secret_key_normalized_matches_from_seed() {
+        let seed = [0x01; VRF_SEED_SIZE];
+        let sk = VrfSecretKey::from_seed(seed);
+        let normalized = sk.normalized();
+        assert_eq!(sk, normalized);
+    }
+
+    #[test]
+    fn secret_key_validate_accepts_valid() {
+        let sk = VrfSecretKey::from_seed([7u8; VRF_SEED_SIZE]);
+        sk.validate().expect("valid key should pass validation");
+    }
+
+    #[test]
+    fn secret_key_validate_rejects_corrupt_vk() {
+        let mut bytes = VrfSecretKey::from_seed([7u8; VRF_SEED_SIZE]).to_bytes();
+        bytes[VRF_SEED_SIZE] ^= 0xFF; // corrupt the embedded VK
+        let sk = VrfSecretKey::from_bytes(bytes);
+        assert_eq!(sk.validate(), Err(CryptoError::InvalidVrfSigningKey));
+    }
+
+    #[test]
+    fn secret_key_debug_is_redacted() {
+        let sk = VrfSecretKey::from_seed([0; VRF_SEED_SIZE]);
+        let dbg = format!("{:?}", sk);
+        assert_eq!(dbg, "VrfSecretKey([REDACTED])");
+    }
+
+    #[test]
+    fn secret_key_constant_time_eq() {
+        let sk1 = VrfSecretKey::from_seed([1u8; 32]);
+        let sk2 = VrfSecretKey::from_seed([1u8; 32]);
+        let sk3 = VrfSecretKey::from_seed([2u8; 32]);
+        assert_eq!(sk1, sk2);
+        assert_ne!(sk1, sk3);
+    }
+
+    // ── VrfVerificationKey ───────────────────────────────────────────────
+
+    #[test]
+    fn verification_key_from_seed() {
+        let vk1 = VrfVerificationKey::from_seed([1u8; 32]);
+        let vk2 = VrfSecretKey::from_seed([1u8; 32]).verification_key();
+        assert_eq!(vk1, vk2);
+    }
+
+    #[test]
+    fn verification_key_from_bytes_roundtrip() {
+        let bytes = [0xCD; VRF_VERIFICATION_KEY_SIZE];
+        let vk = VrfVerificationKey::from_bytes(bytes);
+        assert_eq!(vk.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn verification_key_validate_accepts_valid() {
+        let vk = VrfVerificationKey::from_seed([7u8; 32]);
+        vk.validate().expect("valid VK should pass validation");
+    }
+
+    #[test]
+    fn verification_key_validate_rejects_identity() {
+        // Compressed identity point on Ed25519 = [1, 0, ..., 0]
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let vk = VrfVerificationKey::from_bytes(identity);
+        assert_eq!(vk.validate(), Err(CryptoError::InvalidVrfVerificationKey));
+    }
+
+    #[test]
+    fn verification_key_validate_rejects_low_order() {
+        // The all-zero compressed Edwards Y is the identity point (0, 1);
+        // mul_by_cofactor produces the identity, which must be rejected.
+        let identity = {
+            let mut buf = [0u8; 32];
+            buf[0] = 0x01; // compressed (0,1) is [1,0,...,0]
+            buf
+        };
+        let vk = VrfVerificationKey::from_bytes(identity);
+        assert!(vk.validate().is_err(), "low-order VK should be rejected");
+    }
+
+    // ── VrfProof / VrfBatchCompatProof construction ──────────────────────
+
+    #[test]
+    fn proof_from_bytes_roundtrip() {
+        let bytes = [0x11; VRF_PROOF_SIZE];
+        let proof = VrfProof::from_bytes(bytes);
+        assert_eq!(proof.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn batchcompat_proof_from_bytes_roundtrip() {
+        let bytes = [0x22; VRF_BATCHCOMPAT_PROOF_SIZE];
+        let proof = VrfBatchCompatProof::from_bytes(bytes);
+        assert_eq!(proof.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn vrf_output_from_bytes_roundtrip() {
+        let bytes = [0x33; VRF_OUTPUT_SIZE];
+        let out = VrfOutput::from_bytes(bytes);
+        assert_eq!(out.to_bytes(), bytes);
+    }
+
+    // ── Standard prove / verify roundtrip ────────────────────────────────
+
+    #[test]
+    fn standard_prove_verify_roundtrip() {
+        let sk = VrfSecretKey::from_seed([5u8; 32]);
+        let vk = sk.verification_key();
+        let msg = b"hello vrf";
+        let (output, proof) = sk.prove(msg).unwrap();
+        let verified_output = vk.verify(msg, &proof).unwrap();
+        assert_eq!(output, verified_output);
+    }
+
+    #[test]
+    fn standard_prove_is_deterministic() {
+        let sk = VrfSecretKey::from_seed([3u8; 32]);
+        let (o1, p1) = sk.prove(b"msg").unwrap();
+        let (o2, p2) = sk.prove(b"msg").unwrap();
+        assert_eq!(o1, o2);
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn standard_prove_different_messages_different_output() {
+        let sk = VrfSecretKey::from_seed([4u8; 32]);
+        let (o1, _) = sk.prove(b"msg1").unwrap();
+        let (o2, _) = sk.prove(b"msg2").unwrap();
+        assert_ne!(o1, o2);
+    }
+
+    #[test]
+    fn standard_verify_wrong_message_fails() {
+        let sk = VrfSecretKey::from_seed([6u8; 32]);
+        let vk = sk.verification_key();
+        let (_, proof) = sk.prove(b"good").unwrap();
+        assert_eq!(vk.verify(b"bad", &proof), Err(CryptoError::InvalidVrfProof));
+    }
+
+    #[test]
+    fn standard_verify_wrong_key_fails() {
+        let sk1 = VrfSecretKey::from_seed([1u8; 32]);
+        let vk2 = VrfVerificationKey::from_seed([2u8; 32]);
+        let (_, proof) = sk1.prove(b"msg").unwrap();
+        assert!(vk2.verify(b"msg", &proof).is_err());
+    }
+
+    #[test]
+    fn standard_prove_empty_message() {
+        let sk = VrfSecretKey::from_seed([8u8; 32]);
+        let vk = sk.verification_key();
+        let (output, proof) = sk.prove(b"").unwrap();
+        let verified = vk.verify(b"", &proof).unwrap();
+        assert_eq!(output, verified);
+    }
+
+    // ── Batchcompat prove / verify roundtrip ─────────────────────────────
+
+    #[test]
+    fn batchcompat_prove_verify_roundtrip() {
+        let sk = VrfSecretKey::from_seed([5u8; 32]);
+        let vk = sk.verification_key();
+        let msg = b"batchcompat test";
+        let (output, proof) = sk.prove_batchcompat(msg).unwrap();
+        let verified_output = vk.verify_batchcompat(msg, &proof).unwrap();
+        assert_eq!(output, verified_output);
+    }
+
+    #[test]
+    fn batchcompat_prove_is_deterministic() {
+        let sk = VrfSecretKey::from_seed([3u8; 32]);
+        let (o1, p1) = sk.prove_batchcompat(b"msg").unwrap();
+        let (o2, p2) = sk.prove_batchcompat(b"msg").unwrap();
+        assert_eq!(o1, o2);
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn batchcompat_verify_wrong_message_fails() {
+        let sk = VrfSecretKey::from_seed([6u8; 32]);
+        let vk = sk.verification_key();
+        let (_, proof) = sk.prove_batchcompat(b"good").unwrap();
+        assert_eq!(
+            vk.verify_batchcompat(b"bad", &proof),
+            Err(CryptoError::InvalidVrfProof)
+        );
+    }
+
+    #[test]
+    fn batchcompat_verify_wrong_key_fails() {
+        let sk1 = VrfSecretKey::from_seed([1u8; 32]);
+        let vk2 = VrfVerificationKey::from_seed([2u8; 32]);
+        let (_, proof) = sk1.prove_batchcompat(b"msg").unwrap();
+        assert!(vk2.verify_batchcompat(b"msg", &proof).is_err());
+    }
+
+    #[test]
+    fn batchcompat_prove_empty_message() {
+        let sk = VrfSecretKey::from_seed([8u8; 32]);
+        let vk = sk.verification_key();
+        let (output, proof) = sk.prove_batchcompat(b"").unwrap();
+        let verified = vk.verify_batchcompat(b"", &proof).unwrap();
+        assert_eq!(output, verified);
+    }
+
+    // ── Standard vs batchcompat outputs differ ───────────────────────────
+
+    #[test]
+    fn standard_and_batchcompat_produce_different_outputs() {
+        let sk = VrfSecretKey::from_seed([9u8; 32]);
+        let (std_out, _) = sk.prove(b"msg").unwrap();
+        let (bc_out, _) = sk.prove_batchcompat(b"msg").unwrap();
+        // Different VRF schemes should produce different outputs for same input.
+        assert_ne!(std_out, bc_out);
+    }
+
+    // ── Standard test vector verification ────────────────────────────────
+
+    #[test]
+    fn standard_test_vectors_prove() {
+        for v in vrf_praos_test_vectors() {
+            let sk = VrfSecretKey::from_bytes(v.secret_key);
+            let (output, proof) = sk
+                .prove(&v.message)
+                .unwrap_or_else(|e| panic!("prove failed for {}: {e}", v.name));
+            assert_eq!(
+                proof.to_bytes(),
+                v.proof,
+                "proof mismatch for vector {}",
+                v.name
+            );
+            assert_eq!(
+                output.to_bytes(),
+                v.output,
+                "output mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    #[test]
+    fn standard_test_vectors_verify() {
+        for v in vrf_praos_test_vectors() {
+            let vk = VrfVerificationKey::from_bytes(v.public_key);
+            let proof = VrfProof::from_bytes(v.proof);
+            let output = vk
+                .verify(&v.message, &proof)
+                .unwrap_or_else(|e| panic!("verify failed for {}: {e}", v.name));
+            assert_eq!(
+                output.to_bytes(),
+                v.output,
+                "output mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    #[test]
+    fn standard_test_vectors_key_derivation() {
+        for v in vrf_praos_test_vectors() {
+            let sk = VrfSecretKey::from_bytes(v.secret_key);
+            assert_eq!(
+                sk.verification_key().to_bytes(),
+                v.public_key,
+                "VK mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    #[test]
+    fn standard_test_vectors_output_from_proof() {
+        for v in vrf_praos_test_vectors() {
+            let proof = VrfProof::from_bytes(v.proof);
+            let output = proof
+                .output()
+                .unwrap_or_else(|e| panic!("output() failed for {}: {e}", v.name));
+            assert_eq!(
+                output.to_bytes(),
+                v.output,
+                "output mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    // ── Batchcompat test vector verification ─────────────────────────────
+
+    #[test]
+    fn batchcompat_test_vectors_prove() {
+        for v in vrf_praos_batchcompat_test_vectors() {
+            let sk = VrfSecretKey::from_bytes(v.secret_key);
+            let (output, proof) = sk
+                .prove_batchcompat(&v.message)
+                .unwrap_or_else(|e| panic!("prove_batchcompat failed for {}: {e}", v.name));
+            assert_eq!(
+                proof.to_bytes(),
+                v.proof,
+                "proof mismatch for vector {}",
+                v.name
+            );
+            assert_eq!(
+                output.to_bytes(),
+                v.output,
+                "output mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    #[test]
+    fn batchcompat_test_vectors_verify() {
+        for v in vrf_praos_batchcompat_test_vectors() {
+            let vk = VrfVerificationKey::from_bytes(v.public_key);
+            let proof = VrfBatchCompatProof::from_bytes(v.proof);
+            let output = vk
+                .verify_batchcompat(&v.message, &proof)
+                .unwrap_or_else(|e| panic!("verify_batchcompat failed for {}: {e}", v.name));
+            assert_eq!(
+                output.to_bytes(),
+                v.output,
+                "output mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    #[test]
+    fn batchcompat_test_vectors_key_derivation() {
+        for v in vrf_praos_batchcompat_test_vectors() {
+            let sk = VrfSecretKey::from_bytes(v.secret_key);
+            assert_eq!(
+                sk.verification_key().to_bytes(),
+                v.public_key,
+                "VK mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    #[test]
+    fn batchcompat_test_vectors_output_from_proof() {
+        for v in vrf_praos_batchcompat_test_vectors() {
+            let proof = VrfBatchCompatProof::from_bytes(v.proof);
+            let output = proof
+                .output()
+                .unwrap_or_else(|e| panic!("output() failed for {}: {e}", v.name));
+            assert_eq!(
+                output.to_bytes(),
+                v.output,
+                "output mismatch for vector {}",
+                v.name
+            );
+        }
+    }
+
+    // ── Proof validation ─────────────────────────────────────────────────
+
+    #[test]
+    fn standard_proof_validate_published_vectors() {
+        for v in vrf_praos_test_vectors() {
+            let proof = VrfProof::from_bytes(v.proof);
+            proof
+                .validate()
+                .unwrap_or_else(|e| panic!("validate failed for {}: {e}", v.name));
+        }
+    }
+
+    #[test]
+    fn batchcompat_proof_validate_published_vectors() {
+        for v in vrf_praos_batchcompat_test_vectors() {
+            let proof = VrfBatchCompatProof::from_bytes(v.proof);
+            proof
+                .validate()
+                .unwrap_or_else(|e| panic!("validate failed for {}: {e}", v.name));
+        }
     }
 }

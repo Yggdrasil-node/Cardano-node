@@ -1,34 +1,25 @@
-//! LocalTxSubmission mini-protocol — node-to-client transaction submission.
-//!
-//! Allows a client (wallet, dApp) to submit a transaction to the node's mempool
-//! and receive an acceptance or rejection response.
-//!
-//! ## State Machine
-//!
-//! ```text
-//!  StIdle ──MsgSubmitTx──► StBusy ──MsgAcceptTx──► StIdle
-//!    │                              └──MsgRejectTx──► StIdle
-//!    └──MsgDone──► StDone
-//! ```
-//!
-//! Reference: `Ouroboros.Network.Protocol.LocalTxSubmission.Type`
-//! <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxSubmission>
-
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
-use yggdrasil_ledger::LedgerError;
-
-// ---------------------------------------------------------------------------
-// States
-// ---------------------------------------------------------------------------
-
-/// States of the LocalTxSubmission mini-protocol.
+/// States of the LocalTxSubmission mini-protocol state machine.
 ///
-/// Reference: `LocalTxSubmission.Type.StIdle` / `StBusy` / `StDone`.
+/// The LocalTxSubmission protocol is a simple request-response exchange used
+/// by local clients (wallets, tooling) to submit signed transactions to the
+/// node over the Node-to-Client socket.
+///
+/// ```text
+///  MsgSubmitTx               MsgAcceptTx
+///  StIdle ──────────► StBusy ──────────► StIdle
+///                      │
+///                      │ MsgRejectTx(reason)
+///                      └─────────────────────► StIdle
+///
+///  StIdle ──MsgDone──► StDone
+/// ```
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalTxSubmission.Type`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalTxSubmissionState {
     /// Client agency — may send `MsgSubmitTx` or `MsgDone`.
     StIdle,
-    /// Server agency — must send `MsgAcceptTx` or `MsgRejectTx`.
+    /// Server agency — must reply with `MsgAcceptTx` or `MsgRejectTx`.
     StBusy,
     /// Terminal state — no further messages.
     StDone,
@@ -40,40 +31,40 @@ pub enum LocalTxSubmissionState {
 
 /// Messages of the LocalTxSubmission mini-protocol.
 ///
-/// CBOR wire tags (from upstream CDDL):
+/// CDDL wire tags (from upstream `local-tx-submission.cddl`):
 ///
-/// | Tag | Message          |
-/// |-----|------------------|
-/// |  0  | `MsgSubmitTx`    |
-/// |  1  | `MsgAcceptTx`    |
-/// |  2  | `MsgRejectTx`    |
-/// |  3  | `MsgDone`        |
+/// | Tag | Message        |
+/// |-----|----------------|
+/// |  0  | `MsgSubmitTx`  |
+/// |  1  | `MsgAcceptTx`  |
+/// |  2  | `MsgRejectTx`  |
+/// |  3  | `MsgDone`      |
 ///
-/// Reference: `Ouroboros.Network.Protocol.LocalTxSubmission.Type.Message`.
+/// Transaction bytes and rejection reasons remain opaque at this layer;
+/// the node layer decodes them per-era.
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalTxSubmission.Type` — `Message`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocalTxSubmissionMessage {
-    /// `[0, tx]` — client submits a serialised transaction.
+    /// `[0, tx_bytes]` — client submits a serialized transaction.
     ///
     /// Transition: `StIdle → StBusy`.
     MsgSubmitTx {
-        /// Serialised transaction bytes (era-tagged CBOR).
+        /// Raw CBOR-encoded transaction bytes.
         tx: Vec<u8>,
     },
 
-    /// `[1]` — node accepted the transaction into the mempool.
+    /// `[1]` — server accepted the transaction.
     ///
     /// Transition: `StBusy → StIdle`.
     MsgAcceptTx,
 
-    /// `[2, reject_reason]` — node rejected the transaction.
-    ///
-    /// The `reject_reason` is an opaque CBOR blob encoding the ledger
-    /// validation error; the exact structure depends on the era.
+    /// `[2, reason_bytes]` — server rejected the transaction.
     ///
     /// Transition: `StBusy → StIdle`.
     MsgRejectTx {
-        /// Serialised rejection reason (era-specific CBOR).
-        reject_reason: Vec<u8>,
+        /// Opaque rejection reason (era-specific CBOR).
+        reason: Vec<u8>,
     },
 
     /// `[3]` — client terminates the protocol.
@@ -82,108 +73,108 @@ pub enum LocalTxSubmissionMessage {
     MsgDone,
 }
 
+// ---------------------------------------------------------------------------
+// Transition validation
+// ---------------------------------------------------------------------------
+
+/// Errors arising from illegal LocalTxSubmission state transitions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum LocalTxSubmissionTransitionError {
+    /// A message was received that is not legal in the current state.
+    #[error("illegal local-tx-submission transition from {from:?} via {msg_tag}")]
+    IllegalTransition {
+        /// State the machine was in.
+        from: LocalTxSubmissionState,
+        /// Human-readable tag of the offending message.
+        msg_tag: &'static str,
+    },
+}
+
+impl LocalTxSubmissionState {
+    /// Compute the next state given a message, or return an error if the
+    /// transition is illegal in the current state.
+    pub fn transition(
+        self,
+        msg: &LocalTxSubmissionMessage,
+    ) -> Result<Self, LocalTxSubmissionTransitionError> {
+        match (self, msg) {
+            (Self::StIdle, LocalTxSubmissionMessage::MsgSubmitTx { .. }) => Ok(Self::StBusy),
+            (Self::StIdle, LocalTxSubmissionMessage::MsgDone) => Ok(Self::StDone),
+            (Self::StBusy, LocalTxSubmissionMessage::MsgAcceptTx) => Ok(Self::StIdle),
+            (Self::StBusy, LocalTxSubmissionMessage::MsgRejectTx { .. }) => Ok(Self::StIdle),
+            (from, msg) => Err(LocalTxSubmissionTransitionError::IllegalTransition {
+                from,
+                msg_tag: match msg {
+                    LocalTxSubmissionMessage::MsgSubmitTx { .. } => "MsgSubmitTx",
+                    LocalTxSubmissionMessage::MsgAcceptTx => "MsgAcceptTx",
+                    LocalTxSubmissionMessage::MsgRejectTx { .. } => "MsgRejectTx",
+                    LocalTxSubmissionMessage::MsgDone => "MsgDone",
+                },
+            }),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CBOR wire codec
+// ---------------------------------------------------------------------------
+
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::LedgerError;
+
 impl LocalTxSubmissionMessage {
-    /// CBOR array tag for this message.
-    pub fn tag(&self) -> u64 {
-        match self {
-            Self::MsgSubmitTx { .. } => 0,
-            Self::MsgAcceptTx => 1,
-            Self::MsgRejectTx { .. } => 2,
-            Self::MsgDone => 3,
-        }
-    }
-
-    /// State transition: returns the new state after this message is applied
-    /// from `current`.
-    pub fn apply(&self, current: LocalTxSubmissionState) -> Option<LocalTxSubmissionState> {
-        use LocalTxSubmissionState::*;
-        match (self, current) {
-            (Self::MsgSubmitTx { .. }, StIdle) => Some(StBusy),
-            (Self::MsgAcceptTx, StBusy) => Some(StIdle),
-            (Self::MsgRejectTx { .. }, StBusy) => Some(StIdle),
-            (Self::MsgDone, StIdle) => Some(StDone),
-            _ => None,
-        }
-    }
-
     /// Encode this message to CBOR bytes.
     ///
-    /// Wire format:
-    /// - `MsgSubmitTx`  → `[0, #bytes(tx)]`
+    /// Wire format (matching upstream CDDL):
+    /// - `MsgSubmitTx`  → `[0, bytes]`
     /// - `MsgAcceptTx`  → `[1]`
-    /// - `MsgRejectTx`  → `[2, #bytes(reject_reason)]`
+    /// - `MsgRejectTx`  → `[2, bytes]`
     /// - `MsgDone`      → `[3]`
-    pub fn encode_cbor(&self) -> Vec<u8> {
+    pub fn to_cbor(&self) -> Vec<u8> {
         let mut enc = Encoder::new();
         match self {
             Self::MsgSubmitTx { tx } => {
-                enc.array(2).unsigned(0).bytes(tx);
+                enc.array(2);
+                enc.unsigned(0);
+                enc.bytes(tx);
             }
             Self::MsgAcceptTx => {
-                enc.array(1).unsigned(1);
+                enc.array(1);
+                enc.unsigned(1);
             }
-            Self::MsgRejectTx { reject_reason } => {
-                enc.array(2).unsigned(2).bytes(reject_reason);
+            Self::MsgRejectTx { reason } => {
+                enc.array(2);
+                enc.unsigned(2);
+                enc.bytes(reason);
             }
             Self::MsgDone => {
-                enc.array(1).unsigned(3);
+                enc.array(1);
+                enc.unsigned(3);
             }
         }
         enc.into_bytes()
     }
 
-    /// Decode a message from CBOR bytes.
-    pub fn decode_cbor(data: &[u8]) -> Result<Self, LocalTxSubmissionError> {
-        let mut dec = Decoder::new(data);
-        let len = dec.array().map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
-        let tag = dec.unsigned().map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
-        match (tag, len) {
-            (0, 2) => {
-                let tx = dec
-                    .bytes()
-                    .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?
-                    .to_vec();
+    /// Decode a CBOR-encoded message from wire bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, LedgerError> {
+        let mut dec = Decoder::new(bytes);
+        let _len = dec.array()?;
+        let tag = dec.unsigned()?;
+        match tag {
+            0 => {
+                let tx = dec.bytes()?.to_vec();
                 Ok(Self::MsgSubmitTx { tx })
             }
-            (1, 1) => Ok(Self::MsgAcceptTx),
-            (2, 2) => {
-                let rr = dec
-                    .bytes()
-                    .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?
-                    .to_vec();
-                Ok(Self::MsgRejectTx { reject_reason: rr })
+            1 => Ok(Self::MsgAcceptTx),
+            2 => {
+                let reason = dec.bytes()?.to_vec();
+                Ok(Self::MsgRejectTx { reason })
             }
-            (3, 1) => Ok(Self::MsgDone),
-            _ => Err(LocalTxSubmissionError::UnknownTag(tag)),
+            3 => Ok(Self::MsgDone),
+            tag => Err(LedgerError::CborDecodeError(format!(
+                "unknown LocalTxSubmission message tag: {tag}"
+            ))),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
-/// Errors produced by the LocalTxSubmission protocol driver.
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum LocalTxSubmissionError {
-    #[error("CBOR codec error: {0}")]
-    Cbor(String),
-    #[error("unknown message tag: {0}")]
-    UnknownTag(u64),
-    #[error("invalid state transition for message tag {tag} in state {state:?}")]
-    InvalidTransition {
-        tag: u64,
-        state: LocalTxSubmissionState,
-    },
-    #[error("channel send error")]
-    ChannelSend,
-    #[error("channel closed (peer disconnected)")]
-    ChannelClosed,
-}
-
-impl From<LedgerError> for LocalTxSubmissionError {
-    fn from(e: LedgerError) -> Self {
-        Self::Cbor(e.to_string())
     }
 }
 
@@ -196,51 +187,77 @@ mod tests {
     use super::*;
 
     #[test]
-    fn msg_submit_tx_round_trip() {
-        let tx = vec![0xde, 0xad, 0xbe, 0xef];
+    fn submit_accept_roundtrip() {
+        let tx = vec![0xDE, 0xAD, 0xBE, 0xEF];
         let msg = LocalTxSubmissionMessage::MsgSubmitTx { tx: tx.clone() };
-        let encoded = msg.encode_cbor();
-        let decoded = LocalTxSubmissionMessage::decode_cbor(&encoded).unwrap();
-        assert_eq!(decoded, msg);
+        let encoded = msg.to_cbor();
+        let decoded = LocalTxSubmissionMessage::from_cbor(&encoded).unwrap();
+        assert_eq!(decoded, LocalTxSubmissionMessage::MsgSubmitTx { tx });
     }
 
     #[test]
-    fn msg_accept_tx_round_trip() {
+    fn accept_roundtrip() {
         let msg = LocalTxSubmissionMessage::MsgAcceptTx;
-        let decoded = LocalTxSubmissionMessage::decode_cbor(&msg.encode_cbor()).unwrap();
-        assert_eq!(decoded, msg);
+        let decoded = LocalTxSubmissionMessage::from_cbor(&msg.to_cbor()).unwrap();
+        assert_eq!(decoded, LocalTxSubmissionMessage::MsgAcceptTx);
     }
 
     #[test]
-    fn msg_reject_tx_round_trip() {
-        let msg = LocalTxSubmissionMessage::MsgRejectTx {
-            reject_reason: vec![0x82, 0x00, 0x01],
-        };
-        let decoded = LocalTxSubmissionMessage::decode_cbor(&msg.encode_cbor()).unwrap();
-        assert_eq!(decoded, msg);
+    fn reject_roundtrip() {
+        let reason = vec![0x01, 0x02];
+        let msg = LocalTxSubmissionMessage::MsgRejectTx { reason: reason.clone() };
+        let decoded = LocalTxSubmissionMessage::from_cbor(&msg.to_cbor()).unwrap();
+        assert_eq!(decoded, LocalTxSubmissionMessage::MsgRejectTx { reason });
     }
 
     #[test]
-    fn msg_done_round_trip() {
+    fn done_roundtrip() {
         let msg = LocalTxSubmissionMessage::MsgDone;
-        let decoded = LocalTxSubmissionMessage::decode_cbor(&msg.encode_cbor()).unwrap();
-        assert_eq!(decoded, msg);
+        let decoded = LocalTxSubmissionMessage::from_cbor(&msg.to_cbor()).unwrap();
+        assert_eq!(decoded, LocalTxSubmissionMessage::MsgDone);
     }
 
     #[test]
-    fn state_transitions() {
-        use LocalTxSubmissionState::*;
-        assert_eq!(
-            LocalTxSubmissionMessage::MsgSubmitTx { tx: vec![] }.apply(StIdle),
-            Some(StBusy)
-        );
-        assert_eq!(LocalTxSubmissionMessage::MsgAcceptTx.apply(StBusy), Some(StIdle));
-        assert_eq!(
-            LocalTxSubmissionMessage::MsgRejectTx { reject_reason: vec![] }.apply(StBusy),
-            Some(StIdle)
-        );
-        assert_eq!(LocalTxSubmissionMessage::MsgDone.apply(StIdle), Some(StDone));
-        // Invalid transitions
-        assert_eq!(LocalTxSubmissionMessage::MsgAcceptTx.apply(StIdle), None);
+    fn state_machine_idle_to_busy() {
+        let state = LocalTxSubmissionState::StIdle;
+        let next = state
+            .transition(&LocalTxSubmissionMessage::MsgSubmitTx { tx: vec![] })
+            .unwrap();
+        assert_eq!(next, LocalTxSubmissionState::StBusy);
+    }
+
+    #[test]
+    fn state_machine_busy_to_idle_via_accept() {
+        let state = LocalTxSubmissionState::StBusy;
+        let next = state
+            .transition(&LocalTxSubmissionMessage::MsgAcceptTx)
+            .unwrap();
+        assert_eq!(next, LocalTxSubmissionState::StIdle);
+    }
+
+    #[test]
+    fn state_machine_busy_to_idle_via_reject() {
+        let state = LocalTxSubmissionState::StBusy;
+        let next = state
+            .transition(&LocalTxSubmissionMessage::MsgRejectTx { reason: vec![] })
+            .unwrap();
+        assert_eq!(next, LocalTxSubmissionState::StIdle);
+    }
+
+    #[test]
+    fn state_machine_idle_to_done() {
+        let state = LocalTxSubmissionState::StIdle;
+        let next = state
+            .transition(&LocalTxSubmissionMessage::MsgDone)
+            .unwrap();
+        assert_eq!(next, LocalTxSubmissionState::StDone);
+    }
+
+    #[test]
+    fn state_machine_illegal_transition() {
+        let state = LocalTxSubmissionState::StIdle;
+        // Can't send MsgAcceptTx in StIdle
+        let res = state.transition(&LocalTxSubmissionMessage::MsgAcceptTx);
+        assert!(res.is_err());
     }
 }

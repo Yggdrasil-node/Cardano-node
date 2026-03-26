@@ -167,15 +167,6 @@ pub struct NodeConfigFile {
     /// Target number of active (hot) peers the governor maintains.
     #[serde(default = "default_governor_target_active")]
     pub governor_target_active: usize,
-    /// Target number of known big-ledger peers the governor maintains.
-    #[serde(default = "default_governor_target_known_big_ledger")]
-    pub governor_target_known_big_ledger: usize,
-    /// Target number of established (warm + hot) big-ledger peers.
-    #[serde(default = "default_governor_target_established_big_ledger")]
-    pub governor_target_established_big_ledger: usize,
-    /// Target number of active (hot) big-ledger peers.
-    #[serde(default = "default_governor_target_active_big_ledger")]
-    pub governor_target_active_big_ledger: usize,
     /// Whether local logging output is enabled.
     #[serde(rename = "TurnOnLogging", default = "default_turn_on_logging")]
     pub turn_on_logging: bool,
@@ -211,12 +202,7 @@ pub struct NodeConfigFile {
     pub trace_options: BTreeMap<String, TraceNamespaceConfig>,
         /// Relative path to the Shelley genesis file.  Matches `ShelleyGenesisFile`
         /// in the official Cardano node configuration.
-        #[serde(
-            rename = "ShelleyGenesisFile",
-            alias = "GenesisFile",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(rename = "ShelleyGenesisFile", default, skip_serializing_if = "Option::is_none")]
         pub shelley_genesis_file: Option<String>,
         /// Relative path to the Alonzo genesis file.  Matches `AlonzoGenesisFile`
         /// in the official Cardano node configuration.
@@ -313,13 +299,56 @@ impl NodeConfigFile {
         }
     }
 
+    /// Load the parsed Shelley bootstrap bundle from the configured genesis
+    /// file when one is present.
+    pub fn load_shelley_genesis_bootstrap(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<Option<crate::genesis::ShelleyGenesisBootstrap>, crate::genesis::GenesisLoadError> {
+        use crate::genesis::load_shelley_genesis_bootstrap;
+
+        let Some(path) = self.shelley_genesis_file.as_deref() else {
+            return Ok(None);
+        };
+
+        let path = if let Some(base) = config_base_dir {
+            base.join(Path::new(path))
+        } else {
+            Path::new(path).to_path_buf()
+        };
+
+        Ok(Some(load_shelley_genesis_bootstrap(&path)?))
+    }
+
+    /// Load the genesis [`EnactState`] from the configured Conway genesis file
+    /// when a `constitution` section is present.
+    pub fn load_genesis_enact_state(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<Option<yggdrasil_ledger::EnactState>, crate::genesis::GenesisLoadError> {
+        use crate::genesis::{build_genesis_enact_state, load_conway_genesis};
+
+        let Some(path) = self.conway_genesis_file.as_deref() else {
+            return Ok(None);
+        };
+
+        let path = if let Some(base) = config_base_dir {
+            base.join(Path::new(path))
+        } else {
+            Path::new(path).to_path_buf()
+        };
+
+        let conway = load_conway_genesis(&path)?;
+        build_genesis_enact_state(Some(&conway))
+    }
+
     /// Load the simplified CEK [`CostModel`] from the configured Alonzo
     /// genesis file when a named Plutus cost-model map is available.
     pub fn load_plutus_cost_model(
         &self,
         config_base_dir: Option<&Path>,
     ) -> Result<Option<CostModel>, crate::genesis::GenesisCostModelError> {
-        use crate::genesis::{build_plutus_cost_model, load_alonzo_genesis};
+        use crate::genesis::{build_plutus_cost_model, load_alonzo_genesis, load_conway_genesis};
 
         let Some(path) = self.alonzo_genesis_file.as_deref() else {
             return Ok(None);
@@ -332,7 +361,20 @@ impl NodeConfigFile {
         };
 
         let alonzo = load_alonzo_genesis(&path)?;
-        build_plutus_cost_model(&alonzo).map_err(Into::into)
+
+        let conway = match self.conway_genesis_file.as_deref() {
+            Some(path) => {
+                let path = if let Some(base) = config_base_dir {
+                    base.join(Path::new(path))
+                } else {
+                    Path::new(path).to_path_buf()
+                };
+                Some(load_conway_genesis(&path)?)
+            }
+            None => None,
+        };
+
+        build_plutus_cost_model(&alonzo, conway.as_ref()).map_err(Into::into)
     }
 
     pub fn topology_config(&self) -> TopologyConfig {
@@ -583,18 +625,6 @@ fn default_governor_target_active() -> usize {
     5
 }
 
-fn default_governor_target_known_big_ledger() -> usize {
-    0
-}
-
-fn default_governor_target_established_big_ledger() -> usize {
-    0
-}
-
-fn default_governor_target_active_big_ledger() -> usize {
-    0
-}
-
 fn default_turn_on_logging() -> bool {
     true
 }
@@ -824,9 +854,6 @@ pub fn mainnet_config() -> NodeConfigFile {
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
-        governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
-        governor_target_established_big_ledger: default_governor_target_established_big_ledger(),
-        governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -875,9 +902,6 @@ pub fn preprod_config() -> NodeConfigFile {
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
-        governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
-        governor_target_established_big_ledger: default_governor_target_established_big_ledger(),
-        governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -926,9 +950,6 @@ pub fn preview_config() -> NodeConfigFile {
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
-        governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
-        governor_target_established_big_ledger: default_governor_target_established_big_ledger(),
-        governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -972,18 +993,6 @@ mod tests {
             cfg.governor_target_established
         );
         assert_eq!(parsed.governor_target_active, cfg.governor_target_active);
-        assert_eq!(
-            parsed.governor_target_known_big_ledger,
-            cfg.governor_target_known_big_ledger
-        );
-        assert_eq!(
-            parsed.governor_target_established_big_ledger,
-            cfg.governor_target_established_big_ledger
-        );
-        assert_eq!(
-            parsed.governor_target_active_big_ledger,
-            cfg.governor_target_active_big_ledger
-        );
         assert_eq!(parsed.turn_on_logging, cfg.turn_on_logging);
         assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
         assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);
@@ -1015,9 +1024,6 @@ mod tests {
         assert_eq!(cfg.security_param_k, 2160);
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
         assert!(cfg.keepalive_interval_secs.is_none());
-        assert_eq!(cfg.governor_target_known_big_ledger, 0);
-        assert_eq!(cfg.governor_target_established_big_ledger, 0);
-        assert_eq!(cfg.governor_target_active_big_ledger, 0);
         assert!(cfg.turn_on_logging);
         assert!(cfg.use_trace_dispatcher);
         assert!(cfg.turn_on_log_metrics);
@@ -1033,22 +1039,6 @@ mod tests {
                 .expect("checkpoint trace options")
                 .max_frequency,
             Some(1.0)
-        );
-    }
-
-    #[test]
-    fn legacy_genesis_file_alias_maps_to_shelley_genesis_file() {
-        let json = r#"{
-            "peer_addr": "127.0.0.1:3001",
-            "network_magic": 42,
-            "protocol_versions": [13],
-            "GenesisFile": "legacy-shelley-genesis.json"
-        }"#;
-
-        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse legacy genesis alias");
-        assert_eq!(
-            cfg.shelley_genesis_file.as_deref(),
-            Some("legacy-shelley-genesis.json")
         );
     }
 
@@ -1140,25 +1130,16 @@ mod tests {
 
     #[test]
     fn mainnet_preset_loads_plutus_cost_model() {
-        use yggdrasil_plutus::types::{Constant, DefaultFun, Value};
         let cfg = NetworkPreset::Mainnet.to_config();
         let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("configuration/mainnet");
         let model = cfg
             .load_plutus_cost_model(Some(base_dir.as_path()))
             .expect("load plutus cost model")
             .expect("mainnet plutus cost model");
-        // Verify machine step costs via public API.
-        let step = model.machine_step_cost();
-        assert_eq!(step.cpu, 29_773);
-        assert_eq!(step.mem, 100);
-        // Verify a per-builtin cost: addInteger with zero-sized args → intercept only.
-        let args = [
-            Value::Constant(Constant::Integer(0)),
-            Value::Constant(Constant::Integer(0)),
-        ];
-        let bc = model.builtin_cost(DefaultFun::AddInteger, &args);
-        // intercept=197209, slope=0 → always 197209
-        assert_eq!(bc.cpu, 197_209);
+        assert_eq!(model.step_costs.var_cpu, 29_773);
+        assert_eq!(model.step_costs.var_mem, 100);
+        assert_eq!(model.builtin_cpu, 29_773);
+        assert_eq!(model.builtin_mem, 100);
     }
 
     #[test]

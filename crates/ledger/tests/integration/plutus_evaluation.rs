@@ -3,7 +3,7 @@
 
 use super::*;
 use std::collections::BTreeMap;
-use yggdrasil_ledger::plutus_validation::{PlutusEvaluator, PlutusScriptEval, PlutusVersion, plutus_script_hash};
+use yggdrasil_ledger::plutus_validation::{PlutusEvaluator, PlutusScriptEval, PlutusVersion, TxContext, plutus_script_hash};
 
 // ---------------------------------------------------------------------------
 // Mock evaluators
@@ -13,7 +13,7 @@ use yggdrasil_ledger::plutus_validation::{PlutusEvaluator, PlutusScriptEval, Plu
 struct AlwaysSucceeds;
 
 impl PlutusEvaluator for AlwaysSucceeds {
-    fn evaluate(&self, _eval: &PlutusScriptEval) -> Result<(), LedgerError> {
+    fn evaluate(&self, _eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
         Ok(())
     }
 }
@@ -22,7 +22,7 @@ impl PlutusEvaluator for AlwaysSucceeds {
 struct AlwaysFails;
 
 impl PlutusEvaluator for AlwaysFails {
-    fn evaluate(&self, eval: &PlutusScriptEval) -> Result<(), LedgerError> {
+    fn evaluate(&self, eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
         Err(LedgerError::PlutusScriptFailed {
             hash: eval.script_hash,
             reason: "mock: script always fails".into(),
@@ -201,6 +201,7 @@ fn alonzo_plutus_v1_minting_evaluator_succeeds() {
         id: TxId(tx_id),
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x01, vec![tx]);
 
@@ -224,6 +225,7 @@ fn alonzo_plutus_v1_minting_evaluator_fails() {
         id: TxId(tx_id),
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x02, vec![tx]);
 
@@ -255,6 +257,7 @@ fn alonzo_plutus_v1_minting_no_evaluator_skips() {
         id: TxId(tx_id),
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x03, vec![tx]);
 
@@ -318,6 +321,7 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
         id: TxId(tx_id),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
     let block = make_block(Era::Babbage, 200, 2, 0x04, vec![tx]);
 
@@ -393,6 +397,7 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
         id: TxId(tx_id),
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
     let block = make_block(Era::Conway, 300, 3, 0x05, vec![tx]);
 
@@ -422,7 +427,7 @@ struct AssertEvaluator {
 }
 
 impl PlutusEvaluator for AssertEvaluator {
-    fn evaluate(&self, eval: &PlutusScriptEval) -> Result<(), LedgerError> {
+    fn evaluate(&self, eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
         assert_eq!(eval.script_hash, self.expected_hash, "script hash mismatch");
         assert_eq!(eval.version, self.expected_version, "version mismatch");
         assert_eq!(eval.script_bytes, DUMMY_SCRIPT, "script bytes mismatch");
@@ -443,6 +448,7 @@ fn alonzo_evaluator_receives_correct_script_metadata() {
         id: TxId(tx_id),
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x06, vec![tx]);
 

@@ -364,6 +364,9 @@ pub enum ByronBlock {
         chain_difficulty: u64,
         /// Previous block hash (32 bytes).
         prev_hash: [u8; 32],
+        /// PBFT issuer verification key (first 32 bytes of the 64-byte
+        /// extended Ed25519 public key from consensus data).
+        issuer_vkey: [u8; 32],
         /// Raw CBOR bytes of the header element (for hash computation).
         raw_header: Vec<u8>,
         /// Decoded transactions (TxAux entries from the block body).
@@ -421,6 +424,18 @@ impl ByronBlock {
         match self {
             Self::EpochBoundary { prev_hash, .. } => prev_hash,
             Self::MainBlock { prev_hash, .. } => prev_hash,
+        }
+    }
+
+    /// Returns the PBFT issuer verification key (32 bytes).
+    ///
+    /// For MainBlocks this is the first 32 bytes of the extended Ed25519
+    /// public key from the consensus data.  EBBs have no issuer and
+    /// return all zeros.
+    pub fn issuer_vkey(&self) -> [u8; 32] {
+        match self {
+            Self::EpochBoundary { .. } => [0u8; 32],
+            Self::MainBlock { issuer_vkey, .. } => *issuer_vkey,
         }
     }
 
@@ -612,8 +627,16 @@ impl ByronBlock {
         let epoch = dec.unsigned()?;
         let slot_in_epoch = dec.unsigned()?;
 
-        // pubkey
-        dec.skip()?;
+        // pubkey — 64-byte extended Ed25519 public key
+        let pubkey_raw = dec.bytes()?;
+        let issuer_vkey: [u8; 32] = if pubkey_raw.len() >= 32 {
+            pubkey_raw[..32].try_into().unwrap()
+        } else {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: pubkey_raw.len(),
+            });
+        };
 
         // difficulty: [Word64] — 1-element array.
         let diff_len = dec.array()?;
@@ -666,8 +689,262 @@ impl ByronBlock {
             slot_in_epoch,
             chain_difficulty,
             prev_hash,
+            issuer_vkey,
             raw_header,
             transactions,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ByronTxIn ──────────────────────────────────────────────────────
+
+    #[test]
+    fn txin_round_trip() {
+        let txin = ByronTxIn { txid: [0xAA; 32], index: 0 };
+        let decoded = ByronTxIn::from_cbor_bytes(&txin.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, txin);
+    }
+
+    #[test]
+    fn txin_different_index_round_trip() {
+        let txin = ByronTxIn { txid: [0x11; 32], index: 42 };
+        let decoded = ByronTxIn::from_cbor_bytes(&txin.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, txin);
+    }
+
+    #[test]
+    fn txin_different_indices_differ() {
+        let a = ByronTxIn { txid: [0x00; 32], index: 0 };
+        let b = ByronTxIn { txid: [0x00; 32], index: 1 };
+        assert_ne!(a.to_cbor_bytes(), b.to_cbor_bytes());
+    }
+
+    // ── ByronTxOut ─────────────────────────────────────────────────────
+
+    #[test]
+    fn txout_round_trip() {
+        // Build a minimal valid CBOR address (just raw CBOR bytes)
+        let mut addr_enc = Encoder::new();
+        addr_enc.bytes(&[0x01; 28]);
+        let addr = addr_enc.into_bytes();
+
+        let txout = ByronTxOut { address: addr, amount: 5_000_000 };
+        let decoded = ByronTxOut::from_cbor_bytes(&txout.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, txout);
+    }
+
+    #[test]
+    fn txout_different_amounts_differ() {
+        let mut addr_enc = Encoder::new();
+        addr_enc.bytes(&[0x01; 28]);
+        let addr = addr_enc.into_bytes();
+
+        let a = ByronTxOut { address: addr.clone(), amount: 100 };
+        let b = ByronTxOut { address: addr, amount: 200 };
+        assert_ne!(a.to_cbor_bytes(), b.to_cbor_bytes());
+    }
+
+    // ── ByronTxWitness ─────────────────────────────────────────────────
+
+    #[test]
+    fn tx_witness_pk_round_trip() {
+        let w = ByronTxWitness {
+            witness_type: 0,
+            payload: vec![0xCC; 64],
+        };
+        let decoded = ByronTxWitness::from_cbor_bytes(&w.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, w);
+    }
+
+    #[test]
+    fn tx_witness_redeem_round_trip() {
+        let w = ByronTxWitness {
+            witness_type: 2,
+            payload: vec![0xDD; 96],
+        };
+        let decoded = ByronTxWitness::from_cbor_bytes(&w.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, w);
+    }
+
+    // ── ByronTx ────────────────────────────────────────────────────────
+
+    fn mk_addr() -> Vec<u8> {
+        let mut enc = Encoder::new();
+        enc.bytes(&[0x01; 28]);
+        enc.into_bytes()
+    }
+
+    fn mk_attrs() -> Vec<u8> {
+        let mut enc = Encoder::new();
+        enc.map(0);
+        enc.into_bytes()
+    }
+
+    #[test]
+    fn tx_round_trip() {
+        let tx = ByronTx {
+            inputs: vec![ByronTxIn { txid: [0xAA; 32], index: 0 }],
+            outputs: vec![ByronTxOut { address: mk_addr(), amount: 1_000_000 }],
+            attributes: mk_attrs(),
+        };
+        let decoded = ByronTx::from_cbor_bytes(&tx.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, tx);
+    }
+
+    #[test]
+    fn tx_id_is_32_bytes() {
+        let tx = ByronTx {
+            inputs: vec![ByronTxIn { txid: [0xBB; 32], index: 1 }],
+            outputs: vec![ByronTxOut { address: mk_addr(), amount: 500 }],
+            attributes: mk_attrs(),
+        };
+        assert_eq!(tx.tx_id().len(), 32);
+    }
+
+    #[test]
+    fn tx_id_deterministic() {
+        let tx = ByronTx {
+            inputs: vec![ByronTxIn { txid: [0xCC; 32], index: 0 }],
+            outputs: vec![ByronTxOut { address: mk_addr(), amount: 100 }],
+            attributes: mk_attrs(),
+        };
+        assert_eq!(tx.tx_id(), tx.tx_id());
+    }
+
+    #[test]
+    fn tx_id_different_inputs_differ() {
+        let tx1 = ByronTx {
+            inputs: vec![ByronTxIn { txid: [0x01; 32], index: 0 }],
+            outputs: vec![ByronTxOut { address: mk_addr(), amount: 100 }],
+            attributes: mk_attrs(),
+        };
+        let tx2 = ByronTx {
+            inputs: vec![ByronTxIn { txid: [0x02; 32], index: 0 }],
+            outputs: vec![ByronTxOut { address: mk_addr(), amount: 100 }],
+            attributes: mk_attrs(),
+        };
+        assert_ne!(tx1.tx_id(), tx2.tx_id());
+    }
+
+    // ── ByronTxAux ─────────────────────────────────────────────────────
+
+    #[test]
+    fn tx_aux_round_trip() {
+        let aux = ByronTxAux {
+            tx: ByronTx {
+                inputs: vec![ByronTxIn { txid: [0xDD; 32], index: 0 }],
+                outputs: vec![ByronTxOut { address: mk_addr(), amount: 1_000_000 }],
+                attributes: mk_attrs(),
+            },
+            witnesses: vec![ByronTxWitness { witness_type: 0, payload: vec![0xEE; 64] }],
+        };
+        let decoded = ByronTxAux::from_cbor_bytes(&aux.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, aux);
+    }
+
+    #[test]
+    fn tx_aux_empty_witnesses_round_trip() {
+        let aux = ByronTxAux {
+            tx: ByronTx {
+                inputs: vec![ByronTxIn { txid: [0xFF; 32], index: 0 }],
+                outputs: vec![ByronTxOut { address: mk_addr(), amount: 500 }],
+                attributes: mk_attrs(),
+            },
+            witnesses: vec![],
+        };
+        let decoded = ByronTxAux::from_cbor_bytes(&aux.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, aux);
+    }
+
+    // ── ByronBlock helpers ─────────────────────────────────────────────
+
+    #[test]
+    fn ebb_accessors() {
+        let blk = ByronBlock::EpochBoundary {
+            epoch: 10,
+            chain_difficulty: 100,
+            prev_hash: [0xAB; 32],
+            raw_header: vec![],
+        };
+        assert_eq!(blk.epoch(), 10);
+        assert_eq!(blk.chain_difficulty(), 100);
+        assert!(blk.is_ebb());
+        assert_eq!(blk.absolute_slot(BYRON_SLOTS_PER_EPOCH), 10 * BYRON_SLOTS_PER_EPOCH);
+        assert_eq!(blk.prev_hash(), &[0xAB; 32]);
+        assert_eq!(blk.issuer_vkey(), [0u8; 32]);
+        assert!(blk.transactions().is_empty());
+    }
+
+    #[test]
+    fn main_block_accessors() {
+        let blk = ByronBlock::MainBlock {
+            epoch: 5,
+            slot_in_epoch: 100,
+            chain_difficulty: 50,
+            prev_hash: [0xCD; 32],
+            issuer_vkey: [0xEF; 32],
+            raw_header: vec![],
+            transactions: vec![],
+        };
+        assert_eq!(blk.epoch(), 5);
+        assert_eq!(blk.chain_difficulty(), 50);
+        assert!(!blk.is_ebb());
+        assert_eq!(blk.absolute_slot(BYRON_SLOTS_PER_EPOCH), 5 * BYRON_SLOTS_PER_EPOCH + 100);
+        assert_eq!(blk.prev_hash(), &[0xCD; 32]);
+        assert_eq!(blk.issuer_vkey(), [0xEF; 32]);
+        assert!(blk.transactions().is_empty());
+    }
+
+    #[test]
+    fn ebb_header_hash_deterministic() {
+        let blk = ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0x00; 32],
+            raw_header: vec![0x83, 0x01, 0x02, 0x03],
+        };
+        assert_eq!(blk.header_hash(), blk.header_hash());
+    }
+
+    #[test]
+    fn main_header_hash_deterministic() {
+        let blk = ByronBlock::MainBlock {
+            epoch: 1,
+            slot_in_epoch: 10,
+            chain_difficulty: 5,
+            prev_hash: [0x00; 32],
+            issuer_vkey: [0x00; 32],
+            raw_header: vec![0x84, 0x01, 0x02, 0x03, 0x04],
+            transactions: vec![],
+        };
+        assert_eq!(blk.header_hash(), blk.header_hash());
+    }
+
+    #[test]
+    fn ebb_vs_main_header_hash_prefix_differ() {
+        let raw = vec![0x83, 0x01, 0x02, 0x03];
+        let ebb = ByronBlock::EpochBoundary {
+            epoch: 0, chain_difficulty: 0,
+            prev_hash: [0x00; 32], raw_header: raw.clone(),
+        };
+        let main = ByronBlock::MainBlock {
+            epoch: 0, slot_in_epoch: 0, chain_difficulty: 0,
+            prev_hash: [0x00; 32], issuer_vkey: [0x00; 32],
+            raw_header: raw, transactions: vec![],
+        };
+        assert_ne!(ebb.header_hash(), main.header_hash());
+    }
+
+    #[test]
+    fn header_hash_is_32_bytes() {
+        let blk = ByronBlock::EpochBoundary {
+            epoch: 0, chain_difficulty: 0,
+            prev_hash: [0x00; 32], raw_header: vec![0x01],
+        };
+        assert_eq!(blk.header_hash().0.len(), 32);
     }
 }

@@ -14,7 +14,7 @@ use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo,
     ByronBlock, CborEncode, Era, HeaderHash, LedgerError, LedgerState, MultiEraSubmittedTx,
     Point, Encoder, PoolParams, Relay, RewardAccount, ShelleyTx, ShelleyTxBody, ShelleyTxIn,
-    ShelleyTxOut, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value,
+    ShelleyTxOut, ShelleyWitnessSet, SlotNo, StakeCredential, Tip, TxId, UnitInterval, Value,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_node::{
@@ -53,8 +53,8 @@ async fn spawn_responder(magic: u32) -> SocketAddr {
             let msg = ChainSyncMessage::from_cbor(&raw).expect("cs decode");
             assert_eq!(msg, ChainSyncMessage::MsgRequestNext);
             let reply = ChainSyncMessage::MsgRollForward {
-                header: b"hdr".to_vec(),
-                tip: b"tip".to_vec(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: vec![0x01],
             };
             cs.send(reply.to_cbor()).await.expect("cs send");
         }
@@ -120,10 +120,11 @@ async fn spawn_verified_batch_responder(
         let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
         assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
 
+        let tip_obj = Tip::Tip(tip, BlockNo(0));
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"byron-hdr".to_vec(),
-                tip: tip.to_cbor_bytes(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: tip_obj.to_cbor_bytes(),
             }
             .to_cbor(),
         )
@@ -186,10 +187,11 @@ async fn spawn_verified_batch_responder_from_point(
         let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
         assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
 
+        let tip_obj = Tip::Tip(tip.clone(), BlockNo(0));
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"byron-hdr".to_vec(),
-                tip: tip.to_cbor_bytes(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: tip_obj.to_cbor_bytes(),
             }
             .to_cbor(),
         )
@@ -723,6 +725,8 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         security_param: None,
         checkpoint_policy: LedgerCheckpointPolicy::default(),
         plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
     };
     let mut store = InMemoryVolatile::default();
 
@@ -799,6 +803,8 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
         plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -880,6 +886,8 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
         plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -972,9 +980,11 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
         plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
     };
 
-    let mut checkpoint_state = LedgerState::new(Era::Shelley);
+    let mut checkpoint_state = LedgerState::new(Era::Byron);
     checkpoint_state.tip = recovered_point;
     checkpoint_state
         .pool_state_mut()
@@ -1085,6 +1095,8 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
         plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);

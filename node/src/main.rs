@@ -17,14 +17,15 @@ use yggdrasil_node::{
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome,
     RuntimeGovernorConfig, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
-    SharedChainDb, SharedTxSubmissionConsumer, recover_ledger_state_chaindb,
+    SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer,
+    recover_ledger_state_chaindb,
     run_governor_loop,
-    resume_reconnecting_verified_sync_service_shared_chaindb,
+    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer,
     seed_peer_registry,
     run_inbound_accept_loop,
 };
-use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
-use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, PoolRelayAccessPoint};
+use yggdrasil_consensus::{ActiveSlotCoeff, EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
+use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     GovernorState, GovernorTargets,
@@ -231,6 +232,8 @@ fn main() -> Result<()> {
             let max_ledger_snapshots = max_ledger_snapshots
                 .unwrap_or(file_cfg.max_ledger_snapshots);
 
+            let active_slot_coeff = ActiveSlotCoeff::new(file_cfg.active_slot_coeff).ok();
+
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
                     batch_size,
@@ -242,6 +245,8 @@ fn main() -> Result<()> {
                         max_snapshots: max_ledger_snapshots,
                     },
                     plutus_cost_model: plutus_cost_model.clone(),
+                    verify_vrf: active_slot_coeff.is_some(),
+                    active_slot_coeff: active_slot_coeff.clone(),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -258,6 +263,8 @@ fn main() -> Result<()> {
                         max_snapshots: max_ledger_snapshots,
                     },
                     plutus_cost_model: plutus_cost_model.clone(),
+                    verify_vrf: active_slot_coeff.is_some(),
+                    active_slot_coeff,
                 }
             };
 
@@ -329,10 +336,7 @@ fn main() -> Result<()> {
                     target_known: file_cfg.governor_target_known,
                     target_established: file_cfg.governor_target_established,
                     target_active: file_cfg.governor_target_active,
-                    target_known_big_ledger: file_cfg.governor_target_known_big_ledger,
-                    target_established_big_ledger: file_cfg
-                        .governor_target_established_big_ledger,
-                    target_active_big_ledger: file_cfg.governor_target_active_big_ledger,
+                    ..Default::default()
                 },
             );
 
@@ -367,11 +371,45 @@ fn strict_base_ledger_state(
 ) -> Result<LedgerState> {
     let mut state = LedgerState::new(Era::Byron);
     state.set_expected_network_id(file_cfg.expected_network_id());
+    if let Some(bootstrap) = file_cfg
+        .load_shelley_genesis_bootstrap(config_base_dir)
+        .wrap_err("failed to load Shelley genesis bootstrap")?
+    {
+        state.configure_pending_shelley_genesis_utxo(bootstrap.initial_funds);
+        state.configure_pending_shelley_genesis_stake(
+            bootstrap
+                .staking
+                .into_iter()
+                .map(|(credential, pool)| (StakeCredential::AddrKeyHash(credential), pool))
+                .collect(),
+        );
+        state.configure_pending_shelley_genesis_delegs(
+            bootstrap
+                .gen_delegs
+                .into_iter()
+                .map(|(genesis_hash, parsed)| {
+                    (
+                        genesis_hash,
+                        GenesisDelegationState {
+                            delegate: parsed.delegate,
+                            vrf: parsed.vrf,
+                        },
+                    )
+                })
+                .collect(),
+        );
+    }
     if let Some(params) = file_cfg
         .load_genesis_protocol_params(config_base_dir)
         .wrap_err("failed to load genesis protocol parameters")?
     {
         state.set_protocol_params(params);
+    }
+    if let Some(enact) = file_cfg
+        .load_genesis_enact_state(config_base_dir)
+        .wrap_err("failed to load genesis enact state")?
+    {
+        *state.enact_state_mut() = enact;
     }
     Ok(state)
 }
@@ -912,6 +950,9 @@ async fn run_node(
         let _ = signal_shutdown_tx.send(true);
     });
 
+    // Shared mempool for governor TTL purge and inbound TxSubmission admission.
+    let shared_mempool = SharedMempool::default();
+
     let governor_task = {
         let mut governor_shutdown = shutdown_rx.clone();
         let governor_node_config = node_config.clone();
@@ -920,7 +961,7 @@ async fn run_node(
         let governor_tracer = tracer.clone();
         let governor_topology = topology_config.clone();
         let governor_base_ledger_state = base_ledger_state.clone();
-        let governor_metrics = Arc::clone(&metrics);
+        let governor_mempool = shared_mempool.clone();
         tokio::spawn(async move {
             let shutdown = async move {
                 if *governor_shutdown.borrow() {
@@ -941,8 +982,8 @@ async fn run_node(
                 governor_config,
                 governor_topology,
                 governor_base_ledger_state,
+                Some(governor_mempool),
                 governor_tracer,
-                Some(governor_metrics),
                 shutdown,
             ).await;
         })
@@ -968,7 +1009,10 @@ async fn run_node(
         let chain_provider: Arc<dyn ChainProvider> = shared_provider;
         let tx_submission_consumer = Arc::new(SharedTxSubmissionConsumer::new(
             Arc::clone(&chain_db),
-            SharedMempool::default(),
+            shared_mempool.clone(),
+        ));
+        let peer_sharing = Arc::new(SharedPeerSharingProvider::new(
+            Arc::clone(&peer_registry),
         ));
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
@@ -990,6 +1034,7 @@ async fn run_node(
                 Some(block_provider),
                 Some(chain_provider),
                 Some(tx_submission_consumer),
+                Some(peer_sharing),
                 shutdown,
             )
             .await
@@ -1015,12 +1060,15 @@ async fn run_node(
     .with_nonce_state(nonce_state)
     .with_use_ledger_peers(use_ledger_peers)
     .with_peer_snapshot_path(peer_snapshot_path)
-    .with_metrics(Some(&metrics));
+    .with_metrics(Some(&metrics))
+    .with_peer_registry(Some(Arc::clone(&peer_registry)))
+    .with_mempool(Some(shared_mempool.clone()));
 
     let mut sync_shutdown = shutdown_rx.clone();
-    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb(
+    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(
         &chain_db,
         request,
+        &tracer,
         async move {
             if *sync_shutdown.borrow() {
                 return;

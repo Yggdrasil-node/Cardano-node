@@ -10,6 +10,7 @@ use crate::eras::allegra::NativeScript;
 use crate::eras::alonzo::{ExUnits, Redeemer};
 use crate::error::LedgerError;
 use crate::plutus::PlutusData;
+use crate::protocol_params::ProtocolParameterUpdate;
 use crate::types::{DCert, RewardAccount};
 
 pub const SHELLEY_NAME: &str = "Shelley";
@@ -112,16 +113,11 @@ impl CborDecode for ShelleyTxOut {
 /// update = [ proposed_protocol_parameter_updates, epoch ]
 /// proposed_protocol_parameter_updates = { * genesis_hash => protocol_param_update }
 /// ```
-///
-/// The inner `protocol_param_update` values remain as opaque CBOR bytes
-/// since the map has 16+ optional keys with complex nested types.
-///
 /// Reference: `Cardano.Ledger.Shelley.PParams.Update`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShelleyUpdate {
-    /// Map from genesis delegate key hash to proposed parameter updates
-    /// (each value is opaque CBOR encoding of `protocol_param_update`).
-    pub proposed_protocol_parameter_updates: BTreeMap<[u8; 28], Vec<u8>>,
+    /// Map from genesis delegate key hash to typed parameter update deltas.
+    pub proposed_protocol_parameter_updates: BTreeMap<[u8; 28], ProtocolParameterUpdate>,
     /// Epoch in which the update takes effect.
     pub epoch: u64,
 }
@@ -132,7 +128,7 @@ impl CborEncode for ShelleyUpdate {
         enc.map(self.proposed_protocol_parameter_updates.len() as u64);
         for (hash, param_update) in &self.proposed_protocol_parameter_updates {
             enc.bytes(hash);
-            enc.raw(param_update);
+            param_update.encode_cbor(enc);
         }
         enc.unsigned(self.epoch);
     }
@@ -158,10 +154,7 @@ impl CborDecode for ShelleyUpdate {
                         expected: 28,
                         actual: raw_hash.len(),
                     })?;
-            let start = dec.position();
-            dec.skip()?;
-            let end = dec.position();
-            let param_update = dec.slice(start, end)?.to_vec();
+            let param_update = ProtocolParameterUpdate::decode_cbor(dec)?;
             proposed.insert(hash, param_update);
         }
         let epoch = dec.unsigned()?;
@@ -1692,5 +1685,376 @@ impl CborDecode for ShelleyBlock {
             transaction_witness_sets: witness_sets,
             transaction_metadata_set: transaction_metadata,
         })
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cbor::{CborDecode, CborEncode};
+
+    fn mk_txin(byte: u8, idx: u16) -> ShelleyTxIn {
+        ShelleyTxIn { transaction_id: [byte; 32], index: idx }
+    }
+
+    fn mk_txout(amt: u64) -> ShelleyTxOut {
+        ShelleyTxOut { address: vec![0x61; 29], amount: amt }
+    }
+
+    fn mk_witness_set_empty() -> ShelleyWitnessSet {
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        }
+    }
+
+    fn mk_shelley_body() -> ShelleyTxBody {
+        ShelleyTxBody {
+            inputs: vec![mk_txin(0x01, 0)],
+            outputs: vec![ShelleyTxOut { address: vec![0x61; 29], amount: 2_000_000 }],
+            fee: 200_000,
+            ttl: 100,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        }
+    }
+
+    // ── ShelleyTxIn ────────────────────────────────────────────────────
+
+    #[test]
+    fn txin_round_trip() {
+        let ti = mk_txin(0xab, 7);
+        let decoded = ShelleyTxIn::from_cbor_bytes(&ti.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, ti);
+    }
+
+    #[test]
+    fn txin_different_indices_differ() {
+        let a = mk_txin(0x01, 0);
+        let b = mk_txin(0x01, 1);
+        assert_ne!(a, b);
+    }
+
+    // ── ShelleyTxOut ───────────────────────────────────────────────────
+
+    #[test]
+    fn txout_round_trip() {
+        let to = ShelleyTxOut { address: vec![0x61; 29], amount: 5_000_000 };
+        let decoded = ShelleyTxOut::from_cbor_bytes(&to.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, to);
+    }
+
+    // ── ShelleyTxBody ──────────────────────────────────────────────────
+
+    #[test]
+    fn tx_body_minimal_round_trip() {
+        let body = mk_shelley_body();
+        let decoded = ShelleyTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_optional_fields_round_trip() {
+        let body = ShelleyTxBody {
+            inputs: vec![mk_txin(0x01, 0)],
+            outputs: vec![ShelleyTxOut { address: vec![0x61; 29], amount: 1_000_000 }],
+            fee: 100_000,
+            ttl: 50,
+            certificates: Some(vec![]),
+            withdrawals: Some(BTreeMap::new()),
+            update: None,
+            auxiliary_data_hash: Some([0xcc; 32]),
+        };
+        let decoded = ShelleyTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    // ── ShelleyVkeyWitness ─────────────────────────────────────────────
+
+    #[test]
+    fn vkey_witness_round_trip() {
+        let w = ShelleyVkeyWitness { vkey: [0x01; 32], signature: [0x02; 64] };
+        let decoded = ShelleyVkeyWitness::from_cbor_bytes(&w.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, w);
+    }
+
+    // ── BootstrapWitness ───────────────────────────────────────────────
+
+    #[test]
+    fn bootstrap_witness_round_trip() {
+        let bw = BootstrapWitness {
+            public_key: [0xaa; 32],
+            signature: [0xbb; 64],
+            chain_code: [0xcc; 32],
+            attributes: vec![0xa0], // empty CBOR map
+        };
+        let decoded = BootstrapWitness::from_cbor_bytes(&bw.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, bw);
+    }
+
+    // ── ShelleyWitnessSet ──────────────────────────────────────────────
+
+    #[test]
+    fn witness_set_empty_round_trip() {
+        let ws = mk_witness_set_empty();
+        let decoded = ShelleyWitnessSet::from_cbor_bytes(&ws.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, ws);
+    }
+
+    #[test]
+    fn witness_set_with_vkeys_round_trip() {
+        let mut ws = mk_witness_set_empty();
+        ws.vkey_witnesses.push(ShelleyVkeyWitness { vkey: [0x01; 32], signature: [0x02; 64] });
+        let decoded = ShelleyWitnessSet::from_cbor_bytes(&ws.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, ws);
+    }
+
+    #[test]
+    fn witness_set_with_bootstrap_round_trip() {
+        let mut ws = mk_witness_set_empty();
+        ws.bootstrap_witnesses.push(BootstrapWitness {
+            public_key: [0x01; 32],
+            signature: [0x02; 64],
+            chain_code: [0x03; 32],
+            attributes: vec![0xa0],
+        });
+        let decoded = ShelleyWitnessSet::from_cbor_bytes(&ws.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, ws);
+    }
+
+    #[test]
+    fn witness_set_with_native_scripts_round_trip() {
+        let mut ws = mk_witness_set_empty();
+        ws.native_scripts.push(NativeScript::ScriptPubkey([0xab; 28]));
+        let decoded = ShelleyWitnessSet::from_cbor_bytes(&ws.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, ws);
+    }
+
+    // ── ShelleyTx ──────────────────────────────────────────────────────
+
+    #[test]
+    fn shelley_tx_round_trip() {
+        let tx = ShelleyTx {
+            body: mk_shelley_body(),
+            witness_set: mk_witness_set_empty(),
+            auxiliary_data: None,
+        };
+        let decoded = ShelleyTx::from_cbor_bytes(&tx.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, tx);
+    }
+
+    #[test]
+    fn shelley_tx_with_aux_data_round_trip() {
+        let tx = ShelleyTx {
+            body: mk_shelley_body(),
+            witness_set: mk_witness_set_empty(),
+            auxiliary_data: Some(vec![0xa0]),
+        };
+        let decoded = ShelleyTx::from_cbor_bytes(&tx.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, tx);
+    }
+
+    // ── ShelleyUtxo ────────────────────────────────────────────────────
+
+    #[test]
+    fn shelley_utxo_insert_and_get() {
+        let mut utxo = ShelleyUtxo { entries: HashMap::new() };
+        let ti = mk_txin(0x01, 0);
+        let to = ShelleyTxOut { address: vec![0x61; 29], amount: 1_000_000 };
+        utxo.entries.insert(ti.clone(), to.clone());
+        assert_eq!(utxo.entries.get(&ti), Some(&to));
+        assert_eq!(utxo.entries.len(), 1);
+    }
+
+    // ── ShelleyVrfCert ─────────────────────────────────────────────────
+
+    #[test]
+    fn vrf_cert_round_trip() {
+        let vc = ShelleyVrfCert { output: vec![0x01; 32], proof: [0x02; 80] };
+        let decoded = ShelleyVrfCert::from_cbor_bytes(&vc.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, vc);
+    }
+
+    // ── ShelleyOpCert ──────────────────────────────────────────────────
+
+    #[test]
+    fn opcert_fields_round_trip() {
+        let oc = ShelleyOpCert {
+            hot_vkey: [0xaa; 32],
+            sequence_number: 42,
+            kes_period: 100,
+            sigma: [0xbb; 64],
+        };
+        // OpCert is a CDDL group (encode_fields/decode_fields), so wrap in array.
+        let mut enc = Encoder::new();
+        enc.array(4);
+        oc.encode_fields(&mut enc);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let _len = dec.array().unwrap();
+        let decoded = ShelleyOpCert::decode_fields(&mut dec).unwrap();
+        assert_eq!(decoded, oc);
+    }
+
+    // ── ShelleyHeaderBody ──────────────────────────────────────────────
+
+    fn mk_vrf_cert() -> ShelleyVrfCert {
+        ShelleyVrfCert { output: vec![0x00; 32], proof: [0x00; 80] }
+    }
+
+    fn mk_opcert() -> ShelleyOpCert {
+        ShelleyOpCert {
+            hot_vkey: [0x00; 32],
+            sequence_number: 0,
+            kes_period: 0,
+            sigma: [0x00; 64],
+        }
+    }
+
+    fn mk_header_body() -> ShelleyHeaderBody {
+        ShelleyHeaderBody {
+            block_number: 1,
+            slot: 10,
+            prev_hash: Some([0x01; 32]),
+            issuer_vkey: [0x02; 32],
+            vrf_vkey: [0x03; 32],
+            nonce_vrf: mk_vrf_cert(),
+            leader_vrf: mk_vrf_cert(),
+            block_body_size: 256,
+            block_body_hash: [0x04; 32],
+            operational_cert: mk_opcert(),
+            protocol_version: (8, 0),
+        }
+    }
+
+    #[test]
+    fn header_body_round_trip() {
+        let hb = mk_header_body();
+        let decoded = ShelleyHeaderBody::from_cbor_bytes(&hb.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, hb);
+    }
+
+    #[test]
+    fn header_body_genesis_prev_hash_none() {
+        let mut hb = mk_header_body();
+        hb.prev_hash = None;
+        let decoded = ShelleyHeaderBody::from_cbor_bytes(&hb.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded.prev_hash, None);
+    }
+
+    // ── ShelleyHeader ──────────────────────────────────────────────────
+
+    #[test]
+    fn header_round_trip() {
+        let h = ShelleyHeader {
+            body: mk_header_body(),
+            signature: vec![0xfe; 448],
+        };
+        let decoded = ShelleyHeader::from_cbor_bytes(&h.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, h);
+    }
+
+    // ── PraosHeaderBody ────────────────────────────────────────────────
+
+    #[test]
+    fn praos_header_body_round_trip() {
+        let phb = PraosHeaderBody {
+            block_number: 100,
+            slot: 200,
+            prev_hash: Some([0xaa; 32]),
+            issuer_vkey: [0xbb; 32],
+            vrf_vkey: [0xcc; 32],
+            vrf_result: mk_vrf_cert(),
+            block_body_size: 512,
+            block_body_hash: [0xdd; 32],
+            operational_cert: mk_opcert(),
+            protocol_version: (9, 0),
+        };
+        let decoded = PraosHeaderBody::from_cbor_bytes(&phb.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, phb);
+    }
+
+    // ── PraosHeader ────────────────────────────────────────────────────
+
+    #[test]
+    fn praos_header_round_trip() {
+        let ph = PraosHeader {
+            body: PraosHeaderBody {
+                block_number: 5,
+                slot: 50,
+                prev_hash: None,
+                issuer_vkey: [0x01; 32],
+                vrf_vkey: [0x02; 32],
+                vrf_result: mk_vrf_cert(),
+                block_body_size: 128,
+                block_body_hash: [0x03; 32],
+                operational_cert: mk_opcert(),
+                protocol_version: (10, 0),
+            },
+            signature: vec![0xab; 448],
+        };
+        let decoded = PraosHeader::from_cbor_bytes(&ph.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, ph);
+    }
+
+    // ── compute_block_body_hash ────────────────────────────────────────
+
+    /// Build a minimal CBOR block: [header, tx_bodies, witness_sets, metadata]
+    fn mk_block_bytes(body_byte: u8) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        enc.array(4);
+        enc.bytes(&[0x00]); // fake header
+        enc.bytes(&[body_byte]); // tx_bodies placeholder
+        enc.bytes(&[0x00]); // witness_sets placeholder
+        enc.map(0); // empty metadata map
+        enc.into_bytes()
+    }
+
+    #[test]
+    fn block_body_hash_deterministic() {
+        let blk = mk_block_bytes(0xAA);
+        let h1 = compute_block_body_hash(&blk).unwrap();
+        let h2 = compute_block_body_hash(&blk).unwrap();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn block_body_hash_different_input_differs() {
+        let h1 = compute_block_body_hash(&mk_block_bytes(0x01)).unwrap();
+        let h2 = compute_block_body_hash(&mk_block_bytes(0x02)).unwrap();
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn block_body_hash_is_32_bytes() {
+        let h = compute_block_body_hash(&mk_block_bytes(0x00)).unwrap();
+        assert_eq!(h.len(), 32);
+    }
+
+    // ── ProtocolParameterUpdate in ShelleyUpdate ───────────────────────
+
+    #[test]
+    fn shelley_update_round_trip() {
+        let update = ShelleyUpdate {
+            proposed_protocol_parameter_updates: {
+                let mut map = BTreeMap::new();
+                map.insert([0x01; 28], ProtocolParameterUpdate::default());
+                map
+            },
+            epoch: 300,
+        };
+        let decoded = ShelleyUpdate::from_cbor_bytes(&update.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, update);
     }
 }

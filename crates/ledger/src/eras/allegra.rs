@@ -415,3 +415,198 @@ impl CborDecode for NativeScript {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_txin(idx: u16) -> ShelleyTxIn {
+        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+    }
+
+    fn mk_txout() -> ShelleyTxOut {
+        ShelleyTxOut { address: vec![0x61; 29], amount: 2_000_000 }
+    }
+
+    // ── NativeScript round-trips ────────────────────────────────────────
+
+    #[test]
+    fn script_pubkey_round_trip() {
+        let s = NativeScript::ScriptPubkey([0x01; 28]);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_all_round_trip() {
+        let s = NativeScript::ScriptAll(vec![
+            NativeScript::ScriptPubkey([0x02; 28]),
+            NativeScript::ScriptPubkey([0x03; 28]),
+        ]);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_any_round_trip() {
+        let s = NativeScript::ScriptAny(vec![
+            NativeScript::InvalidBefore(100),
+            NativeScript::InvalidHereafter(200),
+        ]);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_n_of_k_round_trip() {
+        let s = NativeScript::ScriptNOfK(2, vec![
+            NativeScript::ScriptPubkey([0x04; 28]),
+            NativeScript::ScriptPubkey([0x05; 28]),
+            NativeScript::ScriptPubkey([0x06; 28]),
+        ]);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn invalid_before_round_trip() {
+        let s = NativeScript::InvalidBefore(42);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn invalid_hereafter_round_trip() {
+        let s = NativeScript::InvalidHereafter(999);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_all_empty_round_trip() {
+        let s = NativeScript::ScriptAll(vec![]);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn nested_scripts_round_trip() {
+        let s = NativeScript::ScriptAll(vec![
+            NativeScript::ScriptAny(vec![
+                NativeScript::ScriptPubkey([0x07; 28]),
+                NativeScript::InvalidBefore(10),
+            ]),
+            NativeScript::ScriptNOfK(1, vec![
+                NativeScript::InvalidHereafter(50),
+            ]),
+        ]);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_n_of_k_zero_threshold() {
+        let s = NativeScript::ScriptNOfK(0, vec![
+            NativeScript::ScriptPubkey([0x08; 28]),
+        ]);
+        let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn different_scripts_encode_differently() {
+        let a = NativeScript::InvalidBefore(100);
+        let b = NativeScript::InvalidHereafter(100);
+        assert_ne!(a.to_cbor_bytes(), b.to_cbor_bytes());
+    }
+
+    // ── AllegraTxBody round-trips ───────────────────────────────────────
+
+    #[test]
+    fn tx_body_minimal_round_trip() {
+        let body = AllegraTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![mk_txout()],
+            fee: 200_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+        };
+        let decoded = AllegraTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_ttl_round_trip() {
+        let body = AllegraTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![mk_txout()],
+            fee: 150_000,
+            ttl: Some(500),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+        };
+        let decoded = AllegraTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_validity_interval_start_round_trip() {
+        let body = AllegraTxBody {
+            inputs: vec![mk_txin(1)],
+            outputs: vec![mk_txout()],
+            fee: 180_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: Some(100),
+        };
+        let decoded = AllegraTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_ttl_and_validity_start_round_trip() {
+        let body = AllegraTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![mk_txout()],
+            fee: 200_000,
+            ttl: Some(1000),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: Some([0xDD; 32]),
+            validity_interval_start: Some(50),
+        };
+        let decoded = AllegraTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_optional_ttl_absent_vs_present_differ() {
+        let no_ttl = AllegraTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![mk_txout()],
+            fee: 200_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+        };
+        let with_ttl = AllegraTxBody {
+            ttl: Some(100),
+            ..no_ttl.clone()
+        };
+        assert_ne!(no_ttl.to_cbor_bytes(), with_ttl.to_cbor_bytes());
+    }
+}

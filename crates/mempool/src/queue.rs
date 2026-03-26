@@ -1,6 +1,10 @@
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use yggdrasil_ledger::{Era, LedgerError, MultiEraSubmittedTx, SlotNo, TxId};
+use yggdrasil_ledger::{
+    Era, LedgerError, MultiEraSubmittedTx, ProtocolParameters, ShelleyTxIn,
+    SlotNo, TxId, validate_fee, validate_tx_size,
+};
 
 /// Monotonic transaction index used by TxSubmission mempool snapshots.
 pub type MempoolIdx = i64;
@@ -31,6 +35,11 @@ pub struct MempoolEntry {
     /// Time-to-live slot — the transaction is invalid after this slot.
     /// Matches the Shelley `ttl` field semantics: valid while `current_slot <= ttl`.
     pub ttl: SlotNo,
+    /// UTxO inputs consumed by this transaction, used for conflict detection.
+    ///
+    /// When two transactions in the mempool share any input, one must be
+    /// rejected — they are attempting to double-spend the same UTxO output.
+    pub inputs: Vec<ShelleyTxIn>,
 }
 
 /// Error type for converting mempool entries into typed submitted transactions.
@@ -71,6 +80,7 @@ impl MempoolEntry {
         let body = tx.body_cbor();
         let raw_tx = tx.raw_cbor();
         let size_bytes = raw_tx.len();
+        let inputs = tx.inputs();
         Self {
             era,
             tx_id,
@@ -79,6 +89,7 @@ impl MempoolEntry {
             raw_tx,
             size_bytes,
             ttl,
+            inputs,
         }
     }
 
@@ -128,6 +139,38 @@ pub enum MempoolError {
         /// The current slot at admission time.
         current_slot: SlotNo,
     },
+
+    /// The transaction fee is lower than the configured minimum fee.
+    #[error("fee too small for configured protocol parameters: minimum {minimum}, declared {declared}")]
+    FeeTooSmall {
+        /// Minimum required fee for this transaction size.
+        minimum: u64,
+        /// Fee declared by the submitted transaction.
+        declared: u64,
+    },
+
+    /// The transaction body exceeds the configured maximum transaction size.
+    #[error("transaction too large for configured protocol parameters: {actual} > {max}")]
+    TxTooLarge {
+        /// Actual transaction body size in bytes.
+        actual: usize,
+        /// Maximum allowed transaction body size in bytes.
+        max: usize,
+    },
+
+    /// Unexpected protocol-parameter validation failure.
+    #[error("protocol-parameter validation failed: {0}")]
+    ProtocolParamValidation(String),
+
+    /// The transaction conflicts with an existing mempool transaction because
+    /// both spend the same UTxO input (double-spend attempt).
+    ///
+    /// The contained `TxId` identifies the already-admitted transaction that
+    /// claims the conflicting input.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — conflict check.
+    #[error("conflicting inputs: existing transaction {0:?} spends the same UTxO")]
+    ConflictingInputs(TxId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -235,6 +278,12 @@ pub struct Mempool {
     current_bytes: usize,
     /// Next monotonic index assigned to an inserted transaction.
     next_idx: MempoolIdx,
+    /// Map from consumed UTxO input to the TxId of the mempool transaction
+    /// that claims it.  Used for O(inputs) double-spend conflict detection
+    /// at admission time.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — conflict check.
+    claimed_inputs: HashMap<ShelleyTxIn, TxId>,
 }
 
 impl Mempool {
@@ -247,6 +296,7 @@ impl Mempool {
             max_bytes,
             current_bytes: 0,
             next_idx: 0,
+            claimed_inputs: HashMap::new(),
         }
     }
 
@@ -257,6 +307,13 @@ impl Mempool {
         if self.entries.iter().any(|e| e.entry.tx_id == entry.tx_id) {
             return Err(MempoolError::Duplicate(entry.tx_id));
         }
+        // Check for UTxO double-spend conflicts: reject if any input is already
+        // claimed by a transaction in the mempool.
+        for input in &entry.inputs {
+            if let Some(&existing_tx_id) = self.claimed_inputs.get(input) {
+                return Err(MempoolError::ConflictingInputs(existing_tx_id));
+            }
+        }
         if self.max_bytes > 0 && self.current_bytes + entry.size_bytes > self.max_bytes {
             return Err(MempoolError::CapacityExceeded {
                 current: self.current_bytes,
@@ -264,7 +321,12 @@ impl Mempool {
                 limit: self.max_bytes,
             });
         }
+        let tx_id = entry.tx_id;
         self.current_bytes += entry.size_bytes;
+        // Claim all inputs before pushing so the set is consistent.
+        for input in &entry.inputs {
+            self.claimed_inputs.insert(input.clone(), tx_id);
+        }
         self.entries.push(IndexedMempoolEntry {
             idx: self.next_idx,
             entry,
@@ -282,6 +344,9 @@ impl Mempool {
         } else {
             let entry = self.entries.remove(0);
             self.current_bytes -= entry.entry.size_bytes;
+            for input in &entry.entry.inputs {
+                self.claimed_inputs.remove(input);
+            }
             Some(entry.entry)
         }
     }
@@ -291,6 +356,9 @@ impl Mempool {
         if let Some(pos) = self.entries.iter().position(|e| &e.entry.tx_id == tx_id) {
             let entry = self.entries.remove(pos);
             self.current_bytes -= entry.entry.size_bytes;
+            for input in &entry.entry.inputs {
+                self.claimed_inputs.remove(input);
+            }
             true
         } else {
             false
@@ -339,16 +407,21 @@ impl Mempool {
     ///
     /// Returns the number of entries removed.
     pub fn remove_confirmed(&mut self, confirmed_tx_ids: &[TxId]) -> usize {
-        let before = self.entries.len();
-        self.entries.retain(|e| {
-            if confirmed_tx_ids.contains(&e.entry.tx_id) {
-                self.current_bytes -= e.entry.size_bytes;
-                false
+        let mut removed_count = 0;
+        let mut i = 0;
+        while i < self.entries.len() {
+            if confirmed_tx_ids.contains(&self.entries[i].entry.tx_id) {
+                let entry = self.entries.remove(i);
+                self.current_bytes -= entry.entry.size_bytes;
+                for input in &entry.entry.inputs {
+                    self.claimed_inputs.remove(input);
+                }
+                removed_count += 1;
             } else {
-                true
+                i += 1;
             }
-        });
-        before - self.entries.len()
+        }
+        removed_count
     }
 
     /// Insert an entry with TTL validation against the current slot.
@@ -362,12 +435,25 @@ impl Mempool {
         &mut self,
         entry: MempoolEntry,
         current_slot: SlotNo,
+        protocol_params: Option<&ProtocolParameters>,
     ) -> Result<(), MempoolError> {
         if current_slot > entry.ttl {
             return Err(MempoolError::TtlExpired {
                 ttl: entry.ttl,
                 current_slot,
             });
+        }
+        if let Some(params) = protocol_params {
+            validate_tx_size(params, entry.body.len()).map_err(|err| match err {
+                LedgerError::TxTooLarge { actual, max } => MempoolError::TxTooLarge { actual, max },
+                other => MempoolError::ProtocolParamValidation(other.to_string()),
+            })?;
+            validate_fee(params, entry.body.len(), None, entry.fee).map_err(|err| match err {
+                LedgerError::FeeTooSmall { minimum, declared } => {
+                    MempoolError::FeeTooSmall { minimum, declared }
+                }
+                other => MempoolError::ProtocolParamValidation(other.to_string()),
+            })?;
         }
         self.insert(entry)
     }
@@ -378,16 +464,21 @@ impl Mempool {
     ///
     /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — re-validation.
     pub fn purge_expired(&mut self, current_slot: SlotNo) -> usize {
-        let before = self.entries.len();
-        self.entries.retain(|e| {
-            if current_slot > e.entry.ttl {
-                self.current_bytes -= e.entry.size_bytes;
-                false
+        let mut removed_count = 0;
+        let mut i = 0;
+        while i < self.entries.len() {
+            if current_slot > self.entries[i].entry.ttl {
+                let entry = self.entries.remove(i);
+                self.current_bytes -= entry.entry.size_bytes;
+                for input in &entry.entry.inputs {
+                    self.claimed_inputs.remove(input);
+                }
+                removed_count += 1;
             } else {
-                true
+                i += 1;
             }
-        });
-        before - self.entries.len()
+        }
+        removed_count
     }
 }
 
@@ -424,11 +515,12 @@ impl SharedMempool {
         &self,
         entry: MempoolEntry,
         current_slot: SlotNo,
+        protocol_params: Option<&ProtocolParameters>,
     ) -> Result<(), MempoolError> {
         self.inner
             .write()
             .expect("shared mempool poisoned")
-            .insert_checked(entry, current_slot)
+            .insert_checked(entry, current_slot, protocol_params)
     }
 
     /// Remove and return the highest-fee entry, if any.
@@ -486,6 +578,11 @@ impl SharedMempool {
             .size_bytes()
     }
 
+    /// Maximum capacity of the mempool in bytes (0 = unlimited).
+    pub fn capacity(&self) -> usize {
+        self.inner.read().expect("shared mempool poisoned").max_bytes
+    }
+
     /// Create a pure owned snapshot of the current mempool contents.
     pub fn snapshot(&self) -> MempoolSnapshot {
         self.inner.read().expect("shared mempool poisoned").snapshot()
@@ -512,6 +609,7 @@ mod tests {
             raw_tx: vec![seed, seed.wrapping_add(1)],
             size_bytes: 2,
             ttl: SlotNo(100),
+            inputs: vec![],
         }
     }
 

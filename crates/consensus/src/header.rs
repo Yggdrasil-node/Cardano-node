@@ -166,3 +166,192 @@ pub fn verify_opcert_only(
     let current_kes_period = kes_period_of_slot(current_slot.0, slots_per_kes_period)?;
     check_kes_period(opcert, current_kes_period, max_kes_evolutions)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yggdrasil_crypto::ed25519::SigningKey;
+    use yggdrasil_crypto::sum_kes::SumKesVerificationKey;
+
+    fn mk_opcert(kes_period: u64) -> (OpCert, VerificationKey) {
+        let cold_sk = SigningKey::from_bytes([0x01; 32]);
+        let cold_vk = cold_sk.verification_key().unwrap();
+        let hot_vkey = SumKesVerificationKey::from_bytes([0xAA; 32]);
+        let mut oc = OpCert {
+            hot_vkey,
+            sequence_number: 0,
+            kes_period,
+            sigma: yggdrasil_crypto::ed25519::Signature::from_bytes([0; 64]),
+        };
+        let signable = oc.signable_bytes();
+        oc.sigma = cold_sk.sign(&signable).unwrap();
+        (oc, cold_vk)
+    }
+
+    fn mk_header_body(opcert: OpCert) -> HeaderBody {
+        // Derive the actual cold VK from the same seed used in mk_opcert
+        let cold_sk = SigningKey::from_bytes([0x01; 32]);
+        let cold_vk = cold_sk.verification_key().unwrap();
+        HeaderBody {
+            block_number: BlockNo(1),
+            slot: SlotNo(100),
+            prev_hash: Some(HeaderHash([0xBB; 32])),
+            issuer_vkey: cold_vk,
+            vrf_vkey: VrfVerificationKey([0xCC; 32]),
+            leader_vrf_output: vec![0xDD; 64],
+            leader_vrf_proof: [0xEE; 80],
+            nonce_vrf_output: None,
+            nonce_vrf_proof: None,
+            block_body_size: 1024,
+            block_body_hash: [0xFF; 32],
+            operational_cert: opcert,
+            protocol_version: (8, 0),
+        }
+    }
+
+    // ── HeaderBody::to_signable_bytes ────────────────────────────────
+
+    #[test]
+    fn signable_bytes_deterministic() {
+        let (oc, _) = mk_opcert(0);
+        let hb = mk_header_body(oc);
+        let b1 = hb.to_signable_bytes();
+        let b2 = hb.to_signable_bytes();
+        assert_eq!(b1, b2);
+    }
+
+    #[test]
+    fn signable_bytes_includes_block_number() {
+        let (oc, _) = mk_opcert(0);
+        let mut hb = mk_header_body(oc.clone());
+        let b1 = hb.to_signable_bytes();
+        hb.block_number = BlockNo(999);
+        let b2 = hb.to_signable_bytes();
+        assert_ne!(b1, b2);
+    }
+
+    #[test]
+    fn signable_bytes_includes_slot() {
+        let (oc, _) = mk_opcert(0);
+        let mut hb = mk_header_body(oc.clone());
+        let b1 = hb.to_signable_bytes();
+        hb.slot = SlotNo(9999);
+        let b2 = hb.to_signable_bytes();
+        assert_ne!(b1, b2);
+    }
+
+    #[test]
+    fn signable_bytes_prev_hash_none_vs_some() {
+        let (oc, _) = mk_opcert(0);
+        let mut hb = mk_header_body(oc);
+        hb.prev_hash = None;
+        let b_none = hb.to_signable_bytes();
+        hb.prev_hash = Some(HeaderHash([0x00; 32]));
+        let b_some = hb.to_signable_bytes();
+        assert_ne!(b_none, b_some);
+        // None encodes as 0x00 (1 byte), Some encodes as 0x01 + 32 bytes
+        assert!(b_none.len() < b_some.len());
+    }
+
+    #[test]
+    fn signable_bytes_includes_body_hash() {
+        let (oc, _) = mk_opcert(0);
+        let mut hb = mk_header_body(oc.clone());
+        let b1 = hb.to_signable_bytes();
+        hb.block_body_hash = [0x00; 32];
+        let b2 = hb.to_signable_bytes();
+        assert_ne!(b1, b2);
+    }
+
+    #[test]
+    fn signable_bytes_includes_protocol_version() {
+        let (oc, _) = mk_opcert(0);
+        let mut hb = mk_header_body(oc.clone());
+        let b1 = hb.to_signable_bytes();
+        hb.protocol_version = (9, 0);
+        let b2 = hb.to_signable_bytes();
+        assert_ne!(b1, b2);
+    }
+
+    #[test]
+    fn signable_bytes_includes_opcert_data() {
+        let (oc1, _) = mk_opcert(0);
+        let (oc2, _) = mk_opcert(10);
+        let hb1 = mk_header_body(oc1);
+        let hb2 = mk_header_body(oc2);
+        assert_ne!(hb1.to_signable_bytes(), hb2.to_signable_bytes());
+    }
+
+    #[test]
+    fn signable_bytes_includes_body_size() {
+        let (oc, _) = mk_opcert(0);
+        let mut hb = mk_header_body(oc);
+        let b1 = hb.to_signable_bytes();
+        hb.block_body_size = 9999;
+        let b2 = hb.to_signable_bytes();
+        assert_ne!(b1, b2);
+    }
+
+    // ── verify_opcert_only ───────────────────────────────────────────
+
+    #[test]
+    fn verify_opcert_only_valid() {
+        let (oc, cold_vk) = mk_opcert(0);
+        let result = verify_opcert_only(&oc, &cold_vk, SlotNo(100), 129_600, 62);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn verify_opcert_only_wrong_cold_key() {
+        let (oc, _) = mk_opcert(0);
+        let wrong_vk = VerificationKey::from_bytes([0xFF; 32]);
+        let result = verify_opcert_only(&oc, &wrong_vk, SlotNo(100), 129_600, 62);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn verify_opcert_only_expired_kes_period() {
+        let (oc, cold_vk) = mk_opcert(0);
+        // Slot far in the future — KES period will be past max evolutions
+        let far_slot = SlotNo(129_600 * 100);
+        let result = verify_opcert_only(&oc, &cold_vk, far_slot, 129_600, 62);
+        assert!(matches!(result, Err(ConsensusError::KesPeriodExpired { .. })));
+    }
+
+    #[test]
+    fn verify_opcert_only_zero_slots_per_kes() {
+        let (oc, cold_vk) = mk_opcert(0);
+        let result = verify_opcert_only(&oc, &cold_vk, SlotNo(100), 0, 62);
+        assert_eq!(result, Err(ConsensusError::InvalidSlotsPerKesPeriod));
+    }
+
+    // ── verify_header (structural validation) ────────────────────────
+
+    #[test]
+    fn verify_header_rejects_bad_opcert_signature() {
+        let (mut oc, _) = mk_opcert(0);
+        // Corrupt the signature
+        oc.sigma = yggdrasil_crypto::ed25519::Signature::from_bytes([0xFF; 64]);
+        let hb = mk_header_body(oc);
+        let header = Header {
+            body: hb,
+            kes_signature: SumKesSignature::from_bytes(6, &vec![0u8; 64 + 6 * 64]).unwrap(),
+        };
+        let result = verify_header(&header, 129_600, 62);
+        assert_eq!(result, Err(ConsensusError::InvalidOpCertSignature));
+    }
+
+    #[test]
+    fn verify_header_rejects_expired_kes() {
+        let (oc, _) = mk_opcert(0);
+        let mut hb = mk_header_body(oc);
+        // Place slot far in the future so KES period expires
+        hb.slot = SlotNo(129_600 * 100);
+        let header = Header {
+            body: hb,
+            kes_signature: SumKesSignature::from_bytes(6, &vec![0u8; 64 + 6 * 64]).unwrap(),
+        };
+        let result = verify_header(&header, 129_600, 62);
+        assert!(matches!(result, Err(ConsensusError::KesPeriodExpired { .. })));
+    }
+}

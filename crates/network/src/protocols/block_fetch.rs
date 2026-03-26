@@ -163,11 +163,11 @@ impl BlockFetchMessage {
     /// Encode this message to CBOR bytes.
     ///
     /// Wire format (matching upstream `block-fetch.cddl`):
-    /// - `[0, point, point]` — MsgRequestRange
+    /// - `[0, point, point]` — MsgRequestRange (points TAG-24 wrapped)
     /// - `[1]` — MsgClientDone
     /// - `[2]` — MsgStartBatch
     /// - `[3]` — MsgNoBlocks
-    /// - `[4, block]` — MsgBlock
+    /// - `[4, block]` — MsgBlock (block byte-wrapped)
     /// - `[5]` — MsgBatchDone
     pub fn to_cbor(&self) -> Vec<u8> {
         use yggdrasil_ledger::cbor::Encoder;
@@ -175,7 +175,7 @@ impl BlockFetchMessage {
         let mut enc = Encoder::new();
         match self {
             Self::MsgRequestRange(range) => {
-                enc.array(3).unsigned(0).bytes(&range.lower).bytes(&range.upper);
+                enc.array(3).unsigned(0).wrapped(&range.lower).wrapped(&range.upper);
             }
             Self::MsgClientDone => {
                 enc.array(1).unsigned(1);
@@ -187,7 +187,7 @@ impl BlockFetchMessage {
                 enc.array(1).unsigned(3);
             }
             Self::MsgBlock { block } => {
-                enc.array(2).unsigned(4).bytes(block);
+                enc.array(2).unsigned(4).wrapped(block);
             }
             Self::MsgBatchDone => {
                 enc.array(1).unsigned(5);
@@ -205,14 +205,14 @@ impl BlockFetchMessage {
         let tag = dec.unsigned()?;
         let msg = match (tag, arr_len) {
             (0, 3) => Self::MsgRequestRange(ChainRange {
-                lower: dec.bytes()?.to_vec(),
-                upper: dec.bytes()?.to_vec(),
+                lower: dec.wrapped()?.to_vec(),
+                upper: dec.wrapped()?.to_vec(),
             }),
             (1, 1) => Self::MsgClientDone,
             (2, 1) => Self::MsgStartBatch,
             (3, 1) => Self::MsgNoBlocks,
             (4, 2) => Self::MsgBlock {
-                block: dec.bytes()?.to_vec(),
+                block: dec.wrapped()?.to_vec(),
             },
             (5, 1) => Self::MsgBatchDone,
             _ => {

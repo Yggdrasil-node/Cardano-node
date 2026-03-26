@@ -109,6 +109,7 @@ fn byron_block_variant_accessors() {
         slot_in_epoch: 100,
         prev_hash: [0x66; 32],
         chain_difficulty: 1,
+        issuer_vkey: [0u8; 32],
         raw_header: vec![],
         transactions: vec![],
     };

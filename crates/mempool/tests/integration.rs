@@ -1,9 +1,12 @@
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Era, MultiEraSubmittedTx,
+    ProtocolParameters,
     ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
     ShelleyWitnessSet, SlotNo, TxId, Value,
 };
-use yggdrasil_mempool::{Mempool, MempoolEntry, MempoolError, MempoolRelayError};
+use yggdrasil_mempool::{
+    Mempool, MempoolEntry, MempoolError, MempoolRelayError, SharedMempool, MEMPOOL_ZERO_IDX,
+};
 
 fn make_entry(id_byte: u8, fee: u64, size: usize) -> MempoolEntry {
     MempoolEntry {
@@ -14,6 +17,7 @@ fn make_entry(id_byte: u8, fee: u64, size: usize) -> MempoolEntry {
         raw_tx: vec![0u8; size],
         size_bytes: size,
         ttl: SlotNo(u64::MAX), // effectively no expiry
+        inputs: vec![],
     }
 }
 
@@ -209,6 +213,7 @@ fn make_entry_with_ttl(id_byte: u8, fee: u64, size: usize, ttl: u64) -> MempoolE
         raw_tx: vec![0u8; size],
         size_bytes: size,
         ttl: SlotNo(ttl),
+        inputs: vec![],
     }
 }
 
@@ -261,7 +266,7 @@ fn insert_checked_accepts_valid_ttl() {
     let mut mempool = Mempool::default();
     let entry = make_entry_with_ttl(0x01, 5, 100, 1000);
     mempool
-        .insert_checked(entry, SlotNo(500))
+        .insert_checked(entry, SlotNo(500), None)
         .expect("valid TTL should be accepted");
     assert_eq!(mempool.len(), 1);
 }
@@ -271,7 +276,7 @@ fn insert_checked_accepts_at_exact_ttl() {
     let mut mempool = Mempool::default();
     let entry = make_entry_with_ttl(0x01, 5, 100, 500);
     mempool
-        .insert_checked(entry, SlotNo(500))
+        .insert_checked(entry, SlotNo(500), None)
         .expect("TTL == current_slot should be accepted");
     assert_eq!(mempool.len(), 1);
 }
@@ -281,7 +286,7 @@ fn insert_checked_rejects_expired_ttl() {
     let mut mempool = Mempool::default();
     let entry = make_entry_with_ttl(0x01, 5, 100, 499);
     let err = mempool
-        .insert_checked(entry, SlotNo(500))
+        .insert_checked(entry, SlotNo(500), None)
         .expect_err("expired TTL");
     assert!(
         matches!(
@@ -339,4 +344,398 @@ fn purge_expired_removes_nothing_when_all_valid() {
     let removed = mempool.purge_expired(SlotNo(500));
     assert_eq!(removed, 0);
     assert_eq!(mempool.len(), 2);
+}
+
+#[test]
+fn insert_checked_rejects_below_min_fee_with_protocol_params() {
+    let mut mempool = Mempool::default();
+    let params = ProtocolParameters::default();
+    let entry = make_entry_with_ttl(0x10, 1, 200, 1000);
+
+    let err = mempool
+        .insert_checked(entry, SlotNo(10), Some(&params))
+        .expect_err("fee should be too small");
+    assert!(matches!(err, MempoolError::FeeTooSmall { .. }));
+}
+
+#[test]
+fn insert_checked_rejects_oversized_tx_with_protocol_params() {
+    let mut mempool = Mempool::default();
+    let params = ProtocolParameters::default();
+    let entry = make_entry_with_ttl(0x11, 9_999_999, 20_000, 1000);
+
+    let err = mempool
+        .insert_checked(entry, SlotNo(10), Some(&params))
+        .expect_err("tx size should exceed max");
+    assert!(matches!(err, MempoolError::TxTooLarge { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// Conflict detection tests (double-spend prevention)
+// ---------------------------------------------------------------------------
+
+/// Build a `MempoolEntry` with a specific set of UTxO inputs.
+fn make_entry_with_inputs(
+    id_byte: u8,
+    fee: u64,
+    size: usize,
+    inputs: Vec<ShelleyTxIn>,
+) -> MempoolEntry {
+    MempoolEntry {
+        era: Era::Shelley,
+        tx_id: TxId([id_byte; 32]),
+        fee,
+        body: vec![0u8; size],
+        raw_tx: vec![0u8; size],
+        size_bytes: size,
+        ttl: SlotNo(u64::MAX),
+        inputs,
+    }
+}
+
+fn sample_input(tx_seed: u8, index: u16) -> ShelleyTxIn {
+    ShelleyTxIn {
+        transaction_id: [tx_seed; 32],
+        index,
+    }
+}
+
+#[test]
+fn conflict_detection_rejects_double_spend() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("first tx should be accepted");
+
+    let result = mempool.insert(entry2);
+    assert!(
+        matches!(result, Err(MempoolError::ConflictingInputs(_))),
+        "expected ConflictingInputs error, got {:?}",
+        result
+    );
+    assert_eq!(mempool.len(), 1, "mempool should still have only the first tx");
+}
+
+#[test]
+fn conflict_detection_allows_disjoint_inputs() {
+    let input_a = sample_input(0xAA, 0);
+    let input_b = sample_input(0xBB, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a]);
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input_b]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("first tx");
+    mempool.insert(entry2).expect("second tx with different input should be accepted");
+    assert_eq!(mempool.len(), 2);
+}
+
+#[test]
+fn conflict_detection_partial_overlap_rejected() {
+    let input_a = sample_input(0xAA, 0);
+    let input_b = sample_input(0xBB, 0);
+
+    // entry1 consumes [A, B]; entry2 consumes [B, C] — overlap on B.
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone(), input_b.clone()]);
+    let entry2 = make_entry_with_inputs(
+        0x02,
+        200,
+        50,
+        vec![input_b, sample_input(0xCC, 0)],
+    );
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("first tx");
+    let result = mempool.insert(entry2);
+    assert!(matches!(result, Err(MempoolError::ConflictingInputs(_))));
+}
+
+#[test]
+fn conflict_detection_claims_released_on_removal() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1.clone()).expect("insert entry1");
+
+    // Remove entry1 — its input claim should be released.
+    assert!(mempool.remove_by_id(&entry1.tx_id));
+
+    // Now entry2 (which spends the same input) should be admitted.
+    mempool.insert(entry2).expect("entry2 should be accepted after entry1 removed");
+    assert_eq!(mempool.len(), 1);
+}
+
+#[test]
+fn conflict_detection_claims_released_on_pop_best() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 50, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1).expect("insert entry1 (higher fee)");
+
+    let popped = mempool.pop_best().expect("pop highest fee entry");
+    assert_eq!(popped.fee, 100);
+
+    // After popping, the input claim should be gone; entry2 should be admitted.
+    mempool.insert(entry2).expect("entry2 admitted after pop");
+    assert_eq!(mempool.len(), 1);
+}
+
+#[test]
+fn conflict_detection_claims_released_on_confirmed() {
+    let input_a = sample_input(0xAA, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 50, 50, vec![input_a.clone()]);
+
+    let mut mempool = Mempool::with_capacity(1_000_000);
+    mempool.insert(entry1.clone()).expect("insert entry1");
+
+    let removed = mempool.remove_confirmed(&[entry1.tx_id]);
+    assert_eq!(removed, 1);
+
+    // Input claim released — entry2 should now be admitted.
+    mempool.insert(entry2).expect("entry2 admitted after confirmation");
+    assert_eq!(mempool.len(), 1);
+}
+
+// ===========================================================================
+// SharedMempool tests
+// ===========================================================================
+
+#[test]
+fn shared_mempool_new_wraps_existing() {
+    let mut inner = Mempool::with_capacity(5000);
+    inner.insert(make_entry(0x01, 10, 100)).expect("insert 1");
+    inner.insert(make_entry(0x02, 20, 200)).expect("insert 2");
+
+    let shared = SharedMempool::new(inner);
+    assert_eq!(shared.len(), 2);
+    assert!(!shared.is_empty());
+    assert_eq!(shared.size_bytes(), 300);
+    assert_eq!(shared.capacity(), 5000);
+}
+
+#[test]
+fn shared_mempool_insert_and_pop_best() {
+    let shared = SharedMempool::with_capacity(0);
+    shared
+        .insert(make_entry(0x01, 5, 100))
+        .expect("insert low fee");
+    shared
+        .insert(make_entry(0x02, 50, 100))
+        .expect("insert high fee");
+    assert_eq!(shared.len(), 2);
+
+    let best = shared
+        .pop_best()
+        .expect("should return highest-fee entry");
+    assert_eq!(best.tx_id, TxId([0x02; 32]));
+    assert_eq!(best.fee, 50);
+    assert_eq!(shared.len(), 1);
+}
+
+#[test]
+fn shared_mempool_remove_by_id() {
+    let shared = SharedMempool::with_capacity(0);
+    shared
+        .insert(make_entry(0x01, 10, 100))
+        .expect("insert");
+    assert!(shared.contains(&TxId([0x01; 32])));
+
+    assert!(shared.remove_by_id(&TxId([0x01; 32])));
+    assert!(!shared.contains(&TxId([0x01; 32])));
+    assert!(shared.is_empty());
+
+    // Removing non-existent id returns false.
+    assert!(!shared.remove_by_id(&TxId([0xFF; 32])));
+}
+
+#[test]
+fn shared_mempool_remove_confirmed() {
+    let shared = SharedMempool::with_capacity(0);
+    shared
+        .insert(make_entry(0x01, 10, 100))
+        .expect("insert 1");
+    shared
+        .insert(make_entry(0x02, 20, 200))
+        .expect("insert 2");
+    shared
+        .insert(make_entry(0x03, 30, 300))
+        .expect("insert 3");
+
+    let confirmed = [TxId([0x01; 32]), TxId([0x03; 32])];
+    let removed = shared.remove_confirmed(&confirmed);
+    assert_eq!(removed, 2);
+    assert_eq!(shared.len(), 1);
+    assert!(shared.contains(&TxId([0x02; 32])));
+}
+
+#[test]
+fn shared_mempool_contains() {
+    let shared = SharedMempool::with_capacity(0);
+    shared
+        .insert(make_entry(0x01, 10, 100))
+        .expect("insert");
+
+    assert!(shared.contains(&TxId([0x01; 32])));
+    assert!(!shared.contains(&TxId([0x99; 32])));
+}
+
+#[test]
+fn shared_mempool_purge_expired() {
+    let shared = SharedMempool::with_capacity(0);
+    shared
+        .insert(make_entry_with_ttl(0x01, 5, 100, 100))
+        .expect("insert ttl=100");
+    shared
+        .insert(make_entry_with_ttl(0x02, 3, 200, 500))
+        .expect("insert ttl=500");
+    shared
+        .insert(make_entry_with_ttl(0x03, 1, 50, 200))
+        .expect("insert ttl=200");
+
+    let removed = shared.purge_expired(SlotNo(300));
+    assert_eq!(removed, 2); // TTL 100 and 200 expired
+    assert_eq!(shared.len(), 1);
+    assert!(shared.contains(&TxId([0x02; 32])));
+    assert_eq!(shared.size_bytes(), 200);
+}
+
+#[test]
+fn shared_mempool_insert_checked_ttl_expired() {
+    let shared = SharedMempool::with_capacity(0);
+    let entry = make_entry_with_ttl(0x01, 10, 100, 499);
+
+    let err = shared
+        .insert_checked(entry, SlotNo(500), None)
+        .expect_err("expired TTL should be rejected");
+    assert!(
+        matches!(
+            err,
+            MempoolError::TtlExpired {
+                ttl: SlotNo(499),
+                current_slot: SlotNo(500)
+            }
+        ),
+        "expected TtlExpired, got {err:?}"
+    );
+    assert!(shared.is_empty());
+}
+
+#[test]
+fn shared_mempool_insert_checked_accepts_valid() {
+    let shared = SharedMempool::with_capacity(0);
+    let entry = make_entry_with_ttl(0x01, 10, 100, 1000);
+
+    shared
+        .insert_checked(entry, SlotNo(500), None)
+        .expect("valid TTL should be accepted");
+    assert_eq!(shared.len(), 1);
+    assert!(shared.contains(&TxId([0x01; 32])));
+}
+
+#[test]
+fn shared_mempool_insert_checked_double_spend_through_checked_path() {
+    let input = sample_input(0xDD, 0);
+
+    let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input.clone()]);
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input]);
+    // Give both entries a valid TTL.
+    let entry1 = MempoolEntry {
+        ttl: SlotNo(9999),
+        ..entry1
+    };
+    let entry2 = MempoolEntry {
+        ttl: SlotNo(9999),
+        ..entry2
+    };
+
+    let shared = SharedMempool::with_capacity(1_000_000);
+    shared
+        .insert_checked(entry1, SlotNo(100), None)
+        .expect("first tx via checked path");
+
+    let result = shared.insert_checked(entry2, SlotNo(100), None);
+    assert!(
+        matches!(result, Err(MempoolError::ConflictingInputs(_))),
+        "expected ConflictingInputs, got {result:?}"
+    );
+    assert_eq!(shared.len(), 1);
+}
+
+#[test]
+fn shared_mempool_purge_expired_releases_input_claims() {
+    let input = sample_input(0xEE, 0);
+
+    let entry1 = MempoolEntry {
+        ttl: SlotNo(100),
+        ..make_entry_with_inputs(0x01, 50, 80, vec![input.clone()])
+    };
+    let entry2 = MempoolEntry {
+        ttl: SlotNo(u64::MAX),
+        ..make_entry_with_inputs(0x02, 70, 80, vec![input])
+    };
+
+    let shared = SharedMempool::with_capacity(1_000_000);
+    shared.insert(entry1).expect("insert entry1");
+
+    // entry2 conflicts while entry1 is alive.
+    assert!(shared.insert(entry2.clone()).is_err());
+
+    // Purge entry1 (TTL 100 < current_slot 200).
+    let purged = shared.purge_expired(SlotNo(200));
+    assert_eq!(purged, 1);
+
+    // Input claim released — entry2 should now be admitted.
+    shared
+        .insert(entry2)
+        .expect("entry2 accepted after purge released claims");
+    assert_eq!(shared.len(), 1);
+}
+
+#[test]
+fn shared_mempool_snapshot_after_purge_is_empty() {
+    let shared = SharedMempool::with_capacity(0);
+    shared
+        .insert(make_entry_with_ttl(0x01, 5, 100, 50))
+        .expect("insert ttl=50");
+    shared
+        .insert(make_entry_with_ttl(0x02, 3, 200, 60))
+        .expect("insert ttl=60");
+
+    // Purge everything (current_slot > all TTLs).
+    let purged = shared.purge_expired(SlotNo(1000));
+    assert_eq!(purged, 2);
+    assert!(shared.is_empty());
+
+    // Snapshot should reflect the empty state.
+    let snap = shared.snapshot();
+    let entries = snap.mempool_txids_after(MEMPOOL_ZERO_IDX);
+    assert!(
+        entries.is_empty(),
+        "snapshot should be empty after full purge"
+    );
+}
+
+#[test]
+fn shared_mempool_capacity_returns_configured_max() {
+    let shared_unlimited = SharedMempool::with_capacity(0);
+    assert_eq!(shared_unlimited.capacity(), 0);
+
+    let shared_limited = SharedMempool::with_capacity(4096);
+    assert_eq!(shared_limited.capacity(), 4096);
+
+    // Wrap an inner mempool with specific capacity.
+    let inner = Mempool::with_capacity(8192);
+    let shared_wrapped = SharedMempool::new(inner);
+    assert_eq!(shared_wrapped.capacity(), 8192);
 }

@@ -435,4 +435,232 @@ mod tests {
 
         assert!(final_verify(&combined, &double));
     }
+
+    // -----------------------------------------------------------------------
+    // g2_hash_to_group — previously zero test coverage
+    // Reference: CIP-0381 bls12_381_G2_hashToGroup
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn g2_hash_to_group_deterministic() {
+        let a = g2_hash_to_group(b"test message", b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_")
+            .expect("valid hash-to-group");
+        let b = g2_hash_to_group(b"test message", b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_")
+            .expect("valid hash-to-group");
+        assert!(g2_equal(&a, &b), "same input must produce same G2 point");
+    }
+
+    #[test]
+    fn g2_hash_to_group_different_messages_differ() {
+        let a = g2_hash_to_group(b"message A", b"QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_")
+            .expect("valid");
+        let b = g2_hash_to_group(b"message B", b"QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_")
+            .expect("valid");
+        assert!(!g2_equal(&a, &b), "different messages should hash to different G2 points");
+    }
+
+    #[test]
+    fn g2_hash_to_group_rejects_empty_dst() {
+        assert!(g2_hash_to_group(b"msg", b"").is_err());
+    }
+
+    #[test]
+    fn g2_hash_to_group_empty_message() {
+        // Empty message is valid per hash-to-curve spec.
+        let result = g2_hash_to_group(b"", b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_");
+        assert!(result.is_ok(), "empty message should be accepted");
+        // Result must not be the identity element.
+        assert!(
+            !g2_equal(&result.expect("valid"), &g2_identity()),
+            "hash of empty message should not be identity"
+        );
+    }
+
+    #[test]
+    fn g2_hash_to_group_not_identity() {
+        // The hash-to-curve spec guarantees output is on the curve and
+        // in the prime-order subgroup; it must not be the identity.
+        let point = g2_hash_to_group(b"non-trivial", b"DST")
+            .expect("valid");
+        assert!(
+            !g2_equal(&point, &g2_identity()),
+            "hash-to-group output must not be identity"
+        );
+    }
+
+    #[test]
+    fn g2_hash_to_group_compress_round_trip() {
+        let point = g2_hash_to_group(b"round trip test", b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_")
+            .expect("valid");
+        let compressed = g2_compress(&point);
+        let decompressed = g2_uncompress(&compressed).expect("uncompress hashed point");
+        assert!(g2_equal(&point, &decompressed));
+    }
+
+    // -----------------------------------------------------------------------
+    // g2_scalar_mul — previously only indirect upstream vector coverage
+    // Reference: CIP-0381 bls12_381_G2_scalarMul
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn g2_scalar_mul_by_one() {
+        let g = g2_generator();
+        let result = g2_scalar_mul(&[1], false, &g);
+        assert!(g2_equal(&result, &g), "1 * G2 == G2");
+    }
+
+    #[test]
+    fn g2_scalar_mul_by_zero() {
+        let g = g2_generator();
+        let result = g2_scalar_mul(&[], false, &g);
+        assert!(
+            g2_equal(&result, &g2_identity()),
+            "0 * G2 == identity"
+        );
+    }
+
+    #[test]
+    fn g2_scalar_mul_negate() {
+        let g = g2_generator();
+        let neg_result = g2_scalar_mul(&[1], true, &g);
+        let expected = g2_neg(&g);
+        assert!(g2_equal(&neg_result, &expected), "(-1) * G2 == -G2");
+    }
+
+    #[test]
+    fn g2_scalar_mul_by_two_equals_add() {
+        let g = g2_generator();
+        let double_via_scalar = g2_scalar_mul(&[2], false, &g);
+        let double_via_add = g2_add(&g, &g);
+        assert!(
+            g2_equal(&double_via_scalar, &double_via_add),
+            "2 * G2 == G2 + G2"
+        );
+    }
+
+    #[test]
+    fn g2_scalar_mul_large_scalar() {
+        // 32-byte scalar (matching upstream test vector scalar length).
+        let g = g2_generator();
+        let scalar = [0xFF; 32];
+        let result = g2_scalar_mul(&scalar, false, &g);
+        // Result should not be identity (extremely unlikely for a non-zero scalar).
+        assert!(
+            !g2_equal(&result, &g2_identity()),
+            "large scalar * G2 should not be identity"
+        );
+        // Verify compress/uncompress round-trip of the result.
+        let compressed = g2_compress(&result);
+        let decompressed = g2_uncompress(&compressed).expect("valid point");
+        assert!(g2_equal(&result, &decompressed));
+    }
+
+    #[test]
+    fn g2_scalar_mul_64_byte_scalar() {
+        // 64-byte scalar exercises the ≤64 byte branch of bytes_to_scalar.
+        let g = g2_generator();
+        let scalar = [0x01; 64];
+        let result = g2_scalar_mul(&scalar, false, &g);
+        assert!(
+            !g2_equal(&result, &g2_identity()),
+            "64-byte scalar * G2 should not be identity"
+        );
+    }
+
+    #[test]
+    fn g2_scalar_mul_65_byte_scalar() {
+        // 65-byte scalar exercises the >64 byte iterative Horner branch.
+        let g = g2_generator();
+        let mut scalar = [0u8; 65];
+        scalar[0] = 1;
+        let result = g2_scalar_mul(&scalar, false, &g);
+        assert!(
+            !g2_equal(&result, &g2_identity()),
+            "65-byte scalar * G2 should not be identity"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // g1_scalar_mul — additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn g1_scalar_mul_by_two_equals_add() {
+        let g = g1_generator();
+        let double_via_scalar = g1_scalar_mul(&[2], false, &g);
+        let double_via_add = g1_add(&g, &g);
+        assert!(
+            g1_equal(&double_via_scalar, &double_via_add),
+            "2 * G1 == G1 + G1"
+        );
+    }
+
+    #[test]
+    fn g1_scalar_mul_large_scalar() {
+        let g = g1_generator();
+        let scalar = [0xFF; 32];
+        let result = g1_scalar_mul(&scalar, false, &g);
+        assert!(!g1_equal(&result, &g1_identity()));
+        let compressed = g1_compress(&result);
+        let decompressed = g1_uncompress(&compressed).expect("valid point");
+        assert!(g1_equal(&result, &decompressed));
+    }
+
+    #[test]
+    fn g1_scalar_mul_65_byte_scalar() {
+        // Exercises the >64 byte Horner reduction branch.
+        let g = g1_generator();
+        let mut scalar = [0u8; 65];
+        scalar[0] = 1;
+        let result = g1_scalar_mul(&scalar, false, &g);
+        assert!(!g1_equal(&result, &g1_identity()));
+    }
+
+    // -----------------------------------------------------------------------
+    // G2 uncompress edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn g2_uncompress_rejects_invalid_length() {
+        assert!(g2_uncompress(&[0u8; 10]).is_err());
+    }
+
+    #[test]
+    fn g2_neg_inverse() {
+        let g = g2_generator();
+        let neg_g = g2_neg(&g);
+        let sum = g2_add(&g, &neg_g);
+        assert!(g2_equal(&sum, &g2_identity()), "G2 + (-G2) == identity");
+    }
+
+    // -----------------------------------------------------------------------
+    // Pairing — additional bilinearity checks
+    // Reference: CIP-0381 pairing properties
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pairing_identity_g1_yields_trivial() {
+        // e(O, Q) should be trivial regardless of Q.
+        let id = g1_identity();
+        let q = g2_generator();
+        let result = miller_loop(&id, &q);
+        let trivial = miller_loop(&id, &q);
+        assert!(
+            final_verify(&result, &trivial),
+            "e(O, Q) == e(O, Q)"
+        );
+    }
+
+    #[test]
+    fn pairing_identity_g2_yields_trivial() {
+        // e(P, O) should be trivial regardless of P.
+        let p = g1_generator();
+        let id = g2_identity();
+        let result = miller_loop(&p, &id);
+        let trivial = miller_loop(&g1_identity(), &g2_generator());
+        assert!(
+            final_verify(&result, &trivial),
+            "e(P, O) == e(O, G2)"
+        );
+    }
 }

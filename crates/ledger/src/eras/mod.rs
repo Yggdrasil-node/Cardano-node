@@ -32,7 +32,11 @@ pub use shelley::{
 };
 
 /// Supported Cardano eras in canonical order from Byron through Conway.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+///
+/// The discriminant ordering (0 = Byron … 6 = Conway) is part of the public
+/// API and is relied upon by `era_ordinal()` comparisons and the hard-fork
+/// era-regression guard in `LedgerState::apply_block_validated`.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub enum Era {
     Byron,
     Shelley,
@@ -41,4 +45,42 @@ pub enum Era {
     Alonzo,
     Babbage,
     Conway,
+}
+
+impl Era {
+    /// Return the canonical numeric ordinal of this era (Byron = 0, …, Conway = 6).
+    ///
+    /// The ordinal is used for hard-fork transition checks: the era of an incoming
+    /// block must be **≥** the current ledger era.  Blocks from an older era are
+    /// rejected as era regressions (hard-fork combinator invariant).
+    ///
+    /// Reference: `Ouroboros.Consensus.HardFork.Combinator` — era numbering.
+    pub fn era_ordinal(self) -> u8 {
+        match self {
+            Self::Byron   => 0,
+            Self::Shelley => 1,
+            Self::Allegra => 2,
+            Self::Mary    => 3,
+            Self::Alonzo  => 4,
+            Self::Babbage => 5,
+            Self::Conway  => 6,
+        }
+    }
+
+    /// Returns `true` if `other` is strictly later in the era sequence than `self`.
+    ///
+    /// Used by the hard-fork guard to detect a legitimate era transition
+    /// (as opposed to normal same-era block sequencing).
+    pub fn is_hard_fork_to(self, other: Era) -> bool {
+        other.era_ordinal() > self.era_ordinal()
+    }
+
+    /// Returns `true` if `other` represents an era regression relative to `self`.
+    ///
+    /// An era regression occurs when the incoming block's era is earlier in the
+    /// sequence than the current ledger era, which violates the hard-fork combinator
+    /// invariant that the chain is append-only across era boundaries.
+    pub fn is_era_regression(self, other: Era) -> bool {
+        other.era_ordinal() < self.era_ordinal()
+    }
 }

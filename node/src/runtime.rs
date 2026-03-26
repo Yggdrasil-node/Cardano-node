@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
-    MultiEraSyncProgress, SyncError, VerifiedSyncServiceConfig,
-    apply_verified_progress_to_chaindb,
-    apply_nonce_evolution_to_progress, recover_ledger_state_chaindb,
+    MultiEraSyncProgress, MultiEraSyncStep, SyncError, VerifiedSyncServiceConfig,
+    VrfVerificationContext, apply_verified_progress_to_chaindb,
+    apply_nonce_evolution_to_progress, extract_tx_ids, recover_ledger_state_chaindb,
     sync_batch_apply_verified, sync_batch_verified, track_chain_state,
 };
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
@@ -28,8 +28,8 @@ use yggdrasil_network::{
     GovernorAction, GovernorState, GovernorTargets, LedgerPeerSnapshot,
     LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
     LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
-    PeerConnection, PeerError, PeerRegistry, PeerSource, PeerStatus,
-    PeerSnapshotFreshness, PeerAttemptState, PeerSharingClient, TxIdAndSize, TxServerRequest,
+    PeerConnection, PeerError, PeerRegistry, PeerSharingClient, PeerSource, PeerStatus,
+    PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
     RootPeerProviderState, TopologyConfig, TxSubmissionClient,
     TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
     peer_attempt_state, reconcile_ledger_peer_registry_with_policy,
@@ -76,6 +76,11 @@ struct ManagedWarmPeer {
     session: PeerSession,
     last_keepalive_at: Instant,
     next_cookie: u16,
+    /// When `true` the peer is considered hot (active data exchange candidate).
+    is_hot: bool,
+    /// Most recently observed chain tip from this peer, used for chain
+    /// selection among hot peers.
+    last_known_tip: Option<Point>,
 }
 
 impl ManagedWarmPeer {
@@ -84,6 +89,8 @@ impl ManagedWarmPeer {
             session,
             last_keepalive_at: now,
             next_cookie: 1,
+            is_hot: false,
+            last_known_tip: None,
         }
     }
 
@@ -105,15 +112,22 @@ impl ManagedWarmPeer {
     fn abort(self) {
         self.session.mux.abort();
     }
+
+    async fn share_peers(&mut self, amount: u16) -> Result<Option<Vec<SocketAddr>>, String> {
+        let Some(peer_sharing) = self.session.peer_sharing.as_mut() else {
+            return Ok(None);
+        };
+
+        peer_sharing
+            .share_request(amount)
+            .await
+            .map(|peers| Some(peers.into_iter().map(|peer| peer.addr).collect()))
+            .map_err(|err| err.to_string())
+    }
 }
 
 struct OutboundPeerManager {
     warm_peers: BTreeMap<SocketAddr, ManagedWarmPeer>,
-    /// Maximum peers to request per PeerSharing exchange.
-    ///
-    /// Matches upstream `requestPeersFromCount` default of 10.
-    /// Reference: `Ouroboros.Network.PeerSelection.Governor.ActivePeers`.
-    peer_share_request_count: u16,
 }
 
 struct RuntimeRootPeerSources {
@@ -127,12 +141,7 @@ impl OutboundPeerManager {
     fn new() -> Self {
         Self {
             warm_peers: BTreeMap::new(),
-            peer_share_request_count: 10,
         }
-    }
-
-    fn contains(&self, peer: &SocketAddr) -> bool {
-        self.warm_peers.contains_key(peer)
     }
 
     async fn promote_to_warm(
@@ -194,58 +203,120 @@ impl OutboundPeerManager {
         }
     }
 
-    /// Promote a warm peer to hot by issuing a PeerSharing request.
+    /// Mark a warm peer as hot (active data exchange candidate).
     ///
-    /// If the peer's connection carries a PeerSharing handle the governor asks
-    /// for up to `peer_share_request_count` addresses.  The returned addresses
-    /// are suitable for insertion into the peer registry as
-    /// [`PeerSource::PeerSourcePeerShare`].
+    /// Returns `true` when the peer was found and its status changed.
+    /// The underlying session remains alive so the peer continues to
+    /// receive KeepAlive heartbeats while hot.
+    fn promote_to_hot(&mut self, peer: SocketAddr) -> bool {
+        match self.warm_peers.get_mut(&peer) {
+            Some(managed) if !managed.is_hot => {
+                managed.is_hot = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Demote a hot peer back to warm.
     ///
-    /// This is a best-effort step: failures are logged but do not abort the
-    /// promotion.  Reference: `Ouroboros.Network.PeerSelection.Governor.ActivePeers`
-    /// — `requestPeersFromHotPeers`.
-    async fn promote_to_hot(
+    /// Returns `true` when the peer was found and its `is_hot` flag cleared.
+    fn demote_to_warm(&mut self, peer: SocketAddr) -> bool {
+        match self.warm_peers.get_mut(&peer) {
+            Some(managed) if managed.is_hot => {
+                managed.is_hot = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Query the chain tip of each hot peer via ChainSync `find_intersect`
+    /// and update the cached `last_known_tip`.
+    ///
+    /// Uses Origin as the sole candidate point so the server always returns
+    /// its current tip without advancing the cursor.  Peers that fail the
+    /// query are left with their previous tip value and tracked as failures.
+    ///
+    /// Reference: upstream `peerSelectionGovernor` refreshes candidate tips
+    /// periodically.
+    async fn refresh_hot_peer_tips(
         &mut self,
-        peer: SocketAddr,
+        peer_registry: &Arc<RwLock<PeerRegistry>>,
+        governor_state: &mut GovernorState,
         tracer: &NodeTracer,
-    ) -> Vec<SocketAddr> {
-        let Some(managed) = self.warm_peers.get_mut(&peer) else {
-            return Vec::new();
-        };
+    ) {
+        let hot_peers: Vec<SocketAddr> = self
+            .warm_peers
+            .iter()
+            .filter(|(_, m)| m.is_hot)
+            .map(|(addr, _)| *addr)
+            .collect();
 
-        let Some(ref mut peer_sharing) = managed.session.peer_sharing else {
-            return Vec::new();
-        };
-
-        match peer_sharing.share_request(self.peer_share_request_count).await {
-            Ok(shared) => {
-                let addrs: Vec<SocketAddr> = shared.into_iter().map(|p| p.addr).collect();
-                if !addrs.is_empty() {
+        for peer in hot_peers {
+            let Some(managed) = self.warm_peers.get_mut(&peer) else {
+                continue;
+            };
+            match managed
+                .session
+                .chain_sync
+                .find_intersect_points(vec![Point::Origin])
+                .await
+            {
+                Ok(resp) => {
+                    let tip = match &resp {
+                        yggdrasil_network::TypedIntersectResponse::Found { tip, .. } => tip.clone(),
+                        yggdrasil_network::TypedIntersectResponse::NotFound { tip } => tip.clone(),
+                    };
+                    if let Ok(mut registry) = peer_registry.write() {
+                        let _ = registry.set_hot_tip_slot(peer, tip.slot().map(|slot| slot.0));
+                    }
                     tracer.trace_runtime(
-                        "Net.PeerSelection.PeerShare",
-                        "Info",
-                        "peer share response received",
+                        "Net.Governor",
+                        "Debug",
+                        "hot peer tip refreshed",
                         trace_fields([
                             ("peer", json!(peer.to_string())),
-                            ("count", json!(addrs.len())),
+                            ("tip", json!(format!("{:?}", tip))),
+                        ]),
+                    );
+                    managed.last_known_tip = Some(tip);
+                }
+                Err(err) => {
+                    governor_state.record_failure(peer);
+                    if let Ok(mut registry) = peer_registry.write() {
+                        let _ = registry.set_hot_tip_slot(peer, None);
+                    }
+                    tracer.trace_runtime(
+                        "Net.Governor",
+                        "Warning",
+                        "hot peer tip query failed",
+                        trace_fields([
+                            ("peer", json!(peer.to_string())),
+                            ("error", json!(err.to_string())),
                         ]),
                     );
                 }
-                addrs
-            }
-            Err(err) => {
-                tracer.trace_runtime(
-                    "Net.PeerSelection.PeerShare",
-                    "Warning",
-                    "peer share request failed",
-                    trace_fields([
-                        ("peer", json!(peer.to_string())),
-                        ("error", json!(err.to_string())),
-                    ]),
-                );
-                Vec::new()
             }
         }
+    }
+
+    /// Select the best hot peer to sync from based on its last known tip.
+    ///
+    /// Returns the address of the hot peer with the highest block number
+    /// at its reported tip (most advanced chain), or `None` if no hot
+    /// peers have a known tip.
+    ///
+    /// Reference: upstream chain selection picks the peer whose candidate
+    /// chain header is best according to `selectView`.
+    fn best_hot_peer(&self) -> Option<SocketAddr> {
+        self.warm_peers
+            .iter()
+            .filter(|(_, m)| m.is_hot && m.last_known_tip.is_some())
+            .max_by_key(|(_, m)| {
+                m.last_known_tip.as_ref().and_then(|tip| tip.slot())
+            })
+            .map(|(addr, _)| *addr)
     }
 
     async fn drive_keepalives(
@@ -295,6 +366,68 @@ impl OutboundPeerManager {
             );
         }
     }
+
+    async fn refresh_peer_share_sources(
+        &mut self,
+        request_amount: u16,
+        peer_registry: &Arc<RwLock<PeerRegistry>>,
+        governor_state: &mut GovernorState,
+        tracer: &NodeTracer,
+    ) {
+        let peers = self.warm_peers.keys().copied().collect::<Vec<_>>();
+        let mut discovered = Vec::new();
+        let mut attempted = false;
+
+        for peer in peers {
+            let Some(session) = self.warm_peers.get_mut(&peer) else {
+                continue;
+            };
+
+            match session.share_peers(request_amount).await {
+                Ok(Some(shared_peers)) => {
+                    attempted = true;
+                    governor_state.record_success(peer);
+                    extend_unique_peers(&mut discovered, shared_peers);
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    attempted = true;
+                    governor_state.record_failure(peer);
+                    tracer.trace_runtime(
+                        "Net.PeerSelection",
+                        "Warning",
+                        "peer sharing request failed",
+                        trace_fields([
+                            ("peer", json!(peer.to_string())),
+                            ("error", json!(err)),
+                        ]),
+                    );
+                }
+            }
+        }
+
+        if !attempted {
+            return;
+        }
+
+        let changed = {
+            let mut registry = peer_registry.write().expect("peer registry lock poisoned");
+            registry.sync_peer_share_peers(discovered.clone())
+        };
+
+        if changed {
+            tracer.trace_runtime(
+                "Net.PeerSelection",
+                "Info",
+                "peer sharing registry refreshed",
+                trace_fields([("peerCount", json!(discovered.len()))]),
+            );
+        }
+    }
+}
+
+fn peer_share_request_amount(targets: &GovernorTargets) -> u16 {
+    targets.target_known.clamp(1, u16::MAX as usize) as u16
 }
 
 impl RuntimeRootPeerSources {
@@ -424,6 +557,104 @@ fn point_slot(point: &Point) -> Option<u64> {
         Point::Origin => None,
         Point::BlockPoint(slot, _) => Some(slot.0),
     }
+}
+
+fn preferred_hot_peer_from_registry(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+) -> Option<SocketAddr> {
+    let registry_lock = peer_registry?;
+    let registry = registry_lock.read().ok()?;
+    registry.preferred_hot_peer()
+}
+
+fn preferred_hot_peer_handoff_target(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    current_peer: SocketAddr,
+) -> Option<SocketAddr> {
+    let registry_lock = peer_registry?;
+    let registry = registry_lock.read().ok()?;
+    let preferred = registry.preferred_hot_peer()?;
+    if preferred == current_peer {
+        return None;
+    }
+
+    let preferred_tip = registry.hot_tip_slot(preferred);
+    let current_tip = registry.hot_tip_slot(current_peer);
+    match (preferred_tip, current_tip) {
+        (Some(preferred_slot), Some(current_slot)) if preferred_slot > current_slot => {
+            Some(preferred)
+        }
+        (Some(_), None) => Some(preferred),
+        _ => None,
+    }
+}
+
+fn reconnect_preferred_peer_with_source(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    previous_preferred_peer: Option<SocketAddr>,
+) -> Option<(SocketAddr, &'static str)> {
+    preferred_hot_peer_from_registry(peer_registry)
+        .map(|peer| (peer, "hot"))
+        .or(previous_preferred_peer.map(|peer| (peer, "previous")))
+}
+
+fn ordered_reconnect_fallback_peers(
+    primary_peer: SocketAddr,
+    refreshed_fallback_peers: &[SocketAddr],
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+) -> Vec<SocketAddr> {
+    let mut ordered = Vec::new();
+
+    if let Some(registry_lock) = peer_registry {
+        if let Ok(registry) = registry_lock.read() {
+            for peer in registry.hot_peers_by_reconnect_priority() {
+                if peer != primary_peer
+                    && refreshed_fallback_peers.contains(&peer)
+                    && !ordered.contains(&peer)
+                {
+                    ordered.push(peer);
+                }
+            }
+        }
+    }
+
+    for peer in refreshed_fallback_peers {
+        if *peer != primary_peer && !ordered.contains(peer) {
+            ordered.push(*peer);
+        }
+    }
+
+    ordered
+}
+
+fn prepare_reconnect_attempt_state(
+    primary_peer: SocketAddr,
+    refreshed_fallback_peers: &[SocketAddr],
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    previous_preferred_peer: Option<SocketAddr>,
+) -> (PeerAttemptState, Option<(SocketAddr, &'static str)>) {
+    let reconnect_preference =
+        reconnect_preferred_peer_with_source(peer_registry, previous_preferred_peer);
+    let ordered_fallback_peers = ordered_reconnect_fallback_peers(
+        primary_peer,
+        refreshed_fallback_peers,
+        peer_registry,
+    );
+    let mut attempt_state = peer_attempt_state(primary_peer, &ordered_fallback_peers);
+    if let Some((peer_addr, _)) = reconnect_preference {
+        attempt_state.record_success(peer_addr);
+    }
+
+    (attempt_state, reconnect_preference)
+}
+
+#[cfg(test)]
+fn reconnect_preferred_peer(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    previous_preferred_peer: Option<SocketAddr>,
+) -> Option<SocketAddr> {
+    reconnect_preferred_peer_with_source(peer_registry, previous_preferred_peer)
+        .map(|(peer, _)| peer)
 }
 
 fn extend_unique_peers(target: &mut Vec<SocketAddr>, peers: impl IntoIterator<Item = SocketAddr>) {
@@ -588,149 +819,6 @@ fn governor_action_peer(action: &GovernorAction) -> SocketAddr {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PeerSelectionCounters {
-    target_known: usize,
-    target_established: usize,
-    target_active: usize,
-    target_known_big_ledger: usize,
-    target_established_big_ledger: usize,
-    target_active_big_ledger: usize,
-    known_peers: usize,
-    established_peers: usize,
-    active_peers: usize,
-    known_big_ledger_peers: usize,
-    established_big_ledger_peers: usize,
-    active_big_ledger_peers: usize,
-    known_local_root_peers: usize,
-    established_local_root_peers: usize,
-    active_local_root_peers: usize,
-}
-
-impl PeerSelectionCounters {
-    fn trace_fields(self) -> BTreeMap<String, Value> {
-        trace_fields([
-            ("targetKnownPeers", json!(self.target_known)),
-            ("targetEstablishedPeers", json!(self.target_established)),
-            ("targetActivePeers", json!(self.target_active)),
-            (
-                "targetKnownBigLedger",
-                json!(self.target_known_big_ledger),
-            ),
-            (
-                "targetEstablishedBigLedger",
-                json!(self.target_established_big_ledger),
-            ),
-            (
-                "targetActiveBigLedger",
-                json!(self.target_active_big_ledger),
-            ),
-            // Backward-compatible aliases; prefer *Peers keys above.
-            ("targetKnown", json!(self.target_known)),
-            ("targetEstablished", json!(self.target_established)),
-            ("targetActive", json!(self.target_active)),
-            ("knownPeers", json!(self.known_peers)),
-            ("establishedPeers", json!(self.established_peers)),
-            ("activePeers", json!(self.active_peers)),
-            ("knownBigLedgerPeers", json!(self.known_big_ledger_peers)),
-            (
-                "establishedBigLedgerPeers",
-                json!(self.established_big_ledger_peers),
-            ),
-            ("activeBigLedgerPeers", json!(self.active_big_ledger_peers)),
-            ("knownLocalRootPeers", json!(self.known_local_root_peers)),
-            (
-                "establishedLocalRootPeers",
-                json!(self.established_local_root_peers),
-            ),
-            ("activeLocalRootPeers", json!(self.active_local_root_peers)),
-            // Backward-compatible aliases; prefer established/active names above.
-            ("warmLocalRootPeers", json!(self.established_local_root_peers)),
-            ("hotLocalRootPeers", json!(self.active_local_root_peers)),
-        ])
-    }
-}
-
-fn peer_selection_counters(
-    registry: &PeerRegistry,
-    targets: &GovernorTargets,
-) -> PeerSelectionCounters {
-    let mut known_peers = 0usize;
-    let mut established_peers = 0usize;
-    let mut active_peers = 0usize;
-
-    let mut known_big_ledger_peers = 0usize;
-    let mut established_big_ledger_peers = 0usize;
-    let mut active_big_ledger_peers = 0usize;
-
-    let mut known_local_root_peers = 0usize;
-    let mut established_local_root_peers = 0usize;
-    let mut active_local_root_peers = 0usize;
-
-    for (_, entry) in registry.iter() {
-        let is_big_ledger = entry.sources.contains(&PeerSource::PeerSourceBigLedger);
-        let is_local_root = entry.sources.contains(&PeerSource::PeerSourceLocalRoot);
-
-        if is_big_ledger {
-            known_big_ledger_peers += 1;
-            match entry.status {
-                PeerStatus::PeerHot => {
-                    established_big_ledger_peers += 1;
-                    active_big_ledger_peers += 1;
-                }
-                PeerStatus::PeerWarm => {
-                    established_big_ledger_peers += 1;
-                }
-                PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
-            }
-        } else {
-            known_peers += 1;
-            match entry.status {
-                PeerStatus::PeerHot => {
-                    established_peers += 1;
-                    active_peers += 1;
-                }
-                PeerStatus::PeerWarm => {
-                    established_peers += 1;
-                }
-                PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
-            }
-        }
-
-        if is_local_root {
-            known_local_root_peers += 1;
-            match entry.status {
-                PeerStatus::PeerHot => {
-                    established_local_root_peers += 1;
-                    active_local_root_peers += 1;
-                }
-                PeerStatus::PeerWarm => {
-                    established_local_root_peers += 1;
-                }
-                PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
-            }
-        }
-    }
-
-    PeerSelectionCounters {
-        target_known: targets.target_known,
-        target_established: targets.target_established,
-        target_active: targets.target_active,
-        target_known_big_ledger: targets.target_known_big_ledger,
-        target_established_big_ledger: targets.target_established_big_ledger,
-        target_active_big_ledger: targets.target_active_big_ledger,
-        known_peers,
-        established_peers,
-        active_peers,
-        known_big_ledger_peers,
-        established_big_ledger_peers,
-        active_big_ledger_peers,
-        known_local_root_peers,
-        established_local_root_peers,
-        active_local_root_peers,
-    }
-}
-
 /// Run the peer governor loop until shutdown.
 ///
 /// The loop periodically refreshes root peers from DNS-backed providers,
@@ -745,8 +833,8 @@ pub async fn run_governor_loop<I, V, L, F>(
     config: RuntimeGovernorConfig,
     topology: TopologyConfig,
     base_ledger_state: LedgerState,
+    mempool: Option<SharedMempool>,
     tracer: NodeTracer,
-    metrics: Option<Arc<NodeMetrics>>,
     shutdown: F,
 ) where
     I: ImmutableStore,
@@ -777,25 +865,6 @@ pub async fn run_governor_loop<I, V, L, F>(
         "peer governor started",
         trace_fields([
             ("tickIntervalSecs", json!(config.tick_interval.as_secs())),
-            ("targetKnownPeers", json!(config.targets.target_known)),
-            (
-                "targetEstablishedPeers",
-                json!(config.targets.target_established),
-            ),
-            ("targetActivePeers", json!(config.targets.target_active)),
-            (
-                "targetKnownBigLedger",
-                json!(config.targets.target_known_big_ledger),
-            ),
-            (
-                "targetEstablishedBigLedger",
-                json!(config.targets.target_established_big_ledger),
-            ),
-            (
-                "targetActiveBigLedger",
-                json!(config.targets.target_active_big_ledger),
-            ),
-            // Backward-compatible aliases; prefer *Peers keys above.
             ("targetKnown", json!(config.targets.target_known)),
             (
                 "targetEstablished",
@@ -836,45 +905,53 @@ pub async fn run_governor_loop<I, V, L, F>(
                     .drive_keepalives(config.keepalive_interval, &mut governor_state, &tracer)
                     .await;
 
-                let local_root_groups = root_sources.local_root_targets();
-                let (actions, counters) = {
-                    let registry = peer_registry.read().expect("peer registry lock poisoned");
-                    let actions = governor_state.tick(
-                        &registry,
-                        &config.targets,
-                        &local_root_groups,
-                        Instant::now(),
-                    );
-                    let counters = peer_selection_counters(&registry, &config.targets);
-                    (actions, counters)
-                };
+                peer_manager
+                    .refresh_peer_share_sources(
+                        peer_share_request_amount(&config.targets),
+                        &peer_registry,
+                        &mut governor_state,
+                        &tracer,
+                    )
+                    .await;
 
-                if let Some(metrics) = metrics.as_deref() {
-                    metrics.set_peer_selection_counters(
-                        counters.target_known as u64,
-                        counters.target_established as u64,
-                        counters.target_active as u64,
-                        counters.target_known_big_ledger as u64,
-                        counters.target_established_big_ledger as u64,
-                        counters.target_active_big_ledger as u64,
-                        counters.known_peers as u64,
-                        counters.established_peers as u64,
-                        counters.active_peers as u64,
-                        counters.known_big_ledger_peers as u64,
-                        counters.established_big_ledger_peers as u64,
-                        counters.active_big_ledger_peers as u64,
-                        counters.known_local_root_peers as u64,
-                        counters.established_local_root_peers as u64,
-                        counters.active_local_root_peers as u64,
+                peer_manager
+                    .refresh_hot_peer_tips(&peer_registry, &mut governor_state, &tracer)
+                    .await;
+
+                if let Some(best_peer) = peer_manager.best_hot_peer() {
+                    tracer.trace_runtime(
+                        "Net.Governor",
+                        "Debug",
+                        "best hot peer selected",
+                        trace_fields([("peer", json!(best_peer.to_string()))]),
                     );
                 }
 
-                tracer.trace_runtime(
-                    "Net.PeerSelection.Counters",
-                    "Info",
-                    "peer selection counters",
-                    counters.trace_fields(),
-                );
+                // Purge expired mempool entries using the current chain tip slot.
+                if let Some(ref mempool) = mempool {
+                    let tip_slot = {
+                        let db = chain_db.read().expect("chain_db lock poisoned");
+                        db.volatile().tip().slot().unwrap_or(SlotNo(0))
+                    };
+                    let purged = mempool.purge_expired(tip_slot);
+                    if purged > 0 {
+                        tracer.trace_runtime(
+                            "Mempool",
+                            "Info",
+                            "expired transactions purged",
+                            trace_fields([
+                                ("purged", json!(purged)),
+                                ("tipSlot", json!(tip_slot.0)),
+                            ]),
+                        );
+                    }
+                }
+
+                let local_root_groups = root_sources.local_root_targets();
+                let actions = {
+                    let registry = peer_registry.read().expect("peer registry lock poisoned");
+                    governor_state.tick(&registry, &config.targets, &local_root_groups, Instant::now())
+                };
 
                 if actions.is_empty() {
                     continue;
@@ -897,29 +974,17 @@ pub async fn run_governor_loop<I, V, L, F>(
                             }
                         }
                         GovernorAction::PromoteToHot(peer) => {
-                            if peer_manager.contains(&peer) {
-                                // Issue a PeerSharing request to the newly hot
-                                // peer and register any discovered addresses so
-                                // the governor can later promote them to warm.
-                                // Reference: ouroboros-network
-                                // `requestPeersFromHotPeers`.
-                                let discovered =
-                                    peer_manager.promote_to_hot(peer, &tracer).await;
+                            if peer_manager.promote_to_hot(peer) {
                                 let mut registry = peer_registry
                                     .write()
                                     .expect("peer registry lock poisoned");
-                                for addr in discovered {
-                                    registry.insert_source(
-                                        addr,
-                                        PeerSource::PeerSourcePeerShare,
-                                    );
-                                }
                                 registry.set_status(peer, PeerStatus::PeerHot)
                             } else {
                                 false
                             }
                         }
                         GovernorAction::DemoteToWarm(peer) => {
+                            peer_manager.demote_to_warm(peer);
                             let mut registry = peer_registry
                                 .write()
                                 .expect("peer registry lock poisoned");
@@ -986,13 +1051,13 @@ fn add_tx_with<F>(
     mut insert_entry: F,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError>
 where
-    F: FnMut(MempoolEntry) -> Result<(), MempoolError>,
+    F: FnMut(MempoolEntry, Option<&yggdrasil_ledger::ProtocolParameters>) -> Result<(), MempoolError>,
 {
     let tx_id = tx.tx_id();
     let mut staged_ledger = ledger.clone();
     match staged_ledger.apply_submitted_tx(&tx, current_slot) {
         Ok(()) => {
-            insert_entry(admitted_entry(tx))?;
+            insert_entry(admitted_entry(tx), staged_ledger.protocol_params())?;
             *ledger = staged_ledger;
             Ok(MempoolAddTxResult::MempoolTxAdded(tx_id))
         }
@@ -1013,8 +1078,8 @@ pub fn add_tx_to_mempool(
     tx: MultiEraSubmittedTx,
     current_slot: SlotNo,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, |entry| {
-        mempool.insert_checked(entry, current_slot)
+    add_tx_with(ledger, tx, current_slot, |entry, protocol_params| {
+        mempool.insert_checked(entry, current_slot, protocol_params)
     })
 }
 
@@ -1029,8 +1094,8 @@ pub fn add_tx_to_shared_mempool(
     tx: MultiEraSubmittedTx,
     current_slot: SlotNo,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, |entry| {
-        mempool.insert_checked(entry, current_slot)
+    add_tx_with(ledger, tx, current_slot, |entry, protocol_params| {
+        mempool.insert_checked(entry, current_slot, protocol_params)
     })
 }
 
@@ -1340,11 +1405,7 @@ pub struct PeerSession {
     pub keep_alive: KeepAliveClient,
     /// TxSubmission client driver.
     pub tx_submission: TxSubmissionClient,
-    /// PeerSharing client driver — available when the remote peer supports it.
-    ///
-    /// Used by the governor when promoting a warm peer to hot: a share request
-    /// is issued to discover new peer candidates.  Reference:
-    /// `Ouroboros.Network.Protocol.PeerSharing`.
+    /// Optional PeerSharing client driver when negotiated with the peer.
     pub peer_sharing: Option<PeerSharingClient>,
     /// Mux handle — abort to tear down the connection.
     pub mux: yggdrasil_network::MuxHandle,
@@ -1466,6 +1527,13 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     pub peer_snapshot_path: Option<PathBuf>,
     /// Optional metrics tracker updated during sync.
     pub metrics: Option<&'a NodeMetrics>,
+    /// Optional shared peer registry for reading governor-managed hot peers
+    /// at reconnect time. When present the reconnect loop prefers hot peers
+    /// as sync candidates.
+    pub peer_registry: Option<Arc<RwLock<PeerRegistry>>>,
+    /// Optional shared mempool for evicting confirmed transactions during
+    /// sync roll-forward and re-admitting rolled-back transactions.
+    pub mempool: Option<SharedMempool>,
 }
 
 impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
@@ -1486,6 +1554,8 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
             use_ledger_peers: None,
             peer_snapshot_path: None,
             metrics: None,
+            peer_registry: None,
+            mempool: None,
         }
     }
 
@@ -1512,6 +1582,19 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
         self.metrics = metrics;
         self
     }
+
+    /// Attach a shared peer registry so the reconnect loop can prefer
+    /// governor-managed hot peers.
+    pub fn with_peer_registry(mut self, peer_registry: Option<Arc<RwLock<PeerRegistry>>>) -> Self {
+        self.peer_registry = peer_registry;
+        self
+    }
+
+    /// Attach a shared mempool for sync-driven eviction and re-admission.
+    pub fn with_mempool(mut self, mempool: Option<SharedMempool>) -> Self {
+        self.mempool = mempool;
+        self
+    }
 }
 
 type CheckpointTracking = LedgerCheckpointTracking;
@@ -1528,6 +1611,8 @@ struct ReconnectingVerifiedSyncContext<'a> {
     config: &'a VerifiedSyncServiceConfig,
     tracer: &'a NodeTracer,
     metrics: Option<&'a NodeMetrics>,
+    peer_registry: Option<Arc<RwLock<PeerRegistry>>>,
+    mempool: Option<SharedMempool>,
 }
 
 struct ReconnectingVerifiedSyncState {
@@ -1543,6 +1628,67 @@ struct ReconnectingRunState {
     stable_block_count: usize,
     reconnect_count: usize,
     last_connected_peer_addr: Option<SocketAddr>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RollbackReAdmissionStats {
+    re_admitted: usize,
+    duplicate: usize,
+    expired: usize,
+    conflicting: usize,
+    capacity_exceeded: usize,
+    protocol_rejected: usize,
+    missing_cache_entry: usize,
+}
+
+fn cache_confirmed_entries(
+    mempool: &SharedMempool,
+    confirmed_ids: &[TxId],
+    recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
+) -> usize {
+    if confirmed_ids.is_empty() {
+        return 0;
+    }
+
+    let snapshot = mempool.snapshot();
+    let mut cached = 0usize;
+    for tx_id in confirmed_ids {
+        if recently_confirmed.contains_key(tx_id) {
+            continue;
+        }
+        if let Some(entry) = snapshot.mempool_lookup_tx_by_id(tx_id) {
+            recently_confirmed.insert(*tx_id, entry.clone());
+            cached += 1;
+        }
+    }
+    cached
+}
+
+fn re_admit_rolled_back_tx_ids(
+    mempool: &SharedMempool,
+    rolled_back_tx_ids: &[TxId],
+    current_slot: SlotNo,
+    recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
+) -> RollbackReAdmissionStats {
+    let mut stats = RollbackReAdmissionStats::default();
+    for tx_id in rolled_back_tx_ids {
+        let Some(entry) = recently_confirmed.remove(tx_id) else {
+            stats.missing_cache_entry += 1;
+            continue;
+        };
+
+        match mempool.insert_checked(entry, current_slot, None) {
+            Ok(()) => stats.re_admitted += 1,
+            Err(MempoolError::Duplicate(_)) => stats.duplicate += 1,
+            Err(MempoolError::TtlExpired { .. }) => stats.expired += 1,
+            Err(MempoolError::ConflictingInputs(_)) => stats.conflicting += 1,
+            Err(MempoolError::CapacityExceeded { .. }) => stats.capacity_exceeded += 1,
+            Err(MempoolError::FeeTooSmall { .. })
+            | Err(MempoolError::TxTooLarge { .. })
+            | Err(MempoolError::ProtocolParamValidation(_)) => stats.protocol_rejected += 1,
+        }
+    }
+    stats
 }
 
 impl ReconnectingRunState {
@@ -2025,6 +2171,8 @@ where
         config,
         tracer,
         metrics,
+        peer_registry,
+        mempool,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -2038,6 +2186,7 @@ where
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
     let mut preferred_peer = None;
+    let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
 
     loop {
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
@@ -2048,10 +2197,12 @@ where
             peer_snapshot_path,
             tracer,
         );
-        let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = preferred_peer {
-            attempt_state.record_success(peer_addr);
-        }
+        let (mut attempt_state, reconnect_preference) = prepare_reconnect_attempt_state(
+            node_config.peer_addr,
+            &refreshed_fallback_peers,
+            peer_registry.as_ref(),
+            preferred_peer,
+        );
 
         tracer.trace_runtime(
             "Net.PeerSelection",
@@ -2066,6 +2217,14 @@ where
                         .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
                 ),
                 ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+                (
+                    "preferredPeer",
+                    json!(reconnect_preference.map(|(peer, _)| peer.to_string())),
+                ),
+                (
+                    "preferredPeerSource",
+                    json!(reconnect_preference.map(|(_, source)| source)),
+                ),
             ]),
         );
 
@@ -2120,13 +2279,92 @@ where
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
+                            let vrf_ctx = if config.verify_vrf {
+                                nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
+                                    |(ns, asc)| VrfVerificationContext {
+                                        nonce_state: ns,
+                                        active_slot_coeff: asc,
+                                    },
+                                )
+                            } else {
+                                None
+                            };
                             let applied = apply_verified_progress_to_chaindb(
                                 chain_db,
                                 &progress,
                                 chain_state.as_mut(),
                                 checkpoint_tracking.as_mut(),
                                 &config.checkpoint_policy,
+                                vrf_ctx.as_ref(),
                             )?;
+
+                            if !applied.rolled_back_tx_ids.is_empty() {
+                                tracer.trace_runtime(
+                                    "ChainDB.Rollback",
+                                    "Info",
+                                    "collected rolled-back transaction ids",
+                                    trace_fields([
+                                        ("txCount", json!(applied.rolled_back_tx_ids.len())),
+                                    ]),
+                                );
+
+                                if let Some(ref mempool) = mempool {
+                                    let stats = re_admit_rolled_back_tx_ids(
+                                        mempool,
+                                        &applied.rolled_back_tx_ids,
+                                        progress.current_point.slot().unwrap_or(SlotNo(0)),
+                                        &mut recently_confirmed,
+                                    );
+                                    tracer.trace_runtime(
+                                        "Mempool.RollbackReadmission",
+                                        "Info",
+                                        "processed rolled-back transaction re-admission",
+                                        trace_fields([
+                                            ("rolledBackTxCount", json!(applied.rolled_back_tx_ids.len())),
+                                            ("reAdmitted", json!(stats.re_admitted)),
+                                            ("duplicate", json!(stats.duplicate)),
+                                            ("expired", json!(stats.expired)),
+                                            ("conflicting", json!(stats.conflicting)),
+                                            ("capacityExceeded", json!(stats.capacity_exceeded)),
+                                            ("protocolRejected", json!(stats.protocol_rejected)),
+                                            ("missingCacheEntry", json!(stats.missing_cache_entry)),
+                                        ]),
+                                    );
+                                }
+                            }
+
+                            if let Some(ref mempool) = mempool {
+                                for step in &progress.steps {
+                                    if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
+                                        let confirmed_ids: Vec<TxId> = blocks
+                                            .iter()
+                                            .flat_map(extract_tx_ids)
+                                            .collect();
+                                        if !confirmed_ids.is_empty() {
+                                            let cached = cache_confirmed_entries(
+                                                mempool,
+                                                &confirmed_ids,
+                                                &mut recently_confirmed,
+                                            );
+                                            let removed = mempool.remove_confirmed(&confirmed_ids);
+                                            let tip_slot = tip.slot().unwrap_or(SlotNo(0));
+                                            let purged = mempool.purge_expired(tip_slot);
+                                            if removed + purged + cached > 0 {
+                                                tracer.trace_runtime(
+                                                    "Mempool.Eviction",
+                                                    "Info",
+                                                    "evicted confirmed/expired txs from mempool",
+                                                    trace_fields([
+                                                        ("cachedForRollback", json!(cached)),
+                                                        ("confirmed", json!(removed)),
+                                                        ("expired", json!(purged)),
+                                                    ]),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             record_verified_batch_progress(
                                 &mut from_point,
@@ -2166,6 +2404,24 @@ where
                                     checkpoint_tracked: Some(checkpoint_tracking.is_some()),
                                 },
                             );
+
+                            if let Some(next_hot_peer) = preferred_hot_peer_handoff_target(
+                                peer_registry.as_ref(),
+                                session.connected_peer_addr,
+                            ) {
+                                tracer.trace_runtime(
+                                    "Net.PeerSelection",
+                                    "Info",
+                                    "switching sync session to higher-tip hot peer",
+                                    trace_fields([
+                                        ("fromPeer", json!(session.connected_peer_addr.to_string())),
+                                        ("toPeer", json!(next_hot_peer.to_string())),
+                                    ]),
+                                );
+                                preferred_peer = Some(next_hot_peer);
+                                session.mux.abort();
+                                break;
+                            }
                         }
                         Err(err) => {
                             let disposition = handle_reconnect_batch_error(
@@ -2207,6 +2463,8 @@ where
         config,
         tracer,
         metrics,
+        peer_registry,
+        mempool,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -2220,6 +2478,7 @@ where
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut had_session = false;
     let mut preferred_peer = None;
+    let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
 
     loop {
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
@@ -2230,10 +2489,12 @@ where
             peer_snapshot_path,
             tracer,
         );
-        let mut attempt_state = peer_attempt_state(node_config.peer_addr, &refreshed_fallback_peers);
-        if let Some(peer_addr) = preferred_peer {
-            attempt_state.record_success(peer_addr);
-        }
+        let (mut attempt_state, reconnect_preference) = prepare_reconnect_attempt_state(
+            node_config.peer_addr,
+            &refreshed_fallback_peers,
+            peer_registry.as_ref(),
+            preferred_peer,
+        );
 
         tracer.trace_runtime(
             "Net.PeerSelection",
@@ -2248,6 +2509,14 @@ where
                         .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
                 ),
                 ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+                (
+                    "preferredPeer",
+                    json!(reconnect_preference.map(|(peer, _)| peer.to_string())),
+                ),
+                (
+                    "preferredPeerSource",
+                    json!(reconnect_preference.map(|(_, source)| source)),
+                ),
             ]),
         );
 
@@ -2302,6 +2571,16 @@ where
                 result = batch_fut => {
                     match result {
                         Ok(progress) => {
+                            let vrf_ctx = if config.verify_vrf {
+                                nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
+                                    |(ns, asc)| VrfVerificationContext {
+                                        nonce_state: ns,
+                                        active_slot_coeff: asc,
+                                    },
+                                )
+                            } else {
+                                None
+                            };
                             let applied = {
                                 let mut chain_db = chain_db.write().map_err(|_| shared_chaindb_lock_error())?;
                                 apply_verified_progress_to_chaindb(
@@ -2310,8 +2589,78 @@ where
                                     chain_state.as_mut(),
                                     checkpoint_tracking.as_mut(),
                                     &config.checkpoint_policy,
+                                    vrf_ctx.as_ref(),
                                 )?
                             };
+
+                            if !applied.rolled_back_tx_ids.is_empty() {
+                                tracer.trace_runtime(
+                                    "ChainDB.Rollback",
+                                    "Info",
+                                    "collected rolled-back transaction ids",
+                                    trace_fields([
+                                        ("txCount", json!(applied.rolled_back_tx_ids.len())),
+                                    ]),
+                                );
+
+                                if let Some(ref mempool) = mempool {
+                                    let stats = re_admit_rolled_back_tx_ids(
+                                        mempool,
+                                        &applied.rolled_back_tx_ids,
+                                        progress.current_point.slot().unwrap_or(SlotNo(0)),
+                                        &mut recently_confirmed,
+                                    );
+                                    tracer.trace_runtime(
+                                        "Mempool.RollbackReadmission",
+                                        "Info",
+                                        "processed rolled-back transaction re-admission",
+                                        trace_fields([
+                                            ("rolledBackTxCount", json!(applied.rolled_back_tx_ids.len())),
+                                            ("reAdmitted", json!(stats.re_admitted)),
+                                            ("duplicate", json!(stats.duplicate)),
+                                            ("expired", json!(stats.expired)),
+                                            ("conflicting", json!(stats.conflicting)),
+                                            ("capacityExceeded", json!(stats.capacity_exceeded)),
+                                            ("protocolRejected", json!(stats.protocol_rejected)),
+                                            ("missingCacheEntry", json!(stats.missing_cache_entry)),
+                                        ]),
+                                    );
+                                }
+                            }
+
+                            // Evict confirmed txs from mempool on roll-forward.
+                            if let Some(ref mempool) = mempool {
+                                for step in &progress.steps {
+                                    if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
+                                        let confirmed_ids: Vec<TxId> = blocks
+                                            .iter()
+                                            .flat_map(extract_tx_ids)
+                                            .collect();
+                                        if !confirmed_ids.is_empty() {
+                                            let cached = cache_confirmed_entries(
+                                                mempool,
+                                                &confirmed_ids,
+                                                &mut recently_confirmed,
+                                            );
+                                            let removed = mempool.remove_confirmed(&confirmed_ids);
+                                            let tip_slot = tip.slot().unwrap_or(SlotNo(0));
+                                            let purged = mempool.purge_expired(tip_slot);
+                                            if removed + purged + cached > 0 {
+                                                tracer.trace_runtime(
+                                                    "Mempool.Eviction",
+                                                    "Info",
+                                                    "evicted confirmed/expired txs from mempool",
+                                                    trace_fields([
+                                                        ("cachedForRollback", json!(cached)),
+                                                        ("confirmed", json!(removed)),
+                                                        ("expired", json!(purged)),
+                                                    ]),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             record_verified_batch_progress(
                                 &mut from_point,
@@ -2351,6 +2700,24 @@ where
                                     checkpoint_tracked: Some(checkpoint_tracking.is_some()),
                                 },
                             );
+
+                            if let Some(next_hot_peer) = preferred_hot_peer_handoff_target(
+                                peer_registry.as_ref(),
+                                session.connected_peer_addr,
+                            ) {
+                                tracer.trace_runtime(
+                                    "Net.PeerSelection",
+                                    "Info",
+                                    "switching sync session to higher-tip hot peer",
+                                    trace_fields([
+                                        ("fromPeer", json!(session.connected_peer_addr.to_string())),
+                                        ("toPeer", json!(next_hot_peer.to_string())),
+                                    ]),
+                                );
+                                preferred_peer = Some(next_hot_peer);
+                                session.mux.abort();
+                                break;
+                            }
                         }
                         Err(err) => {
                             let disposition = handle_reconnect_batch_error(
@@ -2414,7 +2781,7 @@ async fn bootstrap_with_attempt_state(
                 NodeToNodeVersionData {
                     network_magic: config.network_magic,
                     initiator_only_diffusion_mode: false,
-                    peer_sharing: 0,
+                    peer_sharing: 1,
                     query: false,
                 },
             )
@@ -2500,13 +2867,12 @@ async fn bootstrap_with_attempt_state(
         .ok_or_else(|| PeerError::HandshakeProtocol {
             detail: "missing TxSubmission protocol handle".into(),
         })?;
-    // PeerSharing (mini-protocol 10) is optional — older peers may not
-    // expose it.  We keep the handle when present so the governor can
-    // request peer addresses from hot peers during peer discovery.
-    let peer_sharing = conn
-        .protocols
-        .remove(&MiniProtocolNum::PEER_SHARING)
-        .map(PeerSharingClient::new);
+    let peer_sharing = conn.protocols.remove(&MiniProtocolNum::PEER_SHARING);
+    let peer_sharing = if conn.version_data.peer_sharing > 0 {
+        peer_sharing.map(PeerSharingClient::new)
+    } else {
+        None
+    };
 
     Ok(PeerSession {
         connected_peer_addr,
@@ -2729,6 +3095,8 @@ where
         use_ledger_peers,
         peer_snapshot_path,
         metrics,
+        peer_registry: _,
+        mempool: _,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -2754,6 +3122,7 @@ where
             .unwrap_or_default(),
         stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
+        pool_block_counts: std::collections::BTreeMap::new(),
     };
 
     let sync = run_reconnecting_verified_sync_service_chaindb_inner(
@@ -2766,6 +3135,8 @@ where
             config,
             tracer,
             metrics,
+            peer_registry: None,
+            mempool: None,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -2821,6 +3192,8 @@ where
         use_ledger_peers,
         peer_snapshot_path,
         metrics,
+        peer_registry,
+        mempool,
     } = request;
 
     let recovery = {
@@ -2849,6 +3222,7 @@ where
             .unwrap_or_default(),
         stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
+        pool_block_counts: std::collections::BTreeMap::new(),
     };
 
     let sync = run_reconnecting_verified_sync_service_shared_chaindb_inner(
@@ -2861,6 +3235,8 @@ where
             config,
             tracer,
             metrics,
+            peer_registry,
+            mempool,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -2921,6 +3297,8 @@ where
             config,
             tracer,
             metrics: None,
+            peer_registry: None,
+            mempool: None,
         },
         ReconnectingVerifiedSyncState {
             from_point,
@@ -2938,9 +3316,15 @@ mod tests {
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
         NodeConfig, ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
         VerifiedSyncServiceConfig,
-        peer_selection_counters,
+        peer_share_request_amount,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
+        preferred_hot_peer_from_registry,
+        preferred_hot_peer_handoff_target,
+        ordered_reconnect_fallback_peers,
+        prepare_reconnect_attempt_state,
+        reconnect_preferred_peer_with_source,
+        reconnect_preferred_peer,
         refresh_ledger_peer_sources_from_chain_db,
         seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
         verified_sync_batch_trace_fields,
@@ -2949,6 +3333,7 @@ mod tests {
     use crate::tracer::NodeTracer;
     use crate::sync::LedgerCheckpointPolicy;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::sync::{Arc, RwLock};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
@@ -2958,13 +3343,29 @@ mod tests {
     };
     use yggdrasil_network::{
         AfterSlot, BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
-        GovernorTargets, HandshakeVersion, PeerAccessPoint, PeerSource, TopologyConfig, UseBootstrapPeers,
+        GovernorTargets, HandshakeVersion, PeerAccessPoint, PeerRegistry, PeerSource,
+        PeerStatus, TopologyConfig,
+        UseBootstrapPeers,
         UseLedgerPeers,
     };
+    use yggdrasil_mempool::SharedMempool;
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
     fn local_addr(port: u16) -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    }
+
+    fn sample_mempool_entry(seed: u8, fee: u64, ttl: u64) -> yggdrasil_mempool::MempoolEntry {
+        yggdrasil_mempool::MempoolEntry {
+            era: yggdrasil_ledger::Era::Shelley,
+            tx_id: yggdrasil_ledger::TxId([seed; 32]),
+            fee,
+            body: vec![seed],
+            raw_tx: vec![seed, seed.wrapping_add(1)],
+            size_bytes: 2,
+            ttl: SlotNo(ttl),
+            inputs: vec![],
+        }
     }
 
     fn sample_node_config() -> NodeConfig {
@@ -2987,6 +3388,8 @@ mod tests {
             security_param: None,
             checkpoint_policy: LedgerCheckpointPolicy::default(),
             plutus_cost_model: None,
+            verify_vrf: false,
+            active_slot_coeff: None,
         }
     }
 
@@ -3008,6 +3411,26 @@ mod tests {
             relays: vec![relay],
             pool_metadata: None,
         }
+    }
+
+    #[test]
+    fn peer_share_request_amount_is_clamped_to_u16() {
+        let targets = GovernorTargets {
+            target_known: usize::MAX,
+            target_established: 5,
+            target_active: 2,
+            ..Default::default()
+        };
+
+        assert_eq!(peer_share_request_amount(&targets), u16::MAX);
+
+        let targets = GovernorTargets {
+            target_known: 0,
+            target_established: 0,
+            target_active: 0,
+            ..Default::default()
+        };
+        assert_eq!(peer_share_request_amount(&targets), 1);
     }
 
     fn ledger_state_with_pool_relay(peer: SocketAddr) -> LedgerState {
@@ -3138,44 +3561,75 @@ mod tests {
     }
 
     #[test]
-    fn peer_selection_counters_separate_big_ledger_and_regular_peers() {
-        let mut registry = yggdrasil_network::PeerRegistry::default();
-        let regular_hot = local_addr(3101);
-        let regular_warm = local_addr(3102);
-        let big_ledger_warm = local_addr(3201);
-        let big_ledger_cold = local_addr(3202);
+    fn resume_request_builder_sets_mempool() {
+        let node = sample_node_config();
+        let cfg = sample_sync_config();
+        let mempool = SharedMempool::default();
 
-        registry.insert_source(regular_hot, PeerSource::PeerSourcePublicRoot);
-        registry.set_status(regular_hot, yggdrasil_network::PeerStatus::PeerHot);
+        let req = ResumeReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            LedgerState::new(Era::Byron),
+            &cfg,
+        )
+        .with_mempool(Some(mempool.clone()));
 
-        registry.insert_source(regular_warm, PeerSource::PeerSourceLocalRoot);
-        registry.set_status(regular_warm, yggdrasil_network::PeerStatus::PeerWarm);
+        assert!(req.mempool.is_some());
 
-        registry.insert_source(big_ledger_warm, PeerSource::PeerSourceBigLedger);
-        registry.set_status(big_ledger_warm, yggdrasil_network::PeerStatus::PeerWarm);
+        // Default constructor has none.
+        let req2 = ResumeReconnectingVerifiedSyncRequest::new(
+            &node,
+            &[],
+            LedgerState::new(Era::Byron),
+            &cfg,
+        );
+        assert!(req2.mempool.is_none());
+    }
 
-        registry.insert_source(big_ledger_cold, PeerSource::PeerSourceBigLedger);
-        registry.set_status(big_ledger_cold, yggdrasil_network::PeerStatus::PeerCold);
+    #[test]
+    fn re_admit_rolled_back_tx_ids_reinserts_cached_entries() {
+        let mempool = SharedMempool::with_capacity(1024);
+        let entry = sample_mempool_entry(42, 100, 1000);
+        let tx_id = entry.tx_id;
+        mempool.insert(entry.clone()).expect("insert entry");
 
-        let counters = peer_selection_counters(&registry, &GovernorTargets::default());
-        assert_eq!(counters.known_peers, 2);
-        assert_eq!(counters.established_peers, 2);
-        assert_eq!(counters.active_peers, 1);
+        let mut recently_confirmed = BTreeMap::new();
+        let cached = super::cache_confirmed_entries(&mempool, &[tx_id], &mut recently_confirmed);
+        assert_eq!(cached, 1);
 
-        assert_eq!(counters.known_big_ledger_peers, 2);
-        assert_eq!(counters.established_big_ledger_peers, 1);
-        assert_eq!(counters.active_big_ledger_peers, 0);
+        let removed = mempool.remove_confirmed(&[tx_id]);
+        assert_eq!(removed, 1);
+        assert!(!mempool.contains(&tx_id));
 
-        assert_eq!(counters.known_local_root_peers, 1);
-        assert_eq!(counters.established_local_root_peers, 1);
-        assert_eq!(counters.active_local_root_peers, 0);
+        let stats = super::re_admit_rolled_back_tx_ids(
+            &mempool,
+            &[tx_id],
+            SlotNo(10),
+            &mut recently_confirmed,
+        );
 
-        let fields = counters.trace_fields();
-        assert_eq!(fields.get("knownPeers"), Some(&json!(2)));
-        assert_eq!(fields.get("knownBigLedgerPeers"), Some(&json!(2)));
-        assert_eq!(fields.get("targetKnownPeers"), Some(&json!(20)));
-        assert_eq!(fields.get("establishedLocalRootPeers"), Some(&json!(1)));
-        assert_eq!(fields.get("activeLocalRootPeers"), Some(&json!(0)));
+        assert_eq!(stats.re_admitted, 1);
+        assert_eq!(stats.missing_cache_entry, 0);
+        assert!(mempool.contains(&tx_id));
+        assert!(!recently_confirmed.contains_key(&tx_id));
+    }
+
+    #[test]
+    fn re_admit_rolled_back_tx_ids_counts_missing_cache_entries() {
+        let mempool = SharedMempool::with_capacity(1024);
+        let tx_id = yggdrasil_ledger::TxId([7; 32]);
+        let mut recently_confirmed = BTreeMap::new();
+
+        let stats = super::re_admit_rolled_back_tx_ids(
+            &mempool,
+            &[tx_id],
+            SlotNo(10),
+            &mut recently_confirmed,
+        );
+
+        assert_eq!(stats.re_admitted, 0);
+        assert_eq!(stats.missing_cache_entry, 1);
+        assert!(!mempool.contains(&tx_id));
     }
 
     #[test]
@@ -3489,5 +3943,346 @@ mod tests {
         assert_eq!(targets[0].hot_valency, 2);
         assert_eq!(targets[0].warm_valency, 2);
         assert_eq!(targets[0].peers, vec![local_addr(4001)]);
+    }
+
+    #[test]
+    fn promote_to_hot_marks_warm_peer() {
+        use super::OutboundPeerManager;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+
+        // Cannot promote unknown peer.
+        assert!(!mgr.promote_to_hot(addr));
+
+        // Simulate adding a warm peer directly.
+        let session = fake_peer_session(addr);
+        mgr.warm_peers.insert(addr, super::ManagedWarmPeer::new(session, std::time::Instant::now()));
+
+        // First promotion succeeds.
+        assert!(mgr.promote_to_hot(addr));
+        assert!(mgr.warm_peers[&addr].is_hot);
+
+        // Second promotion is idempotent.
+        assert!(!mgr.promote_to_hot(addr));
+    }
+
+    #[test]
+    fn demote_to_warm_clears_hot_flag() {
+        use super::OutboundPeerManager;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session(addr);
+        mgr.warm_peers.insert(addr, super::ManagedWarmPeer::new(session, std::time::Instant::now()));
+
+        mgr.promote_to_hot(addr);
+        assert!(mgr.warm_peers[&addr].is_hot);
+
+        assert!(mgr.demote_to_warm(addr));
+        assert!(!mgr.warm_peers[&addr].is_hot);
+
+        // Demoting an already-warm peer is no-op.
+        assert!(!mgr.demote_to_warm(addr));
+    }
+
+    #[test]
+    fn best_hot_peer_selects_highest_slot() {
+        use super::OutboundPeerManager;
+
+        let addr_a: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let addr_b: std::net::SocketAddr = "5.6.7.8:3001".parse().unwrap();
+
+        let mut mgr = OutboundPeerManager::new();
+
+        // Insert two warm peers.
+        let sess_a = fake_peer_session(addr_a);
+        mgr.warm_peers.insert(addr_a, super::ManagedWarmPeer::new(sess_a, std::time::Instant::now()));
+        let sess_b = fake_peer_session(addr_b);
+        mgr.warm_peers.insert(addr_b, super::ManagedWarmPeer::new(sess_b, std::time::Instant::now()));
+
+        // No hot peers → no best peer.
+        assert!(mgr.best_hot_peer().is_none());
+
+        // Promote both to hot.
+        mgr.promote_to_hot(addr_a);
+        mgr.promote_to_hot(addr_b);
+
+        // Still none — no tips cached yet.
+        assert!(mgr.best_hot_peer().is_none());
+
+        // Give peer A a higher slot tip.
+        mgr.warm_peers.get_mut(&addr_a).unwrap().last_known_tip = Some(
+            Point::BlockPoint(SlotNo(200), HeaderHash([0xAA; 32])),
+        );
+        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip = Some(
+            Point::BlockPoint(SlotNo(100), HeaderHash([0xBB; 32])),
+        );
+
+        assert_eq!(mgr.best_hot_peer(), Some(addr_a));
+
+        // Switch — peer B gets a higher slot.
+        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip = Some(
+            Point::BlockPoint(SlotNo(300), HeaderHash([0xCC; 32])),
+        );
+
+        assert_eq!(mgr.best_hot_peer(), Some(addr_b));
+    }
+
+    #[test]
+    fn preferred_hot_peer_from_registry_prefers_highest_tip_slot() {
+        let hot_a = local_addr(3101);
+        let hot_b = local_addr(3102);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_a, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(hot_b, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_a, PeerStatus::PeerHot);
+        registry.set_status(hot_b, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_a, Some(100));
+        registry.set_hot_tip_slot(hot_b, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(preferred_hot_peer_from_registry(Some(&shared)), Some(hot_b));
+    }
+
+    #[test]
+    fn preferred_hot_peer_from_registry_returns_none_without_registry() {
+        assert_eq!(preferred_hot_peer_from_registry(None), None);
+    }
+
+    #[test]
+    fn preferred_hot_peer_handoff_target_prefers_higher_tip_hot_peer() {
+        let current = local_addr(3210);
+        let better = local_addr(3211);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(current, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(better, PeerSource::PeerSourceBootstrap);
+        registry.set_status(current, PeerStatus::PeerHot);
+        registry.set_status(better, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(current, Some(100));
+        registry.set_hot_tip_slot(better, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(
+            preferred_hot_peer_handoff_target(Some(&shared), current),
+            Some(better)
+        );
+    }
+
+    #[test]
+    fn preferred_hot_peer_handoff_target_ignores_non_improving_peer() {
+        let current = local_addr(3212);
+        let other = local_addr(3213);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(current, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(other, PeerSource::PeerSourceBootstrap);
+        registry.set_status(current, PeerStatus::PeerHot);
+        registry.set_status(other, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(current, Some(300));
+        registry.set_hot_tip_slot(other, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(preferred_hot_peer_handoff_target(Some(&shared), current), None);
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_prefers_hot_registry_peer_over_previous() {
+        let previous = local_addr(3201);
+        let hot_peer = local_addr(3202);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_peer, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_peer, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_peer, Some(42));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(
+            reconnect_preferred_peer(Some(&shared), Some(previous)),
+            Some(hot_peer)
+        );
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_falls_back_to_previous_peer() {
+        let previous = local_addr(3203);
+        assert_eq!(reconnect_preferred_peer(None, Some(previous)), Some(previous));
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_returns_none_without_candidates() {
+        assert_eq!(reconnect_preferred_peer(None, None), None);
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_with_source_marks_hot_source() {
+        let hot_peer = local_addr(3204);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(hot_peer, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot_peer, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_peer, Some(55));
+
+        let shared = Arc::new(RwLock::new(registry));
+        assert_eq!(
+            reconnect_preferred_peer_with_source(Some(&shared), None),
+            Some((hot_peer, "hot"))
+        );
+    }
+
+    #[test]
+    fn reconnect_preferred_peer_with_source_marks_previous_source() {
+        let previous = local_addr(3205);
+        assert_eq!(
+            reconnect_preferred_peer_with_source(None, Some(previous)),
+            Some((previous, "previous"))
+        );
+    }
+
+    #[test]
+    fn prepare_reconnect_attempt_state_prefers_hot_peer_over_previous() {
+        let primary = local_addr(3301);
+        let fallback = local_addr(3302);
+        let previous = local_addr(3303);
+        let hot = local_addr(3304);
+
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(hot, PeerSource::PeerSourceBootstrap);
+        registry.insert_source(fallback, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot, Some(500));
+        let shared = Arc::new(RwLock::new(registry));
+
+        let (attempt_state, preference) = prepare_reconnect_attempt_state(
+            primary,
+            &[fallback, hot],
+            Some(&shared),
+            Some(previous),
+        );
+
+        assert_eq!(preference, Some((hot, "hot")));
+        assert_eq!(attempt_state.preferred_peer(), Some(hot));
+    }
+
+    #[test]
+    fn prepare_reconnect_attempt_state_uses_previous_without_hot_peer() {
+        let primary = local_addr(3305);
+        let fallback = local_addr(3306);
+        let previous = fallback;
+
+        let (attempt_state, preference) = prepare_reconnect_attempt_state(
+            primary,
+            &[fallback],
+            None,
+            Some(previous),
+        );
+
+        assert_eq!(preference, Some((previous, "previous")));
+        assert_eq!(attempt_state.preferred_peer(), Some(previous));
+    }
+
+    #[test]
+    fn ordered_reconnect_fallback_peers_prioritizes_ranked_hot_peers() {
+        let primary = local_addr(3310);
+        let hot_low = local_addr(3311);
+        let hot_high = local_addr(3312);
+        let cold = local_addr(3313);
+
+        let mut registry = PeerRegistry::default();
+        for peer in [hot_low, hot_high, cold] {
+            registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        }
+        registry.set_status(hot_low, PeerStatus::PeerHot);
+        registry.set_status(hot_high, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(hot_low, Some(100));
+        registry.set_hot_tip_slot(hot_high, Some(200));
+
+        let shared = Arc::new(RwLock::new(registry));
+        let ordered = ordered_reconnect_fallback_peers(
+            primary,
+            &[cold, hot_low, hot_high],
+            Some(&shared),
+        );
+
+        assert_eq!(ordered, vec![hot_high, hot_low, cold]);
+    }
+
+    /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
+    fn fake_peer_session(addr: std::net::SocketAddr) -> super::PeerSession {
+        use yggdrasil_network::{
+            HandshakeVersion, NodeToNodeVersionData,
+        };
+        use yggdrasil_network::multiplexer::MiniProtocolNum;
+
+        // We need real protocol handles. Create a TCP loopback pair and mux it.
+        // However, that requires async. For pure unit tests we can use an
+        // abortable sentinel that panics if any protocol method is called.
+        //
+        // The simplest approach: create protocol handles from a mux that will
+        // never be driven (tests only inspect .is_hot / .promote_to_hot).
+        // We build a TcpStream pair synchronously via std and wrap in tokio.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let listen_addr = listener.local_addr().unwrap();
+            let client_stream = tokio::net::TcpStream::connect(listen_addr).await.unwrap();
+            let (server_stream, _) = listener.accept().await.unwrap();
+
+            let protocols = [
+                MiniProtocolNum::CHAIN_SYNC,
+                MiniProtocolNum::BLOCK_FETCH,
+                MiniProtocolNum::KEEP_ALIVE,
+                MiniProtocolNum::TX_SUBMISSION,
+            ];
+
+            let (mut handles, mux) = yggdrasil_network::mux::start(
+                client_stream,
+                yggdrasil_network::multiplexer::MiniProtocolDir::Initiator,
+                &protocols,
+                4096,
+            );
+            // Also start the server side so the mux doesn't immediately fail.
+            let (_server_handles, server_mux) = yggdrasil_network::mux::start(
+                server_stream,
+                yggdrasil_network::multiplexer::MiniProtocolDir::Responder,
+                &protocols,
+                4096,
+            );
+
+            // Stash server mux so it outlives the construction; it will be
+            // cleaned up when tests drop the manager.
+            std::mem::forget(server_mux);
+
+            super::PeerSession {
+                connected_peer_addr: addr,
+                chain_sync: yggdrasil_network::ChainSyncClient::new(
+                    handles.remove(&MiniProtocolNum::CHAIN_SYNC).unwrap(),
+                ),
+                block_fetch: yggdrasil_network::BlockFetchClient::new(
+                    handles.remove(&MiniProtocolNum::BLOCK_FETCH).unwrap(),
+                ),
+                keep_alive: yggdrasil_network::KeepAliveClient::new(
+                    handles.remove(&MiniProtocolNum::KEEP_ALIVE).unwrap(),
+                ),
+                tx_submission: yggdrasil_network::TxSubmissionClient::new(
+                    handles.remove(&MiniProtocolNum::TX_SUBMISSION).unwrap(),
+                ),
+                peer_sharing: None,
+                mux,
+                version: HandshakeVersion(15),
+                version_data: NodeToNodeVersionData {
+                    network_magic: 764824073,
+                    initiator_only_diffusion_mode: false,
+                    peer_sharing: 0,
+                    query: false,
+                },
+            }
+        })
     }
 }

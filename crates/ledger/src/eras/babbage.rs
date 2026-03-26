@@ -777,3 +777,180 @@ impl CborDecode for BabbageBlock {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eras::mary::Value;
+
+    fn mk_txin(idx: u16) -> ShelleyTxIn {
+        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+    }
+
+    fn mk_babbage_txout() -> BabbageTxOut {
+        BabbageTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: None,
+        }
+    }
+
+    // ── DatumOption ────────────────────────────────────────────────────
+
+    #[test]
+    fn datum_option_hash_round_trip() {
+        let d = DatumOption::Hash([0xCC; 32]);
+        let decoded = DatumOption::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn datum_option_inline_round_trip() {
+        let d = DatumOption::Inline(PlutusData::Integer(42));
+        let decoded = DatumOption::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn datum_option_inline_complex_round_trip() {
+        let d = DatumOption::Inline(PlutusData::Constr(0, vec![
+            PlutusData::Bytes(vec![0x01, 0x02]),
+            PlutusData::Integer(-1),
+        ]));
+        let decoded = DatumOption::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn datum_option_hash_vs_inline_differ() {
+        let h = DatumOption::Hash([0xDD; 32]);
+        let i = DatumOption::Inline(PlutusData::Bytes(vec![0xDD; 32]));
+        assert_ne!(h.to_cbor_bytes(), i.to_cbor_bytes());
+    }
+
+    // ── BabbageTxOut ───────────────────────────────────────────────────
+
+    #[test]
+    fn txout_minimal_round_trip() {
+        let out = mk_babbage_txout();
+        let decoded = BabbageTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn txout_with_datum_option_round_trip() {
+        let out = BabbageTxOut {
+            datum_option: Some(DatumOption::Hash([0xEE; 32])),
+            ..mk_babbage_txout()
+        };
+        let decoded = BabbageTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn txout_with_script_ref_round_trip() {
+        use crate::plutus::{Script, ScriptRef};
+        let out = BabbageTxOut {
+            script_ref: Some(ScriptRef(Script::PlutusV2(vec![0x01, 0x02, 0x03]))),
+            ..mk_babbage_txout()
+        };
+        let decoded = BabbageTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn txout_with_all_optional_round_trip() {
+        use crate::plutus::{Script, ScriptRef};
+        let out = BabbageTxOut {
+            address: vec![0x01; 57],
+            amount: Value::Coin(10_000_000),
+            datum_option: Some(DatumOption::Inline(PlutusData::Integer(99))),
+            script_ref: Some(ScriptRef(Script::PlutusV1(vec![0xAB]))),
+        };
+        let decoded = BabbageTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, out);
+    }
+
+    #[test]
+    fn txout_datum_option_absent_vs_present_differ() {
+        let without = mk_babbage_txout();
+        let with = BabbageTxOut {
+            datum_option: Some(DatumOption::Hash([0xFF; 32])),
+            ..without.clone()
+        };
+        assert_ne!(without.to_cbor_bytes(), with.to_cbor_bytes());
+    }
+
+    // ── BabbageTxBody ──────────────────────────────────────────────────
+
+    fn mk_babbage_body() -> BabbageTxBody {
+        BabbageTxBody {
+            inputs: vec![mk_txin(0)],
+            outputs: vec![mk_babbage_txout()],
+            fee: 200_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+        }
+    }
+
+    #[test]
+    fn tx_body_minimal_round_trip() {
+        let body = mk_babbage_body();
+        let decoded = BabbageTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_babbage_fields_round_trip() {
+        let body = BabbageTxBody {
+            collateral_return: Some(mk_babbage_txout()),
+            total_collateral: Some(5_000_000),
+            reference_inputs: Some(vec![mk_txin(2)]),
+            ..mk_babbage_body()
+        };
+        let decoded = BabbageTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_with_all_optional_round_trip() {
+        let body = BabbageTxBody {
+            ttl: Some(1000),
+            auxiliary_data_hash: Some([0x11; 32]),
+            validity_interval_start: Some(100),
+            script_data_hash: Some([0x22; 32]),
+            collateral: Some(vec![mk_txin(3)]),
+            required_signers: Some(vec![[0x33; 28]]),
+            network_id: Some(1),
+            collateral_return: Some(mk_babbage_txout()),
+            total_collateral: Some(3_000_000),
+            reference_inputs: Some(vec![mk_txin(4)]),
+            ..mk_babbage_body()
+        };
+        let decoded = BabbageTxBody::from_cbor_bytes(&body.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn tx_body_no_ref_inputs_vs_with_differ() {
+        let base = mk_babbage_body();
+        let with_refs = BabbageTxBody {
+            reference_inputs: Some(vec![mk_txin(9)]),
+            ..base.clone()
+        };
+        assert_ne!(base.to_cbor_bytes(), with_refs.to_cbor_bytes());
+    }
+}

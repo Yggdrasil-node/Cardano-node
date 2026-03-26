@@ -4,12 +4,12 @@ mod block_fetch;
 mod chain_sync;
 /// KeepAlive protocol state machine and messages.
 mod keep_alive;
-/// LocalStateQuery mini-protocol (node-to-client).
+/// LocalStateQuery mini-protocol state machine and messages (Node-to-Client).
 pub mod local_state_query;
-/// LocalTxMonitor mini-protocol (node-to-client).
-pub mod local_tx_monitor;
-/// LocalTxSubmission mini-protocol (node-to-client).
-pub mod local_tx_submission;
+/// LocalTxMonitor mini-protocol state machine and messages (Node-to-Client).
+mod local_tx_monitor;
+/// LocalTxSubmission mini-protocol state machine and messages (Node-to-Client).
+mod local_tx_submission;
 /// PeerSharing protocol state machine and messages.
 mod peer_sharing;
 /// TxSubmission2 protocol state machine and messages.
@@ -21,14 +21,14 @@ pub use block_fetch::{
 pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
 pub use local_state_query::{
-    AcquireFailure, AcquireTarget, LocalStateQueryError, LocalStateQueryMessage,
-    LocalStateQueryState,
+    AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
+    LocalStateQueryTransitionError,
 };
 pub use local_tx_monitor::{
-    LocalTxMonitorError, LocalTxMonitorMessage, LocalTxMonitorState, MempoolSizeAndCapacity,
+    LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,
 };
 pub use local_tx_submission::{
-    LocalTxSubmissionError, LocalTxSubmissionMessage, LocalTxSubmissionState,
+    LocalTxSubmissionMessage, LocalTxSubmissionState, LocalTxSubmissionTransitionError,
 };
 pub use peer_sharing::{
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,

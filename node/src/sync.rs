@@ -23,8 +23,8 @@ use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
     CborDecode, CborEncode, ConwayBlock,
     Decoder, Era, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState, Nonce, Point,
-    PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert,
-    SlotNo, StakeSnapshots, Tx, TxId,
+    PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
+    ShelleyOpCert, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
     apply_epoch_boundary, compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
@@ -185,6 +185,7 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -192,12 +193,13 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.transaction_metadata_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();
@@ -777,6 +779,20 @@ pub struct VerifiedSyncServiceConfig {
     /// phase-2 Plutus validation during checkpoint-tracked ledger replay.
     /// When absent, `CekPlutusEvaluator` falls back to `CostModel::default()`.
     pub plutus_cost_model: Option<CostModel>,
+    /// Whether to verify VRF leader eligibility proofs against stake
+    /// distribution during epoch-boundary-aware block application.
+    ///
+    /// Requires `nonce_config` to be set (so epoch nonce and stake snapshots
+    /// are tracked).  When the `set` snapshot is non-empty and the epoch
+    /// nonce is available, each Shelley-family block's VRF proof is checked
+    /// against the pool's relative stake.
+    ///
+    /// Defaults to `false` for backward compatibility and because VRF
+    /// verification is computationally expensive during initial sync.
+    pub verify_vrf: bool,
+    /// Active slot coefficient `f` from genesis, required when `verify_vrf`
+    /// is `true`.  Ignored when VRF verification is disabled.
+    pub active_slot_coeff: Option<ActiveSlotCoeff>,
 }
 
 /// Outcome returned when the verified sync service finishes.
@@ -817,6 +833,12 @@ pub(crate) struct LedgerCheckpointTracking {
     /// Epoch size (slots per epoch) for epoch boundary detection.
     /// Required when `stake_snapshots` is `Some`.
     pub(crate) epoch_size: Option<EpochSize>,
+    /// Per-pool block production counts for the current epoch.
+    ///
+    /// At each epoch boundary, these counts are converted to performance
+    /// ratios (`blocks_produced / expected_blocks`) and passed to
+    /// `apply_epoch_boundary`, then reset for the next epoch.
+    pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -871,12 +893,68 @@ pub(crate) fn advance_ledger_state_with_progress(
 /// Returns the list of epoch boundary events that fired during this batch.
 /// When no epoch transition occurs, the returned vec is empty and the
 /// behavior is identical to [`advance_ledger_state_with_progress`].
+/// Compute per-pool performance ratios from accumulated block counts and
+/// the `set` stake snapshot.
+///
+/// Performance for each pool is `blocks_produced / expected_blocks` where
+/// `expected_blocks = σ_pool * total_blocks`. When the snapshot has no
+/// stake data (initial sync epochs), returns an empty map which causes
+/// `apply_epoch_boundary` to fall back to perfect performance for all pools.
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `completeRupd`.
+pub(crate) fn compute_pool_performance(
+    pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
+    set_snapshot: &yggdrasil_ledger::StakeSnapshot,
+    _epoch_size: EpochSize,
+) -> BTreeMap<PoolKeyHash, UnitInterval> {
+    let stake_dist = set_snapshot.pool_stake_distribution();
+    let total_stake = stake_dist.total_active_stake();
+    if total_stake == 0 || pool_block_counts.is_empty() {
+        return BTreeMap::new();
+    }
+
+    let total_blocks: u64 = pool_block_counts.values().sum();
+    if total_blocks == 0 {
+        return BTreeMap::new();
+    }
+
+    let mut performance = BTreeMap::new();
+    for (pool_hash, &blocks_produced) in pool_block_counts {
+        let pool_stake = stake_dist.pool_stake(pool_hash);
+        if pool_stake == 0 {
+            // Pool has no stake in the set snapshot — skip (defaults to perfect).
+            continue;
+        }
+        // performance = blocks_produced / (σ * total_blocks)
+        //             = blocks_produced * total_stake / (pool_stake * total_blocks)
+        let numerator = blocks_produced.saturating_mul(total_stake);
+        let denominator = pool_stake.saturating_mul(total_blocks);
+        if denominator > 0 {
+            performance.insert(*pool_hash, UnitInterval { numerator, denominator });
+        }
+    }
+    performance
+}
+
+/// Optional VRF verification context for epoch-boundary-aware block application.
+///
+/// When provided, each block's VRF leader eligibility proof is checked
+/// against the pool's relative stake using the `set` snapshot.
+pub(crate) struct VrfVerificationContext<'a> {
+    /// Current epoch nonce from nonce evolution tracking.
+    pub nonce_state: &'a NonceEvolutionState,
+    /// Active slot coefficient from genesis.
+    pub active_slot_coeff: &'a ActiveSlotCoeff,
+}
+
 pub(crate) fn advance_ledger_with_epoch_boundary(
     ledger_state: &mut LedgerState,
     snapshots: &mut StakeSnapshots,
     epoch_size: EpochSize,
     progress: &MultiEraSyncProgress,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
+    vrf_ctx: Option<&VrfVerificationContext<'_>>,
+    pool_block_counts: &mut BTreeMap<PoolKeyHash, u64>,
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
     for_each_roll_forward_block(progress, |block| -> Result<(), SyncError> {
@@ -890,11 +968,43 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
         };
         if is_new_epoch(prev_slot, block_slot, epoch_size) {
             let new_epoch = slot_to_epoch(block_slot, epoch_size);
-            // Pool performance is not yet tracked; treat all pools as
-            // having ideal performance (empty map → perfect σ/σ̂ ratio).
-            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &BTreeMap::new())
+            // Compute pool performance ratios from accumulated block counts.
+            // Performance = blocks_produced / expected_blocks where
+            // expected_blocks ≈ σ_pool * epoch_size * f.  When the set
+            // snapshot has stake data we use it; otherwise fall back to
+            // the previous behavior of treating all pools as perfect.
+            let pool_performance = compute_pool_performance(
+                pool_block_counts,
+                &snapshots.set,
+                epoch_size,
+            );
+            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
+            // Reset counts for the new epoch.
+            pool_block_counts.clear();
+        }
+
+        // Track pool block production.
+        if let Some(issuer_vkey) = block_issuer_vkey(block) {
+            let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey).0;
+            *pool_block_counts.entry(pool_hash).or_insert(0) += 1;
+        }
+
+        // VRF leader eligibility check using the `set` snapshot.
+        if let Some(ctx) = vrf_ctx {
+            let stake_dist = snapshots.set.pool_stake_distribution();
+            if stake_dist.total_active_stake() > 0 {
+                let valid = verify_block_vrf_with_stake(
+                    block,
+                    ctx.nonce_state.epoch_nonce,
+                    &stake_dist,
+                    ctx.active_slot_coeff,
+                )?;
+                if !valid {
+                    return Err(SyncError::Consensus(ConsensusError::VrfLeaderCheckFailed));
+                }
+            }
         }
 
         ledger_state.apply_block_validated(&converted, evaluator)?;
@@ -919,6 +1029,7 @@ pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
     tracking: &mut LedgerCheckpointTracking,
     progress: &MultiEraSyncProgress,
     policy: &LedgerCheckpointPolicy,
+    vrf_ctx: Option<&VrfVerificationContext<'_>>,
 ) -> Result<LedgerCheckpointUpdateOutcome, SyncError>
 where
     I: ImmutableStore,
@@ -938,6 +1049,8 @@ where
         if tracking.stake_snapshots.is_some() {
             tracking.stake_snapshots = Some(StakeSnapshots::new());
         }
+        // Pool block counts are epoch-relative and stale after rollback.
+        tracking.pool_block_counts.clear();
     } else if let (Some(snapshots), Some(epoch_size)) =
         (tracking.stake_snapshots.as_mut(), tracking.epoch_size)
     {
@@ -947,6 +1060,8 @@ where
             epoch_size,
             progress,
             Some(&tracking.plutus_evaluator),
+            vrf_ctx,
+            &mut tracking.pool_block_counts,
         )?;
     } else {
         advance_ledger_state_with_progress(
@@ -1024,6 +1139,7 @@ where
             .unwrap_or_default(),
         stake_snapshots: None,
         epoch_size: None,
+        pool_block_counts: BTreeMap::new(),
     })
 }
 
@@ -1208,12 +1324,28 @@ where
 
             result = batch_fut => {
                 let progress = result?;
+
+                // Build VRF context when verification is enabled and nonce
+                // tracking is active.  The nonce state must be read before
+                // this batch's nonce evolution update.
+                let vrf_ctx = if config.verify_vrf {
+                    nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
+                        |(ns, asc)| VrfVerificationContext {
+                            nonce_state: ns,
+                            active_slot_coeff: asc,
+                        },
+                    )
+                } else {
+                    None
+                };
+
                 let applied = apply_verified_progress_to_chaindb(
                     chain_db,
                     &progress,
                     chain_state.as_mut(),
                     Some(&mut checkpoint_tracking),
                     &config.checkpoint_policy,
+                    vrf_ctx.as_ref(),
                 )?;
                 from_point = progress.current_point;
                 total_blocks += progress.fetched_blocks;
@@ -1525,7 +1657,8 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 /// - `prev_hash`: from Byron consensus data
 /// - `slot_no`: absolute slot via `epoch * 21600 + slot_in_epoch`
 /// - `block_no`: `chain_difficulty` from consensus data
-/// - `issuer_vkey`: zeroed (Byron uses a different signature scheme)
+/// - `issuer_vkey`: PBFT issuer key from consensus data (MainBlock) or
+///   zeroed (EBB)
 /// - `transactions`: decoded from block body tx_payload
 pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
     match block {
@@ -1543,6 +1676,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                         id: compute_tx_id(&raw),
                         body: raw,
                         witnesses: None,
+                        auxiliary_data: None,
                     }
                 })
                 .collect();
@@ -1553,7 +1687,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                     prev_hash: HeaderHash(*byron.prev_hash()),
                     slot_no: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
                     block_no: BlockNo(byron.chain_difficulty()),
-                    issuer_vkey: [0u8; 32],
+                    issuer_vkey: byron.issuer_vkey(),
                 },
                 transactions,
                 raw_cbor: None,
@@ -1571,6 +1705,7 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -1578,12 +1713,13 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();
@@ -1611,6 +1747,7 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -1618,12 +1755,13 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();
@@ -1651,6 +1789,7 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
     let transactions: Vec<Tx> = block
         .transaction_bodies
         .iter()
+        .enumerate()
         .zip(
             block
                 .transaction_witness_sets
@@ -1658,12 +1797,13 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
                 .map(Some)
                 .chain(std::iter::repeat(None)),
         )
-        .map(|(tx_body, ws)| {
+        .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
+                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
             }
         })
         .collect();
@@ -1774,6 +1914,62 @@ pub fn verify_block_vrf(
         &params.active_slot_coeff,
     )
     .map_err(SyncError::Consensus)
+}
+
+/// Extract the issuer's cold verification key bytes from a multi-era block.
+///
+/// Returns `None` for Byron blocks (which use PBFT, not VRF).
+pub fn block_issuer_vkey(block: &MultiEraBlock) -> Option<[u8; 32]> {
+    match block {
+        MultiEraBlock::Shelley(s) => Some(s.header.body.issuer_vkey),
+        MultiEraBlock::Alonzo(a) => Some(a.header.body.issuer_vkey),
+        MultiEraBlock::Babbage(b) => Some(b.header.body.issuer_vkey),
+        MultiEraBlock::Conway(c) => Some(c.header.body.issuer_vkey),
+        MultiEraBlock::Byron { .. } => None,
+    }
+}
+
+/// Verify a block's VRF leader eligibility proof using the pool stake
+/// distribution from the ledger's `set` snapshot.
+///
+/// This function:
+/// 1. Extracts the issuer's cold key from the block header.
+/// 2. Hashes it (Blake2b-224) to obtain the pool operator key hash.
+/// 3. Looks up the pool's relative stake `σ = pool_stake / total_stake`
+///    from the stake distribution.
+/// 4. Verifies the VRF proof and checks the output against the leader
+///    threshold `φ_f(σ) = 1 − (1 − f)^σ`.
+///
+/// Byron blocks are always `Ok(true)` (no VRF).  If the pool is unknown
+/// (not in the stake distribution), `sigma` defaults to `(0, 1)` which will
+/// fail the leader check unless the VRF output is exactly zero (impossible
+/// in practice).
+///
+/// Reference: `validateVRFSignature` in
+/// `Ouroboros.Consensus.Protocol.Praos`.
+pub fn verify_block_vrf_with_stake(
+    block: &MultiEraBlock,
+    epoch_nonce: Nonce,
+    stake_dist: &yggdrasil_ledger::PoolStakeDistribution,
+    active_slot_coeff: &ActiveSlotCoeff,
+) -> Result<bool, SyncError> {
+    let issuer_vkey_bytes = match block_issuer_vkey(block) {
+        Some(vk) => vk,
+        None => return Ok(true), // Byron
+    };
+
+    // Derive pool key hash = Blake2b-224(issuer_vkey).
+    let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey_bytes).0;
+    let (sigma_num, sigma_den) = stake_dist.relative_stake(&pool_hash);
+
+    let params = VrfVerificationParams {
+        epoch_nonce,
+        sigma_num,
+        sigma_den,
+        active_slot_coeff: active_slot_coeff.clone(),
+    };
+
+    verify_block_vrf(block, &params)
 }
 
 /// Applies a multi-era block to the nonce evolution state machine.
@@ -2127,6 +2323,8 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
 pub(crate) struct AppliedVerifiedProgress {
     pub stable_block_count: usize,
     pub checkpoint_outcome: Option<LedgerCheckpointUpdateOutcome>,
+    /// Transaction ids collected from blocks discarded during rollback steps.
+    pub rolled_back_tx_ids: Vec<TxId>,
 }
 
 pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
@@ -2135,13 +2333,18 @@ pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
     chain_state: Option<&mut ChainState>,
     checkpoint_tracking: Option<&mut LedgerCheckpointTracking>,
     checkpoint_policy: &LedgerCheckpointPolicy,
+    vrf_ctx: Option<&VrfVerificationContext<'_>>,
 ) -> Result<AppliedVerifiedProgress, SyncError>
 where
     I: ImmutableStore,
     V: VolatileStore,
     L: LedgerStore,
 {
+    let mut rolled_back_tx_ids = Vec::new();
     for step in &progress.steps {
+        if let MultiEraSyncStep::RollBackward { point, .. } = step {
+            rolled_back_tx_ids.extend(collect_rolled_back_tx_ids(chain_db.volatile(), point));
+        }
         apply_multi_era_step_to_volatile(chain_db.volatile_mut(), step)?;
     }
 
@@ -2164,6 +2367,7 @@ where
                 tracking,
                 progress,
                 checkpoint_policy,
+                vrf_ctx,
             )
         })
         .transpose()?;
@@ -2171,6 +2375,7 @@ where
     Ok(AppliedVerifiedProgress {
         stable_block_count: total_stable,
         checkpoint_outcome,
+        rolled_back_tx_ids,
     })
 }
 
@@ -2351,5 +2556,146 @@ pub fn evict_confirmed_from_mempool(
             removed + purged
         }
         MultiEraSyncStep::RollBackward { .. } => 0,
+    }
+}
+
+/// Collect transaction IDs from rolled-back blocks so they can be
+/// considered for re-admission.
+///
+/// Before a volatile store rollback is applied, this reads the blocks
+/// that will be discarded (the suffix *after* `target`) and returns
+/// their transaction IDs. Callers can then re-admit any of these
+/// transactions that remain valid under the new chain state.
+///
+/// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — post-rollback
+/// re-addition of rolled-back transactions.
+pub fn collect_rolled_back_tx_ids<V: VolatileStore>(
+    store: &V,
+    target: &Point,
+) -> Vec<TxId> {
+    store
+        .suffix_after(target)
+        .iter()
+        .flat_map(|block| block.transactions.iter().map(|tx| tx.id))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yggdrasil_ledger::{
+        PoolKeyHash, PoolParams, StakeCredential,
+        StakeSnapshot, UnitInterval, RewardAccount,
+    };
+    use yggdrasil_consensus::EpochSize;
+
+    fn pool_hash(seed: u8) -> PoolKeyHash {
+        [seed; 28]
+    }
+
+    fn stake_cred(seed: u8) -> StakeCredential {
+        StakeCredential::AddrKeyHash([seed; 28])
+    }
+
+    /// Build a snapshot where each pool has the specified stake via a
+    /// dedicated fake credential.
+    fn make_snapshot_with_pools(pools: &[(PoolKeyHash, u64)]) -> StakeSnapshot {
+        let mut snapshot = StakeSnapshot::default();
+        for (i, (hash, amount)) in pools.iter().enumerate() {
+            let cred = stake_cred(100 + i as u8);
+            let params = PoolParams {
+                operator: *hash,
+                vrf_keyhash: [0u8; 32],
+                pledge: 0,
+                cost: 0,
+                margin: UnitInterval { numerator: 0, denominator: 1 },
+                reward_account: RewardAccount {
+                    network: 0,
+                    credential: StakeCredential::AddrKeyHash([0u8; 28]),
+                },
+                pool_owners: vec![],
+                relays: vec![],
+                pool_metadata: None,
+            };
+            snapshot.pool_params.insert(*hash, params);
+            snapshot.delegations.insert(cred, *hash);
+            snapshot.stake.add(cred, *amount);
+        }
+        snapshot
+    }
+
+    #[test]
+    fn pool_performance_empty_counts_returns_empty_map() {
+        let snapshot = make_snapshot_with_pools(&[(pool_hash(1), 500)]);
+        let counts = BTreeMap::new();
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        assert!(perf.is_empty());
+    }
+
+    #[test]
+    fn pool_performance_no_stake_returns_empty_map() {
+        let snapshot = StakeSnapshot::default();
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_hash(1), 10);
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        assert!(perf.is_empty());
+    }
+
+    #[test]
+    fn pool_performance_single_pool_perfect() {
+        let pool_a = pool_hash(1);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 1000)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 100);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        let p = perf.get(&pool_a).unwrap();
+        // numerator = 100 * 1000, denominator = 1000 * 100 → 1/1
+        assert_eq!(p.numerator, p.denominator);
+    }
+
+    #[test]
+    fn pool_performance_two_pools_proportional() {
+        let pool_a = pool_hash(1);
+        let pool_b = pool_hash(2);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 500), (pool_b, 500)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 50);
+        counts.insert(pool_b, 50);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        let pa = perf.get(&pool_a).unwrap();
+        let pb = perf.get(&pool_b).unwrap();
+        assert_eq!(pa.numerator, pa.denominator);
+        assert_eq!(pb.numerator, pb.denominator);
+    }
+
+    #[test]
+    fn pool_performance_underperforming_pool() {
+        let pool_a = pool_hash(1);
+        let pool_b = pool_hash(2);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 500), (pool_b, 500)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 25);
+        counts.insert(pool_b, 75);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        let pa = perf.get(&pool_a).unwrap();
+        // numerator = 25 * 1000, denominator = 500 * 100 → 25000/50000 = 0.5
+        assert_eq!(pa.numerator * 2, pa.denominator);
+    }
+
+    #[test]
+    fn pool_performance_pool_without_stake_skipped() {
+        let pool_a = pool_hash(1);
+        let pool_c = pool_hash(3);
+        let snapshot = make_snapshot_with_pools(&[(pool_a, 1000)]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 90);
+        counts.insert(pool_c, 10);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        assert!(perf.contains_key(&pool_a));
+        assert!(!perf.contains_key(&pool_c));
     }
 }

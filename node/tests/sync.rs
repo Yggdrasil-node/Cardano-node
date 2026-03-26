@@ -9,7 +9,7 @@ use yggdrasil_ledger::{
     CborEncode, ConwayBlock, ConwayTxBody, Encoder, HeaderHash, LedgerState, Nonce, Point,
     PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
-    ShelleyWitnessSet, SlotNo, TxId,
+    ShelleyWitnessSet, SlotNo, StakeCredential, Tip, Tx, TxId,
     Era,
     compute_block_body_hash,
 };
@@ -21,7 +21,8 @@ use yggdrasil_node::{
     apply_multi_era_step_to_volatile,
     apply_nonce_evolution,
     apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
-    evict_confirmed_from_mempool, extract_tx_ids, keepalive_heartbeat, multi_era_block_to_block,
+    evict_confirmed_from_mempool, extract_tx_ids, collect_rolled_back_tx_ids,
+    keepalive_heartbeat, multi_era_block_to_block,
     multi_era_block_to_chain_entry, promote_stable_blocks, recover_ledger_state_chaindb,
     run_verified_sync_service_chaindb, track_chain_state, track_chain_state_entries,
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
@@ -32,6 +33,12 @@ use yggdrasil_node::{
 };
 use yggdrasil_consensus::{ChainState, SecurityParam};
 use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile, ImmutableStore, VolatileStore};
+
+fn test_shelley_initial_funds_address(seed: u8) -> Vec<u8> {
+    let mut address = vec![0x60];
+    address.extend_from_slice(&[seed; 28]);
+    address
+}
 
 fn test_store_block(hash_byte: u8, slot: u64) -> Block {
     Block {
@@ -75,8 +82,8 @@ async fn spawn_rollforward_responder(magic: u32) -> SocketAddr {
 
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"hdr-1".to_vec(),
-                tip: b"tip-1".to_vec(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: vec![0x81, 0x01],
             }
             .to_cbor(),
         )
@@ -87,8 +94,8 @@ async fn spawn_rollforward_responder(magic: u32) -> SocketAddr {
         let bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
         match bf_msg {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, b"origin".to_vec());
-                assert_eq!(range.upper, b"tip-1".to_vec());
+                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                assert_eq!(range.upper, vec![0x81, 0x01]);
             }
             other => panic!("unexpected blockfetch request: {other:?}"),
         }
@@ -146,8 +153,8 @@ async fn spawn_rollback_responder(magic: u32) -> SocketAddr {
 
         cs.send(
             ChainSyncMessage::MsgRollBackward {
-                point: b"rollback-point".to_vec(),
-                tip: b"tip-after-rollback".to_vec(),
+                point: vec![0x82, 0x05, 0x07],
+                tip: vec![0x82, 0x05, 0x06],
             }
             .to_cbor(),
         )
@@ -188,8 +195,8 @@ async fn spawn_two_step_responder(magic: u32) -> SocketAddr {
         assert_eq!(cs_msg_1, ChainSyncMessage::MsgRequestNext);
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"hdr-1".to_vec(),
-                tip: b"tip-1".to_vec(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: vec![0x81, 0x01],
             }
             .to_cbor(),
         )
@@ -200,8 +207,8 @@ async fn spawn_two_step_responder(magic: u32) -> SocketAddr {
         let bf_msg_1 = BlockFetchMessage::from_cbor(&bf_req_1).expect("decode bf request 1");
         match bf_msg_1 {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, b"origin".to_vec());
-                assert_eq!(range.upper, b"tip-1".to_vec());
+                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                assert_eq!(range.upper, vec![0x81, 0x01]);
             }
             other => panic!("unexpected blockfetch request step 1: {other:?}"),
         }
@@ -227,8 +234,8 @@ async fn spawn_two_step_responder(magic: u32) -> SocketAddr {
         assert_eq!(cs_msg_2, ChainSyncMessage::MsgRequestNext);
         cs.send(
             ChainSyncMessage::MsgRollBackward {
-                point: b"tip-0".to_vec(),
-                tip: b"tip-2".to_vec(),
+                point: vec![0x81, 0x00],
+                tip: vec![0x81, 0x02],
             }
             .to_cbor(),
         )
@@ -271,10 +278,14 @@ async fn spawn_verified_batch_responder(
         let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
         assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
 
+        let tip_cbor = match tip {
+            Point::Origin => Tip::TipGenesis.to_cbor_bytes(),
+            Point::BlockPoint(s, h) => Tip::Tip(Point::BlockPoint(s, h), BlockNo(0)).to_cbor_bytes(),
+        };
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"byron-hdr".to_vec(),
-                tip: tip.to_cbor_bytes(),
+                header: vec![0x82, 0x00, 0x01],
+                tip: tip_cbor,
             }
             .to_cbor(),
         )
@@ -322,7 +333,7 @@ async fn sync_step_rollforward_fetches_blocks() {
     let step = sync_step(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect("sync step");
@@ -330,8 +341,8 @@ async fn sync_step_rollforward_fetches_blocks() {
     assert_eq!(
         step,
         SyncStep::RollForward {
-            header: b"hdr-1".to_vec(),
-            tip: b"tip-1".to_vec(),
+            header: vec![0x82, 0x00, 0x01],
+            tip: vec![0x81, 0x01],
             blocks: vec![b"block-1".to_vec(), b"block-2".to_vec()],
         }
     );
@@ -366,6 +377,8 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         security_param: Some(SecurityParam(1)),
         checkpoint_policy: LedgerCheckpointPolicy::default(),
         plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
     };
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let mut chain_db = ChainDb::new(
@@ -422,7 +435,7 @@ async fn sync_step_rollback_skips_blockfetch() {
     let step = sync_step(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect("sync step");
@@ -430,8 +443,8 @@ async fn sync_step_rollback_skips_blockfetch() {
     assert_eq!(
         step,
         SyncStep::RollBackward {
-            point: b"rollback-point".to_vec(),
-            tip: b"tip-after-rollback".to_vec(),
+            point: vec![0x82, 0x05, 0x07],
+            tip: vec![0x82, 0x05, 0x06],
         }
     );
 
@@ -454,28 +467,28 @@ async fn sync_steps_tracks_progress_and_point() {
     let progress = sync_steps(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
         2,
     )
     .await
     .expect("sync steps");
 
     assert_eq!(progress.fetched_blocks, 1);
-    assert_eq!(progress.current_point, b"tip-0".to_vec());
+    assert_eq!(progress.current_point, vec![0x81, 0x00]);
     assert_eq!(progress.steps.len(), 2);
     assert_eq!(
         progress.steps[0],
         SyncStep::RollForward {
-            header: b"hdr-1".to_vec(),
-            tip: b"tip-1".to_vec(),
+            header: vec![0x82, 0x00, 0x01],
+            tip: vec![0x81, 0x01],
             blocks: vec![b"block-1".to_vec()],
         }
     );
     assert_eq!(
         progress.steps[1],
         SyncStep::RollBackward {
-            point: b"tip-0".to_vec(),
-            tip: b"tip-2".to_vec(),
+            point: vec![0x81, 0x00],
+            tip: vec![0x81, 0x02],
         }
     );
 
@@ -587,8 +600,8 @@ async fn spawn_decoded_rollforward_responder(magic: u32, block_bytes: Vec<u8>) -
 
         cs.send(
             ChainSyncMessage::MsgRollForward {
-                header: b"hdr-decode".to_vec(),
-                tip: b"tip-decode".to_vec(),
+                header: vec![0x82, 0x00, 0x04],
+                tip: vec![0x82, 0x06, 0x06],
             }
             .to_cbor(),
         )
@@ -599,8 +612,8 @@ async fn spawn_decoded_rollforward_responder(magic: u32, block_bytes: Vec<u8>) -
         let bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
         match bf_msg {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, b"origin".to_vec());
-                assert_eq!(range.upper, b"tip-decode".to_vec());
+                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                assert_eq!(range.upper, vec![0x82, 0x06, 0x06]);
             }
             other => panic!("unexpected blockfetch request: {other:?}"),
         }
@@ -820,7 +833,7 @@ async fn sync_step_decoded_rollforward_decodes_shelley_blocks() {
     let step = sync_step_decoded(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect("decoded sync step");
@@ -831,8 +844,8 @@ async fn sync_step_decoded_rollforward_decodes_shelley_blocks() {
             tip,
             blocks,
         } => {
-            assert_eq!(header, b"hdr-decode".to_vec());
-            assert_eq!(tip, b"tip-decode".to_vec());
+            assert_eq!(header, vec![0x82, 0x00, 0x04]);
+            assert_eq!(tip, vec![0x82, 0x06, 0x06]);
             assert_eq!(blocks.len(), 1);
             assert_eq!(blocks[0].header.body.block_number, 1);
             assert_eq!(blocks[0].header.body.slot, 500);
@@ -859,7 +872,7 @@ async fn sync_step_decoded_reports_decode_error_on_invalid_block_bytes() {
     let err = sync_step_decoded(
         &mut session.chain_sync,
         &mut session.block_fetch,
-        b"origin".to_vec(),
+        Point::Origin.to_cbor_bytes(),
     )
     .await
     .expect_err("expected decode error");
@@ -885,7 +898,7 @@ async fn sync_step_typed_rollforward_decodes_header_tip_and_blocks() {
     let addr = spawn_typed_rollforward_responder(
         magic,
         header.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
     )
     .await;
@@ -930,7 +943,7 @@ async fn sync_step_typed_rollback_decodes_points() {
     let tip = Point::BlockPoint(SlotNo(222), HeaderHash([0x22; 32]));
 
     let addr =
-        spawn_typed_rollback_responder(magic, point.to_cbor_bytes(), tip.to_cbor_bytes()).await;
+        spawn_typed_rollback_responder(magic, point.to_cbor_bytes(), Tip::Tip(tip, BlockNo(0)).to_cbor_bytes()).await;
 
     let config = NodeConfig {
         peer_addr: addr,
@@ -973,10 +986,10 @@ async fn sync_steps_typed_tracks_progress_and_rollbacks() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1021,10 +1034,10 @@ async fn sync_until_typed_stops_at_target_point() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1068,10 +1081,10 @@ async fn apply_typed_progress_to_volatile_applies_forwards_and_rollbacks() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1236,7 +1249,7 @@ async fn typed_find_intersect_found() {
     let addr = spawn_intersect_found_responder(
         magic,
         intersect.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1271,7 +1284,7 @@ async fn typed_find_intersect_not_found() {
     let magic = 201;
     let tip = Point::BlockPoint(SlotNo(999), HeaderHash([0xFF; 32]));
 
-    let addr = spawn_intersect_not_found_responder(magic, tip.to_cbor_bytes()).await;
+    let addr = spawn_intersect_not_found_responder(magic, Tip::Tip(tip, BlockNo(0)).to_cbor_bytes()).await;
 
     let config = NodeConfig {
         peer_addr: addr,
@@ -1310,10 +1323,10 @@ async fn sync_batch_apply_updates_volatile_store() {
     let addr = spawn_two_step_typed_responder(
         magic,
         first_header.to_cbor_bytes(),
-        first_tip.to_cbor_bytes(),
+        Tip::Tip(first_tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         rollback_point.to_cbor_bytes(),
-        rollback_tip.to_cbor_bytes(),
+        Tip::Tip(rollback_tip, BlockNo(0)).to_cbor_bytes(),
     )
     .await;
 
@@ -1468,7 +1481,7 @@ async fn run_sync_service_shutdown_after_batches() {
     let addr = spawn_service_responder(
         magic,
         header.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
         sample_block_bytes(),
         1,
     )
@@ -1847,7 +1860,7 @@ async fn sync_step_multi_era_rollforward() {
     let addr = spawn_typed_rollforward_responder(
         magic,
         header.to_cbor_bytes(),
-        tip.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
         block_bytes,
     )
     .await;
@@ -1953,6 +1966,7 @@ fn evict_confirmed_removes_matching_mempool_entries() {
         raw_tx: body.to_cbor_bytes(),
         size_bytes: 100,
         ttl: SlotNo(10_000),
+        inputs: vec![],
     };
     mempool.insert(entry).expect("insert");
     assert_eq!(mempool.len(), 1);
@@ -1995,6 +2009,7 @@ fn evict_confirmed_also_purges_expired() {
         raw_tx: body1.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(5),
+        inputs: vec![],
     }).expect("insert body1");
     mempool.insert(MempoolEntry {
         era: Era::Shelley,
@@ -2004,6 +2019,7 @@ fn evict_confirmed_also_purges_expired() {
         raw_tx: body2.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(10_000),
+        inputs: vec![],
     }).expect("insert body2");
     assert_eq!(mempool.len(), 2);
 
@@ -2044,6 +2060,7 @@ fn evict_confirmed_rollback_does_nothing() {
         raw_tx: body.to_cbor_bytes(),
         size_bytes: 50,
         ttl: SlotNo(10_000),
+        inputs: vec![],
     }).expect("insert");
     assert_eq!(mempool.len(), 1);
 
@@ -2939,6 +2956,7 @@ fn apply_nonce_evolution_byron_is_no_op() {
             slot_in_epoch: 0,
             chain_difficulty: 0,
             prev_hash: [0; 32],
+            issuer_vkey: [0u8; 32],
             raw_header: vec![],
             transactions: vec![],
         },
@@ -3054,6 +3072,7 @@ fn chain_entry_from_byron_returns_some() {
             slot_in_epoch: 5,
             chain_difficulty: 42,
             prev_hash: [0x11; 32],
+            issuer_vkey: [0u8; 32],
             raw_header: vec![0xCC],
             transactions: vec![],
         },
@@ -3278,6 +3297,142 @@ fn recover_ledger_state_chaindb_replays_immutable_blocks_after_checkpoint() {
 }
 
 #[test]
+fn recover_ledger_state_chaindb_bootstraps_initial_funds_on_first_shelley_block() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let address = test_shelley_initial_funds_address(0x44);
+    let txin = yggdrasil_node::genesis::initial_funds_pseudo_txin(&address);
+    let txout = yggdrasil_ledger::ShelleyTxOut {
+        address: address.clone(),
+        amount: 1_000,
+    };
+
+    let mut base_state = LedgerState::new(Era::Byron);
+    base_state.configure_pending_shelley_genesis_utxo(vec![(txin.clone(), txout.clone())]);
+
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
+            block: ByronBlock::MainBlock {
+                epoch: 0,
+                slot_in_epoch: 1,
+                chain_difficulty: 1,
+                prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
+                raw_header: vec![0xAA],
+                transactions: vec![],
+            },
+            era_tag: 1,
+        }))
+        .expect("append byron block");
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(
+            make_shelley_block_with_number(2, 10),
+        ))))
+        .expect("append shelley block");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
+        .expect("recover ledger state with Shelley bootstrap");
+
+    assert_eq!(recovered.ledger_state.current_era(), Era::Shelley);
+    assert_eq!(recovered.ledger_state.utxo().get(&txin), Some(&txout));
+    assert!(recovered.ledger_state.multi_era_utxo().get(&txin).is_some());
+}
+
+#[test]
+fn recover_ledger_state_chaindb_keeps_initial_funds_hidden_before_shelley() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let address = test_shelley_initial_funds_address(0x55);
+    let txin = yggdrasil_node::genesis::initial_funds_pseudo_txin(&address);
+
+    let mut base_state = LedgerState::new(Era::Byron);
+    base_state.configure_pending_shelley_genesis_utxo(vec![(
+        txin.clone(),
+        yggdrasil_ledger::ShelleyTxOut {
+            address,
+            amount: 2_000,
+        },
+    )]);
+
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
+            block: ByronBlock::MainBlock {
+                epoch: 0,
+                slot_in_epoch: 1,
+                chain_difficulty: 1,
+                prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
+                raw_header: vec![0xAA],
+                transactions: vec![],
+            },
+            era_tag: 1,
+        }))
+        .expect("append byron block");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
+        .expect("recover ledger state before Shelley");
+
+    assert_eq!(recovered.ledger_state.current_era(), Era::Byron);
+    assert!(recovered.ledger_state.utxo().get(&txin).is_none());
+    assert!(recovered.ledger_state.multi_era_utxo().get(&txin).is_none());
+}
+
+#[test]
+fn recover_ledger_state_chaindb_bootstraps_genesis_stake_on_first_shelley_block() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let credential = StakeCredential::AddrKeyHash([0x66; 28]);
+    let pool = [0x77; 28];
+
+    let mut base_state = LedgerState::new(Era::Byron);
+    base_state.configure_pending_shelley_genesis_stake(vec![(credential, pool)]);
+
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
+            block: ByronBlock::MainBlock {
+                epoch: 0,
+                slot_in_epoch: 1,
+                chain_difficulty: 1,
+                prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
+                raw_header: vec![0xAA],
+                transactions: vec![],
+            },
+            era_tag: 1,
+        }))
+        .expect("append byron block");
+    chain_db
+        .immutable_mut()
+        .append_block(multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(
+            make_shelley_block_with_number(2, 10),
+        ))))
+        .expect("append shelley block");
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
+        .expect("recover ledger state with Shelley stake bootstrap");
+
+    assert_eq!(recovered.ledger_state.current_era(), Era::Shelley);
+    let registered = recovered
+        .ledger_state
+        .stake_credential_state(&credential)
+        .expect("stake credential should be bootstrapped");
+    assert_eq!(registered.delegated_pool(), Some(pool));
+}
+
+#[test]
 fn track_chain_state_includes_byron_blocks() {
     let mut cs = ChainState::new(SecurityParam(10));
     let blocks = vec![
@@ -3287,6 +3442,7 @@ fn track_chain_state_includes_byron_blocks() {
                 slot_in_epoch: 1,
                 chain_difficulty: 1,
                 prev_hash: [0; 32],
+                issuer_vkey: [0u8; 32],
                 raw_header: vec![0xDD],
                 transactions: vec![],
             },
@@ -3304,4 +3460,231 @@ fn track_chain_state_includes_byron_blocks() {
     assert_eq!(stable, 0);
     // Both the Byron and the Shelley block were tracked.
     assert_eq!(cs.volatile_len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// collect_rolled_back_tx_ids
+// ---------------------------------------------------------------------------
+
+#[test]
+fn collect_rolled_back_tx_ids_returns_txs_after_target() {
+    let mut store = InMemoryVolatile::default();
+
+    // Block 1: no transactions (the rollback target)
+    store.add_block(test_store_block(0x01, 10)).unwrap();
+
+    // Block 2: 2 transactions
+    let tx_a = TxId([0xA0; 32]);
+    let tx_b = TxId([0xB0; 32]);
+    let mut blk2 = test_store_block(0x02, 11);
+    blk2.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk2).unwrap();
+
+    // Block 3: 1 transaction
+    let tx_c = TxId([0xC0; 32]);
+    let mut blk3 = test_store_block(0x03, 12);
+    blk3.transactions = vec![
+        Tx { id: tx_c, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk3).unwrap();
+
+    // Rolling back to block 1 should yield tx_a, tx_b, tx_c.
+    let target = Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]));
+    let ids = collect_rolled_back_tx_ids(&store, &target);
+    assert_eq!(ids, vec![tx_a, tx_b, tx_c]);
+}
+
+#[test]
+fn collect_rolled_back_tx_ids_empty_when_at_tip() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_store_block(0x01, 10)).unwrap();
+
+    let target = Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]));
+    let ids = collect_rolled_back_tx_ids(&store, &target);
+    assert!(ids.is_empty());
+}
+
+#[test]
+fn collect_rolled_back_tx_ids_origin_returns_all() {
+    let mut store = InMemoryVolatile::default();
+
+    let tx_a = TxId([0xAA; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk1).unwrap();
+
+    let ids = collect_rolled_back_tx_ids(&store, &Point::Origin);
+    assert_eq!(ids, vec![tx_a]);
+}
+
+// ---------------------------------------------------------------------------
+// Rollback + mempool integration
+// ---------------------------------------------------------------------------
+
+/// After a rollback, the tx IDs collected from discarded blocks should not
+/// match anything the mempool considers confirmed (since they are now
+/// *un-confirmed*). This validates the dual flow: evict_confirmed_from_mempool
+/// removes confirmed txs, while collect_rolled_back_tx_ids identifies txs
+/// that should be re-admitted.
+#[test]
+fn rollback_collected_tx_ids_not_evicted_from_mempool() {
+    let mut store = InMemoryVolatile::default();
+    let mut mempool = Mempool::with_capacity(1_000_000);
+
+    // Build two blocks with transactions.
+    let tx_a = TxId([0xA0; 32]);
+    let tx_b = TxId([0xB0; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk1).unwrap();
+
+    let mut blk2 = test_store_block(0x02, 20);
+    blk2.transactions = vec![
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk2).unwrap();
+
+    // Simulate: tx_a was in our mempool before being confirmed.
+    let entry_a = MempoolEntry {
+        era: Era::Shelley,
+        tx_id: tx_a,
+        fee: 200_000,
+        body: vec![0xCA, 0xFE],
+        raw_tx: vec![0xDE, 0xAD],
+        size_bytes: 256,
+        ttl: SlotNo(100),
+        inputs: vec![],
+    };
+    mempool.insert(entry_a).unwrap();
+
+    // Before rollback: evict_confirmed_from_mempool removes tx_a 
+    // (it is confirmed in block 1).
+    let blocks: Vec<_> = store.prefix_up_to(
+        &Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    ).unwrap();
+    let confirmed_ids: Vec<TxId> = blocks
+        .iter()
+        .flat_map(|b| b.transactions.iter().map(|tx| tx.id))
+        .collect();
+    let evicted = mempool.remove_confirmed(&confirmed_ids);
+    assert_eq!(evicted, 1, "tx_a should be evicted as confirmed");
+
+    // Now simulate a rollback to origin, collecting rolled-back tx IDs.
+    let rolled_back = collect_rolled_back_tx_ids(
+        &store,
+        &Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])),
+    );
+    assert_eq!(rolled_back.len(), 1, "block 2's tx_b should appear");
+    assert_eq!(rolled_back[0], tx_b);
+
+    // The mempool shouldn't contain tx_b (it was never submitted there),
+    // but if it were, it should NOT be evicted since the block was rolled back.
+    assert!(!mempool.contains(&tx_b));
+
+    // Apply the rollback.
+    store.rollback_to(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]))
+    );
+}
+
+/// Verifies that apply_multi_era_step_to_volatile handles rollback steps
+/// by truncating the volatile store and that transactions from the removed
+/// blocks can be identified beforehand via collect_rolled_back_tx_ids.
+#[test]
+fn apply_rollback_step_discards_volatile_suffix() {
+    let mut store = InMemoryVolatile::default();
+
+    let tx_a = TxId([0xAA; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk1).unwrap();
+
+    let tx_b = TxId([0xBB; 32]);
+    let mut blk2 = test_store_block(0x02, 20);
+    blk2.transactions = vec![
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    store.add_block(blk2).unwrap();
+
+    let target = Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]));
+
+    // Collect tx IDs before applying the rollback step.
+    let rolled_back = collect_rolled_back_tx_ids(&store, &target);
+    assert_eq!(rolled_back, vec![tx_b]);
+
+    // Apply the rollback step.
+    let step = MultiEraSyncStep::RollBackward {
+        point: target,
+        tip: Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])),
+    };
+    apply_multi_era_step_to_volatile(&mut store, &step).unwrap();
+
+    // Store is now truncated.
+    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
+}
+
+/// After promotion and rollback, the immutable portion is preserved and
+/// only volatile blocks are discarded. Collected tx IDs should come only
+/// from the discarded volatile suffix.
+#[test]
+fn promote_then_rollback_collects_only_volatile_tx_ids() {
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    let tx_imm = TxId([0x11; 32]);
+    let mut blk1 = test_store_block(0x01, 10);
+    blk1.transactions = vec![
+        Tx { id: tx_imm, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    chain_db.add_volatile_block(blk1).unwrap();
+
+    let tx_vol_a = TxId([0x22; 32]);
+    let mut blk2 = test_store_block(0x02, 20);
+    blk2.transactions = vec![
+        Tx { id: tx_vol_a, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    chain_db.add_volatile_block(blk2).unwrap();
+
+    let tx_vol_b = TxId([0x33; 32]);
+    let mut blk3 = test_store_block(0x03, 30);
+    blk3.transactions = vec![
+        Tx { id: tx_vol_b, body: vec![], witnesses: None, auxiliary_data: None },
+    ];
+    chain_db.add_volatile_block(blk3).unwrap();
+
+    // Promote block 1 to immutable.
+    chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])))
+        .unwrap();
+    assert_eq!(chain_db.immutable().len(), 1);
+
+    // Collect tx IDs that would be rolled back if we roll to block 2.
+    let target = Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]));
+    let rolled_back = collect_rolled_back_tx_ids(chain_db.volatile(), &target);
+    // Only block 3's tx (tx_vol_b) is in the volatile suffix after the target.
+    assert_eq!(rolled_back, vec![tx_vol_b]);
+
+    // Apply the rollback.
+    chain_db.volatile_mut().rollback_to(&target);
+    assert_eq!(
+        chain_db.volatile().tip(),
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    );
+    // Immutable block is preserved.
+    assert!(chain_db.immutable().get_block(&HeaderHash([0x01; 32])).is_some());
 }

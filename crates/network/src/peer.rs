@@ -83,11 +83,8 @@ pub struct PeerConnection {
 // ---------------------------------------------------------------------------
 
 /// The set of mini-protocol numbers registered for a standard node-to-node
-/// connection: Handshake (for negotiation) plus the five data protocols.
-///
-/// Includes PeerSharing (10) so warm peers can be queried for peer discovery
-/// once promoted to hot.  Reference: `Ouroboros.Network.NodeToNode` —
-/// `NodeToNodeProtocols`.
+/// connection: Handshake (for negotiation) plus the standard data protocols
+/// and PeerSharing.
 const N2N_PROTOCOLS: [MiniProtocolNum; 6] = [
     MiniProtocolNum::HANDSHAKE,
     MiniProtocolNum::CHAIN_SYNC,
@@ -229,4 +226,15 @@ pub async fn accept(
     hs.send(refuse.to_cbor()).await?;
 
     Err(PeerError::NoCompatibleVersion)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::N2N_PROTOCOLS;
+    use crate::multiplexer::MiniProtocolNum;
+
+    #[test]
+    fn n2n_protocols_include_peer_sharing() {
+        assert!(N2N_PROTOCOLS.contains(&MiniProtocolNum::PEER_SHARING));
+    }
 }

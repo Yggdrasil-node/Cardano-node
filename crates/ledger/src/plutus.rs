@@ -360,3 +360,349 @@ impl CborDecode for ScriptRef {
         Ok(Self(script))
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── PlutusData: Integer ────────────────────────────────────────────
+
+    #[test]
+    fn integer_zero_round_trip() {
+        let d = PlutusData::Integer(0);
+        let bytes = d.to_cbor_bytes();
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_positive_small_round_trip() {
+        let d = PlutusData::Integer(42);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_u64_max_round_trip() {
+        let d = PlutusData::Integer(i128::from(u64::MAX));
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_negative_small_round_trip() {
+        let d = PlutusData::Integer(-1);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_negative_large_round_trip() {
+        // Fits in CBOR negative int (magnitude fits in u64)
+        let d = PlutusData::Integer(-1_000_000_000_000);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_big_uint_round_trip() {
+        // Exceeds u64::MAX → uses tag 2 big_uint
+        let big = i128::from(u64::MAX) + 1;
+        let d = PlutusData::Integer(big);
+        let bytes = d.to_cbor_bytes();
+        // Should contain tag 2
+        assert!(bytes.iter().any(|&b| b == 0xc2)); // tag(2) = 0xc2
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_big_nint_round_trip() {
+        // Exceeds i64 negative range → uses tag 3 big_nint
+        // -(1 + magnitude) where magnitude > u64::MAX
+        let val = -1 - i128::from(u64::MAX) - 1;
+        let d = PlutusData::Integer(val);
+        let bytes = d.to_cbor_bytes();
+        // Should contain tag 3
+        assert!(bytes.iter().any(|&b| b == 0xc3)); // tag(3) = 0xc3
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    // ── PlutusData: Bytes ──────────────────────────────────────────────
+
+    #[test]
+    fn bytes_empty_round_trip() {
+        let d = PlutusData::Bytes(vec![]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn bytes_non_empty_round_trip() {
+        let d = PlutusData::Bytes(vec![0xde, 0xad, 0xbe, 0xef]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    // ── PlutusData: List ───────────────────────────────────────────────
+
+    #[test]
+    fn list_empty_round_trip() {
+        let d = PlutusData::List(vec![]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn list_with_items_round_trip() {
+        let d = PlutusData::List(vec![
+            PlutusData::Integer(1),
+            PlutusData::Bytes(vec![0x01]),
+            PlutusData::List(vec![]),
+        ]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    // ── PlutusData: Map ────────────────────────────────────────────────
+
+    #[test]
+    fn map_empty_round_trip() {
+        let d = PlutusData::Map(vec![]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn map_with_entries_round_trip() {
+        let d = PlutusData::Map(vec![
+            (PlutusData::Integer(0), PlutusData::Bytes(vec![0xaa])),
+            (PlutusData::Bytes(vec![0x01]), PlutusData::Integer(99)),
+        ]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    // ── PlutusData: Constr ─────────────────────────────────────────────
+
+    #[test]
+    fn constr_compact_tag_121_round_trip() {
+        // Alternative 0 → tag 121
+        let d = PlutusData::Constr(0, vec![PlutusData::Integer(1)]);
+        let bytes = d.to_cbor_bytes();
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_compact_tag_127_round_trip() {
+        // Alternative 6 → tag 127
+        let d = PlutusData::Constr(6, vec![]);
+        let bytes = d.to_cbor_bytes();
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_all_compact_alternatives() {
+        for alt in 0..=6 {
+            let d = PlutusData::Constr(alt, vec![PlutusData::Integer(alt as i128)]);
+            let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+            assert_eq!(decoded, d, "Compact constructor alt={alt} failed");
+        }
+    }
+
+    #[test]
+    fn constr_general_form_round_trip() {
+        // Alternative 7 → tag 102 (general form)
+        let d = PlutusData::Constr(7, vec![PlutusData::Integer(42)]);
+        let bytes = d.to_cbor_bytes();
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_general_form_large_alt() {
+        let d = PlutusData::Constr(1000, vec![]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_nested_fields() {
+        let d = PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Constr(1, vec![PlutusData::Integer(10)]),
+                PlutusData::List(vec![PlutusData::Bytes(vec![0xff])]),
+            ],
+        );
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    // ── PlutusData: deeply nested ──────────────────────────────────────
+
+    #[test]
+    fn deeply_nested_round_trip() {
+        let d = PlutusData::Map(vec![(
+            PlutusData::Constr(
+                0,
+                vec![PlutusData::List(vec![
+                    PlutusData::Integer(-100),
+                    PlutusData::Bytes(vec![0x01, 0x02, 0x03]),
+                ])],
+            ),
+            PlutusData::Constr(10, vec![PlutusData::Map(vec![])]),
+        )]);
+        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    // ── PlutusData: decode errors ──────────────────────────────────────
+
+    #[test]
+    fn decode_unknown_tag_rejected() {
+        // Tag 200 is not a valid PlutusData tag
+        let mut enc = Encoder::new();
+        enc.tag(200).unsigned(0);
+        let bytes = enc.into_bytes();
+        assert!(PlutusData::from_cbor_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn decode_text_string_rejected() {
+        // Major type 3 (text) is not valid PlutusData
+        let mut enc = Encoder::new();
+        enc.text("hello");
+        let bytes = enc.into_bytes();
+        assert!(PlutusData::from_cbor_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn decode_general_constr_bad_length_rejected() {
+        // Tag 102 with 3-element array (should be 2)
+        let mut enc = Encoder::new();
+        enc.tag(102).array(3).unsigned(0).array(0).unsigned(0);
+        let bytes = enc.into_bytes();
+        assert!(PlutusData::from_cbor_bytes(&bytes).is_err());
+    }
+
+    // ── encode_big_int internals ───────────────────────────────────────
+
+    #[test]
+    fn encode_big_int_small_positive_is_plain_unsigned() {
+        let d = PlutusData::Integer(23);
+        let bytes = d.to_cbor_bytes();
+        // CBOR unsigned 23 = single byte 0x17
+        assert_eq!(bytes, [0x17]);
+    }
+
+    #[test]
+    fn encode_big_int_negative_one_is_plain_negative() {
+        let d = PlutusData::Integer(-1);
+        let bytes = d.to_cbor_bytes();
+        // CBOR negative -1 (magnitude 0) = 0x20
+        assert_eq!(bytes, [0x20]);
+    }
+
+    // ── Script ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn script_plutus_v1_round_trip() {
+        let s = Script::PlutusV1(vec![0x01, 0x02, 0x03]);
+        let decoded = Script::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_plutus_v2_round_trip() {
+        let s = Script::PlutusV2(vec![0xca, 0xfe]);
+        let decoded = Script::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_plutus_v3_round_trip() {
+        let s = Script::PlutusV3(vec![0xff]);
+        let decoded = Script::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_native_round_trip() {
+        // NativeScript::ScriptPubkey is tag 0
+        let ns = NativeScript::ScriptPubkey([0xab; 28]);
+        let s = Script::Native(ns);
+        let decoded = Script::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn script_unknown_tag_rejected() {
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(4).bytes(&[0x01]); // tag 4 invalid
+        let bytes = enc.into_bytes();
+        assert!(Script::from_cbor_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn script_bad_array_length_rejected() {
+        let mut enc = Encoder::new();
+        enc.array(3).unsigned(1).bytes(&[0x01]).unsigned(0);
+        let bytes = enc.into_bytes();
+        assert!(Script::from_cbor_bytes(&bytes).is_err());
+    }
+
+    // ── ScriptRef ──────────────────────────────────────────────────────
+
+    #[test]
+    fn script_ref_plutus_v1_round_trip() {
+        let sr = ScriptRef(Script::PlutusV1(vec![0x01, 0x02]));
+        let bytes = sr.to_cbor_bytes();
+        let decoded = ScriptRef::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, sr);
+    }
+
+    #[test]
+    fn script_ref_plutus_v3_round_trip() {
+        let sr = ScriptRef(Script::PlutusV3(vec![0xaa, 0xbb, 0xcc]));
+        let decoded = ScriptRef::from_cbor_bytes(&sr.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, sr);
+    }
+
+    #[test]
+    fn script_ref_native_round_trip() {
+        let sr = ScriptRef(Script::Native(NativeScript::ScriptPubkey([0x01; 28])));
+        let decoded = ScriptRef::from_cbor_bytes(&sr.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, sr);
+    }
+
+    #[test]
+    fn script_ref_wrong_tag_rejected() {
+        // Tag 25 instead of 24
+        let mut enc = Encoder::new();
+        enc.tag(25).bytes(&[0x01]);
+        let bytes = enc.into_bytes();
+        assert!(ScriptRef::from_cbor_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn script_ref_double_encoding() {
+        // Verify the double encoding: outer = tag24(bytes), inner = script CBOR
+        let inner = Script::PlutusV2(vec![0xde, 0xad]);
+        let inner_cbor = inner.to_cbor_bytes();
+        let sr = ScriptRef(inner.clone());
+        let outer = sr.to_cbor_bytes();
+        // The outer CBOR should contain the inner bytes embedded
+        // Decode manually: tag(24) + bstr(inner_cbor)
+        let mut dec = Decoder::new(&outer);
+        assert_eq!(dec.tag().unwrap(), 24);
+        let payload = dec.bytes().unwrap();
+        assert_eq!(payload, &inner_cbor);
+    }
+}

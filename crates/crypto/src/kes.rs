@@ -515,3 +515,429 @@ fn ensure_supported_period(period: KesPeriod) -> Result<(), CryptoError> {
         Err(CryptoError::InvalidKesPeriod(period.0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_vectors::simple_kes_two_period_test_vectors;
+
+    // ── KesPeriod ────────────────────────────────────────────────────────
+
+    #[test]
+    fn kes_period_next_increments() {
+        let p = KesPeriod(0).next().unwrap();
+        assert_eq!(p, KesPeriod(1));
+    }
+
+    #[test]
+    fn kes_period_next_overflow() {
+        let result = KesPeriod(u32::MAX).next();
+        assert_eq!(result, Err(CryptoError::KesPeriodOverflow));
+    }
+
+    #[test]
+    fn kes_period_equality() {
+        assert_eq!(KesPeriod(5), KesPeriod(5));
+        assert_ne!(KesPeriod(0), KesPeriod(1));
+    }
+
+    #[test]
+    fn evolve_period_wraps_next() {
+        assert_eq!(evolve_period(KesPeriod(0)).unwrap(), KesPeriod(1));
+        assert_eq!(
+            evolve_period(KesPeriod(u32::MAX)),
+            Err(CryptoError::KesPeriodOverflow)
+        );
+    }
+
+    // ── KesSigningKey ────────────────────────────────────────────────────
+
+    #[test]
+    fn kes_signing_key_from_bytes_roundtrip() {
+        let seed = [0x42; KES_SIGNING_KEY_SIZE];
+        let sk = KesSigningKey::from_bytes(seed);
+        assert_eq!(sk.to_bytes(), seed);
+    }
+
+    #[test]
+    fn kes_signing_key_verification_key_deterministic() {
+        let sk = KesSigningKey::from_bytes([7u8; 32]);
+        let vk1 = sk.verification_key().unwrap();
+        let vk2 = sk.verification_key().unwrap();
+        assert_eq!(vk1, vk2);
+    }
+
+    #[test]
+    fn kes_signing_key_constant_time_eq() {
+        let sk1 = KesSigningKey::from_bytes([1u8; 32]);
+        let sk2 = KesSigningKey::from_bytes([1u8; 32]);
+        let sk3 = KesSigningKey::from_bytes([2u8; 32]);
+        assert!(sk1 == sk2, "same bytes should be equal");
+        assert!(sk1 != sk3, "different bytes should not be equal");
+    }
+
+    // ── Single-period sign / verify ──────────────────────────────────────
+
+    #[test]
+    fn kes_sign_verify_period_zero() {
+        let sk = KesSigningKey::from_bytes([0x0A; 32]);
+        let vk = sk.verification_key().unwrap();
+        let msg = b"test message";
+        let sig = sk.sign(KesPeriod(0), msg).unwrap();
+        vk.verify(KesPeriod(0), msg, &sig)
+            .expect("valid single-period KES signature should verify");
+    }
+
+    #[test]
+    fn kes_sign_rejects_period_one() {
+        let sk = KesSigningKey::from_bytes([0x0B; 32]);
+        let result = sk.sign(KesPeriod(1), b"msg");
+        assert_eq!(result, Err(CryptoError::InvalidKesPeriod(1)));
+    }
+
+    #[test]
+    fn kes_verify_rejects_period_above_zero() {
+        let sk = KesSigningKey::from_bytes([0x0C; 32]);
+        let vk = sk.verification_key().unwrap();
+        let sig = sk.sign(KesPeriod(0), b"msg").unwrap();
+        assert_eq!(
+            vk.verify(KesPeriod(1), b"msg", &sig),
+            Err(CryptoError::InvalidKesPeriod(1))
+        );
+    }
+
+    #[test]
+    fn kes_sign_wrong_message_fails() {
+        let sk = KesSigningKey::from_bytes([0x0D; 32]);
+        let vk = sk.verification_key().unwrap();
+        let sig = sk.sign(KesPeriod(0), b"good").unwrap();
+        assert!(vk.verify(KesPeriod(0), b"bad", &sig).is_err());
+    }
+
+    #[test]
+    fn kes_sign_wrong_key_fails() {
+        let sk1 = KesSigningKey::from_bytes([1u8; 32]);
+        let vk2 = KesSigningKey::from_bytes([2u8; 32]).verification_key().unwrap();
+        let sig = sk1.sign(KesPeriod(0), b"msg").unwrap();
+        assert!(vk2.verify(KesPeriod(0), b"msg", &sig).is_err());
+    }
+
+    // ── Compact KES ──────────────────────────────────────────────────────
+
+    #[test]
+    fn compact_kes_sign_verify() {
+        let sk = KesSigningKey::from_bytes([0x10; 32]);
+        let vk = sk.verification_key().unwrap();
+        let msg = b"compact test";
+        let csig = sk.sign_compact(KesPeriod(0), msg).unwrap();
+        vk.verify_compact(KesPeriod(0), msg, &csig)
+            .expect("compact KES signature should verify");
+    }
+
+    #[test]
+    fn compact_kes_embeds_correct_vk() {
+        let sk = KesSigningKey::from_bytes([0x11; 32]);
+        let vk = sk.verification_key().unwrap();
+        let csig = sk.sign_compact(KesPeriod(0), b"msg").unwrap();
+        assert_eq!(csig.verification_key(), vk);
+    }
+
+    #[test]
+    fn compact_kes_rejects_vk_mismatch() {
+        let sk1 = KesSigningKey::from_bytes([1u8; 32]);
+        let vk2 = KesSigningKey::from_bytes([2u8; 32]).verification_key().unwrap();
+        let csig = sk1.sign_compact(KesPeriod(0), b"msg").unwrap();
+        let result = vk2.verify_compact(KesPeriod(0), b"msg", &csig);
+        assert_eq!(result, Err(CryptoError::KesVerificationKeyMismatch));
+    }
+
+    #[test]
+    fn compact_kes_signature_extracts_inner_sig() {
+        let sk = KesSigningKey::from_bytes([0x12; 32]);
+        let sig = sk.sign(KesPeriod(0), b"msg").unwrap();
+        let csig = sk.sign_compact(KesPeriod(0), b"msg").unwrap();
+        assert_eq!(csig.signature(), sig);
+    }
+
+    #[test]
+    fn compact_kes_from_bytes_roundtrip() {
+        let sk = KesSigningKey::from_bytes([0x13; 32]);
+        let csig = sk.sign_compact(KesPeriod(0), b"x").unwrap();
+        let bytes = csig.to_bytes();
+        let csig2 = CompactKesSignature::from_bytes(bytes);
+        assert_eq!(csig, csig2);
+    }
+
+    // ── KesSignature / KesVerificationKey serialization ──────────────────
+
+    #[test]
+    fn kes_signature_from_bytes_roundtrip() {
+        let bytes = [0xAA; KES_SIGNATURE_SIZE];
+        let sig = KesSignature::from_bytes(bytes);
+        assert_eq!(sig.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn kes_verification_key_from_bytes_roundtrip() {
+        let bytes = [0xBB; KES_VERIFICATION_KEY_SIZE];
+        let vk = KesVerificationKey::from_bytes(bytes);
+        assert_eq!(vk.to_bytes(), bytes);
+    }
+
+    // ── SimpleKesSigningKey ──────────────────────────────────────────────
+
+    #[test]
+    fn simple_kes_from_seeds() {
+        let seeds = vec![[1u8; 32], [2u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        assert_eq!(sk.total_periods(), 2);
+    }
+
+    #[test]
+    fn simple_kes_from_seeds_empty_rejected() {
+        let result = SimpleKesSigningKey::from_seeds(vec![]);
+        assert_eq!(result, Err(CryptoError::InvalidKesDepth(0)));
+    }
+
+    #[test]
+    fn simple_kes_from_bytes_roundtrip() {
+        let mut bytes = vec![0u8; 64];
+        bytes[..32].copy_from_slice(&[1u8; 32]);
+        bytes[32..].copy_from_slice(&[2u8; 32]);
+        let sk = SimpleKesSigningKey::from_bytes(&bytes).unwrap();
+        assert_eq!(sk.to_bytes(), bytes);
+        assert_eq!(sk.total_periods(), 2);
+    }
+
+    #[test]
+    fn simple_kes_from_bytes_empty_rejected() {
+        assert_eq!(
+            SimpleKesSigningKey::from_bytes(&[]),
+            Err(CryptoError::InvalidKesDepth(0))
+        );
+    }
+
+    #[test]
+    fn simple_kes_from_bytes_non_multiple_rejected() {
+        assert_eq!(
+            SimpleKesSigningKey::from_bytes(&[0u8; 33]),
+            Err(CryptoError::InvalidKesKeyMaterialLength(33))
+        );
+    }
+
+    #[test]
+    fn simple_kes_sign_verify_each_period() {
+        let seeds = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let vk = sk.verification_key().unwrap();
+        let msg = b"multi-period test";
+
+        for period in 0..3 {
+            let sig = sk.sign(KesPeriod(period), msg).unwrap();
+            vk.verify(KesPeriod(period), msg, &sig)
+                .unwrap_or_else(|e| panic!("period {period} should verify: {e}"));
+        }
+    }
+
+    #[test]
+    fn simple_kes_sign_out_of_range_rejected() {
+        let sk = SimpleKesSigningKey::from_seeds(vec![[1u8; 32]]).unwrap();
+        assert_eq!(
+            sk.sign(KesPeriod(1), b"msg"),
+            Err(CryptoError::InvalidKesPeriod(1))
+        );
+    }
+
+    #[test]
+    fn simple_kes_cross_period_verification_fails() {
+        let seeds = vec![[1u8; 32], [2u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let vk = sk.verification_key().unwrap();
+        let sig_p0 = sk.sign(KesPeriod(0), b"msg").unwrap();
+        // Signature from period 0 must not verify under period 1's key.
+        assert!(vk.verify(KesPeriod(1), b"msg", &sig_p0).is_err());
+    }
+
+    // ── SimpleKES indexed signatures ─────────────────────────────────────
+
+    #[test]
+    fn simple_kes_sign_indexed_embeds_period() {
+        let seeds = vec![[1u8; 32], [2u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let sig = sk.sign_indexed(KesPeriod(1), b"msg").unwrap();
+        assert_eq!(sig.period(), KesPeriod(1));
+    }
+
+    #[test]
+    fn simple_kes_verify_indexed_roundtrip() {
+        let seeds = vec![[1u8; 32], [2u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let vk = sk.verification_key().unwrap();
+        let sig = sk.sign_indexed(KesPeriod(1), b"msg").unwrap();
+        vk.verify_indexed(b"msg", &sig)
+            .expect("indexed signature should verify");
+    }
+
+    #[test]
+    fn simple_kes_indexed_signature_from_bytes_roundtrip() {
+        let seeds = vec![[1u8; 32], [2u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let sig = sk.sign_indexed(KesPeriod(0), b"msg").unwrap();
+        let bytes = sig.to_bytes();
+        let sig2 = SimpleKesSignature::from_bytes(bytes);
+        assert_eq!(sig, sig2);
+    }
+
+    // ── SimpleKES compact indexed signatures ─────────────────────────────
+
+    #[test]
+    fn simple_kes_sign_indexed_compact_roundtrip() {
+        let seeds = vec![[1u8; 32], [2u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let vk = sk.verification_key().unwrap();
+        let csig = sk.sign_indexed_compact(KesPeriod(1), b"msg").unwrap();
+        vk.verify_indexed_compact(b"msg", &csig)
+            .expect("compact indexed signature should verify");
+    }
+
+    #[test]
+    fn simple_compact_kes_rejects_vk_mismatch() {
+        let sk = SimpleKesSigningKey::from_seeds(vec![[1u8; 32], [2u8; 32]]).unwrap();
+        let vk_other = SimpleKesSigningKey::from_seeds(vec![[3u8; 32], [4u8; 32]])
+            .unwrap()
+            .verification_key()
+            .unwrap();
+        let csig = sk.sign_indexed_compact(KesPeriod(0), b"msg").unwrap();
+        let result = vk_other.verify_indexed_compact(b"msg", &csig);
+        assert_eq!(result, Err(CryptoError::KesVerificationKeyMismatch));
+    }
+
+    #[test]
+    fn simple_compact_kes_from_bytes_roundtrip() {
+        let sk = SimpleKesSigningKey::from_seeds(vec![[1u8; 32]]).unwrap();
+        let csig = sk.sign_indexed_compact(KesPeriod(0), b"msg").unwrap();
+        let bytes = csig.to_bytes();
+        let csig2 = SimpleCompactKesSignature::from_bytes(bytes);
+        assert_eq!(csig, csig2);
+    }
+
+    #[test]
+    fn simple_compact_kes_accessors() {
+        let sk = SimpleKesSigningKey::from_seeds(vec![[1u8; 32], [2u8; 32]]).unwrap();
+        let csig = sk.sign_indexed_compact(KesPeriod(1), b"msg").unwrap();
+        assert_eq!(csig.period(), KesPeriod(1));
+        let inner_sig = csig.signature();
+        assert_eq!(inner_sig.0.len(), KES_SIGNATURE_SIZE);
+        let inner_vk = csig.verification_key();
+        assert_eq!(inner_vk.0.len(), KES_VERIFICATION_KEY_SIZE);
+    }
+
+    // ── SimpleKesVerificationKey ─────────────────────────────────────────
+
+    #[test]
+    fn simple_kes_vk_from_bytes_roundtrip() {
+        let seeds = vec![[1u8; 32], [2u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let vk = sk.verification_key().unwrap();
+        let bytes = vk.to_bytes();
+        let vk2 = SimpleKesVerificationKey::from_bytes(&bytes).unwrap();
+        assert_eq!(vk, vk2);
+    }
+
+    #[test]
+    fn simple_kes_vk_from_bytes_empty_rejected() {
+        assert_eq!(
+            SimpleKesVerificationKey::from_bytes(&[]),
+            Err(CryptoError::InvalidKesDepth(0))
+        );
+    }
+
+    #[test]
+    fn simple_kes_vk_from_bytes_non_multiple_rejected() {
+        assert_eq!(
+            SimpleKesVerificationKey::from_bytes(&[0u8; 33]),
+            Err(CryptoError::InvalidKesKeyMaterialLength(33))
+        );
+    }
+
+    #[test]
+    fn simple_kes_vk_total_periods() {
+        let seeds = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+        let sk = SimpleKesSigningKey::from_seeds(seeds).unwrap();
+        let vk = sk.verification_key().unwrap();
+        assert_eq!(vk.total_periods(), 3);
+    }
+
+    // ── SimpleKesSigningKey debug ────────────────────────────────────────
+
+    #[test]
+    fn simple_kes_signing_key_debug_redacted() {
+        let sk = SimpleKesSigningKey::from_seeds(vec![[1u8; 32]]).unwrap();
+        let dbg = format!("{:?}", sk);
+        assert!(dbg.contains("REDACTED"));
+        assert!(dbg.contains("total_periods"));
+    }
+
+    // ── Test vector: two-period SimpleKES ────────────────────────────────
+
+    #[test]
+    fn simple_kes_two_period_test_vector_sign_indexed() {
+        let v = &simple_kes_two_period_test_vectors()[0];
+        let sk = SimpleKesSigningKey::from_seeds(v.seeds.to_vec()).unwrap();
+        let sig = sk.sign_indexed(KesPeriod(v.period), &v.message).unwrap();
+        assert_eq!(
+            sig.to_bytes(),
+            v.indexed_signature,
+            "indexed signature mismatch for vector: {}",
+            v.name
+        );
+    }
+
+    #[test]
+    fn simple_kes_two_period_test_vector_verify_indexed() {
+        let v = &simple_kes_two_period_test_vectors()[0];
+        let sk = SimpleKesSigningKey::from_seeds(v.seeds.to_vec()).unwrap();
+        let vk = sk.verification_key().unwrap();
+        let sig = SimpleKesSignature::from_bytes(v.indexed_signature);
+        vk.verify_indexed(&v.message, &sig)
+            .expect("test vector indexed signature should verify");
+    }
+
+    #[test]
+    fn simple_kes_two_period_test_vector_verify_compact() {
+        let v = &simple_kes_two_period_test_vectors()[0];
+        let sk = SimpleKesSigningKey::from_seeds(v.seeds.to_vec()).unwrap();
+        let vk = sk.verification_key().unwrap();
+        let csig = SimpleCompactKesSignature::from_bytes(v.compact_indexed_signature);
+        vk.verify_indexed_compact(&v.message, &csig)
+            .expect("test vector compact indexed signature should verify");
+    }
+
+    #[test]
+    fn simple_kes_two_period_test_vector_key_derivation() {
+        let v = &simple_kes_two_period_test_vectors()[0];
+        let sk = SimpleKesSigningKey::from_seeds(v.seeds.to_vec()).unwrap();
+        let vk = sk.verification_key().unwrap();
+        for (i, expected_vk_bytes) in v.verification_keys.iter().enumerate() {
+            assert_eq!(
+                vk.0[i].to_bytes(),
+                *expected_vk_bytes,
+                "VK mismatch at period {i} for vector: {}",
+                v.name
+            );
+        }
+    }
+
+    #[test]
+    fn simple_kes_two_period_test_vector_raw_signature() {
+        let v = &simple_kes_two_period_test_vectors()[0];
+        let sk = SimpleKesSigningKey::from_seeds(v.seeds.to_vec()).unwrap();
+        let sig = sk.sign(KesPeriod(v.period), &v.message).unwrap();
+        assert_eq!(
+            sig.to_bytes(),
+            v.signature,
+            "raw signature mismatch for vector: {}",
+            v.name
+        );
+    }
+}

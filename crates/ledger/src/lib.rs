@@ -66,7 +66,7 @@ pub use error::LedgerError;
 /// Top-level ledger state wrapper.
 pub use state::{
     AccountingState, CommitteeAuthorization, CommitteeMemberState, CommitteeState,
-    DepositPot, DrepState, EnactOutcome, EnactState, LedgerState,
+    DepositPot, DrepState, EnactOutcome, EnactState, GenesisDelegationState, LedgerState,
     GovernanceActionState,
     LedgerStateCheckpoint, LedgerStateSnapshot, PoolRelayAccessPoint, PoolState,
     RegisteredDrep, RegisteredPool, RewardAccountState,
@@ -83,9 +83,9 @@ pub use tx::{
 // -- Type re-exports ----------------------------------------------------------
 pub use types::{
     AddrKeyHash, Address, Anchor, BaseAddress, BlockNo, DCert, DRep, EnterpriseAddress, EpochNo,
-    GenesisDelegateHash, GenesisHash, HeaderHash, Nonce, Point, PointerAddress, PoolKeyHash,
-    PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash, SlotNo, StakeCredential, TxId,
-    UnitInterval, VrfKeyHash,
+    GenesisDelegateHash, GenesisHash, HeaderHash, MirPot, MirTarget, Nonce, Point,
+    PointerAddress, PoolKeyHash, PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash,
+    SlotNo, StakeCredential, Tip, TxId, UnitInterval, VrfKeyHash,
 };
 
 // -- Plutus re-exports --------------------------------------------------------
@@ -113,7 +113,9 @@ pub use epoch_boundary::{
 };
 
 // -- Protocol params re-exports -----------------------------------------------
-pub use protocol_params::{DRepVotingThresholds, PoolVotingThresholds, ProtocolParamUpdate, ProtocolParameters};
+pub use protocol_params::{
+    DRepVotingThresholds, PoolVotingThresholds, ProtocolParameterUpdate, ProtocolParameters,
+};
 
 // -- Fee re-exports -----------------------------------------------------------
 pub use fees::{min_fee_linear, script_fee, total_min_fee, validate_fee, validate_tx_ex_units, validate_tx_size};

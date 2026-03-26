@@ -48,7 +48,7 @@ fn gov_action_hard_fork_round_trip() {
 fn gov_action_parameter_change_round_trip() {
     let ga = GovAction::ParameterChange {
         prev_action_id: None,
-        protocol_param_update: yggdrasil_ledger::ProtocolParamUpdate::default(),
+        protocol_param_update: ProtocolParameterUpdate::default(),
         guardrails_script_hash: Some([0xFF; 28]),
     };
     let bytes = ga.to_cbor_bytes();
@@ -63,7 +63,7 @@ fn gov_action_parameter_change_no_guardrails_round_trip() {
             transaction_id: [0xBB; 32],
             gov_action_index: 1,
         }),
-        protocol_param_update: yggdrasil_ledger::ProtocolParamUpdate {
+        protocol_param_update: ProtocolParameterUpdate {
             min_fee_a: Some(500),
             ..Default::default()
         },
@@ -189,10 +189,9 @@ fn constitution_null_guardrails_round_trip() {
 fn shelley_update_round_trip() {
     use std::collections::BTreeMap;
     let mut proposed = BTreeMap::new();
-    let param_update = {
-        let mut enc = Encoder::new();
-        enc.map(1).unsigned(0).unsigned(1000);
-        enc.into_bytes()
+    let param_update = ProtocolParameterUpdate {
+        min_fee_a: Some(1000),
+        ..Default::default()
     };
     proposed.insert([0x01; 28], param_update);
     let update = ShelleyUpdate {
@@ -208,15 +207,10 @@ fn shelley_update_round_trip() {
 fn shelley_update_multiple_delegates_round_trip() {
     use std::collections::BTreeMap;
     let mut proposed = BTreeMap::new();
-    let p1 = {
-        let mut enc = Encoder::new();
-        enc.map(0);
-        enc.into_bytes()
-    };
-    let p2 = {
-        let mut enc = Encoder::new();
-        enc.map(1).unsigned(1).unsigned(500_000);
-        enc.into_bytes()
+    let p1 = ProtocolParameterUpdate::default();
+    let p2 = ProtocolParameterUpdate {
+        min_fee_b: Some(500_000),
+        ..Default::default()
     };
     proposed.insert([0x01; 28], p1);
     proposed.insert([0x02; 28], p2);
