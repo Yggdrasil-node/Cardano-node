@@ -1050,3 +1050,159 @@ fn promote_volatile_prefix_point_not_found() {
         .promote_volatile_prefix(&Point::BlockPoint(SlotNo(99), HeaderHash([0xFF; 32])));
     assert!(result.is_err(), "promoting a non-existent point should fail");
 }
+
+// ---------------------------------------------------------------------------
+// ChainDb::ledger_mut / into_inner
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chaindb_ledger_mut_allows_direct_mutation() {
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    // Use ledger_mut() to save a snapshot directly through the underlying store.
+    chain_db
+        .ledger_mut()
+        .save_snapshot(SlotNo(42), vec![0xCA, 0xFE])
+        .expect("save via ledger_mut");
+
+    // Verify the snapshot is visible through the immutable ledger() accessor.
+    let (slot, data) = chain_db
+        .ledger()
+        .latest_snapshot()
+        .expect("snapshot should be present");
+    assert_eq!(slot, SlotNo(42));
+    assert_eq!(data, &[0xCA, 0xFE]);
+}
+
+#[test]
+fn chaindb_into_inner_yields_components() {
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    // Populate each store so we can verify state after decomposition.
+    chain_db
+        .add_volatile_block(test_block(0xA1, 10))
+        .expect("add volatile block");
+    chain_db
+        .save_ledger_snapshot(SlotNo(10), vec![0xDD])
+        .expect("save snapshot");
+
+    let (immutable, volatile, ledger) = chain_db.into_inner();
+
+    // Immutable was never populated.
+    assert!(immutable.is_empty());
+
+    // Volatile should contain the block we added.
+    assert_eq!(
+        volatile.tip(),
+        Point::BlockPoint(SlotNo(10), HeaderHash([0xA1; 32]))
+    );
+
+    // Ledger should contain the snapshot we saved.
+    let (slot, data) = ledger
+        .latest_snapshot()
+        .expect("snapshot should be present after into_inner");
+    assert_eq!(slot, SlotNo(10));
+    assert_eq!(data, &[0xDD]);
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: volatile rollback to Origin
+// ---------------------------------------------------------------------------
+
+#[test]
+fn volatile_rollback_to_origin_clears_all() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 1)).expect("add block 1");
+    store.add_block(test_block(0x02, 2)).expect("add block 2");
+    store.add_block(test_block(0x03, 3)).expect("add block 3");
+
+    // Rolling back to Origin should discard every block.
+    store.rollback_to(&Point::Origin);
+
+    assert_eq!(store.tip(), Point::Origin);
+    assert!(store.get_block(&HeaderHash([0x01; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x03; 32])).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: ledger truncate_after(None)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ledger_truncate_after_none_clears_all() {
+    let mut store = InMemoryLedgerStore::default();
+    store
+        .save_snapshot(SlotNo(10), vec![0x0A])
+        .expect("save snapshot 10");
+    store
+        .save_snapshot(SlotNo(20), vec![0x14])
+        .expect("save snapshot 20");
+    store
+        .save_snapshot(SlotNo(30), vec![0x1E])
+        .expect("save snapshot 30");
+
+    // Passing None should clear all snapshots.
+    store
+        .truncate_after(None)
+        .expect("truncate_after(None) should succeed");
+
+    assert!(
+        store.latest_snapshot().is_none(),
+        "all snapshots should be cleared"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: immutable suffix_after Origin
+// ---------------------------------------------------------------------------
+
+#[test]
+fn immutable_suffix_after_origin_returns_all() {
+    let mut store = InMemoryImmutable::default();
+    store
+        .append_block(test_block(0x01, 1))
+        .expect("append block 1");
+    store
+        .append_block(test_block(0x02, 2))
+        .expect("append block 2");
+    store
+        .append_block(test_block(0x03, 3))
+        .expect("append block 3");
+
+    // suffix_after(Origin) should return the full chain.
+    let blocks = store
+        .suffix_after(&Point::Origin)
+        .expect("suffix_after Origin should succeed");
+
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks[0].header.slot_no, SlotNo(1));
+    assert_eq!(blocks[1].header.slot_no, SlotNo(2));
+    assert_eq!(blocks[2].header.slot_no, SlotNo(3));
+}
+
+// ---------------------------------------------------------------------------
+// Edge cases: ChainDb recovery with empty stores
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chaindb_recovery_empty_stores() {
+    let chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    let recovery = chain_db.recovery();
+
+    assert_eq!(recovery.tip, Point::Origin);
+    assert_eq!(recovery.ledger_snapshot_slot, None);
+}
