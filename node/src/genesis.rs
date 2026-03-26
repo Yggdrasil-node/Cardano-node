@@ -741,10 +741,16 @@ mod tests {
         let model = build_plutus_cost_model(&alonzo)
             .expect("build cost model")
             .expect("plutus v1 cost model");
-        assert_eq!(model.step_cpu, 29_773);
-        assert_eq!(model.step_mem, 100);
-        assert_eq!(model.builtin_cpu, 29_773);
-        assert_eq!(model.builtin_mem, 100);
+        // Verify machine step costs via the public API.
+        let step = model.machine_step_cost();
+        assert_eq!(step.cpu, 29_773);
+        assert_eq!(step.mem, 100);
+        // The sample fixture only provides CEK step cost keys; no per-builtin
+        // params are present, so builtins fall back to the default cost.
+        use yggdrasil_plutus::types::{Constant, DefaultFun, Value};
+        let args = [Value::Constant(Constant::ByteString(vec![]))];
+        let bc = model.builtin_cost(DefaultFun::Sha2_256, &args);
+        assert_eq!(bc.cpu, 29_773); // fallback to default builtin cost
     }
 
     #[test]

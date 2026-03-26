@@ -68,7 +68,17 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - Flat decoder handles tags 9/10/11 for BLS types.
 - `MachineError::CryptoError(String)` variant added for BLS operation failures.
 
+## Current Cost Model Status
+`CostModel` now implements full per-builtin parameterized costing:
+- `CostFun` enum covers all upstream model shapes: `Constant`, `LinearInX/Y/Z`, `LinearInXAndY`, `LinearInMaxXY/MinXY`, `MultipliedSizes`, `ConstAboveDiagonal`, `SubtractedSizesWithMin`, `ConstOffDiagonalLinearOnDiagonal`.
+- `BuiltinCostEntry { cpu: CostFun, mem: CostFun }` per builtin, stored in a `BTreeMap<DefaultFun, BuiltinCostEntry>` inside `CostModel`.
+- `from_alonzo_genesis_params()` parses all V1 (Alonzo named map) and V2 (Babbage named map) cost parameters. Handles old key names (`blake2b`, `verifySignature`) and new names (`blake2b_256`, `verifyEd25519Signature`). Falls back to `default_builtin_cpu/mem` for any builtin not present in the parameter map.
+- Argument size measurement: integers use 64-bit word count (`integer_size`), bytestrings and strings use raw byte length (0 for empty), data types use a conservative estimate.
+- `DefaultFun` now derives `PartialOrd + Ord` (required for `BTreeMap` keying).
+- 10 unit tests covering: machine step parsing, per-builtin scaling, divide constant-below-diagonal, equalsByteString on/off-diagonal, chooseData constant, verifyEd25519 message scaling, integer size, fallback default.
+
 ## Next Steps
-1. Replace the current flat CEK model with per-builtin parameterized costing keyed by the full upstream cost-model parameter set.
-2. Add integration tests with on-chain script samples.
-3. Expand version-aware cost-model support so Conway `plutusV3CostModel` arrays can be mapped without falling back to Alonzo named maps.
+1. Add integration tests with real on-chain script samples (from `specs/upstream-test-vectors`).
+2. Implement Conway `plutusV3CostModel` positional-array parser (251 integers in `DefaultFun` order).
+3. Full `ScriptContext` / `TxInfo` construction replacing the current placeholder for all script purposes.
+4. Per-builtin cost model support for PlutusV2 additional parameters (verifyEcdsaSecp256k1Signature, verifySchnorrSecp256k1Signature, serialiseData) — already parsed but needs test coverage with real V2 genesis.

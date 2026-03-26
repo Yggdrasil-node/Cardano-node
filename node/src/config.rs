@@ -1140,16 +1140,25 @@ mod tests {
 
     #[test]
     fn mainnet_preset_loads_plutus_cost_model() {
+        use yggdrasil_plutus::types::{Constant, DefaultFun, Value};
         let cfg = NetworkPreset::Mainnet.to_config();
         let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("configuration/mainnet");
         let model = cfg
             .load_plutus_cost_model(Some(base_dir.as_path()))
             .expect("load plutus cost model")
             .expect("mainnet plutus cost model");
-        assert_eq!(model.step_cpu, 29_773);
-        assert_eq!(model.step_mem, 100);
-        assert_eq!(model.builtin_cpu, 29_773);
-        assert_eq!(model.builtin_mem, 100);
+        // Verify machine step costs via public API.
+        let step = model.machine_step_cost();
+        assert_eq!(step.cpu, 29_773);
+        assert_eq!(step.mem, 100);
+        // Verify a per-builtin cost: addInteger with zero-sized args → intercept only.
+        let args = [
+            Value::Constant(Constant::Integer(0)),
+            Value::Constant(Constant::Integer(0)),
+        ];
+        let bc = model.builtin_cost(DefaultFun::AddInteger, &args);
+        // intercept=197209, slope=0 → always 197209
+        assert_eq!(bc.cpu, 197_209);
     }
 
     #[test]

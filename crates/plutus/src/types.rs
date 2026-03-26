@@ -126,7 +126,7 @@ pub enum Constant {
 ///
 /// Discriminant values match the Flat encoding index used on-chain.
 /// Reference: `PlutusCore.Default.Builtins.DefaultFun`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 pub enum DefaultFun {
