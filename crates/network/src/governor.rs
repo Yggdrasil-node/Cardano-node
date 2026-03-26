@@ -22,24 +22,111 @@ use std::time::{Duration, Instant};
 
 /// Target peer counts that the governor tries to maintain.
 ///
-/// Upstream reference: `PeerSelectionTargets` in
-/// `Ouroboros.Network.PeerSelection.Governor.Types`.
+/// Matches the upstream `PeerSelectionTargets` record in
+/// `Ouroboros.Network.PeerSelection.Governor.Types`, which defines seven
+/// fields split into *regular* and *big-ledger* categories.
+///
+/// **Upstream field mapping:**
+///
+/// | Upstream Haskell field                          | Rust field                             |
+/// |-------------------------------------------------|----------------------------------------|
+/// | `targetNumberOfRootPeers`                       | `target_root`                          |
+/// | `targetNumberOfKnownPeers`                      | `target_known`                         |
+/// | `targetNumberOfEstablishedPeers`                | `target_established`                   |
+/// | `targetNumberOfActivePeers`                     | `target_active`                        |
+/// | `targetNumberOfKnownBigLedgerPeers`             | `target_known_big_ledger`              |
+/// | `targetNumberOfEstablishedBigLedgerPeers`       | `target_established_big_ledger`        |
+/// | `targetNumberOfActiveBigLedgerPeers`            | `target_active_big_ledger`             |
+///
+/// The `target_root` field is a one-sided target (from below only): the
+/// governor stops looking for more roots once reached but never shrinks
+/// the set.  Regular targets (`target_known`, `target_established`,
+/// `target_active`) are two-sided (the governor grows *and* shrinks).
+/// Big-ledger targets operate independently and their counts do not
+/// overlap with regular targets.
+///
+/// Reference: `Ouroboros.Network.PeerSelection.Governor.Types`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GovernorTargets {
+    // -- Regular peer targets (excludes big-ledger) ---------------------------
+
+    /// Target number of root peers (one-sided, from below only).
+    ///
+    /// Upstream: `targetNumberOfRootPeers`.
+    pub target_root: usize,
     /// Target number of known (cold + warm + hot) peers.
+    ///
+    /// Upstream: `targetNumberOfKnownPeers`.
     pub target_known: usize,
     /// Target number of established (warm + hot) peers.
+    ///
+    /// Upstream: `targetNumberOfEstablishedPeers`.
     pub target_established: usize,
     /// Target number of active (hot) peers.
+    ///
+    /// Upstream: `targetNumberOfActivePeers`.
     pub target_active: usize,
+
+    // -- Big-ledger peer targets (independent of regular) ---------------------
+
+    /// Target number of known big-ledger peers.
+    ///
+    /// Upstream: `targetNumberOfKnownBigLedgerPeers`.
+    pub target_known_big_ledger: usize,
+    /// Target number of established big-ledger peers.
+    ///
+    /// Upstream: `targetNumberOfEstablishedBigLedgerPeers`.
+    pub target_established_big_ledger: usize,
+    /// Target number of active big-ledger peers.
+    ///
+    /// Upstream: `targetNumberOfActiveBigLedgerPeers`.
+    pub target_active_big_ledger: usize,
+}
+
+impl GovernorTargets {
+    /// Checks whether the targets satisfy the upstream `sanePeerSelectionTargets`
+    /// invariants.
+    ///
+    /// The upstream Haskell implementation enforces:
+    ///
+    /// ```text
+    /// 0 ≤ active ≤ established ≤ known
+    /// 0 ≤ root ≤ known
+    /// 0 ≤ active_big ≤ established_big ≤ known_big
+    /// active ≤ 100, established ≤ 1000, known ≤ 10000
+    /// active_big ≤ 100, established_big ≤ 1000, known_big ≤ 10000
+    /// ```
+    ///
+    /// Reference: `sanePeerSelectionTargets` in
+    /// `Ouroboros.Network.PeerSelection.Governor.Types`.
+    pub fn is_sane(&self) -> bool {
+        // Regular chain: 0 ≤ active ≤ established ≤ known, root ≤ known
+        self.target_active <= self.target_established
+            && self.target_established <= self.target_known
+            && self.target_root <= self.target_known
+            // Big-ledger chain: 0 ≤ active_big ≤ established_big ≤ known_big
+            && self.target_active_big_ledger <= self.target_established_big_ledger
+            && self.target_established_big_ledger <= self.target_known_big_ledger
+            // Upper bounds (matching upstream constants)
+            && self.target_active <= 100
+            && self.target_established <= 1000
+            && self.target_known <= 10000
+            && self.target_active_big_ledger <= 100
+            && self.target_established_big_ledger <= 1000
+            && self.target_known_big_ledger <= 10000
+    }
 }
 
 impl Default for GovernorTargets {
     fn default() -> Self {
         Self {
+            target_root: 3,
             target_known: 20,
             target_established: 10,
             target_active: 5,
+            target_known_big_ledger: 0,
+            target_established_big_ledger: 0,
+            target_active_big_ledger: 0,
         }
     }
 }
@@ -496,6 +583,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..Default::default()
         };
 
         let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
