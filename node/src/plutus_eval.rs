@@ -1181,9 +1181,20 @@ fn credential_data(credential: &StakeCredential) -> PlutusData {
 
 /// Convert a [`MachineError`] into a [`LedgerError::PlutusScriptFailed`].
 fn map_machine_error(hash: &[u8; 28], err: MachineError) -> LedgerError {
-    LedgerError::PlutusScriptFailed {
-        hash: *hash,
-        reason: err.to_string(),
+    // Collapse operational errors to the opaque `EvaluationFailure` sentinel
+    // before surfacing to the ledger.  Structural errors pass through with
+    // full detail so the caller can distinguish budget exhaustion from decode
+    // failures, matching upstream Plutus error semantics.
+    let ledger_err = err.into_ledger_error();
+    match &ledger_err {
+        MachineError::FlatDecodeError(reason) => LedgerError::PlutusScriptDecodeError {
+            hash: *hash,
+            reason: reason.clone(),
+        },
+        other => LedgerError::PlutusScriptFailed {
+            hash: *hash,
+            reason: other.to_string(),
+        },
     }
 }
 
@@ -3914,16 +3925,48 @@ mod tests {
     // -- map_machine_error encoding ------------------------------------------
 
     #[test]
-    fn map_machine_error_produces_plutus_script_failed() {
+    fn map_machine_error_structural_out_of_budget() {
         let hash = [0xFF; 28];
         let err = MachineError::OutOfBudget("cpu exceeded".into());
         let result = map_machine_error(&hash, err);
         match result {
             LedgerError::PlutusScriptFailed { hash: h, reason } => {
                 assert_eq!(h, [0xFF; 28]);
-                assert!(reason.contains("cpu exceeded"));
+                // Structural error — detail preserved
+                assert!(reason.contains("cpu exceeded"), "budget detail must be preserved");
             }
             other => panic!("Expected PlutusScriptFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_machine_error_operational_collapses_to_opaque() {
+        let hash = [0xAA; 28];
+        let err = MachineError::DivisionByZero;
+        let result = map_machine_error(&hash, err);
+        match result {
+            LedgerError::PlutusScriptFailed { reason, .. } => {
+                // Operational error collapsed — must NOT leak "division by zero"
+                assert!(
+                    reason.contains("evaluation failure"),
+                    "operational error should be opaque, got: {reason}"
+                );
+            }
+            other => panic!("Expected PlutusScriptFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_machine_error_flat_decode_becomes_decode_error() {
+        let hash = [0xBB; 28];
+        let err = MachineError::FlatDecodeError("trailing bits".into());
+        let result = map_machine_error(&hash, err);
+        match result {
+            LedgerError::PlutusScriptDecodeError { hash: h, reason } => {
+                assert_eq!(h, [0xBB; 28]);
+                assert!(reason.contains("trailing bits"));
+            }
+            other => panic!("Expected PlutusScriptDecodeError, got {:?}", other),
         }
     }
 

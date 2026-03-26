@@ -243,23 +243,28 @@ impl CostExpr {
         let sz = |idx: usize| sizes.get(idx).copied().unwrap_or(1).max(0);
         let raw = match self {
             Self::Constant(c)                          => *c,
-            Self::LinearInX { intercept, slope }       => intercept + slope * sz(0),
-            Self::LinearInY { intercept, slope }       => intercept + slope * sz(1),
-            Self::LinearInZ { intercept, slope }       => intercept + slope * sz(2),
+            Self::LinearInX { intercept, slope }       => intercept.saturating_add(slope.saturating_mul(sz(0))),
+            Self::LinearInY { intercept, slope }       => intercept.saturating_add(slope.saturating_mul(sz(1))),
+            Self::LinearInZ { intercept, slope }       => intercept.saturating_add(slope.saturating_mul(sz(2))),
             Self::LinearForm { intercept, x, y, z }    => {
-                intercept + x * sz(0) + y * sz(1) + z * sz(2)
+                intercept
+                    .saturating_add(x.saturating_mul(sz(0)))
+                    .saturating_add(y.saturating_mul(sz(1)))
+                    .saturating_add(z.saturating_mul(sz(2)))
             }
-            Self::AddedSizes { intercept, slope }      => intercept + slope * (sz(0) + sz(1)),
-            Self::MaxSize { intercept, slope }         => intercept + slope * sz(0).max(sz(1)),
-            Self::MinSize { intercept, slope }         => intercept + slope * sz(0).min(sz(1)),
+            Self::AddedSizes { intercept, slope }      => intercept.saturating_add(slope.saturating_mul(sz(0).saturating_add(sz(1)))),
+            Self::MaxSize { intercept, slope }         => intercept.saturating_add(slope.saturating_mul(sz(0).max(sz(1)))),
+            Self::MinSize { intercept, slope }         => intercept.saturating_add(slope.saturating_mul(sz(0).min(sz(1)))),
             Self::SubtractedSizes { intercept, slope, minimum } => {
-                (*minimum).max(intercept + slope * (sz(0) - sz(1)).max(0))
+                (*minimum).max(intercept.saturating_add(slope.saturating_mul((sz(0) - sz(1)).max(0))))
             }
-            Self::MaxSizeYZ { intercept, slope } => intercept + slope * sz(1).max(sz(2)),
+            Self::MaxSizeYZ { intercept, slope } => intercept.saturating_add(slope.saturating_mul(sz(1).max(sz(2)))),
             Self::ExpModCost { c00, c11, c12 } => {
                 let y = sz(1);
                 let z = sz(2);
-                c00 + c11 * (y * z) + c12 * (y * z * z)
+                let yz = y.saturating_mul(z);
+                c00.saturating_add(c11.saturating_mul(yz))
+                   .saturating_add(c12.saturating_mul(yz.saturating_mul(z)))
             }
         };
         raw.max(0)
@@ -1346,5 +1351,17 @@ mod tests {
         let expr = CostExpr::ExpModCost { c00: 500, c11: 100, c12: 50 };
         // y = 0 → all y-dependent terms vanish: 500 + 0 + 0 = 500
         assert_eq!(expr.evaluate(&[5, 0, 10]), 500);
+    }
+
+    #[test]
+    fn cost_expr_saturates_instead_of_overflow() {
+        // ExpModCost with huge sizes must saturate to i64::MAX, not panic.
+        let expr = CostExpr::ExpModCost { c00: 0, c11: i64::MAX, c12: i64::MAX };
+        let cost = expr.evaluate(&[0, i64::MAX, i64::MAX]);
+        assert_eq!(cost, i64::MAX);
+
+        // Linear expressions also saturate.
+        let lin = CostExpr::LinearInX { intercept: i64::MAX, slope: i64::MAX };
+        assert_eq!(lin.evaluate(&[i64::MAX]), i64::MAX);
     }
 }
