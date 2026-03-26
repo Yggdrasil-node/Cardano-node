@@ -10,6 +10,9 @@ use yggdrasil_network::{
     TcpBearer, TxIdAndSize, TxServerRequest, TxSubmissionClient, TxSubmissionMessage,
     TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
     start_mux, peer_connect, peer_accept, PeerError,
+    LocalRootConfig, LocalRootTargets, PeerAccessPoint, PeerAttemptState,
+    PeerBootstrapTargets, PeerDiffusionMode, PeerRegistry, PeerRegistryEntry,
+    PeerSource, PeerStatus,
 };
 use yggdrasil_ledger::{AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, CborDecode, CborEncode, HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, TxId, Value};
 
@@ -3706,4 +3709,174 @@ async fn txsubmission_client_rejects_unrequested_typed_tx_reply() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     c_mux.abort();
     s_mux.abort();
+}
+
+// ---------------------------------------------------------------------------
+// PeerRegistry tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn peer_registry_len_tracks_entries() {
+    let mut reg = PeerRegistry::default();
+    assert_eq!(reg.len(), 0);
+    assert!(reg.is_empty());
+
+    let addr_a: std::net::SocketAddr = "127.0.0.1:3001".parse().expect("parse addr_a");
+    let addr_b: std::net::SocketAddr = "127.0.0.2:3001".parse().expect("parse addr_b");
+    let addr_c: std::net::SocketAddr = "127.0.0.3:3001".parse().expect("parse addr_c");
+
+    reg.insert_source(addr_a, PeerSource::PeerSourceLocalRoot);
+    assert_eq!(reg.len(), 1);
+
+    reg.insert_source(addr_b, PeerSource::PeerSourcePublicRoot);
+    assert_eq!(reg.len(), 2);
+
+    // Inserting a second source for the same peer should NOT increase len.
+    reg.insert_source(addr_a, PeerSource::PeerSourceBootstrap);
+    assert_eq!(reg.len(), 2);
+
+    reg.insert_source(addr_c, PeerSource::PeerSourceLedger);
+    assert_eq!(reg.len(), 3);
+    assert!(!reg.is_empty());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_local() {
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourceLocalRoot]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_public() {
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourcePublicRoot]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_ledger() {
+    // Ledger peers are considered root peers by the current implementation
+    // (matches PeerSourceLedger in is_root_peer). Only PeerShare is excluded.
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourceLedger]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+
+    // PeerShare is the only non-root source.
+    let peer_share_only = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([PeerSource::PeerSourcePeerShare]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(!peer_share_only.is_root_peer());
+}
+
+#[test]
+fn peer_registry_entry_is_root_peer_mixed_sources() {
+    // An entry with Ledger + LocalRoot should be a root peer.
+    let entry = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([
+            PeerSource::PeerSourceLedger,
+            PeerSource::PeerSourceLocalRoot,
+        ]),
+        status: PeerStatus::PeerWarm,
+        hot_tip_slot: None,
+    };
+    assert!(entry.is_root_peer());
+
+    // Even PeerShare mixed with LocalRoot should be a root peer.
+    let mixed = PeerRegistryEntry {
+        sources: std::collections::BTreeSet::from([
+            PeerSource::PeerSourcePeerShare,
+            PeerSource::PeerSourceLocalRoot,
+        ]),
+        status: PeerStatus::PeerCold,
+        hot_tip_slot: None,
+    };
+    assert!(mixed.is_root_peer());
+}
+
+// ---------------------------------------------------------------------------
+// Governor tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn local_root_targets_from_config() {
+    let config = LocalRootConfig {
+        access_points: vec![
+            PeerAccessPoint { address: "127.0.0.1".to_owned(), port: 3001 },
+            PeerAccessPoint { address: "127.0.0.2".to_owned(), port: 3002 },
+        ],
+        advertise: false,
+        trustable: true,
+        hot_valency: 2,
+        warm_valency: Some(4),
+        diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+    };
+
+    let resolved: Vec<std::net::SocketAddr> = vec![
+        "127.0.0.1:3001".parse().expect("parse resolved_a"),
+        "127.0.0.2:3002".parse().expect("parse resolved_b"),
+    ];
+
+    let targets = LocalRootTargets::from_config(&config, resolved.clone());
+
+    assert_eq!(targets.peers, resolved);
+    assert_eq!(targets.hot_valency, 2);
+    // warm_valency should come from effective_warm_valency() which returns
+    // the explicit warm_valency (4) when present.
+    assert_eq!(targets.warm_valency, 4);
+}
+
+#[test]
+fn local_root_targets_from_config_defaults_warm_to_hot() {
+    let config = LocalRootConfig {
+        access_points: vec![
+            PeerAccessPoint { address: "127.0.0.1".to_owned(), port: 3001 },
+        ],
+        advertise: false,
+        trustable: false,
+        hot_valency: 3,
+        warm_valency: None,
+        diffusion_mode: PeerDiffusionMode::InitiatorOnlyDiffusionMode,
+    };
+
+    let resolved: Vec<std::net::SocketAddr> = vec![
+        "127.0.0.1:3001".parse().expect("parse resolved"),
+    ];
+
+    let targets = LocalRootTargets::from_config(&config, resolved.clone());
+
+    assert_eq!(targets.peers, resolved);
+    assert_eq!(targets.hot_valency, 3);
+    // When warm_valency is None, effective_warm_valency() falls back to
+    // hot_valency.
+    assert_eq!(targets.warm_valency, 3);
+}
+
+// ---------------------------------------------------------------------------
+// PeerSelection tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn peer_attempt_state_targets_returns_bootstrap_targets() {
+    let primary: std::net::SocketAddr = "127.0.0.10:3001".parse().expect("parse primary");
+    let fallback_a: std::net::SocketAddr = "127.0.0.11:3001".parse().expect("parse fallback_a");
+    let fallback_b: std::net::SocketAddr = "127.0.0.12:3001".parse().expect("parse fallback_b");
+
+    let bt = PeerBootstrapTargets::new(primary, &[fallback_a, fallback_b]);
+    let state = PeerAttemptState::new(bt);
+
+    let targets = state.targets();
+    assert_eq!(targets.primary_peer(), primary);
+    assert_eq!(targets.fallback_peers(), &[fallback_a, fallback_b]);
 }

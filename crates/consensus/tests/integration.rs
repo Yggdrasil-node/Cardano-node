@@ -1274,3 +1274,316 @@ fn skip_epoch_detects_transition() {
     // epoch_nonce should have been updated by the transition.
     assert_ne!(state.epoch_nonce, init);
 }
+
+// ---------------------------------------------------------------------------
+// Chain selection edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn select_preferred_reflexivity() {
+    // When both candidates are identical, `select_preferred` returns left.
+    let c = ChainCandidate {
+        block_no: BlockNo(42),
+        slot_no: SlotNo(100),
+        vrf_tiebreaker: Some([0xCC; 32]),
+    };
+    let result = select_preferred(c, c);
+    assert_eq!(result, c);
+}
+
+#[test]
+fn select_preferred_max_block_no() {
+    // Candidates at u64::MAX block height — verify no overflow or panic.
+    let left = ChainCandidate {
+        block_no: BlockNo(u64::MAX),
+        slot_no: SlotNo(10),
+        vrf_tiebreaker: None,
+    };
+    let right = ChainCandidate {
+        block_no: BlockNo(u64::MAX),
+        slot_no: SlotNo(20),
+        vrf_tiebreaker: None,
+    };
+    // Equal block_no → lower slot wins.
+    assert_eq!(select_preferred(left, right), left);
+}
+
+#[test]
+fn select_preferred_max_slot_no() {
+    // Equal block_no: u64::MAX slot vs 0 slot — lower slot (right) wins.
+    let left = ChainCandidate {
+        block_no: BlockNo(5),
+        slot_no: SlotNo(u64::MAX),
+        vrf_tiebreaker: None,
+    };
+    let right = ChainCandidate {
+        block_no: BlockNo(5),
+        slot_no: SlotNo(0),
+        vrf_tiebreaker: None,
+    };
+    assert_eq!(select_preferred(left, right), right);
+}
+
+// ---------------------------------------------------------------------------
+// ActiveSlotCoeff edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn active_slot_coeff_near_one_rational() {
+    // f = 999/1000 — very close to 1 but not equal.
+    let asc = ActiveSlotCoeff::from_rational(999, 1000).expect("999/1000 is valid");
+    assert!((asc.to_f64() - 0.999).abs() < 1e-9);
+}
+
+#[test]
+fn active_slot_coeff_one_over_max() {
+    // f = 1/u64::MAX — smallest possible positive rational.
+    let asc = ActiveSlotCoeff::from_rational(1, u64::MAX).expect("1/u64::MAX is valid");
+    assert!(asc.to_f64() > 0.0);
+    assert!(asc.to_f64() < 1e-10);
+}
+
+// ---------------------------------------------------------------------------
+// check_leader_value edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn leader_check_fractional_stake_with_zeros_output() {
+    // sigma = 1/100, all-zeros VRF output → p = 0 which is below any
+    // positive threshold, so this should always be a leader.
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
+    let output = VrfOutput::from_bytes([0u8; 64]);
+    let result = check_leader_value(&output, 1, 100, &asc).expect("valid");
+    assert!(result, "all-zeros output with fractional stake should be leader");
+}
+
+#[test]
+fn leader_check_full_stake_all_ones_output() {
+    // sigma = sigma_den (full stake), all-ones VRF output.
+    // target = certNatMax - certNat ≈ 0, and the comparison is
+    // target > certNatMax × (1-f)^σ. With f=0.05 and full stake,
+    // (1-f)^1 = 0.95, so target ≈ 0 < certNatMax × 0.95 → NOT leader.
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
+    let output = VrfOutput::from_bytes([0xFF; 64]);
+    let result = check_leader_value(&output, 100, 100, &asc).expect("valid");
+    assert!(!result, "all-ones output should not be leader even with full stake");
+}
+
+#[test]
+fn leader_check_sigma_exceeds_denominator() {
+    // sigma_num > sigma_den is not a valid stake fraction, but the function
+    // should not panic — it just performs the arithmetic.
+    let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
+    let output = VrfOutput::from_bytes([0x80; 64]);
+    let result = check_leader_value(&output, 200, 100, &asc);
+    // We only care that it doesn't panic; the result can be Ok(true) or Ok(false).
+    assert!(result.is_ok(), "sigma_num > sigma_den should not panic");
+}
+
+// ---------------------------------------------------------------------------
+// ChainState edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chain_state_roll_backward_then_forward() {
+    // Roll backward to Origin, then build a completely new chain.
+    let mut cs = ChainState::new(SecurityParam(5));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("forward 0");
+    cs.roll_forward(entry(0x02, 20, 1)).expect("forward 1");
+
+    cs.roll_backward(&Point::Origin).expect("rollback to origin");
+    assert!(cs.is_empty());
+
+    // Build a new chain from scratch.
+    cs.roll_forward(entry(0xA0, 5, 0)).expect("new forward 0");
+    cs.roll_forward(entry(0xA1, 15, 1)).expect("new forward 1");
+    cs.roll_forward(entry(0xA2, 25, 2)).expect("new forward 2");
+
+    assert_eq!(cs.volatile_len(), 3);
+    assert_eq!(
+        cs.tip(),
+        Point::BlockPoint(SlotNo(25), HeaderHash([0xA2; 32]))
+    );
+}
+
+#[test]
+fn chain_state_drain_stable_after_rollback() {
+    // Fill past k, rollback to within k, verify stable_count drops to 0.
+    let k = 3u64;
+    let mut cs = ChainState::new(SecurityParam(k));
+
+    // Insert 6 blocks: stable_count should be 3 (6 - 3 = 3).
+    for i in 0u64..6 {
+        cs.roll_forward(entry(i as u8, (i + 1) * 10, i))
+            .expect("forward");
+    }
+    assert_eq!(cs.stable_count(), 3);
+
+    // Roll back to block 4 (remove block 5) — now 5 entries, stable_count = 2.
+    cs.roll_backward(&Point::BlockPoint(SlotNo(50), HeaderHash([0x04; 32])))
+        .expect("rollback");
+    assert_eq!(cs.volatile_len(), 5);
+
+    // Roll back further to block 2 — now 3 entries, stable_count = 0.
+    cs.roll_backward(&Point::BlockPoint(SlotNo(30), HeaderHash([0x02; 32])))
+        .expect("rollback");
+    assert_eq!(cs.volatile_len(), 3);
+    assert_eq!(cs.stable_count(), 0);
+}
+
+#[test]
+fn chain_state_volatile_entries_preserves_order() {
+    // Insert 5 entries and verify volatile_entries returns them oldest first.
+    let mut cs = ChainState::new(SecurityParam(10));
+    for i in 0u64..5 {
+        cs.roll_forward(entry(i as u8, (i + 1) * 10, i))
+            .expect("forward");
+    }
+
+    let entries = cs.volatile_entries();
+    assert_eq!(entries.len(), 5);
+    for (idx, e) in entries.iter().enumerate() {
+        assert_eq!(e.block_no, BlockNo(idx as u64));
+        assert_eq!(e.hash, HeaderHash([idx as u8; 32]));
+    }
+}
+
+#[test]
+fn chain_state_k_zero_all_entries_stable() {
+    // With SecurityParam(0), every entry is immediately stable.
+    let mut cs = ChainState::new(SecurityParam(0));
+    cs.roll_forward(entry(0x01, 10, 0)).expect("forward 0");
+    assert_eq!(cs.stable_count(), 1);
+
+    cs.roll_forward(entry(0x02, 20, 1)).expect("forward 1");
+    assert_eq!(cs.stable_count(), 2);
+
+    let drained = cs.drain_stable();
+    assert_eq!(drained.len(), 2);
+    assert_eq!(cs.volatile_len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Epoch math edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn slot_to_epoch_large_slot() {
+    // Slot near u64::MAX with mainnet epoch size — should not overflow.
+    let epoch_size = EpochSize(432_000);
+    let large_slot = SlotNo(u64::MAX - 1);
+    let epoch = slot_to_epoch(large_slot, epoch_size);
+    // u64::MAX - 1 = 18446744073709551614, / 432000 = 42699869152105
+    assert_eq!(epoch, EpochNo((u64::MAX - 1) / 432_000));
+}
+
+#[test]
+fn is_new_epoch_first_slot_of_next() {
+    // The exact boundary between epoch 0 and 1: slot 431999 → epoch 0,
+    // slot 432000 → epoch 1.
+    let epoch_size = EpochSize(432_000);
+    assert!(
+        !is_new_epoch(Some(SlotNo(431_998)), SlotNo(431_999), epoch_size),
+        "both in epoch 0"
+    );
+    assert!(
+        is_new_epoch(Some(SlotNo(431_999)), SlotNo(432_000), epoch_size),
+        "crossing from epoch 0 to 1"
+    );
+}
+
+#[test]
+fn epoch_first_slot_epoch_zero() {
+    // Epoch 0 starts at slot 0 for any epoch size.
+    assert_eq!(epoch_first_slot(EpochNo(0), EpochSize(432_000)), SlotNo(0));
+    assert_eq!(epoch_first_slot(EpochNo(0), EpochSize(10)), SlotNo(0));
+    assert_eq!(epoch_first_slot(EpochNo(0), EpochSize(1)), SlotNo(0));
+}
+
+// ---------------------------------------------------------------------------
+// Nonce evolution edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nonce_evolution_consecutive_epochs_without_blocks() {
+    // Apply blocks that skip multiple epochs: epoch 0 → epoch 3.
+    // Each call to apply_block should trigger one epoch transition.
+    let config = test_nonce_config(); // epoch=10, sw=3
+    let init = Nonce::Hash([0x11; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Block in epoch 0.
+    state.apply_block(SlotNo(0), &make_vrf_output(1), Some(make_header_hash(1)), &config);
+    assert_eq!(state.current_epoch, EpochNo(0));
+    let epoch_nonce_0 = state.epoch_nonce;
+
+    // Jump to epoch 3 (slot 30) — triggers a transition.
+    state.apply_block(SlotNo(30), &make_vrf_output(2), Some(make_header_hash(2)), &config);
+    assert_eq!(state.current_epoch, EpochNo(3));
+    assert_ne!(state.epoch_nonce, epoch_nonce_0, "epoch nonce should change after transition");
+
+    let epoch_nonce_3 = state.epoch_nonce;
+
+    // Jump to epoch 7 (slot 70) — another transition.
+    state.apply_block(SlotNo(70), &make_vrf_output(3), Some(make_header_hash(3)), &config);
+    assert_eq!(state.current_epoch, EpochNo(7));
+    assert_ne!(state.epoch_nonce, epoch_nonce_3, "epoch nonce should change again");
+}
+
+#[test]
+fn nonce_evolution_stability_window_exact_boundary() {
+    // With epoch_size=10 and stability_window=3:
+    // Slot 6: 6 + 3 = 9 < 10 → NOT in stability window (candidate updated).
+    // Slot 7: 7 + 3 = 10 >= 10 → IN stability window (candidate frozen).
+    // This test verifies the exact boundary at slot 7.
+    let config = test_nonce_config(); // epoch=10, sw=3
+    let init = Nonce::Hash([0x22; 32]);
+    let mut state = NonceEvolutionState::new(init);
+
+    // Slot 6: outside stability window — candidate should be updated.
+    state.apply_block(SlotNo(6), &make_vrf_output(0xAA), Some(make_header_hash(0xAA)), &config);
+    let candidate_after_6 = state.candidate_nonce;
+    assert_eq!(state.candidate_nonce, state.evolving_nonce, "candidate tracks evolving outside window");
+
+    // Slot 7: exactly at stability window boundary — candidate should freeze.
+    state.apply_block(SlotNo(7), &make_vrf_output(0xBB), Some(make_header_hash(0xBB)), &config);
+    assert_eq!(state.candidate_nonce, candidate_after_6, "candidate frozen at boundary");
+    assert_ne!(state.evolving_nonce, candidate_after_6, "evolving still evolves");
+}
+
+#[test]
+fn nonce_evolution_neutral_extra_entropy() {
+    // Verify that Nonce::Neutral extra entropy produces the same epoch nonce
+    // as the default configuration. Neutral is the identity for combine(),
+    // so candidate ⭒ prev_hash ⭒ Neutral == candidate ⭒ prev_hash.
+    let config_neutral = NonceEvolutionConfig {
+        epoch_size: EpochSize(10),
+        stability_window: 3,
+        extra_entropy: Nonce::Neutral,
+    };
+    let config_zero = NonceEvolutionConfig {
+        epoch_size: EpochSize(10),
+        stability_window: 3,
+        extra_entropy: Nonce::Hash([0u8; 32]),
+    };
+    let init = Nonce::Hash([0x33; 32]);
+
+    let mut state_neutral = NonceEvolutionState::new(init);
+    let mut state_zero = NonceEvolutionState::new(init);
+
+    // Apply identical blocks in epoch 0.
+    state_neutral.apply_block(SlotNo(0), &make_vrf_output(1), Some(make_header_hash(1)), &config_neutral);
+    state_zero.apply_block(SlotNo(0), &make_vrf_output(1), Some(make_header_hash(1)), &config_zero);
+
+    // Trigger epoch transition by jumping to epoch 1.
+    state_neutral.apply_block(SlotNo(10), &make_vrf_output(2), Some(make_header_hash(2)), &config_neutral);
+    state_zero.apply_block(SlotNo(10), &make_vrf_output(2), Some(make_header_hash(2)), &config_zero);
+
+    // Both Nonce::Neutral and Nonce::Hash([0;32]) act as identity elements
+    // under combine (Neutral by definition, Hash([0;32]) because XOR with
+    // zeros is a no-op), so the resulting epoch nonces must be equal.
+    assert_eq!(
+        state_neutral.epoch_nonce, state_zero.epoch_nonce,
+        "Neutral and Hash([0;32]) are both identity for XOR combine"
+    );
+}
