@@ -29,17 +29,33 @@ const DIRECTION_BIT: u16 = 0x8000;
 pub struct MiniProtocolNum(pub u16);
 
 impl MiniProtocolNum {
-    /// Handshake — reserved protocol number 0.
+    /// Handshake — reserved protocol number 0 (both N2N and N2C).
     pub const HANDSHAKE: Self = Self(0);
-    /// ChainSync — protocol number 2 (node-to-node).
+    /// ChainSync — protocol number 2 (node-to-node headers).
     pub const CHAIN_SYNC: Self = Self(2);
-    /// BlockFetch — protocol number 3.
+    /// BlockFetch — protocol number 3 (node-to-node).
     pub const BLOCK_FETCH: Self = Self(3);
-    /// TxSubmission2 — protocol number 4.
+    /// TxSubmission2 — protocol number 4 (node-to-node).
     pub const TX_SUBMISSION: Self = Self(4);
-    /// KeepAlive — protocol number 8.
+    /// LocalChainSync — protocol number 5 (node-to-client full blocks).
+    ///
+    /// Reference: `ouroboros-network-protocols` `LocalChainSync`.
+    pub const LOCAL_CHAIN_SYNC: Self = Self(5);
+    /// LocalTxSubmission — protocol number 6 (node-to-client).
+    ///
+    /// Reference: `Ouroboros.Network.Protocol.LocalTxSubmission.Type`.
+    pub const LOCAL_TX_SUBMISSION: Self = Self(6);
+    /// LocalStateQuery — protocol number 7 (node-to-client).
+    ///
+    /// Reference: `Ouroboros.Network.Protocol.LocalStateQuery.Type`.
+    pub const LOCAL_STATE_QUERY: Self = Self(7);
+    /// KeepAlive — protocol number 8 (node-to-node).
     pub const KEEP_ALIVE: Self = Self(8);
-    /// PeerSharing — protocol number 10.
+    /// LocalTxMonitor — protocol number 9 (node-to-client).
+    ///
+    /// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Type`.
+    pub const LOCAL_TX_MONITOR: Self = Self(9);
+    /// PeerSharing — protocol number 10 (node-to-node).
     pub const PEER_SHARING: Self = Self(10);
 }
 

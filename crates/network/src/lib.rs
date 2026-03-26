@@ -110,14 +110,36 @@ pub use peer_selection::{
     resolve_peer_access_points,
 };
 
+/// Node-to-client connection lifecycle — Unix socket handshake and protocol setup.
+pub mod ntc_peer;
+/// LocalStateQuery client driver (node-to-client).
+pub mod local_state_query_client;
+/// LocalTxMonitor client driver (node-to-client).
+pub mod local_tx_monitor_client;
+/// LocalTxSubmission client driver (node-to-client).
+pub mod local_tx_submission_client;
+
 // -- Protocol re-exports ------------------------------------------------------
 pub use protocols::{
+    AcquireFailure, AcquireTarget, LocalStateQueryError, LocalStateQueryMessage,
+    LocalStateQueryState,
+    LocalTxMonitorError, LocalTxMonitorMessage, LocalTxMonitorState, MempoolSizeAndCapacity,
+    LocalTxSubmissionError, LocalTxSubmissionMessage, LocalTxSubmissionState,
     BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
     ChainSyncMessage, ChainSyncState, ChainSyncTransitionError,
     KeepAliveMessage, KeepAliveState, KeepAliveTransitionError,
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
+
+// -- NtC re-exports -----------------------------------------------------------
+pub use ntc_peer::{
+    NodeToClientVersionData, NtcPeerConnection, NtcPeerError,
+    ntc_connect, ntc_accept,
+};
+pub use local_state_query_client::{LocalStateQueryClient, LocalStateQueryClientError};
+pub use local_tx_monitor_client::{LocalTxMonitorClient, LocalTxMonitorClientError};
+pub use local_tx_submission_client::{LocalTxSubmissionClient, LocalTxSubmissionClientError};
 
 // -- ChainSync client re-exports ----------------------------------------------
 pub use chainsync_client::{
