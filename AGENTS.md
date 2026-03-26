@@ -57,7 +57,7 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - Type and function naming MUST stay as close to upstream terminology as practical so parity work and fixture comparison remain tractable.
 - Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
 - When you do not know how to proceed after researching the official node and upstream repositories, you may review <https://github.com/pragma-org/amaru/> and <https://github.com/txpipe/dolos/> for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
-- Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, and `docs/CONTRIBUTING.md` for project policy and workflow details and keep `./README.md` updated.
+- Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, `docs/CONTRIBUTING.md`, and `docs/UPSTREAM_RESEARCH.md` for project policy and workflow details and keep `./README.md` updated.
 
 
 ## Verification Expectations
