@@ -131,8 +131,8 @@ impl LocalTxSubmissionClient {
             LocalTxSubmissionMessage::MsgRejectTx { reject_reason } => {
                 Err(LocalTxSubmissionClientError::Protocol(
                     LocalTxSubmissionError::Cbor(format!(
-                        "transaction rejected: {}",
-                        hex::encode(&reject_reason)
+                        "transaction rejected ({} bytes)",
+                        reject_reason.len()
                     )),
                 ))
             }
