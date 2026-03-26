@@ -99,8 +99,13 @@ fn decode_target(dec: &mut Decoder<'_>) -> Result<AcquireTarget, LocalStateQuery
     let major = dec.peek_major().map_err(cbor_err)?;
     match major {
         0 => {
-            // uint → ImmutableTip
-            let _v = dec.unsigned().map_err(cbor_err)?;
+            // uint 0 → ImmutableTip
+            let value = dec.unsigned().map_err(cbor_err)?;
+            if value != 0 {
+                return Err(LocalStateQueryError::Cbor(format!(
+                    "unexpected uint value {value} for ImmutableTip; expected 0"
+                )));
+            }
             Ok(AcquireTarget::ImmutableTip)
         }
         4 => {
@@ -478,5 +483,12 @@ mod tests {
         );
         // Invalid
         assert_eq!(LocalStateQueryMessage::MsgAcquired.apply(StIdle), None);
+    }
+
+    #[test]
+    fn immutable_tip_rejects_non_zero_uint() {
+        let msg = vec![0x82, 0x00, 0x01];
+        let err = LocalStateQueryMessage::decode_cbor(&msg).expect_err("must reject non-zero uint");
+        assert!(matches!(err, LocalStateQueryError::Cbor(_)));
     }
 }

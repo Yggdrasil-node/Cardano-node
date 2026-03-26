@@ -1,8 +1,11 @@
 //! Node-to-client (NtC) connection lifecycle.
 //!
-//! Establishes a connection over a Unix domain socket, runs the NtC handshake
-//! mini-protocol (version negotiation), and returns a [`NtcPeerConnection`]
-//! with handles for all registered NtC mini-protocols.
+//! Defines the node-to-client (NtC) protocol surface and version-data helpers.
+//!
+//! Full Unix-socket NtC connection setup is not yet wired because the current
+//! mux implementation only supports `TcpStream`. The public `ntc_connect()` and
+//! `ntc_accept()` functions therefore return an explicit unsupported error until
+//! Unix-socket bearer support lands.
 //!
 //! ## NtC Mini-Protocol IDs
 //!
@@ -27,8 +30,10 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use tokio::net::UnixStream;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::LedgerError;
 
-use crate::mux::{MessageChannel, MuxHandle, ProtocolHandle, start as start_mux};
+use crate::mux::{MuxHandle, ProtocolHandle};
 use crate::multiplexer::MiniProtocolNum;
 use crate::handshake::HandshakeVersion;
 
@@ -73,6 +78,7 @@ impl HandshakeVersion {
 }
 
 /// NtC protocol handles registered per connection.
+#[allow(dead_code)]
 const NTC_PROTOCOLS: [MiniProtocolNum; 4] = [
     MiniProtocolNum::LOCAL_TX_SUBMISSION,
     MiniProtocolNum::LOCAL_STATE_QUERY,
@@ -114,6 +120,8 @@ pub enum NtcPeerError {
     Cbor(String),
     #[error("mux error: {0}")]
     Mux(String),
+    #[error("unsupported: {0}")]
+    Unsupported(&'static str),
 }
 
 // ---------------------------------------------------------------------------
@@ -122,78 +130,27 @@ pub enum NtcPeerError {
 
 /// Encode NtC version data as CBOR `[network_magic, query]`.
 fn encode_ntc_version_data(magic: u32, query: bool) -> Vec<u8> {
-    let mut buf = Vec::new();
-    // Simple 2-element array matching upstream encoding
-    minicbor::encode(&(magic as u64, query), &mut buf).expect("infallible");
-    buf
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(magic as u64).bool(query);
+    enc.into_bytes()
 }
 
 /// Decode NtC version data from CBOR `[network_magic, query]`.
 fn decode_ntc_version_data(data: &[u8]) -> Result<NodeToClientVersionData, NtcPeerError> {
-    let mut dec = minicbor::Decoder::new(data);
-    dec.array().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-    let magic: u64 = dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-    let query: bool = dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
+    let cbor_err = |e: LedgerError| NtcPeerError::Cbor(e.to_string());
+    let mut dec = Decoder::new(data);
+    let len = dec.array().map_err(cbor_err)?;
+    if len != 2 {
+        return Err(NtcPeerError::Cbor(format!(
+            "unexpected NtC version-data length {len}; expected 2"
+        )));
+    }
+    let magic = dec.unsigned().map_err(cbor_err)?;
+    let query = dec.bool().map_err(cbor_err)?;
     Ok(NodeToClientVersionData {
         network_magic: magic as u32,
         query,
     })
-}
-
-/// Build a `ProposeVersions` CBOR payload for NtC handshake.
-///
-/// Proposes V9 through V16 in descending order. The server picks the highest
-/// version it supports.
-fn build_ntc_propose_versions(network_magic: u32, query: bool) -> Vec<u8> {
-    let vd = encode_ntc_version_data(network_magic, query);
-    let versions: Vec<(u64, &[u8])> = [9u64, 10, 11, 12, 13, 14, 15, 16]
-        .iter()
-        .map(|v| (*v, vd.as_slice()))
-        .collect();
-
-    // Encode as CBOR: [0, {version_num: version_data, ...}]
-    // Tag 0 = ProposeVersions
-    let mut map_buf = Vec::new();
-    let mut enc = minicbor::Encoder::new(&mut map_buf);
-    enc.map(versions.len() as u64).expect("infallible");
-    for (v, data) in &versions {
-        enc.u64(*v).expect("infallible");
-        enc.bytes(data).expect("infallible");
-    }
-    drop(enc);
-
-    let mut buf = Vec::new();
-    let mut outer = minicbor::Encoder::new(&mut buf);
-    outer.array(2).expect("infallible");
-    outer.u64(0).expect("infallible"); // ProposeVersions tag
-    outer.writer().extend_from_slice(&map_buf);
-    buf
-}
-
-/// Parse the server's `AcceptVersion` response and extract version + data.
-fn parse_ntc_accept_version(
-    data: &[u8],
-) -> Result<(HandshakeVersion, NodeToClientVersionData), NtcPeerError> {
-    let mut dec = minicbor::Decoder::new(data);
-    dec.array().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-    let tag: u64 = dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-    match tag {
-        1 => {
-            // AcceptVersion
-            let ver: u64 = dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-            let vd_bytes: minicbor::bytes::ByteVec =
-                dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-            let vd = decode_ntc_version_data(&vd_bytes)?;
-            Ok((HandshakeVersion(ver as u16), vd))
-        }
-        2 => {
-            // Refuse
-            Err(NtcPeerError::HandshakeRefused(
-                "server refused NtC connection".to_owned(),
-            ))
-        }
-        _ => Err(NtcPeerError::Cbor(format!("unexpected handshake tag {tag}"))),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,51 +171,10 @@ pub async fn ntc_connect(
     network_magic: u32,
     query_only: bool,
 ) -> Result<NtcPeerConnection, NtcPeerError> {
-    let stream = UnixStream::connect(socket_path.as_ref()).await?;
-    let (read_half, write_half) = stream.into_split();
-
-    // Start the mux over the Unix stream
-    let mut protocols_init: Vec<MiniProtocolNum> =
-        vec![MiniProtocolNum::HANDSHAKE];
-    protocols_init.extend_from_slice(&NTC_PROTOCOLS);
-
-    let mux = start_mux(read_half, write_half, &protocols_init)
-        .map_err(|e| NtcPeerError::Mux(e.to_string()))?;
-
-    let mut handles = mux.handles.clone();
-
-    // Run handshake
-    let hs_handle = handles
-        .remove(&MiniProtocolNum::HANDSHAKE)
-        .ok_or_else(|| NtcPeerError::Mux("no handshake handle".to_owned()))?;
-    let mut hs_channel = MessageChannel::new(hs_handle);
-
-    let propose = build_ntc_propose_versions(network_magic, query_only);
-    hs_channel
-        .send(propose)
-        .await
-        .map_err(|e| NtcPeerError::Mux(e.to_string()))?;
-
-    let response = hs_channel
-        .recv()
-        .await
-        .ok_or(NtcPeerError::Mux("handshake channel closed".to_owned()))?
-        .map_err(|e| NtcPeerError::Mux(e.to_string()))?;
-
-    let (version, version_data) = parse_ntc_accept_version(&response)?;
-
-    // Collect data protocol handles
-    let protocols: HashMap<MiniProtocolNum, ProtocolHandle> = NTC_PROTOCOLS
-        .iter()
-        .filter_map(|num| handles.remove(num).map(|h| (*num, h)))
-        .collect();
-
-    Ok(NtcPeerConnection {
-        version,
-        version_data,
-        protocols,
-        mux: mux.mux_handle,
-    })
+    let _ = (socket_path.as_ref(), network_magic, query_only);
+    Err(NtcPeerError::Unsupported(
+        "NtC Unix-socket transport is not yet supported by the current mux implementation",
+    ))
 }
 
 /// Accept an inbound NtC connection from a Unix socket stream.
@@ -273,145 +189,10 @@ pub async fn ntc_accept(
     stream: UnixStream,
     network_magic: u32,
 ) -> Result<NtcPeerConnection, NtcPeerError> {
-    let (read_half, write_half) = stream.into_split();
-
-    let mut protocols_init: Vec<MiniProtocolNum> =
-        vec![MiniProtocolNum::HANDSHAKE];
-    protocols_init.extend_from_slice(&NTC_PROTOCOLS);
-
-    let mux = start_mux(read_half, write_half, &protocols_init)
-        .map_err(|e| NtcPeerError::Mux(e.to_string()))?;
-
-    let mut handles = mux.handles.clone();
-
-    let hs_handle = handles
-        .remove(&MiniProtocolNum::HANDSHAKE)
-        .ok_or_else(|| NtcPeerError::Mux("no handshake handle".to_owned()))?;
-    let mut hs_channel = MessageChannel::new(hs_handle);
-
-    // Receive ProposeVersions
-    let proposal = hs_channel
-        .recv()
-        .await
-        .ok_or(NtcPeerError::Mux("handshake channel closed".to_owned()))?
-        .map_err(|e| NtcPeerError::Mux(e.to_string()))?;
-
-    // Parse proposal and select highest supported version
-    let (selected_version, client_vd) = parse_ntc_propose_versions(&proposal, network_magic)?;
-
-    // Send AcceptVersion
-    let accept = build_ntc_accept_version(selected_version, network_magic, client_vd.query);
-    hs_channel
-        .send(accept)
-        .await
-        .map_err(|e| NtcPeerError::Mux(e.to_string()))?;
-
-    let version_data = NodeToClientVersionData {
-        network_magic,
-        query: client_vd.query,
-    };
-
-    let protocols: HashMap<MiniProtocolNum, ProtocolHandle> = NTC_PROTOCOLS
-        .iter()
-        .filter_map(|num| handles.remove(num).map(|h| (*num, h)))
-        .collect();
-
-    Ok(NtcPeerConnection {
-        version: HandshakeVersion(selected_version),
-        version_data,
-        protocols,
-        mux: mux.mux_handle,
-    })
-}
-
-/// Parse a client's ProposeVersions message and select the highest supported version.
-fn parse_ntc_propose_versions(
-    data: &[u8],
-    expected_magic: u32,
-) -> Result<(u16, NodeToClientVersionData), NtcPeerError> {
-    let mut dec = minicbor::Decoder::new(data);
-    dec.array().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-    let tag: u64 = dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-    if tag != 0 {
-        return Err(NtcPeerError::Cbor(format!("expected ProposeVersions tag 0, got {tag}")));
-    }
-    let n = dec.map().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-
-    let supported = [9u16, 10, 11, 12, 13, 14, 15, 16];
-    let mut best: Option<(u16, NodeToClientVersionData)> = None;
-
-    match n {
-        // Definite-length map: keep existing behavior.
-        Some(count) => {
-            let count = count as usize;
-            for _ in 0..count {
-                let ver: u64 =
-                    dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-                let vd_bytes: minicbor::bytes::ByteVec =
-                    dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-
-                let v = ver as u16;
-                if supported.contains(&v) {
-                    if let Ok(vd) = decode_ntc_version_data(&vd_bytes) {
-                        if vd.network_magic == expected_magic {
-                            if best.as_ref().map_or(true, |(bv, _)| v > *bv) {
-                                best = Some((v, vd));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Indefinite-length map: read entries until CBOR break.
-        None => {
-            loop {
-                match dec.datatype() {
-                    Ok(minicbor::data::Type::Break) => {
-                        // Consume the break and finish.
-                        dec.skip().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-                        break;
-                    }
-                    Ok(_) => {
-                        let ver: u64 =
-                            dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-                        let vd_bytes: minicbor::bytes::ByteVec =
-                            dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-
-                        let v = ver as u16;
-                        if supported.contains(&v) {
-                            if let Ok(vd) = decode_ntc_version_data(&vd_bytes) {
-                                if vd.network_magic == expected_magic {
-                                    if best
-                                        .as_ref()
-                                        .map_or(true, |(bv, _)| v > *bv)
-                                    {
-                                        best = Some((v, vd));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Err(NtcPeerError::Cbor(e.to_string()));
-                    }
-                }
-            }
-        }
-    }
-
-    best.ok_or(NtcPeerError::VersionMismatch)
-}
-
-/// Build an `AcceptVersion` CBOR payload.
-fn build_ntc_accept_version(version: u16, magic: u32, query: bool) -> Vec<u8> {
-    let vd = encode_ntc_version_data(magic, query);
-    let mut buf = Vec::new();
-    let mut enc = minicbor::Encoder::new(&mut buf);
-    enc.array(3).expect("infallible");
-    enc.u64(1).expect("infallible"); // AcceptVersion tag
-    enc.u64(u64::from(version)).expect("infallible");
-    enc.bytes(&vd).expect("infallible");
-    buf
+    let _ = (stream, network_magic);
+    Err(NtcPeerError::Unsupported(
+        "NtC Unix-socket transport is not yet supported by the current mux implementation",
+    ))
 }
 
 #[cfg(test)]

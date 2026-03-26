@@ -188,8 +188,8 @@ impl BuiltinCostEntry {
 ///
 /// Follows the upstream Plutus size semantics:
 /// - Integers: number of 64-bit words needed to represent the absolute value (min 1)
-/// - ByteStrings: length in bytes (min 1)
-/// - Strings: UTF-8 byte length (min 1)
+/// - ByteStrings: raw byte length
+/// - Strings: UTF-8 byte length
 /// - Other: 1 (unit size)
 fn arg_size(val: &Value) -> i64 {
     match val {

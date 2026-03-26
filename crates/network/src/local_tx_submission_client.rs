@@ -31,6 +31,10 @@ pub enum LocalTxSubmissionClientError {
     #[error("protocol error: {0}")]
     Protocol(#[from] LocalTxSubmissionError),
 
+    /// Transaction rejected by the node, with the raw era-specific rejection bytes.
+    #[error("transaction rejected")]
+    TransactionRejected(Vec<u8>),
+
     /// Unexpected message received from the server.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
@@ -96,8 +100,7 @@ impl LocalTxSubmissionClient {
             .channel
             .recv()
             .await
-            .ok_or(LocalTxSubmissionClientError::ConnectionClosed)?
-            .map_err(LocalTxSubmissionClientError::Mux)?;
+            .ok_or(LocalTxSubmissionClientError::ConnectionClosed)?;
         let msg = LocalTxSubmissionMessage::decode_cbor(&raw)
             .map_err(LocalTxSubmissionClientError::Protocol)?;
         let next = msg
@@ -115,8 +118,8 @@ impl LocalTxSubmissionClient {
     /// Submit a serialised transaction and wait for the server response.
     ///
     /// Returns `Ok(())` if the node accepted the transaction into the mempool,
-    /// or `Err(LocalTxSubmissionClientError::Protocol(LocalTxSubmissionError::…))`
-    /// carrying the rejection bytes if the node rejected it.
+    /// or `Err(LocalTxSubmissionClientError::TransactionRejected(bytes))` if
+    /// the node rejected it and returned era-specific rejection bytes.
     ///
     /// `tx` should be era-tagged CBOR (the same bytes you would submit via
     /// the cardano-submit-api or cardano-cli).
@@ -129,12 +132,7 @@ impl LocalTxSubmissionClient {
         match msg {
             LocalTxSubmissionMessage::MsgAcceptTx => Ok(()),
             LocalTxSubmissionMessage::MsgRejectTx { reject_reason } => {
-                Err(LocalTxSubmissionClientError::Protocol(
-                    LocalTxSubmissionError::Cbor(format!(
-                        "transaction rejected ({} bytes)",
-                        reject_reason.len()
-                    )),
-                ))
+                Err(LocalTxSubmissionClientError::TransactionRejected(reject_reason))
             }
             other => Err(LocalTxSubmissionClientError::UnexpectedMessage(format!(
                 "{other:?}"

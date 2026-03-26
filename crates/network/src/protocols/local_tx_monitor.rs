@@ -18,6 +18,9 @@
 //! Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Type`
 //! <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxMonitor>
 
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::LedgerError;
+
 // ---------------------------------------------------------------------------
 // States
 // ---------------------------------------------------------------------------
@@ -84,17 +87,16 @@ pub enum LocalTxMonitorMessage {
     /// Transition: `StIdle → StAcquiring`.
     MsgAcquire,
 
-    /// `[1, slot_no, tx_count, capacity]` — server has acquired a snapshot.
+    /// `[1, slot_no]` — server has acquired a snapshot.
     ///
-    /// Carries the slot number at which the snapshot was taken, the number
-    /// of transactions, and the byte capacity of the mempool.
+    /// Carries the slot number at which the snapshot was taken. Size/capacity
+    /// information is returned separately by `MsgReplyGetSizes`, matching the
+    /// upstream LocalTxMonitor wire format.
     ///
     /// Transition: `StAcquiring → StAcquired`.
     MsgAcquired {
         /// Slot at which the mempool snapshot was taken.
         slot_no: u64,
-        /// Byte capacity of the mempool.
-        mempool_capacity: u32,
     },
 
     /// `[2]` — client asks the server to wait until the mempool changes and
@@ -197,117 +199,95 @@ impl LocalTxMonitorMessage {
 
     /// Encode this message to CBOR bytes.
     pub fn encode_cbor(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut enc = Encoder::new();
         match self {
             Self::MsgAcquire => {
-                minicbor::encode(&[0u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(0);
             }
-            Self::MsgAcquired { slot_no, mempool_capacity } => {
-                minicbor::encode(&(1u64, slot_no, mempool_capacity), &mut buf)
-                    .expect("infallible");
+            Self::MsgAcquired { slot_no } => {
+                enc.array(2).unsigned(1).unsigned(*slot_no);
             }
             Self::MsgAwaitAcquire => {
-                minicbor::encode(&[2u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(2);
             }
             Self::MsgRelease => {
-                minicbor::encode(&[3u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(3);
             }
             Self::MsgNextTx => {
-                minicbor::encode(&[4u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(4);
             }
             Self::MsgReplyNextTx { tx } => {
                 match tx {
-                    None => minicbor::encode(&(5u64, ()), &mut buf).expect("infallible"),
-                    Some(bytes) => minicbor::encode(
-                        &(5u64, minicbor::bytes::ByteVec::from(bytes.clone())),
-                        &mut buf,
-                    )
-                    .expect("infallible"),
+                    None => {
+                        enc.array(2).unsigned(5).null();
+                    }
+                    Some(bytes) => {
+                        enc.array(2).unsigned(5).bytes(bytes);
+                    }
                 }
             }
             Self::MsgHasTx { tx_id } => {
-                minicbor::encode(
-                    &(6u64, minicbor::bytes::ByteVec::from(tx_id.clone())),
-                    &mut buf,
-                )
-                .expect("infallible");
+                enc.array(2).unsigned(6).bytes(tx_id);
             }
             Self::MsgReplyHasTx { has_tx } => {
-                minicbor::encode(&(7u64, has_tx), &mut buf).expect("infallible");
+                enc.array(2).unsigned(7).bool(*has_tx);
             }
             Self::MsgGetSizes => {
-                minicbor::encode(&[8u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(8);
             }
             Self::MsgReplyGetSizes { sizes } => {
-                minicbor::encode(
-                    &(
-                        9u64,
-                        sizes.capacity_in_bytes,
-                        sizes.size_in_bytes,
-                        sizes.number_of_txs,
-                    ),
-                    &mut buf,
-                )
-                .expect("infallible");
+                enc.array(4)
+                    .unsigned(9)
+                    .unsigned(sizes.capacity_in_bytes as u64)
+                    .unsigned(sizes.size_in_bytes as u64)
+                    .unsigned(sizes.number_of_txs as u64);
             }
             Self::MsgDone => {
-                minicbor::encode(&[10u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(10);
             }
         }
-        buf
+        enc.into_bytes()
     }
 
     /// Decode a message from CBOR bytes.
     pub fn decode_cbor(data: &[u8]) -> Result<Self, LocalTxMonitorError> {
-        let mut dec = minicbor::Decoder::new(data);
-        dec.array().map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-        let tag: u64 = dec.decode().map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
+        let cbor_err = |e: LedgerError| LocalTxMonitorError::Cbor(e.to_string());
+        let mut dec = Decoder::new(data);
+        let _len = dec.array().map_err(cbor_err)?;
+        let tag = dec.unsigned().map_err(cbor_err)?;
         match tag {
             0  => Ok(Self::MsgAcquire),
             1  => {
-                let slot_no: u64 = dec.decode()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-                let capacity: u32 = dec.decode()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-                Ok(Self::MsgAcquired { slot_no, mempool_capacity: capacity })
+                let slot_no = dec.unsigned().map_err(cbor_err)?;
+                Ok(Self::MsgAcquired { slot_no })
             }
             2  => Ok(Self::MsgAwaitAcquire),
             3  => Ok(Self::MsgRelease),
             4  => Ok(Self::MsgNextTx),
             5  => {
                 // None if next is unit/null, Some if next is bytes
-                let datatype = dec.datatype()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-                let tx = if datatype == minicbor::data::Type::Null
-                    || datatype == minicbor::data::Type::Undefined
-                {
-                    dec.skip().map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
+                let tx = if dec.peek_is_null() {
+                    dec.null().map_err(cbor_err)?;
                     None
                 } else {
-                    let bytes: minicbor::bytes::ByteVec = dec.decode()
-                        .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-                    Some(bytes.into())
+                    Some(dec.bytes().map_err(cbor_err)?.to_vec())
                 };
                 Ok(Self::MsgReplyNextTx { tx })
             }
             6  => {
-                let id: minicbor::bytes::ByteVec = dec.decode()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-                Ok(Self::MsgHasTx { tx_id: id.into() })
+                Ok(Self::MsgHasTx {
+                    tx_id: dec.bytes().map_err(cbor_err)?.to_vec(),
+                })
             }
             7  => {
-                let has: bool = dec.decode()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
+                let has = dec.bool().map_err(cbor_err)?;
                 Ok(Self::MsgReplyHasTx { has_tx: has })
             }
             8  => Ok(Self::MsgGetSizes),
             9  => {
-                let cap: u32 = dec.decode()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-                let sz: u32 = dec.decode()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
-                let ntx: u32 = dec.decode()
-                    .map_err(|e| LocalTxMonitorError::Cbor(e.to_string()))?;
+                let cap = dec.unsigned().map_err(cbor_err)? as u32;
+                let sz = dec.unsigned().map_err(cbor_err)? as u32;
+                let ntx = dec.unsigned().map_err(cbor_err)? as u32;
                 Ok(Self::MsgReplyGetSizes {
                     sizes: MempoolSizeAndCapacity {
                         capacity_in_bytes: cap,
@@ -361,7 +341,6 @@ mod tests {
     fn msg_acquired_round_trip() {
         let msg = LocalTxMonitorMessage::MsgAcquired {
             slot_no: 10_000_000,
-            mempool_capacity: 4_096_000,
         };
         let decoded = LocalTxMonitorMessage::decode_cbor(&msg.encode_cbor()).unwrap();
         assert_eq!(decoded, msg);
@@ -418,7 +397,7 @@ mod tests {
         use LocalTxMonitorState::*;
         assert_eq!(LocalTxMonitorMessage::MsgAcquire.apply(StIdle), Some(StAcquiring));
         assert_eq!(
-            LocalTxMonitorMessage::MsgAcquired { slot_no: 0, mempool_capacity: 0 }.apply(StAcquiring),
+            LocalTxMonitorMessage::MsgAcquired { slot_no: 0 }.apply(StAcquiring),
             Some(StAcquired)
         );
         assert_eq!(LocalTxMonitorMessage::MsgNextTx.apply(StAcquired), Some(StBusy));
@@ -436,6 +415,6 @@ mod tests {
         assert_eq!(LocalTxMonitorMessage::MsgRelease.apply(StAcquired), Some(StIdle));
         assert_eq!(LocalTxMonitorMessage::MsgDone.apply(StIdle), Some(StDone));
         // Invalid
-        assert_eq!(LocalTxMonitorMessage::MsgAcquired { slot_no: 0, mempool_capacity: 0 }.apply(StIdle), None);
+        assert_eq!(LocalTxMonitorMessage::MsgAcquired { slot_no: 0 }.apply(StIdle), None);
     }
 }

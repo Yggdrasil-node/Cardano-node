@@ -24,6 +24,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::cbor::CborEncode;
 use crate::error::LedgerError;
 use crate::rewards::{compute_epoch_rewards, EpochRewardDistribution, RewardParams};
 use crate::stake::{compute_drep_stake_distribution, compute_stake_snapshot, StakeSnapshots};
@@ -469,10 +470,15 @@ fn resolve_pending_ppup(ledger: &mut LedgerState, new_epoch: EpochNo) -> bool {
         }
     }
 
-    // Find the update with the most supporters.
+    // Find the update with the most supporters. Break ties deterministically
+    // using the lexicographically smaller CBOR encoding.
     let winner = vote_groups
         .into_iter()
-        .max_by_key(|&(_, count)| count)
+        .max_by(|(left_update, left_count), (right_update, right_count)| {
+            left_count
+                .cmp(right_count)
+                .then_with(|| right_update.to_cbor_bytes().cmp(&left_update.to_cbor_bytes()))
+        })
         .map(|(update, _count)| update);
 
     if let Some(update) = winner {
@@ -1713,5 +1719,32 @@ mod tests {
         let pp = ledger.protocol_params().unwrap();
         assert_eq!(pp.min_fee_a, 55);
         assert_eq!(pp.max_tx_size, 32768);
+    }
+
+    #[test]
+    fn ppup_tie_break_uses_lexicographically_smaller_cbor() {
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        let smaller = ProtocolParamUpdate {
+            min_fee_a: Some(10),
+            ..Default::default()
+        };
+        let larger = ProtocolParamUpdate {
+            min_fee_a: Some(20),
+            ..Default::default()
+        };
+        assert!(smaller.to_cbor_bytes() < larger.to_cbor_bytes());
+
+        ledger.accumulate_ppup(&make_ppup_update(0x01, &smaller, 4));
+        ledger.accumulate_ppup(&make_ppup_update(0x02, &larger, 4));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(4), &mut snapshots, &perf)
+            .expect("epoch 4");
+        assert!(event.ppup_applied);
+        assert_eq!(ledger.protocol_params().unwrap().min_fee_a, 10);
     }
 }

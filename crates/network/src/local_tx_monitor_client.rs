@@ -43,16 +43,13 @@ pub enum LocalTxMonitorClientError {
 /// A handle to an acquired mempool snapshot, obtained via
 /// [`LocalTxMonitorClient::acquire`].
 ///
-/// Carries the slot number at which the snapshot was taken and the byte
-/// capacity of the mempool.
+/// Carries the slot number at which the snapshot was taken.
 ///
 /// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Client.ClientStAcquired`.
 #[derive(Clone, Copy, Debug)]
 pub struct MempoolSnapshot {
     /// Slot at which this snapshot was taken.
     pub slot_no: u64,
-    /// Byte capacity of the mempool at the time of acquisition.
-    pub mempool_capacity: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,8 +113,7 @@ impl LocalTxMonitorClient {
             .channel
             .recv()
             .await
-            .ok_or(LocalTxMonitorClientError::ConnectionClosed)?
-            .map_err(LocalTxMonitorClientError::Mux)?;
+            .ok_or(LocalTxMonitorClientError::ConnectionClosed)?;
         let msg = LocalTxMonitorMessage::decode_cbor(&raw)
             .map_err(LocalTxMonitorClientError::Protocol)?;
         let next = msg
@@ -135,7 +131,7 @@ impl LocalTxMonitorClient {
     /// Acquire a new mempool snapshot.
     ///
     /// Sends `MsgAcquire` and waits for `MsgAcquired`.  Returns a
-    /// [`MempoolSnapshot`] carrying the snapshot slot and mempool capacity.
+    /// [`MempoolSnapshot`] carrying the snapshot slot.
     ///
     /// The client must be in `StIdle`.  On success the driver is in
     /// `StAcquired`.
@@ -143,13 +139,7 @@ impl LocalTxMonitorClient {
         self.send_msg(&LocalTxMonitorMessage::MsgAcquire).await?;
         let msg = self.recv_msg().await?;
         match msg {
-            LocalTxMonitorMessage::MsgAcquired {
-                slot_no,
-                mempool_capacity,
-            } => Ok(MempoolSnapshot {
-                slot_no,
-                mempool_capacity,
-            }),
+            LocalTxMonitorMessage::MsgAcquired { slot_no } => Ok(MempoolSnapshot { slot_no }),
             other => Err(LocalTxMonitorClientError::UnexpectedMessage(format!(
                 "{other:?}"
             ))),
@@ -168,13 +158,7 @@ impl LocalTxMonitorClient {
             .await?;
         let msg = self.recv_msg().await?;
         match msg {
-            LocalTxMonitorMessage::MsgAcquired {
-                slot_no,
-                mempool_capacity,
-            } => Ok(MempoolSnapshot {
-                slot_no,
-                mempool_capacity,
-            }),
+            LocalTxMonitorMessage::MsgAcquired { slot_no } => Ok(MempoolSnapshot { slot_no }),
             other => Err(LocalTxMonitorClientError::UnexpectedMessage(format!(
                 "{other:?}"
             ))),

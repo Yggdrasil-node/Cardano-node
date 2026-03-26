@@ -103,8 +103,7 @@ impl LocalStateQueryClient {
             .channel
             .recv()
             .await
-            .ok_or(LocalStateQueryClientError::ConnectionClosed)?
-            .map_err(LocalStateQueryClientError::Mux)?;
+            .ok_or(LocalStateQueryClientError::ConnectionClosed)?;
         let msg = LocalStateQueryMessage::decode_cbor(&raw)
             .map_err(LocalStateQueryClientError::Protocol)?;
         let next = msg
