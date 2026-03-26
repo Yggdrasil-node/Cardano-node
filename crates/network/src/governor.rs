@@ -602,6 +602,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..Default::default()
         };
 
         let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
@@ -622,6 +623,7 @@ mod tests {
             target_known: 10,
             target_established: 3,
             target_active: 1,
+            ..Default::default()
         };
 
         let actions = evaluate_hot_to_warm_demotions(&reg, &targets);
@@ -665,6 +667,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..Default::default()
         };
         let groups = vec![LocalRootTargets {
             peers: vec![addr(1)],
@@ -767,6 +770,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..Default::default()
         };
         let groups = vec![LocalRootTargets {
             peers: vec![addr(1)],

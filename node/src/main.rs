@@ -336,6 +336,7 @@ fn main() -> Result<()> {
                     target_known: file_cfg.governor_target_known,
                     target_established: file_cfg.governor_target_established,
                     target_active: file_cfg.governor_target_active,
+                    ..Default::default()
                 },
             );
 

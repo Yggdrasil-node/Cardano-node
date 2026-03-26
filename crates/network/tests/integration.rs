@@ -668,7 +668,7 @@ fn chainsync_cbor_done_round_trip() {
 
 #[test]
 fn blockfetch_cbor_request_range_round_trip() {
-    // lower/upper are inline CBOR (must be valid CBOR items)
+    // lower/upper are opaque point bytes (wrapped via TAG 24 on the wire)
     let msg = BlockFetchMessage::MsgRequestRange(ChainRange {
         lower: vec![0x82, 0x01, 0x02], // [1, 2]
         upper: vec![0x82, 0x03, 0x04], // [3, 4]

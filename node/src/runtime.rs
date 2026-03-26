@@ -3419,6 +3419,7 @@ mod tests {
             target_known: usize::MAX,
             target_established: 5,
             target_active: 2,
+            ..Default::default()
         };
 
         assert_eq!(peer_share_request_amount(&targets), u16::MAX);
@@ -3427,6 +3428,7 @@ mod tests {
             target_known: 0,
             target_established: 0,
             target_active: 0,
+            ..Default::default()
         };
         assert_eq!(peer_share_request_amount(&targets), 1);
     }

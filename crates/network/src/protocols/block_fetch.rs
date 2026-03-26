@@ -163,7 +163,7 @@ impl BlockFetchMessage {
     /// Encode this message to CBOR bytes.
     ///
     /// Wire format (matching upstream `block-fetch.cddl`):
-    /// - `[0, point, point]` — MsgRequestRange (points inline CBOR)
+    /// - `[0, point, point]` — MsgRequestRange (points TAG-24 wrapped)
     /// - `[1]` — MsgClientDone
     /// - `[2]` — MsgStartBatch
     /// - `[3]` — MsgNoBlocks
@@ -175,7 +175,7 @@ impl BlockFetchMessage {
         let mut enc = Encoder::new();
         match self {
             Self::MsgRequestRange(range) => {
-                enc.array(3).unsigned(0).raw(&range.lower).raw(&range.upper);
+                enc.array(3).unsigned(0).wrapped(&range.lower).wrapped(&range.upper);
             }
             Self::MsgClientDone => {
                 enc.array(1).unsigned(1);
