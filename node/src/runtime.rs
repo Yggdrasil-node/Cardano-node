@@ -29,7 +29,7 @@ use yggdrasil_network::{
     LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
     LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
     PeerConnection, PeerError, PeerRegistry, PeerSource, PeerStatus,
-    PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
+    PeerSnapshotFreshness, PeerAttemptState, PeerSharingClient, TxIdAndSize, TxServerRequest,
     RootPeerProviderState, TopologyConfig, TxSubmissionClient,
     TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
     peer_attempt_state, reconcile_ledger_peer_registry_with_policy,
@@ -109,6 +109,11 @@ impl ManagedWarmPeer {
 
 struct OutboundPeerManager {
     warm_peers: BTreeMap<SocketAddr, ManagedWarmPeer>,
+    /// Maximum peers to request per PeerSharing exchange.
+    ///
+    /// Matches upstream `requestPeersFromCount` default of 10.
+    /// Reference: `Ouroboros.Network.PeerSelection.Governor.ActivePeers`.
+    peer_share_request_count: u16,
 }
 
 struct RuntimeRootPeerSources {
@@ -122,6 +127,7 @@ impl OutboundPeerManager {
     fn new() -> Self {
         Self {
             warm_peers: BTreeMap::new(),
+            peer_share_request_count: 10,
         }
     }
 
@@ -185,6 +191,60 @@ impl OutboundPeerManager {
                 true
             }
             None => false,
+        }
+    }
+
+    /// Promote a warm peer to hot by issuing a PeerSharing request.
+    ///
+    /// If the peer's connection carries a PeerSharing handle the governor asks
+    /// for up to `peer_share_request_count` addresses.  The returned addresses
+    /// are suitable for insertion into the peer registry as
+    /// [`PeerSource::PeerSourcePeerShare`].
+    ///
+    /// This is a best-effort step: failures are logged but do not abort the
+    /// promotion.  Reference: `Ouroboros.Network.PeerSelection.Governor.ActivePeers`
+    /// — `requestPeersFromHotPeers`.
+    async fn promote_to_hot(
+        &mut self,
+        peer: SocketAddr,
+        tracer: &NodeTracer,
+    ) -> Vec<SocketAddr> {
+        let Some(managed) = self.warm_peers.get_mut(&peer) else {
+            return Vec::new();
+        };
+
+        let Some(ref mut peer_sharing) = managed.session.peer_sharing else {
+            return Vec::new();
+        };
+
+        match peer_sharing.share_request(self.peer_share_request_count).await {
+            Ok(shared) => {
+                let addrs: Vec<SocketAddr> = shared.into_iter().map(|p| p.addr).collect();
+                if !addrs.is_empty() {
+                    tracer.trace_runtime(
+                        "Net.PeerSelection.PeerShare",
+                        "Info",
+                        "peer share response received",
+                        trace_fields([
+                            ("peer", json!(peer.to_string())),
+                            ("count", json!(addrs.len())),
+                        ]),
+                    );
+                }
+                addrs
+            }
+            Err(err) => {
+                tracer.trace_runtime(
+                    "Net.PeerSelection.PeerShare",
+                    "Warning",
+                    "peer share request failed",
+                    trace_fields([
+                        ("peer", json!(peer.to_string())),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+                Vec::new()
+            }
         }
     }
 
@@ -528,6 +588,149 @@ fn governor_action_peer(action: &GovernorAction) -> SocketAddr {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PeerSelectionCounters {
+    target_known: usize,
+    target_established: usize,
+    target_active: usize,
+    target_known_big_ledger: usize,
+    target_established_big_ledger: usize,
+    target_active_big_ledger: usize,
+    known_peers: usize,
+    established_peers: usize,
+    active_peers: usize,
+    known_big_ledger_peers: usize,
+    established_big_ledger_peers: usize,
+    active_big_ledger_peers: usize,
+    known_local_root_peers: usize,
+    established_local_root_peers: usize,
+    active_local_root_peers: usize,
+}
+
+impl PeerSelectionCounters {
+    fn trace_fields(self) -> BTreeMap<String, Value> {
+        trace_fields([
+            ("targetKnownPeers", json!(self.target_known)),
+            ("targetEstablishedPeers", json!(self.target_established)),
+            ("targetActivePeers", json!(self.target_active)),
+            (
+                "targetKnownBigLedger",
+                json!(self.target_known_big_ledger),
+            ),
+            (
+                "targetEstablishedBigLedger",
+                json!(self.target_established_big_ledger),
+            ),
+            (
+                "targetActiveBigLedger",
+                json!(self.target_active_big_ledger),
+            ),
+            // Backward-compatible aliases; prefer *Peers keys above.
+            ("targetKnown", json!(self.target_known)),
+            ("targetEstablished", json!(self.target_established)),
+            ("targetActive", json!(self.target_active)),
+            ("knownPeers", json!(self.known_peers)),
+            ("establishedPeers", json!(self.established_peers)),
+            ("activePeers", json!(self.active_peers)),
+            ("knownBigLedgerPeers", json!(self.known_big_ledger_peers)),
+            (
+                "establishedBigLedgerPeers",
+                json!(self.established_big_ledger_peers),
+            ),
+            ("activeBigLedgerPeers", json!(self.active_big_ledger_peers)),
+            ("knownLocalRootPeers", json!(self.known_local_root_peers)),
+            (
+                "establishedLocalRootPeers",
+                json!(self.established_local_root_peers),
+            ),
+            ("activeLocalRootPeers", json!(self.active_local_root_peers)),
+            // Backward-compatible aliases; prefer established/active names above.
+            ("warmLocalRootPeers", json!(self.established_local_root_peers)),
+            ("hotLocalRootPeers", json!(self.active_local_root_peers)),
+        ])
+    }
+}
+
+fn peer_selection_counters(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+) -> PeerSelectionCounters {
+    let mut known_peers = 0usize;
+    let mut established_peers = 0usize;
+    let mut active_peers = 0usize;
+
+    let mut known_big_ledger_peers = 0usize;
+    let mut established_big_ledger_peers = 0usize;
+    let mut active_big_ledger_peers = 0usize;
+
+    let mut known_local_root_peers = 0usize;
+    let mut established_local_root_peers = 0usize;
+    let mut active_local_root_peers = 0usize;
+
+    for (_, entry) in registry.iter() {
+        let is_big_ledger = entry.sources.contains(&PeerSource::PeerSourceBigLedger);
+        let is_local_root = entry.sources.contains(&PeerSource::PeerSourceLocalRoot);
+
+        if is_big_ledger {
+            known_big_ledger_peers += 1;
+            match entry.status {
+                PeerStatus::PeerHot => {
+                    established_big_ledger_peers += 1;
+                    active_big_ledger_peers += 1;
+                }
+                PeerStatus::PeerWarm => {
+                    established_big_ledger_peers += 1;
+                }
+                PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
+            }
+        } else {
+            known_peers += 1;
+            match entry.status {
+                PeerStatus::PeerHot => {
+                    established_peers += 1;
+                    active_peers += 1;
+                }
+                PeerStatus::PeerWarm => {
+                    established_peers += 1;
+                }
+                PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
+            }
+        }
+
+        if is_local_root {
+            known_local_root_peers += 1;
+            match entry.status {
+                PeerStatus::PeerHot => {
+                    established_local_root_peers += 1;
+                    active_local_root_peers += 1;
+                }
+                PeerStatus::PeerWarm => {
+                    established_local_root_peers += 1;
+                }
+                PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
+            }
+        }
+    }
+
+    PeerSelectionCounters {
+        target_known: targets.target_known,
+        target_established: targets.target_established,
+        target_active: targets.target_active,
+        target_known_big_ledger: targets.target_known_big_ledger,
+        target_established_big_ledger: targets.target_established_big_ledger,
+        target_active_big_ledger: targets.target_active_big_ledger,
+        known_peers,
+        established_peers,
+        active_peers,
+        known_big_ledger_peers,
+        established_big_ledger_peers,
+        active_big_ledger_peers,
+        known_local_root_peers,
+        established_local_root_peers,
+        active_local_root_peers,
+    }
+}
+
 /// Run the peer governor loop until shutdown.
 ///
 /// The loop periodically refreshes root peers from DNS-backed providers,
@@ -543,6 +746,7 @@ pub async fn run_governor_loop<I, V, L, F>(
     topology: TopologyConfig,
     base_ledger_state: LedgerState,
     tracer: NodeTracer,
+    metrics: Option<Arc<NodeMetrics>>,
     shutdown: F,
 ) where
     I: ImmutableStore,
@@ -573,6 +777,25 @@ pub async fn run_governor_loop<I, V, L, F>(
         "peer governor started",
         trace_fields([
             ("tickIntervalSecs", json!(config.tick_interval.as_secs())),
+            ("targetKnownPeers", json!(config.targets.target_known)),
+            (
+                "targetEstablishedPeers",
+                json!(config.targets.target_established),
+            ),
+            ("targetActivePeers", json!(config.targets.target_active)),
+            (
+                "targetKnownBigLedger",
+                json!(config.targets.target_known_big_ledger),
+            ),
+            (
+                "targetEstablishedBigLedger",
+                json!(config.targets.target_established_big_ledger),
+            ),
+            (
+                "targetActiveBigLedger",
+                json!(config.targets.target_active_big_ledger),
+            ),
+            // Backward-compatible aliases; prefer *Peers keys above.
             ("targetKnown", json!(config.targets.target_known)),
             (
                 "targetEstablished",
@@ -614,10 +837,44 @@ pub async fn run_governor_loop<I, V, L, F>(
                     .await;
 
                 let local_root_groups = root_sources.local_root_targets();
-                let actions = {
+                let (actions, counters) = {
                     let registry = peer_registry.read().expect("peer registry lock poisoned");
-                    governor_state.tick(&registry, &config.targets, &local_root_groups, Instant::now())
+                    let actions = governor_state.tick(
+                        &registry,
+                        &config.targets,
+                        &local_root_groups,
+                        Instant::now(),
+                    );
+                    let counters = peer_selection_counters(&registry, &config.targets);
+                    (actions, counters)
                 };
+
+                if let Some(metrics) = metrics.as_deref() {
+                    metrics.set_peer_selection_counters(
+                        counters.target_known as u64,
+                        counters.target_established as u64,
+                        counters.target_active as u64,
+                        counters.target_known_big_ledger as u64,
+                        counters.target_established_big_ledger as u64,
+                        counters.target_active_big_ledger as u64,
+                        counters.known_peers as u64,
+                        counters.established_peers as u64,
+                        counters.active_peers as u64,
+                        counters.known_big_ledger_peers as u64,
+                        counters.established_big_ledger_peers as u64,
+                        counters.active_big_ledger_peers as u64,
+                        counters.known_local_root_peers as u64,
+                        counters.established_local_root_peers as u64,
+                        counters.active_local_root_peers as u64,
+                    );
+                }
+
+                tracer.trace_runtime(
+                    "Net.PeerSelection.Counters",
+                    "Info",
+                    "peer selection counters",
+                    counters.trace_fields(),
+                );
 
                 if actions.is_empty() {
                     continue;
@@ -641,9 +898,22 @@ pub async fn run_governor_loop<I, V, L, F>(
                         }
                         GovernorAction::PromoteToHot(peer) => {
                             if peer_manager.contains(&peer) {
+                                // Issue a PeerSharing request to the newly hot
+                                // peer and register any discovered addresses so
+                                // the governor can later promote them to warm.
+                                // Reference: ouroboros-network
+                                // `requestPeersFromHotPeers`.
+                                let discovered =
+                                    peer_manager.promote_to_hot(peer, &tracer).await;
                                 let mut registry = peer_registry
                                     .write()
                                     .expect("peer registry lock poisoned");
+                                for addr in discovered {
+                                    registry.insert_source(
+                                        addr,
+                                        PeerSource::PeerSourcePeerShare,
+                                    );
+                                }
                                 registry.set_status(peer, PeerStatus::PeerHot)
                             } else {
                                 false
@@ -1070,6 +1340,12 @@ pub struct PeerSession {
     pub keep_alive: KeepAliveClient,
     /// TxSubmission client driver.
     pub tx_submission: TxSubmissionClient,
+    /// PeerSharing client driver — available when the remote peer supports it.
+    ///
+    /// Used by the governor when promoting a warm peer to hot: a share request
+    /// is issued to discover new peer candidates.  Reference:
+    /// `Ouroboros.Network.Protocol.PeerSharing`.
+    pub peer_sharing: Option<PeerSharingClient>,
     /// Mux handle — abort to tear down the connection.
     pub mux: yggdrasil_network::MuxHandle,
     /// Negotiated protocol version.
@@ -2224,6 +2500,13 @@ async fn bootstrap_with_attempt_state(
         .ok_or_else(|| PeerError::HandshakeProtocol {
             detail: "missing TxSubmission protocol handle".into(),
         })?;
+    // PeerSharing (mini-protocol 10) is optional — older peers may not
+    // expose it.  We keep the handle when present so the governor can
+    // request peer addresses from hot peers during peer discovery.
+    let peer_sharing = conn
+        .protocols
+        .remove(&MiniProtocolNum::PEER_SHARING)
+        .map(PeerSharingClient::new);
 
     Ok(PeerSession {
         connected_peer_addr,
@@ -2231,6 +2514,7 @@ async fn bootstrap_with_attempt_state(
         block_fetch: BlockFetchClient::new(bf),
         keep_alive: KeepAliveClient::new(ka),
         tx_submission: TxSubmissionClient::new(tx),
+        peer_sharing,
         mux: conn.mux,
         version: conn.version,
         version_data: conn.version_data,
@@ -2654,6 +2938,7 @@ mod tests {
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
         NodeConfig, ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
         VerifiedSyncServiceConfig,
+        peer_selection_counters,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
         refresh_ledger_peer_sources_from_chain_db,
@@ -2673,7 +2958,7 @@ mod tests {
     };
     use yggdrasil_network::{
         AfterSlot, BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
-        HandshakeVersion, PeerAccessPoint, PeerSource, TopologyConfig, UseBootstrapPeers,
+        GovernorTargets, HandshakeVersion, PeerAccessPoint, PeerSource, TopologyConfig, UseBootstrapPeers,
         UseLedgerPeers,
     };
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
@@ -2850,6 +3135,47 @@ mod tests {
         assert_eq!(req.peer_snapshot_path, Some(second));
         assert_eq!(req.use_ledger_peers, None);
         assert_eq!(req.nonce_state, None);
+    }
+
+    #[test]
+    fn peer_selection_counters_separate_big_ledger_and_regular_peers() {
+        let mut registry = yggdrasil_network::PeerRegistry::default();
+        let regular_hot = local_addr(3101);
+        let regular_warm = local_addr(3102);
+        let big_ledger_warm = local_addr(3201);
+        let big_ledger_cold = local_addr(3202);
+
+        registry.insert_source(regular_hot, PeerSource::PeerSourcePublicRoot);
+        registry.set_status(regular_hot, yggdrasil_network::PeerStatus::PeerHot);
+
+        registry.insert_source(regular_warm, PeerSource::PeerSourceLocalRoot);
+        registry.set_status(regular_warm, yggdrasil_network::PeerStatus::PeerWarm);
+
+        registry.insert_source(big_ledger_warm, PeerSource::PeerSourceBigLedger);
+        registry.set_status(big_ledger_warm, yggdrasil_network::PeerStatus::PeerWarm);
+
+        registry.insert_source(big_ledger_cold, PeerSource::PeerSourceBigLedger);
+        registry.set_status(big_ledger_cold, yggdrasil_network::PeerStatus::PeerCold);
+
+        let counters = peer_selection_counters(&registry, &GovernorTargets::default());
+        assert_eq!(counters.known_peers, 2);
+        assert_eq!(counters.established_peers, 2);
+        assert_eq!(counters.active_peers, 1);
+
+        assert_eq!(counters.known_big_ledger_peers, 2);
+        assert_eq!(counters.established_big_ledger_peers, 1);
+        assert_eq!(counters.active_big_ledger_peers, 0);
+
+        assert_eq!(counters.known_local_root_peers, 1);
+        assert_eq!(counters.established_local_root_peers, 1);
+        assert_eq!(counters.active_local_root_peers, 0);
+
+        let fields = counters.trace_fields();
+        assert_eq!(fields.get("knownPeers"), Some(&json!(2)));
+        assert_eq!(fields.get("knownBigLedgerPeers"), Some(&json!(2)));
+        assert_eq!(fields.get("targetKnownPeers"), Some(&json!(20)));
+        assert_eq!(fields.get("establishedLocalRootPeers"), Some(&json!(1)));
+        assert_eq!(fields.get("activeLocalRootPeers"), Some(&json!(0)));
     }
 
     #[test]

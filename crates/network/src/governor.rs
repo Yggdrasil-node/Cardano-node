@@ -12,7 +12,7 @@
 
 use crate::peer_registry::{PeerRegistry, PeerSource, PeerStatus};
 use crate::peer_selection::LocalRootConfig;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -26,12 +26,20 @@ use std::time::{Duration, Instant};
 /// `Ouroboros.Network.PeerSelection.Governor.Types`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GovernorTargets {
-    /// Target number of known (cold + warm + hot) peers.
+    /// Target number of known (cold + warm + hot) peers, excluding
+    /// big-ledger peers.
     pub target_known: usize,
-    /// Target number of established (warm + hot) peers.
+    /// Target number of established (warm + hot) peers, excluding
+    /// big-ledger peers.
     pub target_established: usize,
-    /// Target number of active (hot) peers.
+    /// Target number of active (hot) peers, excluding big-ledger peers.
     pub target_active: usize,
+    /// Target number of known big-ledger peers.
+    pub target_known_big_ledger: usize,
+    /// Target number of established big-ledger peers.
+    pub target_established_big_ledger: usize,
+    /// Target number of active big-ledger peers.
+    pub target_active_big_ledger: usize,
 }
 
 impl Default for GovernorTargets {
@@ -40,8 +48,61 @@ impl Default for GovernorTargets {
             target_known: 20,
             target_established: 10,
             target_active: 5,
+            target_known_big_ledger: 0,
+            target_established_big_ledger: 0,
+            target_active_big_ledger: 0,
         }
     }
+}
+
+fn is_big_ledger_peer_source(entry: &crate::peer_registry::PeerRegistryEntry) -> bool {
+    entry.sources.contains(&PeerSource::PeerSourceBigLedger)
+}
+
+fn non_big_ledger_status_counts(registry: &PeerRegistry) -> (usize, usize, usize) {
+    let mut known = 0;
+    let mut established = 0;
+    let mut active = 0;
+    for (_, entry) in registry.iter() {
+        if is_big_ledger_peer_source(entry) {
+            continue;
+        }
+        known += 1;
+        match entry.status {
+            PeerStatus::PeerHot => {
+                established += 1;
+                active += 1;
+            }
+            PeerStatus::PeerWarm => {
+                established += 1;
+            }
+            PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
+        }
+    }
+    (known, established, active)
+}
+
+fn big_ledger_status_counts(registry: &PeerRegistry) -> (usize, usize, usize) {
+    let mut known = 0;
+    let mut established = 0;
+    let mut active = 0;
+    for (_, entry) in registry.iter() {
+        if !is_big_ledger_peer_source(entry) {
+            continue;
+        }
+        known += 1;
+        match entry.status {
+            PeerStatus::PeerHot => {
+                established += 1;
+                active += 1;
+            }
+            PeerStatus::PeerWarm => {
+                established += 1;
+            }
+            PeerStatus::PeerCold | PeerStatus::PeerCooling => {}
+        }
+    }
+    (known, established, active)
 }
 
 /// Per-group governor targets derived from local root config.
@@ -208,7 +269,7 @@ impl GovernorState {
 ///
 /// Reference: `Ouroboros.Network.PeerSelection.Governor.Types` —
 /// `Decision` / `PeerSelectionActions`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum GovernorAction {
     /// Promote a cold peer to warm (establish a connection).
     PromoteToWarm(SocketAddr),
@@ -233,8 +294,7 @@ pub fn evaluate_cold_to_warm_promotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
 ) -> Vec<GovernorAction> {
-    let counts = registry.status_counts();
-    let established = counts.warm + counts.hot;
+    let (_, established, _) = non_big_ledger_status_counts(registry);
     if established >= targets.target_established {
         return Vec::new();
     }
@@ -244,7 +304,7 @@ pub fn evaluate_cold_to_warm_promotions(
     let mut local_root_cold = Vec::new();
     let mut other_cold = Vec::new();
     for (addr, entry) in registry.iter() {
-        if entry.status == PeerStatus::PeerCold {
+        if entry.status == PeerStatus::PeerCold && !is_big_ledger_peer_source(entry) {
             if entry.sources.contains(&PeerSource::PeerSourceLocalRoot) {
                 local_root_cold.push(*addr);
             } else {
@@ -271,16 +331,16 @@ pub fn evaluate_warm_to_hot_promotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
 ) -> Vec<GovernorAction> {
-    let counts = registry.status_counts();
-    if counts.hot >= targets.target_active {
+    let (_, _, active) = non_big_ledger_status_counts(registry);
+    if active >= targets.target_active {
         return Vec::new();
     }
-    let needed = targets.target_active - counts.hot;
+    let needed = targets.target_active - active;
 
     let mut local_root_warm = Vec::new();
     let mut other_warm = Vec::new();
     for (addr, entry) in registry.iter() {
-        if entry.status == PeerStatus::PeerWarm {
+        if entry.status == PeerStatus::PeerWarm && !is_big_ledger_peer_source(entry) {
             if entry.sources.contains(&PeerSource::PeerSourceLocalRoot) {
                 local_root_warm.push(*addr);
             } else {
@@ -307,17 +367,17 @@ pub fn evaluate_hot_to_warm_demotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
 ) -> Vec<GovernorAction> {
-    let counts = registry.status_counts();
-    if counts.hot <= targets.target_active {
+    let (_, _, active) = non_big_ledger_status_counts(registry);
+    if active <= targets.target_active {
         return Vec::new();
     }
-    let excess = counts.hot - targets.target_active;
+    let excess = active - targets.target_active;
 
     // Collect hot peers, preferring to demote non-local-root first.
     let mut non_local_hot = Vec::new();
     let mut local_hot = Vec::new();
     for (addr, entry) in registry.iter() {
-        if entry.status == PeerStatus::PeerHot {
+        if entry.status == PeerStatus::PeerHot && !is_big_ledger_peer_source(entry) {
             if entry.sources.contains(&PeerSource::PeerSourceLocalRoot) {
                 local_hot.push(*addr);
             } else {
@@ -344,8 +404,7 @@ pub fn evaluate_warm_to_cold_demotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
 ) -> Vec<GovernorAction> {
-    let counts = registry.status_counts();
-    let established = counts.warm + counts.hot;
+    let (_, established, _) = non_big_ledger_status_counts(registry);
     if established <= targets.target_established {
         return Vec::new();
     }
@@ -354,7 +413,7 @@ pub fn evaluate_warm_to_cold_demotions(
     let mut non_local_warm = Vec::new();
     let mut local_warm = Vec::new();
     for (addr, entry) in registry.iter() {
-        if entry.status == PeerStatus::PeerWarm {
+        if entry.status == PeerStatus::PeerWarm && !is_big_ledger_peer_source(entry) {
             if entry.sources.contains(&PeerSource::PeerSourceLocalRoot) {
                 local_warm.push(*addr);
             } else {
@@ -371,6 +430,117 @@ pub fn evaluate_warm_to_cold_demotions(
         actions.push(GovernorAction::DemoteToCold(addr));
     }
     actions
+}
+
+/// Evaluate which cold big-ledger peers should be promoted to warm.
+pub fn evaluate_cold_to_warm_big_ledger_promotions(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+) -> Vec<GovernorAction> {
+    let (_, established, _) = big_ledger_status_counts(registry);
+    if established >= targets.target_established_big_ledger {
+        return Vec::new();
+    }
+    let needed = targets.target_established_big_ledger - established;
+
+    let mut big_ledger_cold = Vec::new();
+    for (addr, entry) in registry.iter() {
+        if entry.status == PeerStatus::PeerCold && is_big_ledger_peer_source(entry) {
+            big_ledger_cold.push(*addr);
+        }
+    }
+
+    let mut actions = Vec::new();
+    for addr in big_ledger_cold.into_iter().take(needed) {
+        actions.push(GovernorAction::PromoteToWarm(addr));
+    }
+    actions
+}
+
+/// Evaluate which warm big-ledger peers should be promoted to hot.
+pub fn evaluate_warm_to_hot_big_ledger_promotions(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+) -> Vec<GovernorAction> {
+    let (_, _, active) = big_ledger_status_counts(registry);
+    if active >= targets.target_active_big_ledger {
+        return Vec::new();
+    }
+    let needed = targets.target_active_big_ledger - active;
+
+    let mut big_ledger_warm = Vec::new();
+    for (addr, entry) in registry.iter() {
+        if entry.status == PeerStatus::PeerWarm && is_big_ledger_peer_source(entry) {
+            big_ledger_warm.push(*addr);
+        }
+    }
+
+    let mut actions = Vec::new();
+    for addr in big_ledger_warm.into_iter().take(needed) {
+        actions.push(GovernorAction::PromoteToHot(addr));
+    }
+    actions
+}
+
+/// Evaluate which hot big-ledger peers should be demoted to warm.
+pub fn evaluate_hot_to_warm_big_ledger_demotions(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+) -> Vec<GovernorAction> {
+    let (_, _, active) = big_ledger_status_counts(registry);
+    if active <= targets.target_active_big_ledger {
+        return Vec::new();
+    }
+    let excess = active - targets.target_active_big_ledger;
+
+    let mut big_ledger_hot = Vec::new();
+    for (addr, entry) in registry.iter() {
+        if entry.status == PeerStatus::PeerHot && is_big_ledger_peer_source(entry) {
+            big_ledger_hot.push(*addr);
+        }
+    }
+
+    let mut actions = Vec::new();
+    for addr in big_ledger_hot.into_iter().take(excess) {
+        actions.push(GovernorAction::DemoteToWarm(addr));
+    }
+    actions
+}
+
+/// Evaluate which warm big-ledger peers should be demoted to cold.
+pub fn evaluate_warm_to_cold_big_ledger_demotions(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+) -> Vec<GovernorAction> {
+    let (_, established, _) = big_ledger_status_counts(registry);
+    if established <= targets.target_established_big_ledger {
+        return Vec::new();
+    }
+    let excess = established - targets.target_established_big_ledger;
+
+    let mut big_ledger_warm = Vec::new();
+    for (addr, entry) in registry.iter() {
+        if entry.status == PeerStatus::PeerWarm && is_big_ledger_peer_source(entry) {
+            big_ledger_warm.push(*addr);
+        }
+    }
+
+    let mut actions = Vec::new();
+    for addr in big_ledger_warm.into_iter().take(excess) {
+        actions.push(GovernorAction::DemoteToCold(addr));
+    }
+    actions
+}
+
+fn dedup_actions(actions: Vec<GovernorAction>) -> Vec<GovernorAction> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for action in actions {
+        if seen.insert(action.clone()) {
+            out.push(action);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -453,14 +623,18 @@ pub fn governor_tick(
     actions.extend(enforce_local_root_valency(registry, local_root_groups));
 
     // 2. Global promotion targets (if not already covered by local roots).
+    actions.extend(evaluate_cold_to_warm_big_ledger_promotions(registry, targets));
+    actions.extend(evaluate_warm_to_hot_big_ledger_promotions(registry, targets));
     actions.extend(evaluate_cold_to_warm_promotions(registry, targets));
     actions.extend(evaluate_warm_to_hot_promotions(registry, targets));
 
     // 3. Global demotion targets.
+    actions.extend(evaluate_hot_to_warm_big_ledger_demotions(registry, targets));
+    actions.extend(evaluate_warm_to_cold_big_ledger_demotions(registry, targets));
     actions.extend(evaluate_hot_to_warm_demotions(registry, targets));
     actions.extend(evaluate_warm_to_cold_demotions(registry, targets));
 
-    actions
+    dedup_actions(actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +670,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..GovernorTargets::default()
         };
 
         let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
@@ -514,6 +689,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..GovernorTargets::default()
         };
 
         let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
@@ -534,6 +710,7 @@ mod tests {
             target_known: 10,
             target_established: 3,
             target_active: 1,
+            ..GovernorTargets::default()
         };
 
         let actions = evaluate_hot_to_warm_demotions(&reg, &targets);
@@ -577,6 +754,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..GovernorTargets::default()
         };
         let groups = vec![LocalRootTargets {
             peers: vec![addr(1)],
@@ -679,6 +857,7 @@ mod tests {
             target_known: 10,
             target_established: 2,
             target_active: 1,
+            ..GovernorTargets::default()
         };
         let groups = vec![LocalRootTargets {
             peers: vec![addr(1)],
@@ -697,5 +876,50 @@ mod tests {
         assert!(!actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
         // Churn should demote addr(2) (non-local-root warm).
         assert!(actions.contains(&GovernorAction::DemoteToCold(addr(2))));
+    }
+
+    #[test]
+    fn big_ledger_promotions_are_independent_from_general_targets() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerCold),
+            (2, PeerSource::PeerSourceBigLedger, PeerStatus::PeerCold),
+            (3, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+            (4, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
+        ]);
+
+        let targets = GovernorTargets {
+            target_known: 10,
+            target_established: 1,
+            target_active: 1,
+            target_known_big_ledger: 4,
+            target_established_big_ledger: 2,
+            target_active_big_ledger: 1,
+        };
+
+        let actions = governor_tick(&reg, &targets, &[]);
+        assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
+        assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(2))));
+    }
+
+    #[test]
+    fn big_ledger_demotions_follow_big_ledger_targets() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerHot),
+            (2, PeerSource::PeerSourceBigLedger, PeerStatus::PeerHot),
+            (3, PeerSource::PeerSourceBigLedger, PeerStatus::PeerWarm),
+        ]);
+
+        let targets = GovernorTargets {
+            target_known: 0,
+            target_established: 0,
+            target_active: 0,
+            target_known_big_ledger: 3,
+            target_established_big_ledger: 1,
+            target_active_big_ledger: 1,
+        };
+
+        let actions = governor_tick(&reg, &targets, &[]);
+        assert!(actions.contains(&GovernorAction::DemoteToWarm(addr(1))));
+        assert!(actions.contains(&GovernorAction::DemoteToCold(addr(3))));
     }
 }

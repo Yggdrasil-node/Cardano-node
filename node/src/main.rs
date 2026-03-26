@@ -329,6 +329,10 @@ fn main() -> Result<()> {
                     target_known: file_cfg.governor_target_known,
                     target_established: file_cfg.governor_target_established,
                     target_active: file_cfg.governor_target_active,
+                    target_known_big_ledger: file_cfg.governor_target_known_big_ledger,
+                    target_established_big_ledger: file_cfg
+                        .governor_target_established_big_ledger,
+                    target_active_big_ledger: file_cfg.governor_target_active_big_ledger,
                 },
             );
 
@@ -916,6 +920,7 @@ async fn run_node(
         let governor_tracer = tracer.clone();
         let governor_topology = topology_config.clone();
         let governor_base_ledger_state = base_ledger_state.clone();
+        let governor_metrics = Arc::clone(&metrics);
         tokio::spawn(async move {
             let shutdown = async move {
                 if *governor_shutdown.borrow() {
@@ -937,6 +942,7 @@ async fn run_node(
                 governor_topology,
                 governor_base_ledger_state,
                 governor_tracer,
+                Some(governor_metrics),
                 shutdown,
             ).await;
         })

@@ -163,8 +163,12 @@ pub use txsubmission_server::{
 // -- Governor re-exports ------------------------------------------------------
 pub use governor::{
     ChurnConfig, GovernorAction, GovernorState, GovernorTargets, LocalRootTargets,
+    evaluate_cold_to_warm_big_ledger_promotions,
     enforce_local_root_valency, evaluate_cold_to_warm_promotions,
+    evaluate_hot_to_warm_big_ledger_demotions,
     evaluate_hot_to_warm_demotions, evaluate_warm_to_cold_demotions,
+    evaluate_warm_to_cold_big_ledger_demotions,
+    evaluate_warm_to_hot_big_ledger_promotions,
     evaluate_warm_to_hot_promotions, governor_tick,
 };
 

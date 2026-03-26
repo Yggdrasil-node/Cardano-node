@@ -273,6 +273,21 @@ pub struct NodeMetrics {
     current_slot: AtomicU64,
     current_block_number: AtomicU64,
     checkpoint_slot: AtomicU64,
+    target_known_peers: AtomicU64,
+    target_established_peers: AtomicU64,
+    target_active_peers: AtomicU64,
+    target_known_big_ledger_peers: AtomicU64,
+    target_established_big_ledger_peers: AtomicU64,
+    target_active_big_ledger_peers: AtomicU64,
+    known_peers: AtomicU64,
+    established_peers: AtomicU64,
+    active_peers: AtomicU64,
+    known_big_ledger_peers: AtomicU64,
+    established_big_ledger_peers: AtomicU64,
+    active_big_ledger_peers: AtomicU64,
+    known_local_root_peers: AtomicU64,
+    established_local_root_peers: AtomicU64,
+    active_local_root_peers: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -295,6 +310,40 @@ pub struct MetricsSnapshot {
     pub current_block_number: u64,
     /// Slot of the latest persisted ledger checkpoint.
     pub checkpoint_slot: u64,
+    /// Governor target known peers.
+    pub target_known_peers: u64,
+    /// Governor target established peers.
+    pub target_established_peers: u64,
+    /// Governor target active peers.
+    pub target_active_peers: u64,
+    /// Governor target known big-ledger peers.
+    pub target_known_big_ledger_peers: u64,
+    /// Governor target established big-ledger peers.
+    pub target_established_big_ledger_peers: u64,
+    /// Governor target active big-ledger peers.
+    pub target_active_big_ledger_peers: u64,
+    /// Current known non-big-ledger peers in the registry.
+    pub known_peers: u64,
+    /// Current established non-big-ledger peers in the registry.
+    pub established_peers: u64,
+    /// Current active non-big-ledger peers in the registry.
+    pub active_peers: u64,
+    /// Current known big-ledger peers in the registry.
+    pub known_big_ledger_peers: u64,
+    /// Current established big-ledger peers in the registry.
+    pub established_big_ledger_peers: u64,
+    /// Current active big-ledger peers in the registry.
+    pub active_big_ledger_peers: u64,
+    /// Current known local-root peers in the registry.
+    pub known_local_root_peers: u64,
+    /// Current established local-root peers in the registry.
+    pub established_local_root_peers: u64,
+    /// Current active local-root peers in the registry.
+    pub active_local_root_peers: u64,
+    /// Alias of `established_local_root_peers` for backward compatibility.
+    pub warm_local_root_peers: u64,
+    /// Alias of `active_local_root_peers` for backward compatibility.
+    pub hot_local_root_peers: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -311,6 +360,21 @@ impl NodeMetrics {
             current_slot: AtomicU64::new(0),
             current_block_number: AtomicU64::new(0),
             checkpoint_slot: AtomicU64::new(0),
+            target_known_peers: AtomicU64::new(0),
+            target_established_peers: AtomicU64::new(0),
+            target_active_peers: AtomicU64::new(0),
+            target_known_big_ledger_peers: AtomicU64::new(0),
+            target_established_big_ledger_peers: AtomicU64::new(0),
+            target_active_big_ledger_peers: AtomicU64::new(0),
+            known_peers: AtomicU64::new(0),
+            established_peers: AtomicU64::new(0),
+            active_peers: AtomicU64::new(0),
+            known_big_ledger_peers: AtomicU64::new(0),
+            established_big_ledger_peers: AtomicU64::new(0),
+            active_big_ledger_peers: AtomicU64::new(0),
+            known_local_root_peers: AtomicU64::new(0),
+            established_local_root_peers: AtomicU64::new(0),
+            active_local_root_peers: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
     }
@@ -355,6 +419,56 @@ impl NodeMetrics {
         self.checkpoint_slot.store(slot, Ordering::Relaxed);
     }
 
+    /// Update current governor peer-selection targets and registry counters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_peer_selection_counters(
+        &self,
+        target_known_peers: u64,
+        target_established_peers: u64,
+        target_active_peers: u64,
+        target_known_big_ledger_peers: u64,
+        target_established_big_ledger_peers: u64,
+        target_active_big_ledger_peers: u64,
+        known_peers: u64,
+        established_peers: u64,
+        active_peers: u64,
+        known_big_ledger_peers: u64,
+        established_big_ledger_peers: u64,
+        active_big_ledger_peers: u64,
+        known_local_root_peers: u64,
+        established_local_root_peers: u64,
+        active_local_root_peers: u64,
+    ) {
+        self.target_known_peers
+            .store(target_known_peers, Ordering::Relaxed);
+        self.target_established_peers
+            .store(target_established_peers, Ordering::Relaxed);
+        self.target_active_peers
+            .store(target_active_peers, Ordering::Relaxed);
+        self.target_known_big_ledger_peers
+            .store(target_known_big_ledger_peers, Ordering::Relaxed);
+        self.target_established_big_ledger_peers
+            .store(target_established_big_ledger_peers, Ordering::Relaxed);
+        self.target_active_big_ledger_peers
+            .store(target_active_big_ledger_peers, Ordering::Relaxed);
+        self.known_peers.store(known_peers, Ordering::Relaxed);
+        self.established_peers
+            .store(established_peers, Ordering::Relaxed);
+        self.active_peers.store(active_peers, Ordering::Relaxed);
+        self.known_big_ledger_peers
+            .store(known_big_ledger_peers, Ordering::Relaxed);
+        self.established_big_ledger_peers
+            .store(established_big_ledger_peers, Ordering::Relaxed);
+        self.active_big_ledger_peers
+            .store(active_big_ledger_peers, Ordering::Relaxed);
+        self.known_local_root_peers
+            .store(known_local_root_peers, Ordering::Relaxed);
+        self.established_local_root_peers
+            .store(established_local_root_peers, Ordering::Relaxed);
+        self.active_local_root_peers
+            .store(active_local_root_peers, Ordering::Relaxed);
+    }
+
     /// Read a consistent snapshot of all current metric values.
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
@@ -366,6 +480,33 @@ impl NodeMetrics {
             current_slot: self.current_slot.load(Ordering::Relaxed),
             current_block_number: self.current_block_number.load(Ordering::Relaxed),
             checkpoint_slot: self.checkpoint_slot.load(Ordering::Relaxed),
+            target_known_peers: self.target_known_peers.load(Ordering::Relaxed),
+            target_established_peers: self.target_established_peers.load(Ordering::Relaxed),
+            target_active_peers: self.target_active_peers.load(Ordering::Relaxed),
+            target_known_big_ledger_peers: self
+                .target_known_big_ledger_peers
+                .load(Ordering::Relaxed),
+            target_established_big_ledger_peers: self
+                .target_established_big_ledger_peers
+                .load(Ordering::Relaxed),
+            target_active_big_ledger_peers: self
+                .target_active_big_ledger_peers
+                .load(Ordering::Relaxed),
+            known_peers: self.known_peers.load(Ordering::Relaxed),
+            established_peers: self.established_peers.load(Ordering::Relaxed),
+            active_peers: self.active_peers.load(Ordering::Relaxed),
+            known_big_ledger_peers: self.known_big_ledger_peers.load(Ordering::Relaxed),
+            established_big_ledger_peers: self
+                .established_big_ledger_peers
+                .load(Ordering::Relaxed),
+            active_big_ledger_peers: self.active_big_ledger_peers.load(Ordering::Relaxed),
+            known_local_root_peers: self.known_local_root_peers.load(Ordering::Relaxed),
+            established_local_root_peers: self
+                .established_local_root_peers
+                .load(Ordering::Relaxed),
+            active_local_root_peers: self.active_local_root_peers.load(Ordering::Relaxed),
+            warm_local_root_peers: self.established_local_root_peers.load(Ordering::Relaxed),
+            hot_local_root_peers: self.active_local_root_peers.load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -406,6 +547,57 @@ yggdrasil_current_block_number {}\n\
 # HELP yggdrasil_checkpoint_slot Slot of latest persisted ledger checkpoint.\n\
 # TYPE yggdrasil_checkpoint_slot gauge\n\
 yggdrasil_checkpoint_slot {}\n\
+# HELP yggdrasil_target_known_peers Governor target known peers.\n\
+# TYPE yggdrasil_target_known_peers gauge\n\
+yggdrasil_target_known_peers {}\n\
+# HELP yggdrasil_target_established_peers Governor target established peers.\n\
+# TYPE yggdrasil_target_established_peers gauge\n\
+yggdrasil_target_established_peers {}\n\
+# HELP yggdrasil_target_active_peers Governor target active peers.\n\
+# TYPE yggdrasil_target_active_peers gauge\n\
+yggdrasil_target_active_peers {}\n\
+# HELP yggdrasil_target_known_big_ledger_peers Governor target known big-ledger peers.\n\
+# TYPE yggdrasil_target_known_big_ledger_peers gauge\n\
+yggdrasil_target_known_big_ledger_peers {}\n\
+# HELP yggdrasil_target_established_big_ledger_peers Governor target established big-ledger peers.\n\
+# TYPE yggdrasil_target_established_big_ledger_peers gauge\n\
+yggdrasil_target_established_big_ledger_peers {}\n\
+# HELP yggdrasil_target_active_big_ledger_peers Governor target active big-ledger peers.\n\
+# TYPE yggdrasil_target_active_big_ledger_peers gauge\n\
+yggdrasil_target_active_big_ledger_peers {}\n\
+# HELP yggdrasil_known_peers Current known non-big-ledger peers.\n\
+# TYPE yggdrasil_known_peers gauge\n\
+yggdrasil_known_peers {}\n\
+# HELP yggdrasil_established_peers Current established non-big-ledger peers.\n\
+# TYPE yggdrasil_established_peers gauge\n\
+yggdrasil_established_peers {}\n\
+# HELP yggdrasil_active_peers Current active non-big-ledger peers.\n\
+# TYPE yggdrasil_active_peers gauge\n\
+yggdrasil_active_peers {}\n\
+# HELP yggdrasil_known_big_ledger_peers Current known big-ledger peers.\n\
+# TYPE yggdrasil_known_big_ledger_peers gauge\n\
+yggdrasil_known_big_ledger_peers {}\n\
+# HELP yggdrasil_established_big_ledger_peers Current established big-ledger peers.\n\
+# TYPE yggdrasil_established_big_ledger_peers gauge\n\
+yggdrasil_established_big_ledger_peers {}\n\
+# HELP yggdrasil_active_big_ledger_peers Current active big-ledger peers.\n\
+# TYPE yggdrasil_active_big_ledger_peers gauge\n\
+yggdrasil_active_big_ledger_peers {}\n\
+# HELP yggdrasil_known_local_root_peers Current known local-root peers.\n\
+# TYPE yggdrasil_known_local_root_peers gauge\n\
+yggdrasil_known_local_root_peers {}\n\
+# HELP yggdrasil_established_local_root_peers Current established local-root peers.\n\
+# TYPE yggdrasil_established_local_root_peers gauge\n\
+yggdrasil_established_local_root_peers {}\n\
+# HELP yggdrasil_active_local_root_peers Current active local-root peers.\n\
+# TYPE yggdrasil_active_local_root_peers gauge\n\
+yggdrasil_active_local_root_peers {}\n\
+# HELP yggdrasil_warm_local_root_peers Current warm local-root peers.\n\
+# TYPE yggdrasil_warm_local_root_peers gauge\n\
+yggdrasil_warm_local_root_peers {}\n\
+# HELP yggdrasil_hot_local_root_peers Current hot local-root peers.\n\
+# TYPE yggdrasil_hot_local_root_peers gauge\n\
+yggdrasil_hot_local_root_peers {}\n\
 # HELP yggdrasil_uptime_seconds Seconds since node start.\n\
 # TYPE yggdrasil_uptime_seconds gauge\n\
 yggdrasil_uptime_seconds {}\n",
@@ -417,6 +609,23 @@ yggdrasil_uptime_seconds {}\n",
             self.current_slot,
             self.current_block_number,
             self.checkpoint_slot,
+            self.target_known_peers,
+            self.target_established_peers,
+            self.target_active_peers,
+            self.target_known_big_ledger_peers,
+            self.target_established_big_ledger_peers,
+            self.target_active_big_ledger_peers,
+            self.known_peers,
+            self.established_peers,
+            self.active_peers,
+            self.known_big_ledger_peers,
+            self.established_big_ledger_peers,
+            self.active_big_ledger_peers,
+            self.known_local_root_peers,
+            self.established_local_root_peers,
+            self.active_local_root_peers,
+            self.warm_local_root_peers,
+            self.hot_local_root_peers,
             self.uptime_ms / 1000,
         )
     }
@@ -582,12 +791,42 @@ mod tests {
         let metrics = NodeMetrics::new();
         metrics.add_blocks_synced(42);
         metrics.set_current_slot(100);
+        metrics.set_peer_selection_counters(20, 10, 5, 6, 3, 1, 18, 7, 4, 4, 2, 1, 3, 2, 1);
         let text = metrics.snapshot().to_prometheus_text();
 
         assert!(text.contains("yggdrasil_blocks_synced 42\n"));
         assert!(text.contains("yggdrasil_current_slot 100\n"));
+        assert!(text.contains("yggdrasil_target_known_peers 20\n"));
+        assert!(text.contains("yggdrasil_known_big_ledger_peers 4\n"));
         assert!(text.contains("# TYPE yggdrasil_blocks_synced counter\n"));
         assert!(text.contains("# TYPE yggdrasil_current_slot gauge\n"));
+        assert!(text.contains("# TYPE yggdrasil_target_known_peers gauge\n"));
         assert!(text.contains("yggdrasil_uptime_seconds"));
+    }
+
+    #[test]
+    fn node_metrics_tracks_peer_selection_counters() {
+        let metrics = NodeMetrics::new();
+
+        metrics.set_peer_selection_counters(30, 18, 7, 9, 4, 2, 22, 11, 6, 8, 3, 1, 5, 3, 2);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.target_known_peers, 30);
+        assert_eq!(snap.target_established_peers, 18);
+        assert_eq!(snap.target_active_peers, 7);
+        assert_eq!(snap.target_known_big_ledger_peers, 9);
+        assert_eq!(snap.target_established_big_ledger_peers, 4);
+        assert_eq!(snap.target_active_big_ledger_peers, 2);
+        assert_eq!(snap.known_peers, 22);
+        assert_eq!(snap.established_peers, 11);
+        assert_eq!(snap.active_peers, 6);
+        assert_eq!(snap.known_big_ledger_peers, 8);
+        assert_eq!(snap.established_big_ledger_peers, 3);
+        assert_eq!(snap.active_big_ledger_peers, 1);
+        assert_eq!(snap.known_local_root_peers, 5);
+        assert_eq!(snap.established_local_root_peers, 3);
+        assert_eq!(snap.active_local_root_peers, 2);
+        assert_eq!(snap.warm_local_root_peers, 3);
+        assert_eq!(snap.hot_local_root_peers, 2);
     }
 }

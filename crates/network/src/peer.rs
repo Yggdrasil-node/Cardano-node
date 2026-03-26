@@ -83,13 +83,18 @@ pub struct PeerConnection {
 // ---------------------------------------------------------------------------
 
 /// The set of mini-protocol numbers registered for a standard node-to-node
-/// connection: Handshake (for negotiation) plus the four data protocols.
-const N2N_PROTOCOLS: [MiniProtocolNum; 5] = [
+/// connection: Handshake (for negotiation) plus the five data protocols.
+///
+/// Includes PeerSharing (10) so warm peers can be queried for peer discovery
+/// once promoted to hot.  Reference: `Ouroboros.Network.NodeToNode` —
+/// `NodeToNodeProtocols`.
+const N2N_PROTOCOLS: [MiniProtocolNum; 6] = [
     MiniProtocolNum::HANDSHAKE,
     MiniProtocolNum::CHAIN_SYNC,
     MiniProtocolNum::BLOCK_FETCH,
     MiniProtocolNum::TX_SUBMISSION,
     MiniProtocolNum::KEEP_ALIVE,
+    MiniProtocolNum::PEER_SHARING,
 ];
 
 /// Default per-protocol channel buffer capacity.
