@@ -908,7 +908,7 @@ impl CborDecode for ProtocolParamUpdate {
                     } else {
                         let raw = dec.bytes()?;
                         let hash: [u8; 32] = raw.try_into().map_err(|_| {
-                            LedgerError::CborInvalidLength { expected: 32, actual: 0 }
+                            LedgerError::CborInvalidLength { expected: 32, actual: raw.len() }
                         })?;
                         upd.extra_entropy = Some(Nonce::Hash(hash));
                     }
