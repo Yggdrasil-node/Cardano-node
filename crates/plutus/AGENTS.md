@@ -28,21 +28,21 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - Flat encoding spec: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/plutus-core/src/PlutusCore/Flat>
 
 ## Current Status
-- **CEK machine**: complete. De Bruijn indices, closures, partial application.
+- **CEK machine**: complete. De Bruijn indices, closures, partial application. Per-step-kind cost differentiation matching upstream (9 distinct `StepKind` variants: Constant, Var, LamAbs, Apply, Delay, Force, Builtin, Constr, Case). Return phase (`apply_fun`, `force_value`) does not charge step costs, matching upstream semantics.
 - **Flat decoder**: complete. Parses on-chain script bytes into UPLC `Program`.
 - **PlutusV1 builtins**: all 60+ implemented (integer, bytestring, string, bool, list, pair, data, crypto).
 - **PlutusV2 builtins**: secp256k1 ECDSA/Schnorr verify, SHA3-256, Keccak-256 — all implemented.
 - **PlutusV3 builtins**: RIPEMD-160, integer↔bytestring conversion, all bitwise operations, modular exponentiation, BLS12-381 (17 builtins: G1/G2 add/neg/scalar-mul/equal/hash-to-group/compress/uncompress, miller-loop, mul-ml-result, final-verify) — all implemented.
-- **Budget tracking**: CPU/memory cost accounting with configurable `CostModel`.
+- **Budget tracking**: CPU/memory cost accounting with configurable `CostModel`. `StepCosts` struct provides per-operation-type CPU/memory costs loaded from genesis parameters (e.g., `cekVarCost-exBudgetCPU`, `cekApplyCost-exBudgetMemory`). Constr/Case costs are optional (PlutusV3+), defaulting to Apply cost when absent. One-time `cekStartupCost` charged at evaluation start. Force/Apply order validated on builtins: all type-forces must precede value-arguments, matching upstream `BuiltinExpectForce`/`BuiltinExpectArgument` state machine.
 - **Dependencies**: `yggdrasil-crypto` (blake2b, ed25519, secp256k1), `yggdrasil-ledger` (CBOR, PlutusData), `sha2`, `sha3`, `ripemd`.
 
 ### Module Layout
-- `types.rs` — `Term`, `Constant`, `Value`, `DefaultFun` (87 builtin variants), `ExBudget`, `Type`.
+- `types.rs` — `Term`, `Constant`, `Value`, `DefaultFun` (88 builtin variants), `ExBudget`, `Type`.
 - `flat.rs` — Flat binary codec, bit-level reader, UPLC `Program` deserialization.
 - `machine.rs` — CEK evaluator with budget enforcement and log collection.
 - `builtins.rs` — Saturated builtin evaluation dispatch with helper functions for hash, crypto, bitwise, and conversion operations.
-- `cost_model.rs` — `CostModel` with per-builtin CPU/memory cost functions.
-- `error.rs` — `MachineError` variants.
+- `cost_model.rs` — `CostModel` with per-step-kind CPU/memory costs (`StepKind` enum, `StepCosts` struct) and per-builtin parameterized cost functions. `CostExpr` has 11 variants: `Constant`, `LinearInX`, `LinearInY`, `LinearInZ`, `LinearForm`, `AddedSizes`, `MaxSize`, `MinSize`, `SubtractedSizes`, `MaxSizeYZ` (for bitwise and/or/xor memory), `ExpModCost` (polynomial for expModInteger CPU).
+- `error.rs` — `MachineError` variants with upstream-aligned error semantics. `is_operational()` classifies runtime errors (collapsed to opaque `EvaluationFailure` by `into_ledger_error()`) vs structural errors (budget exhaustion, unbound variables, decode failures) that pass through unchanged.
 
 ### Integration with `node` crate
 `node/src/plutus_eval.rs` implements `yggdrasil_ledger::plutus_validation::PlutusEvaluator` using `yggdrasil_plutus::evaluate_term`. `CekPlutusEvaluator` decodes script bytes via `decode_script_bytes`, builds term-level argument applications (datum if spending, redeemer, version-aware `ScriptContext`), and evaluates with the `ExBudget` declared by the transaction. The node-side context builder now derives `TxInfo` from the normalized ledger `TxContext`, including resolved inputs/reference inputs, structured Shelley-family TxOut addresses, withdrawals, certificates, datums, redeemers, and Conway governance data. Unsupported V3 certificate or proposal encodings now fail explicitly instead of fabricating placeholder integers. `CostModel::from_alonzo_genesis_params()` now derives CEK step costs plus per-builtin parameterized cost expressions from upstream named Alonzo/Babbage maps, and `CostModel::builtin_cost()` evaluates those entries against runtime argument ExMemory sizes (with flat fallback only for unmapped builtins). The node-side Conway path now maps the live 251-entry `plutusV3CostModel` array into this same named/per-builtin pipeline. The remaining budgeting work is tightening any still-approximated builtin cost shapes plus future Conway tail parameters that are not yet present in the vendored genesis files.
@@ -70,5 +70,5 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 
 ## Next Steps
 1. Add integration tests with on-chain script samples and upstream vector parity checks for budget accounting.
-2. Continue tightening per-builtin cost-shape parity where any current shape is still an approximation of upstream Plutus semantics.
-3. Extend Conway-array support when vendored genesis files pick up later V3+/Plomin tail parameters beyond the current 251-entry surface.
+2. Wire `into_ledger_error()` into the ledger/node boundary so operational errors are collapsed before reporting.
+3. Extend Conway-array support when vendored genesis files pick up later V3+/Plomin tail parameters beyond the current 302-entry surface.

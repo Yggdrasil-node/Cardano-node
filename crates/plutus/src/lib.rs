@@ -94,3 +94,141 @@ pub fn evaluate_script(
     let program = decode_script_bytes(script_bytes)?;
     evaluate_program(program, budget, cost_model)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn big_budget() -> ExBudget {
+        ExBudget::new(10_000_000, 10_000_000)
+    }
+
+    // -- evaluate_term -------------------------------------------------
+
+    #[test]
+    fn evaluate_term_constant() {
+        let (val, logs) = evaluate_term(
+            Term::Constant(Constant::Integer(99)),
+            big_budget(),
+            CostModel::default(),
+        )
+        .unwrap();
+        assert!(matches!(val, Value::Constant(Constant::Integer(99))));
+        assert!(logs.is_empty());
+    }
+
+    #[test]
+    fn evaluate_term_identity_application() {
+        let term = Term::Apply(
+            Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
+            Box::new(Term::Constant(Constant::Bool(true))),
+        );
+        let (val, _) = evaluate_term(term, big_budget(), CostModel::default()).unwrap();
+        assert!(matches!(val, Value::Constant(Constant::Bool(true))));
+    }
+
+    #[test]
+    fn evaluate_term_trace_logs() {
+        // (force trace) "hello" ()
+        let term = Term::Apply(
+            Box::new(Term::Apply(
+                Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::Trace)))),
+                Box::new(Term::Constant(Constant::String("hello".into()))),
+            )),
+            Box::new(Term::Constant(Constant::Unit)),
+        );
+        let (_, logs) = evaluate_term(term, big_budget(), CostModel::default()).unwrap();
+        assert_eq!(logs, vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn evaluate_term_error() {
+        let err = evaluate_term(Term::Error, big_budget(), CostModel::default());
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn evaluate_term_budget_exhaustion() {
+        let tiny = ExBudget::new(1, 1);
+        // Apply requires several steps, should exhaust quickly.
+        let term = Term::Apply(
+            Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
+            Box::new(Term::Constant(Constant::Integer(1))),
+        );
+        let err = evaluate_term(term, tiny, CostModel::default());
+        assert!(err.is_err());
+    }
+
+    // -- evaluate_program ----------------------------------------------
+
+    #[test]
+    fn evaluate_program_basic() {
+        let prog = Program {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            term: Term::Constant(Constant::Integer(42)),
+        };
+        let (val, _) = evaluate_program(prog, big_budget(), CostModel::default()).unwrap();
+        assert!(matches!(val, Value::Constant(Constant::Integer(42))));
+    }
+
+    #[test]
+    fn evaluate_program_add_integers() {
+        let add = Term::Apply(
+            Box::new(Term::Apply(
+                Box::new(Term::Builtin(DefaultFun::AddInteger)),
+                Box::new(Term::Constant(Constant::Integer(3))),
+            )),
+            Box::new(Term::Constant(Constant::Integer(7))),
+        );
+        let prog = Program {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            term: add,
+        };
+        let (val, _) = evaluate_program(prog, big_budget(), CostModel::default()).unwrap();
+        assert!(matches!(val, Value::Constant(Constant::Integer(10))));
+    }
+
+    // -- evaluate_script -----------------------------------------------
+
+    #[test]
+    fn evaluate_script_error_term() {
+        // Build flat program: version 1.0.0, body = Error.
+        let flat_bytes: Vec<u8> = vec![0x01, 0x00, 0x00, 0x60];
+        // Single CBOR wrap.
+        let mut cbor = vec![0x44u8]; // 4-byte bytestring
+        cbor.extend_from_slice(&flat_bytes);
+
+        let result = evaluate_script(&cbor, big_budget(), CostModel::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn evaluate_script_constant_unit() {
+        // Build flat program: version 1.0.0, body = Constant Unit.
+        // Constant tag=4 (0100), type=Unit (0011).
+        // Bits: 0100 0011 = 0x43
+        let flat_bytes: Vec<u8> = vec![0x01, 0x00, 0x00, 0x43];
+        // Single CBOR wrap.
+        let mut cbor = vec![0x44u8]; // 4-byte bytestring
+        cbor.extend_from_slice(&flat_bytes);
+
+        let (val, _) = evaluate_script(&cbor, big_budget(), CostModel::default()).unwrap();
+        assert!(matches!(val, Value::Constant(Constant::Unit)));
+    }
+
+    // -- Re-exports exist ----------------------------------------------
+
+    #[test]
+    fn reexports_are_accessible() {
+        // Confirm the re-exports compile.
+        let _budget = ExBudget::default();
+        let _model = CostModel::default();
+        let _err_variant = MachineError::EvaluationFailure;
+        let _fun = DefaultFun::AddInteger;
+        let _typ = Type::Integer;
+    }
+}

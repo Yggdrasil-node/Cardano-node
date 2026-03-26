@@ -698,12 +698,14 @@ pub fn build_plutus_cost_model(
     }
 }
 
-/// Ordered Conway `plutusV3CostModel` parameter names currently present in the
-/// vendored network genesis files.
+/// Ordered Conway `plutusV3CostModel` parameter names.
 ///
-/// The live mainnet/preprod/preview Conway configs expose 251 parameters,
-/// ending at `byteStringToInteger-memory-arguments-slope`. Later Plutus V3+
-/// names exist upstream but are not yet present in these genesis arrays.
+/// The live mainnet/preprod/preview Conway configs expose 251 parameters
+/// (indices 0–250) ending at `byteStringToInteger-memory-arguments-slope`.
+/// Indices 251–301 cover bitwise builtins, RIPEMD-160, and ExpModInteger;
+/// these are defined upstream but may not yet appear in all network genesis
+/// files. The mapping gracefully handles shorter arrays by only zipping
+/// as many values as provided.
 const CONWAY_V3_PARAM_NAMES: &[&str] = &[
     "addInteger-cpu-arguments-intercept",
     "addInteger-cpu-arguments-slope",
@@ -956,6 +958,58 @@ const CONWAY_V3_PARAM_NAMES: &[&str] = &[
     "byteStringToInteger-cpu-arguments-c2",
     "byteStringToInteger-memory-arguments-intercept",
     "byteStringToInteger-memory-arguments-slope",
+    // -- Indices 251+: bitwise, ripemd_160, expModInteger (CIP-0058/0123) --
+    "andByteString-cpu-arguments-intercept",          // 251
+    "andByteString-cpu-arguments-slope1",             // 252
+    "andByteString-cpu-arguments-slope2",             // 253
+    "andByteString-memory-arguments-intercept",       // 254
+    "andByteString-memory-arguments-slope",           // 255
+    "orByteString-cpu-arguments-intercept",           // 256
+    "orByteString-cpu-arguments-slope1",              // 257
+    "orByteString-cpu-arguments-slope2",              // 258
+    "orByteString-memory-arguments-intercept",        // 259
+    "orByteString-memory-arguments-slope",            // 260
+    "xorByteString-cpu-arguments-intercept",          // 261
+    "xorByteString-cpu-arguments-slope1",             // 262
+    "xorByteString-cpu-arguments-slope2",             // 263
+    "xorByteString-memory-arguments-intercept",       // 264
+    "xorByteString-memory-arguments-slope",           // 265
+    "complementByteString-cpu-arguments-intercept",   // 266
+    "complementByteString-cpu-arguments-slope",       // 267
+    "complementByteString-memory-arguments-intercept", // 268
+    "complementByteString-memory-arguments-slope",    // 269
+    "readBit-cpu-arguments",                          // 270
+    "readBit-memory-arguments",                       // 271
+    "writeBits-cpu-arguments-intercept",              // 272
+    "writeBits-cpu-arguments-slope",                  // 273
+    "writeBits-memory-arguments-intercept",           // 274
+    "writeBits-memory-arguments-slope",               // 275
+    "replicateByte-cpu-arguments-intercept",          // 276
+    "replicateByte-cpu-arguments-slope",              // 277
+    "replicateByte-memory-arguments-intercept",       // 278
+    "replicateByte-memory-arguments-slope",           // 279
+    "shiftByteString-cpu-arguments-intercept",        // 280
+    "shiftByteString-cpu-arguments-slope",            // 281
+    "shiftByteString-memory-arguments-intercept",     // 282
+    "shiftByteString-memory-arguments-slope",         // 283
+    "rotateByteString-cpu-arguments-intercept",       // 284
+    "rotateByteString-cpu-arguments-slope",           // 285
+    "rotateByteString-memory-arguments-intercept",    // 286
+    "rotateByteString-memory-arguments-slope",        // 287
+    "countSetBits-cpu-arguments-intercept",           // 288
+    "countSetBits-cpu-arguments-slope",               // 289
+    "countSetBits-memory-arguments",                  // 290
+    "findFirstSetBit-cpu-arguments-intercept",        // 291
+    "findFirstSetBit-cpu-arguments-slope",            // 292
+    "findFirstSetBit-memory-arguments",               // 293
+    "ripemd_160-cpu-arguments-intercept",             // 294
+    "ripemd_160-cpu-arguments-slope",                 // 295
+    "ripemd_160-memory-arguments",                    // 296
+    "expModInteger-cpu-arguments-coefficient00",      // 297
+    "expModInteger-cpu-arguments-coefficient11",      // 298
+    "expModInteger-cpu-arguments-coefficient12",      // 299
+    "expModInteger-memory-arguments-intercept",       // 300
+    "expModInteger-memory-arguments-slope",           // 301
 ];
 
 /// Build a named-parameter map from Conway `plutusV3CostModel` array values.
@@ -1351,8 +1405,8 @@ mod tests {
         let model = build_plutus_cost_model(&alonzo, None)
             .expect("build cost model")
             .expect("plutus v1 cost model");
-        assert_eq!(model.step_cpu, 29_773);
-        assert_eq!(model.step_mem, 100);
+        assert_eq!(model.step_costs.var_cpu, 29_773);
+        assert_eq!(model.step_costs.var_mem, 100);
         assert_eq!(model.builtin_cpu, 29_773);
         assert_eq!(model.builtin_mem, 100);
     }
@@ -1362,8 +1416,10 @@ mod tests {
         let mut alonzo = sample_alonzo();
         alonzo.cost_models.clear();
 
+        // With a 251-value array (current mainnet size), only indices 0-250 are mapped.
         let named = conway_v3_named_params(&(0..251).map(|n| n as i64).collect::<Vec<_>>());
-        assert_eq!(CONWAY_V3_PARAM_NAMES.len(), 251);
+        assert_eq!(CONWAY_V3_PARAM_NAMES.len(), 302);
+        assert_eq!(named.len(), 251); // only 251 values zipped
         assert_eq!(named.get("addInteger-cpu-arguments-intercept"), Some(&0));
         assert_eq!(named.get("cekApplyCost-exBudgetCPU"), Some(&17));
         assert_eq!(named.get("byteStringToInteger-memory-arguments-slope"), Some(&250));
@@ -1375,12 +1431,46 @@ mod tests {
             .expect("build cost model")
             .expect("v3 fallback cost model");
 
-        // step_cpu/step_mem include constructor/case costs when present.
-        assert_eq!(model.step_cpu, 195);
-        assert_eq!(model.step_mem, 196);
+        // Per-step-kind costs: cekApplyCost is key 17 in Conway array.
+        assert_eq!(model.step_costs.apply_cpu, 17);
+        // cekConstrCost/cekCaseCost are keys 193-196 in Conway array.
+        assert_eq!(model.step_costs.constr_cpu, 193);
+        assert_eq!(model.step_costs.case_cpu, 195);
+        assert_eq!(model.step_costs.case_mem, 196);
         assert_eq!(model.builtin_cpu, 19);
         assert_eq!(model.builtin_mem, 20);
         assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::VerifySchnorrSecp256k1Signature));
+    }
+
+    #[test]
+    fn conway_v3_302_entry_array_maps_bitwise_params() {
+        let mut alonzo = sample_alonzo();
+        alonzo.cost_models.clear();
+
+        // Simulate a 302-entry array (future protocol version with bitwise params).
+        let named = conway_v3_named_params(&(0..302).map(|n| n as i64).collect::<Vec<_>>());
+        assert_eq!(named.len(), 302);
+        // Verify bitwise parameter keys appear at expected indices.
+        assert_eq!(named.get("andByteString-cpu-arguments-intercept"), Some(&251));
+        assert_eq!(named.get("complementByteString-cpu-arguments-intercept"), Some(&266));
+        assert_eq!(named.get("readBit-cpu-arguments"), Some(&270));
+        assert_eq!(named.get("countSetBits-memory-arguments"), Some(&290));
+        assert_eq!(named.get("expModInteger-cpu-arguments-coefficient00"), Some(&297));
+        assert_eq!(named.get("expModInteger-memory-arguments-slope"), Some(&301));
+
+        // Build cost model and verify bitwise builtins have proper entries.
+        let mut conway = sample_conway();
+        conway.plutus_v3_cost_model = Some((0..302).map(|n| n as i64).collect());
+
+        let model = build_plutus_cost_model(&alonzo, Some(&conway))
+            .expect("build cost model")
+            .expect("v3 cost model from 302-entry array");
+
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::AndByteString));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ComplementByteString));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ReadBit));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::CountSetBits));
+        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ExpModInteger));
     }
 
     #[test]

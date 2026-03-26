@@ -2,6 +2,7 @@ use yggdrasil_cddl_codegen::{
     FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr,
     generate_module, generate_module_with_codecs, parse_schema,
 };
+use yggdrasil_cddl_codegen::parser::ParseError;
 
 #[test]
 fn parses_and_generates_basic_module() {
@@ -502,4 +503,190 @@ fn codec_gen_fixed_bytes_decode() {
     assert_module_contains(&generated, "let b = dec.bytes()?");
     assert_module_contains(&generated, "try_into().map_err");
     assert_module_contains(&generated, "LedgerError::CborInvalidLength");
+}
+
+// ===========================================================================
+// Parser error cases
+// ===========================================================================
+
+#[test]
+fn error_empty_schema() {
+    assert_eq!(parse_schema("").unwrap_err(), ParseError::Empty);
+}
+
+#[test]
+fn error_comments_only_is_empty() {
+    assert_eq!(parse_schema("; just a comment\n").unwrap_err(), ParseError::Empty);
+}
+
+#[test]
+fn error_missing_assignment() {
+    let err = parse_schema("no_equals_sign\n").unwrap_err();
+    assert!(matches!(err, ParseError::MissingAssignment(_)));
+}
+
+#[test]
+fn error_invalid_type_name_leading_digit() {
+    let err = parse_schema("123bad = uint\n").unwrap_err();
+    assert!(matches!(err, ParseError::InvalidTypeName(_)));
+}
+
+#[test]
+fn error_empty_definition() {
+    let err = parse_schema("foo = \n").unwrap_err();
+    assert!(matches!(err, ParseError::EmptyDefinition(_)));
+}
+
+#[test]
+fn error_invalid_map_field_no_colon() {
+    let err = parse_schema("m = { badfield }\n").unwrap_err();
+    assert!(matches!(err, ParseError::InvalidField(_)));
+}
+
+#[test]
+fn error_invalid_size_non_numeric() {
+    let err = parse_schema("h = bytes .size abc\n").unwrap_err();
+    assert!(matches!(err, ParseError::InvalidSize(_)));
+}
+
+#[test]
+fn error_invalid_tag_no_parens() {
+    let err = parse_schema("t = #6.258\n").unwrap_err();
+    assert!(matches!(err, ParseError::InvalidSize(_)));
+}
+
+// ===========================================================================
+// Nil alternative (type / nil)
+// ===========================================================================
+
+#[test]
+fn parses_nil_alternative() {
+    let parsed = parse_schema("maybe_coin = uint / nil\n").expect("nil alternative should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::Optional(Box::new(TypeExpr::Named(
+            String::from("uint")
+        ))))
+    );
+
+    let generated = generate_module(&parsed);
+    assert_module_contains(&generated, "pub type MaybeCoin = Option<u64>;");
+}
+
+#[test]
+fn parses_nil_alternative_in_map() {
+    let schema = "body = { 0: uint, 1: bytes / nil }\n";
+    let parsed = parse_schema(schema).expect("nil alt in map should parse");
+
+    let TypeDefinition::Map(fields) = &parsed[0].definition else {
+        panic!("expected map");
+    };
+    assert_eq!(
+        fields[1].ty,
+        TypeExpr::Optional(Box::new(TypeExpr::Named(String::from("bytes"))))
+    );
+
+    let generated = generate_module(&parsed);
+    assert_module_contains(&generated, "pub field_1: Option<Vec<u8>>");
+}
+
+// ===========================================================================
+// Nested var-array
+// ===========================================================================
+
+#[test]
+fn parses_nested_var_array() {
+    let schema = "matrix = [* [* uint]]\n";
+    let parsed = parse_schema(schema).expect("nested var-array should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::VarArray(Box::new(TypeExpr::VarArray(
+            Box::new(TypeExpr::Named(String::from("uint")))
+        ))))
+    );
+
+    let generated = generate_module(&parsed);
+    assert_module_contains(&generated, "pub type Matrix = Vec<Vec<u64>>;");
+}
+
+// ===========================================================================
+// Group choice with equal-length variants
+// ===========================================================================
+
+#[test]
+fn group_choice_unnamed_equal_length() {
+    let schema = "op = [uint, bytes] // [uint, uint]\n";
+    let parsed = parse_schema(schema).expect("equal-length group choice should parse");
+
+    let TypeDefinition::GroupChoice(variants) = &parsed[0].definition else {
+        panic!("expected GroupChoice");
+    };
+    assert_eq!(variants.len(), 2);
+    assert_eq!(variants[0].len(), 2);
+    assert_eq!(variants[1].len(), 2);
+
+    let generated = generate_module(&parsed);
+    assert_module_contains(&generated, "pub enum Op {");
+    assert_module_contains(&generated, "Variant0 {");
+    assert_module_contains(&generated, "Variant1 {");
+}
+
+// ===========================================================================
+// Tagged type in map field
+// ===========================================================================
+
+#[test]
+fn codec_gen_tagged_in_map_field() {
+    let schema = "body = { 0: #6.258([* uint]) }\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    assert_module_contains(&generated, "enc.tag(258)");
+    assert_module_contains(&generated, "let t = dec.tag()?");
+}
+
+// ===========================================================================
+// Multiple definitions in single schema
+// ===========================================================================
+
+#[test]
+fn parses_multiple_interdependent_types() {
+    let schema = "hash32 = bytes .size 32\ninput = [id: hash32, index: uint .size 2]\nbody = { 0: [* input], 2: uint }\n";
+    let parsed = parse_schema(schema).expect("multi-def schema should parse");
+    assert_eq!(parsed.len(), 3);
+    assert_eq!(parsed[0].name, "hash32");
+    assert_eq!(parsed[1].name, "input");
+    assert_eq!(parsed[2].name, "body");
+
+    let generated = generate_module(&parsed);
+    assert_module_contains(&generated, "pub type Hash32 = [u8; 32];");
+    assert_module_contains(&generated, "pub struct Input");
+    assert_module_contains(&generated, "pub struct Body");
+}
+
+// ===========================================================================
+// Edge cases
+// ===========================================================================
+
+#[test]
+fn parses_type_name_with_underscores_and_hyphens() {
+    let parsed = parse_schema("my_type-name = uint\n").expect("hyphens/underscores in names");
+    assert_eq!(parsed[0].name, "my_type-name");
+}
+
+#[test]
+fn parses_empty_map() {
+    let parsed = parse_schema("empty = {}\n").expect("empty map should parse");
+    let TypeDefinition::Map(fields) = &parsed[0].definition else {
+        panic!("expected map");
+    };
+    assert!(fields.is_empty());
+}
+
+#[test]
+fn codec_gen_empty_map() {
+    let parsed = parse_schema("empty = {}\n").expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+    assert_module_contains(&generated, "impl CborEncode for Empty {");
+    assert_module_contains(&generated, "enc.map(0)");
 }

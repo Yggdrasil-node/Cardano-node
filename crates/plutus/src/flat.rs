@@ -710,4 +710,283 @@ mod tests {
         let term = dec.decode_term().expect("decode");
         assert_eq!(term, Term::Builtin(DefaultFun::AddInteger));
     }
+
+    // -- Additional term decoding tests ---------------------------------
+
+    #[test]
+    fn test_decode_var_term() {
+        // Var = tag 0 (0000), then natural 1 (0b00000001).
+        let data = bits_to_bytes(&[
+            0, 0, 0, 0, // tag=0 (Var)
+            0, 0, 0, 0, 0, 0, 0, 1, // natural=1
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Var(1));
+    }
+
+    #[test]
+    fn test_decode_delay_term() {
+        // Delay = tag 1 (0001), body = Error (tag 6 = 0110).
+        let data = bits_to_bytes(&[
+            0, 0, 0, 1, // tag=1 (Delay)
+            0, 1, 1, 0, // tag=6 (Error)
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Delay(Box::new(Term::Error)));
+    }
+
+    #[test]
+    fn test_decode_lam_abs_term() {
+        // LamAbs = tag 2 (0010), body = Var(1).
+        let data = bits_to_bytes(&[
+            0, 0, 1, 0, // tag=2 (LamAbs)
+            0, 0, 0, 0, // tag=0 (Var)
+            0, 0, 0, 0, 0, 0, 0, 1, // natural=1
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::LamAbs(Box::new(Term::Var(1))));
+    }
+
+    #[test]
+    fn test_decode_apply_term() {
+        // Apply = tag 3 (0011), fun = Error, arg = Error.
+        let data = bits_to_bytes(&[
+            0, 0, 1, 1, // tag=3 (Apply)
+            0, 1, 1, 0, // tag=6 (Error) -- fun
+            0, 1, 1, 0, // tag=6 (Error) -- arg
+            0, 0, 0, 0, // padding
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(
+            term,
+            Term::Apply(Box::new(Term::Error), Box::new(Term::Error))
+        );
+    }
+
+    #[test]
+    fn test_decode_force_term() {
+        // Force = tag 5 (0101), inner = Error.
+        let data = bits_to_bytes(&[
+            0, 1, 0, 1, // tag=5 (Force)
+            0, 1, 1, 0, // tag=6 (Error)
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Force(Box::new(Term::Error)));
+    }
+
+    #[test]
+    fn test_decode_constant_unit_term() {
+        // Constant = tag 4 (0100), type tag Unit=3 (0011). No payload.
+        let data = bits_to_bytes(&[
+            0, 1, 0, 0, // tag=4 (Constant)
+            0, 0, 1, 1, // type tag=3 (Unit)
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Constant(Constant::Unit));
+    }
+
+    #[test]
+    fn test_decode_constant_bool_true() {
+        // Constant = tag 4 (0100), type tag Bool=4 (0100), payload: 1 bit.
+        let data = bits_to_bytes(&[
+            0, 1, 0, 0, // tag=4 (Constant)
+            0, 1, 0, 0, // type tag=4 (Bool)
+            1,           // bool value = true
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Constant(Constant::Bool(true)));
+    }
+
+    #[test]
+    fn test_decode_constant_bool_false() {
+        let data = bits_to_bytes(&[
+            0, 1, 0, 0, // tag=4 (Constant)
+            0, 1, 0, 0, // type tag=4 (Bool)
+            0,           // bool value = false
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Constant(Constant::Bool(false)));
+    }
+
+    #[test]
+    fn test_decode_constant_integer_zero() {
+        // Constant = tag 4, Type = Integer (tag 0).
+        // Integer 0: zigzag(0) = 0, encoded as 8-bit group: 0x00.
+        let data = bits_to_bytes(&[
+            0, 1, 0, 0,             // tag=4 (Constant)
+            0, 0, 0, 0,             // type tag=0 (Integer)
+            0, 0, 0, 0, 0, 0, 0, 0, // integer byte 0x00 (value=0, MSB=0 → stop)
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Constant(Constant::Integer(0)));
+    }
+
+    #[test]
+    fn test_decode_unknown_term_tag() {
+        // Tag 10 (1010) = unknown.
+        let data = bits_to_bytes(&[1, 0, 1, 0, 0, 0, 0, 0]);
+        let mut dec = FlatDecoder::new(&data);
+        assert!(dec.decode_term().is_err());
+    }
+
+    #[test]
+    fn test_decode_unknown_builtin_tag() {
+        // Builtin term (tag 7), then builtin tag 100 (> 86).
+        // 0111 1100100 + padding
+        let data = bits_to_bytes(&[
+            0, 1, 1, 1, // tag=7 (Builtin)
+            1, 1, 0, 0, 1, 0, 0, // builtin 100
+            0,                     // padding
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        assert!(dec.decode_term().is_err());
+    }
+
+    // -- Program decoding -----------------------------------------------
+
+    #[test]
+    fn test_decode_program_version_and_error() {
+        // Program: version 1.0.0, body = Error.
+        // Natural 1 = 0x01, Natural 0 = 0x00, Natural 0 = 0x00.
+        // Error term = tag 6 (0110).
+        let mut data = vec![0x01, 0x00, 0x00]; // version 1.0.0
+        // Now append the Error term bits: 0110 + 4 bits padding = 0x60
+        data.push(0x60);
+        let program = decode_flat_program(&data).expect("decode");
+        assert_eq!(program.major, 1);
+        assert_eq!(program.minor, 0);
+        assert_eq!(program.patch, 0);
+        assert_eq!(program.term, Term::Error);
+    }
+
+    // -- Constr / Case decoding -----------------------------------------
+
+    #[test]
+    fn test_decode_constr_empty() {
+        // Constr = tag 8 (1000), natural tag 0 (0x00), empty list (0-bit).
+        let data = bits_to_bytes(&[
+            1, 0, 0, 0,             // tag=8 (Constr)
+            0, 0, 0, 0, 0, 0, 0, 0, // natural=0
+            0,                       // empty list (continuation=0)
+            0, 0, 0,                 // padding
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Constr(0, vec![]));
+    }
+
+    #[test]
+    fn test_decode_case_empty_branches() {
+        // Case = tag 9 (1001), scrutinee = Error, empty branch list.
+        let data = bits_to_bytes(&[
+            1, 0, 0, 1, // tag=9 (Case)
+            0, 1, 1, 0, // Error (scrutinee)
+            0,           // empty branch list
+            0, 0, 0,     // padding
+        ]);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Case(Box::new(Term::Error), vec![]));
+    }
+
+    // -- CBOR unwrap edge cases -----------------------------------------
+
+    #[test]
+    fn test_unwrap_cbor_empty() {
+        let result = unwrap_cbor_bytestring(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_unwrap_cbor_len_24() {
+        // CBOR additional=24, length byte, then payload.
+        let data = vec![0x58, 0x03, 0xAA, 0xBB, 0xCC];
+        let result = unwrap_cbor_bytestring(&data);
+        assert_eq!(result, &[0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn test_unwrap_cbor_truncated() {
+        // CBOR header says 10 bytes but only 2 available.
+        let data = [0x4A, 0x01, 0x02];
+        let result = unwrap_cbor_bytestring(&data);
+        // Falls through to returning original bytes.
+        assert_eq!(result, &[0x4A, 0x01, 0x02]);
+    }
+
+    // -- FlatDecoder read_bits8 ----------------------------------------
+
+    #[test]
+    fn test_read_bits8_cross_boundary() {
+        // Read 4 bits, then 8 bits across byte boundary.
+        let data = [0xAB, 0xCD]; // 10101011 11001101
+        let mut dec = FlatDecoder::new(&data);
+        let first4 = dec.read_bits8(4).unwrap();
+        assert_eq!(first4, 0x0A); // 1010
+        let next8 = dec.read_bits8(8).unwrap();
+        assert_eq!(next8, 0xBC); // 10111100
+    }
+
+    #[test]
+    fn test_read_bit_past_end() {
+        let data = [];
+        let mut dec = FlatDecoder::new(&data);
+        assert!(dec.read_bit().is_err());
+    }
+
+    // -- read_list continuation scheme -----------------------------------
+
+    #[test]
+    fn test_read_list_empty() {
+        // 0 bit = end of list.
+        let data = [0x00]; // starts with 0 bit
+        let mut dec = FlatDecoder::new(&data);
+        let list: Vec<bool> = dec.read_list(|d| d.read_bit()).unwrap();
+        assert!(list.is_empty());
+    }
+
+    // -- Skip to byte boundary ------------------------------------------
+
+    #[test]
+    fn test_skip_to_byte_boundary() {
+        let data = [0xFF, 0xAA];
+        let mut dec = FlatDecoder::new(&data);
+        dec.read_bit().unwrap(); // consume 1 bit
+        dec.skip_to_byte_boundary();
+        assert_eq!(dec.pos, 1);
+        assert_eq!(dec.bit, 0);
+    }
+
+    #[test]
+    fn test_skip_to_byte_boundary_already_aligned() {
+        let data = [0xFF];
+        let mut dec = FlatDecoder::new(&data);
+        dec.skip_to_byte_boundary();
+        assert_eq!(dec.pos, 0);
+        assert_eq!(dec.bit, 0);
+    }
+
+    // -- decode_script_bytes with CBOR wrapping -------------------------
+
+    #[test]
+    fn test_decode_script_bytes_single_wrapped() {
+        // Build a flat program: version 1.0.0, body = Error.
+        let flat_bytes = vec![0x01, 0x00, 0x00, 0x60];
+        // Single CBOR wrap.
+        let mut cbor = vec![0x44u8]; // 0x40 | 4 = 4-byte bytestring
+        cbor.extend_from_slice(&flat_bytes);
+
+        let program = decode_script_bytes(&cbor).expect("decode");
+        assert_eq!(program.major, 1);
+        assert_eq!(program.term, Term::Error);
+    }
 }

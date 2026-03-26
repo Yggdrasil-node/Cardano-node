@@ -1136,8 +1136,8 @@ mod tests {
             .load_plutus_cost_model(Some(base_dir.as_path()))
             .expect("load plutus cost model")
             .expect("mainnet plutus cost model");
-        assert_eq!(model.step_cpu, 29_773);
-        assert_eq!(model.step_mem, 100);
+        assert_eq!(model.step_costs.var_cpu, 29_773);
+        assert_eq!(model.step_costs.var_mem, 100);
         assert_eq!(model.builtin_cpu, 29_773);
         assert_eq!(model.builtin_mem, 100);
     }
