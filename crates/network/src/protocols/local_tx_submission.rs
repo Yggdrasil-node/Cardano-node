@@ -14,7 +14,8 @@
 //! Reference: `Ouroboros.Network.Protocol.LocalTxSubmission.Type`
 //! <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxSubmission>
 
-use minicbor::{Decode, Encode};
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::LedgerError;
 
 // ---------------------------------------------------------------------------
 // States
@@ -92,7 +93,7 @@ impl LocalTxSubmissionMessage {
         }
     }
 
-    /// State transition: returns the new state after this message is sent
+    /// State transition: returns the new state after this message is applied
     /// from `current`.
     pub fn apply(&self, current: LocalTxSubmissionState) -> Option<LocalTxSubmissionState> {
         use LocalTxSubmissionState::*;
@@ -106,58 +107,53 @@ impl LocalTxSubmissionMessage {
     }
 
     /// Encode this message to CBOR bytes.
+    ///
+    /// Wire format:
+    /// - `MsgSubmitTx`  → `[0, #bytes(tx)]`
+    /// - `MsgAcceptTx`  → `[1]`
+    /// - `MsgRejectTx`  → `[2, #bytes(reject_reason)]`
+    /// - `MsgDone`      → `[3]`
     pub fn encode_cbor(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut enc = Encoder::new();
         match self {
             Self::MsgSubmitTx { tx } => {
-                // [0, tx_bytes]
-                minicbor::encode(&(0u64, minicbor::bytes::ByteVec::from(tx.clone())), &mut buf)
-                    .expect("infallible CBOR encode");
+                enc.array(2).unsigned(0).bytes(tx);
             }
             Self::MsgAcceptTx => {
-                // [1]
-                minicbor::encode(&[1u64], &mut buf).expect("infallible CBOR encode");
+                enc.array(1).unsigned(1);
             }
             Self::MsgRejectTx { reject_reason } => {
-                // [2, reject_reason_bytes]
-                minicbor::encode(
-                    &(2u64, minicbor::bytes::ByteVec::from(reject_reason.clone())),
-                    &mut buf,
-                )
-                .expect("infallible CBOR encode");
+                enc.array(2).unsigned(2).bytes(reject_reason);
             }
             Self::MsgDone => {
-                // [3]
-                minicbor::encode(&[3u64], &mut buf).expect("infallible CBOR encode");
+                enc.array(1).unsigned(3);
             }
         }
-        buf
+        enc.into_bytes()
     }
 
     /// Decode a message from CBOR bytes.
     pub fn decode_cbor(data: &[u8]) -> Result<Self, LocalTxSubmissionError> {
-        let mut decoder = minicbor::Decoder::new(data);
-        let len = decoder
-            .array()
-            .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
-        let tag: u64 = decoder
-            .decode()
-            .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
-        match tag {
-            0 => {
-                let tx: minicbor::bytes::ByteVec = decoder
-                    .decode()
-                    .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
-                Ok(Self::MsgSubmitTx { tx: tx.into() })
+        let mut dec = Decoder::new(data);
+        let len = dec.array().map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
+        let tag = dec.unsigned().map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
+        match (tag, len) {
+            (0, 2) => {
+                let tx = dec
+                    .bytes()
+                    .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?
+                    .to_vec();
+                Ok(Self::MsgSubmitTx { tx })
             }
-            1 => Ok(Self::MsgAcceptTx),
-            2 => {
-                let rr: minicbor::bytes::ByteVec = decoder
-                    .decode()
-                    .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?;
-                Ok(Self::MsgRejectTx { reject_reason: rr.into() })
+            (1, 1) => Ok(Self::MsgAcceptTx),
+            (2, 2) => {
+                let rr = dec
+                    .bytes()
+                    .map_err(|e| LocalTxSubmissionError::Cbor(e.to_string()))?
+                    .to_vec();
+                Ok(Self::MsgRejectTx { reject_reason: rr })
             }
-            3 => Ok(Self::MsgDone),
+            (3, 1) => Ok(Self::MsgDone),
             _ => Err(LocalTxSubmissionError::UnknownTag(tag)),
         }
     }
@@ -183,6 +179,12 @@ pub enum LocalTxSubmissionError {
     ChannelSend,
     #[error("channel closed (peer disconnected)")]
     ChannelClosed,
+}
+
+impl From<LedgerError> for LocalTxSubmissionError {
+    fn from(e: LedgerError) -> Self {
+        Self::Cbor(e.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -232,22 +234,13 @@ mod tests {
             LocalTxSubmissionMessage::MsgSubmitTx { tx: vec![] }.apply(StIdle),
             Some(StBusy)
         );
-        assert_eq!(
-            LocalTxSubmissionMessage::MsgAcceptTx.apply(StBusy),
-            Some(StIdle)
-        );
+        assert_eq!(LocalTxSubmissionMessage::MsgAcceptTx.apply(StBusy), Some(StIdle));
         assert_eq!(
             LocalTxSubmissionMessage::MsgRejectTx { reject_reason: vec![] }.apply(StBusy),
             Some(StIdle)
         );
-        assert_eq!(
-            LocalTxSubmissionMessage::MsgDone.apply(StIdle),
-            Some(StDone)
-        );
+        assert_eq!(LocalTxSubmissionMessage::MsgDone.apply(StIdle), Some(StDone));
         // Invalid transitions
-        assert_eq!(
-            LocalTxSubmissionMessage::MsgAcceptTx.apply(StIdle),
-            None
-        );
+        assert_eq!(LocalTxSubmissionMessage::MsgAcceptTx.apply(StIdle), None);
     }
 }

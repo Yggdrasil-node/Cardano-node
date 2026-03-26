@@ -18,6 +18,9 @@
 //! Reference: `Ouroboros.Network.Protocol.LocalStateQuery.Type`
 //! <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalStateQuery>
 
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::LedgerError;
+
 // ---------------------------------------------------------------------------
 // States
 // ---------------------------------------------------------------------------
@@ -45,10 +48,15 @@ pub enum LocalStateQueryState {
 
 /// The point at which to acquire a ledger snapshot.
 ///
-/// Mirrors the upstream `Target` type from `LocalStateQuery.Type`.
+/// Upstream encoding (`encodeTarget`):
+/// - `VolatileTip`    → CBOR `null`
+/// - `ImmutableTip`   → CBOR `0` (uint)
+/// - `SpecificPoint`  → CBOR `[slot, #bytes(hash)]`
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalStateQuery.Type.Target`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AcquireTarget {
-    /// Acquire at the tip of the current chain (most common for clients).
+    /// Acquire at the tip of the current volatile chain (most common for clients).
     VolatileTip,
     /// Acquire at the most recently immutable point.
     ImmutableTip,
@@ -61,53 +69,50 @@ pub enum AcquireTarget {
     },
 }
 
-impl AcquireTarget {
-    /// CBOR-encode the acquire target for the wire.
-    ///
-    /// Upstream encoding:
-    /// - `VolatileTip`   → `[0]` (acquire target = volatile tip)
-    /// - `ImmutableTip`  → `[1]` (acquire target = immutable tip)
-    /// - Specific point  → `[slot_no, hash_bytes]` (as in ChainSync points)
-    pub fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        match self {
-            Self::VolatileTip => {
-                minicbor::encode(&[0u64], &mut buf).expect("infallible");
-            }
-            Self::ImmutableTip => {
-                minicbor::encode(&[1u64], &mut buf).expect("infallible");
-            }
-            Self::SpecificPoint { slot, hash } => {
-                // [slot_no, #bytes(hash)]
-                minicbor::encode(
-                    &(*slot, minicbor::bytes::ByteVec::from(hash.clone())),
-                    &mut buf,
-                )
-                .expect("infallible");
-            }
+/// Encode an `AcquireTarget` inline into `enc`.
+///
+/// - `VolatileTip`   → null
+/// - `ImmutableTip`  → 0
+/// - `SpecificPoint` → `[slot, #bytes(hash)]`
+fn encode_target(enc: &mut Encoder, target: &AcquireTarget) {
+    match target {
+        AcquireTarget::VolatileTip => {
+            enc.null();
         }
-        buf
+        AcquireTarget::ImmutableTip => {
+            enc.unsigned(0);
+        }
+        AcquireTarget::SpecificPoint { slot, hash } => {
+            enc.array(2).unsigned(*slot).bytes(hash);
+        }
     }
+}
 
-    /// Decode an acquire target from wire CBOR.
-    pub fn decode(data: &[u8]) -> Result<Self, LocalStateQueryError> {
-        let mut dec = minicbor::Decoder::new(data);
-        // Try array form first
-        if let Ok(Some(len)) = dec.array() {
-            if len == Some(1) {
-                let tag: u64 = dec.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-                return match tag {
-                    0 => Ok(Self::VolatileTip),
-                    1 => Ok(Self::ImmutableTip),
-                    _ => Err(LocalStateQueryError::Cbor(format!("unknown acquire target tag {tag}"))),
-                };
-            }
+/// Decode an `AcquireTarget` from the current position in `dec`.
+fn decode_target(dec: &mut Decoder<'_>) -> Result<AcquireTarget, LocalStateQueryError> {
+    let cbor_err = |e: LedgerError| LocalStateQueryError::Cbor(e.to_string());
+    if dec.peek_is_null() {
+        dec.null().map_err(cbor_err)?;
+        return Ok(AcquireTarget::VolatileTip);
+    }
+    // Distinguish ImmutableTip (uint 0) from SpecificPoint (array)
+    let major = dec.peek_major().map_err(cbor_err)?;
+    match major {
+        0 => {
+            // uint → ImmutableTip
+            let _v = dec.unsigned().map_err(cbor_err)?;
+            Ok(AcquireTarget::ImmutableTip)
         }
-        // Specific point: tuple (slot, hash)
-        let mut dec2 = minicbor::Decoder::new(data);
-        let slot: u64 = dec2.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-        let hash: minicbor::bytes::ByteVec = dec2.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-        Ok(Self::SpecificPoint { slot, hash: hash.into() })
+        4 => {
+            // array → SpecificPoint [slot, hash]
+            let _len = dec.array().map_err(cbor_err)?;
+            let slot = dec.unsigned().map_err(cbor_err)?;
+            let hash = dec.bytes().map_err(cbor_err)?.to_vec();
+            Ok(AcquireTarget::SpecificPoint { slot, hash })
+        }
+        other => Err(LocalStateQueryError::Cbor(format!(
+            "unexpected CBOR major type {other} for AcquireTarget"
+        ))),
     }
 }
 
@@ -246,106 +251,95 @@ impl LocalStateQueryMessage {
     pub fn apply(&self, current: LocalStateQueryState) -> Option<LocalStateQueryState> {
         use LocalStateQueryState::*;
         match (self, current) {
-            (Self::MsgAcquire { .. },   StIdle)     => Some(StAcquiring),
+            (Self::MsgAcquire { .. },   StIdle)      => Some(StAcquiring),
             (Self::MsgAcquired,         StAcquiring) => Some(StAcquired),
             (Self::MsgFailure { .. },   StAcquiring) => Some(StIdle),
-            (Self::MsgRelease,          StAcquired) => Some(StIdle),
-            (Self::MsgReAcquire { .. }, StAcquired) => Some(StAcquiring),
-            (Self::MsgQuery { .. },     StAcquired) => Some(StQuerying),
-            (Self::MsgResult { .. },    StQuerying) => Some(StAcquired),
-            (Self::MsgDone,             StIdle)     => Some(StDone),
+            (Self::MsgRelease,          StAcquired)  => Some(StIdle),
+            (Self::MsgReAcquire { .. }, StAcquired)  => Some(StAcquiring),
+            (Self::MsgQuery { .. },     StAcquired)  => Some(StQuerying),
+            (Self::MsgResult { .. },    StQuerying)  => Some(StAcquired),
+            (Self::MsgDone,             StIdle)      => Some(StDone),
             _ => None,
         }
     }
 
     /// Encode this message to CBOR bytes.
+    ///
+    /// Wire format:
+    /// - `MsgAcquire`   → `[0, target]`  (target encoding: null / 0 / [slot, hash])
+    /// - `MsgAcquired`  → `[1]`
+    /// - `MsgFailure`   → `[2, failure_tag]`
+    /// - `MsgRelease`   → `[3]`
+    /// - `MsgReAcquire` → `[4, target]`
+    /// - `MsgQuery`     → `[5, #bytes(query)]`
+    /// - `MsgResult`    → `[6, #bytes(result)]`
+    /// - `MsgDone`      → `[7]`
     pub fn encode_cbor(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut enc = Encoder::new();
         match self {
             Self::MsgAcquire { target } => {
-                // [0, target_cbor]
-                let target_bytes = target.encode();
-                minicbor::encode(
-                    &(0u64, minicbor::bytes::ByteVec::from(target_bytes)),
-                    &mut buf,
-                )
-                .expect("infallible");
+                enc.array(2).unsigned(0);
+                encode_target(&mut enc, target);
             }
             Self::MsgAcquired => {
-                minicbor::encode(&[1u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(1);
             }
             Self::MsgFailure { failure } => {
-                minicbor::encode(&(2u64, failure.tag()), &mut buf).expect("infallible");
+                enc.array(2).unsigned(2).unsigned(failure.tag());
             }
             Self::MsgRelease => {
-                minicbor::encode(&[3u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(3);
             }
             Self::MsgReAcquire { target } => {
-                let target_bytes = target.encode();
-                minicbor::encode(
-                    &(4u64, minicbor::bytes::ByteVec::from(target_bytes)),
-                    &mut buf,
-                )
-                .expect("infallible");
+                enc.array(2).unsigned(4);
+                encode_target(&mut enc, target);
             }
             Self::MsgQuery { query } => {
-                minicbor::encode(
-                    &(5u64, minicbor::bytes::ByteVec::from(query.clone())),
-                    &mut buf,
-                )
-                .expect("infallible");
+                enc.array(2).unsigned(5).bytes(query);
             }
             Self::MsgResult { result } => {
-                minicbor::encode(
-                    &(6u64, minicbor::bytes::ByteVec::from(result.clone())),
-                    &mut buf,
-                )
-                .expect("infallible");
+                enc.array(2).unsigned(6).bytes(result);
             }
             Self::MsgDone => {
-                minicbor::encode(&[7u64], &mut buf).expect("infallible");
+                enc.array(1).unsigned(7);
             }
         }
-        buf
+        enc.into_bytes()
     }
 
     /// Decode a message from CBOR bytes.
     pub fn decode_cbor(data: &[u8]) -> Result<Self, LocalStateQueryError> {
-        let mut dec = minicbor::Decoder::new(data);
-        dec.array().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-        let tag: u64 = dec.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-        match tag {
-            0 => {
-                let target_bytes: minicbor::bytes::ByteVec =
-                    dec.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-                let target = AcquireTarget::decode(&target_bytes)?;
+        let cbor_err = |e: LedgerError| LocalStateQueryError::Cbor(e.to_string());
+        let mut dec = Decoder::new(data);
+        let len = dec.array().map_err(cbor_err)?;
+        let tag = dec.unsigned().map_err(cbor_err)?;
+        match (tag, len) {
+            (0, 2) => {
+                let target = decode_target(&mut dec)?;
                 Ok(Self::MsgAcquire { target })
             }
-            1 => Ok(Self::MsgAcquired),
-            2 => {
-                let ft: u64 = dec.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-                let failure = AcquireFailure::from_tag(ft)
-                    .ok_or(LocalStateQueryError::Cbor(format!("unknown failure tag {ft}")))?;
+            (1, 1) => Ok(Self::MsgAcquired),
+            (2, 2) => {
+                let ft = dec.unsigned().map_err(cbor_err)?;
+                let failure = AcquireFailure::from_tag(ft).ok_or_else(|| {
+                    LocalStateQueryError::Cbor(format!("unknown acquire failure tag {ft}"))
+                })?;
                 Ok(Self::MsgFailure { failure })
             }
-            3 => Ok(Self::MsgRelease),
-            4 => {
-                let target_bytes: minicbor::bytes::ByteVec =
-                    dec.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-                let target = AcquireTarget::decode(&target_bytes)?;
+            (3, 1) => Ok(Self::MsgRelease),
+            (4, 2) => {
+                let target = decode_target(&mut dec)?;
                 Ok(Self::MsgReAcquire { target })
             }
-            5 => {
-                let q: minicbor::bytes::ByteVec =
-                    dec.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-                Ok(Self::MsgQuery { query: q.into() })
+            (5, 2) => {
+                let query = dec.bytes().map_err(cbor_err)?.to_vec();
+                Ok(Self::MsgQuery { query })
             }
-            6 => {
-                let r: minicbor::bytes::ByteVec =
-                    dec.decode().map_err(|e| LocalStateQueryError::Cbor(e.to_string()))?;
-                Ok(Self::MsgResult { result: r.into() })
+            (6, 2) => {
+                let result = dec.bytes().map_err(cbor_err)?.to_vec();
+                Ok(Self::MsgResult { result })
             }
-            7 => Ok(Self::MsgDone),
+            (7, 1) => Ok(Self::MsgDone),
             _ => Err(LocalStateQueryError::UnknownTag(tag)),
         }
     }
@@ -373,6 +367,12 @@ pub enum LocalStateQueryError {
     ChannelClosed,
 }
 
+impl From<LedgerError> for LocalStateQueryError {
+    fn from(e: LedgerError) -> Self {
+        Self::Cbor(e.to_string())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -385,6 +385,15 @@ mod tests {
     fn msg_acquire_volatile_tip_round_trip() {
         let msg = LocalStateQueryMessage::MsgAcquire {
             target: AcquireTarget::VolatileTip,
+        };
+        let decoded = LocalStateQueryMessage::decode_cbor(&msg.encode_cbor()).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn msg_acquire_immutable_tip_round_trip() {
+        let msg = LocalStateQueryMessage::MsgAcquire {
+            target: AcquireTarget::ImmutableTip,
         };
         let decoded = LocalStateQueryMessage::decode_cbor(&msg.encode_cbor()).unwrap();
         assert_eq!(decoded, msg);
@@ -468,9 +477,6 @@ mod tests {
             Some(StDone)
         );
         // Invalid
-        assert_eq!(
-            LocalStateQueryMessage::MsgAcquired.apply(StIdle),
-            None
-        );
+        assert_eq!(LocalStateQueryMessage::MsgAcquired.apply(StIdle), None);
     }
 }
