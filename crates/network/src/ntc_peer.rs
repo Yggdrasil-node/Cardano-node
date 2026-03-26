@@ -336,22 +336,63 @@ fn parse_ntc_propose_versions(
         return Err(NtcPeerError::Cbor(format!("expected ProposeVersions tag 0, got {tag}")));
     }
     let n = dec.map().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-    let count = n.unwrap_or(0) as usize;
 
     let supported = [9u16, 10, 11, 12, 13, 14, 15, 16];
     let mut best: Option<(u16, NodeToClientVersionData)> = None;
 
-    for _ in 0..count {
-        let ver: u64 = dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
-        let vd_bytes: minicbor::bytes::ByteVec =
-            dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
+    match n {
+        // Definite-length map: keep existing behavior.
+        Some(count) => {
+            let count = count as usize;
+            for _ in 0..count {
+                let ver: u64 =
+                    dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
+                let vd_bytes: minicbor::bytes::ByteVec =
+                    dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
 
-        let v = ver as u16;
-        if supported.contains(&v) {
-            if let Ok(vd) = decode_ntc_version_data(&vd_bytes) {
-                if vd.network_magic == expected_magic {
-                    if best.as_ref().map_or(true, |(bv, _)| v > *bv) {
-                        best = Some((v, vd));
+                let v = ver as u16;
+                if supported.contains(&v) {
+                    if let Ok(vd) = decode_ntc_version_data(&vd_bytes) {
+                        if vd.network_magic == expected_magic {
+                            if best.as_ref().map_or(true, |(bv, _)| v > *bv) {
+                                best = Some((v, vd));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Indefinite-length map: read entries until CBOR break.
+        None => {
+            loop {
+                match dec.datatype() {
+                    Ok(minicbor::data::Type::Break) => {
+                        // Consume the break and finish.
+                        dec.skip().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
+                        break;
+                    }
+                    Ok(_) => {
+                        let ver: u64 =
+                            dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
+                        let vd_bytes: minicbor::bytes::ByteVec =
+                            dec.decode().map_err(|e| NtcPeerError::Cbor(e.to_string()))?;
+
+                        let v = ver as u16;
+                        if supported.contains(&v) {
+                            if let Ok(vd) = decode_ntc_version_data(&vd_bytes) {
+                                if vd.network_magic == expected_magic {
+                                    if best
+                                        .as_ref()
+                                        .map_or(true, |(bv, _)| v > *bv)
+                                    {
+                                        best = Some((v, vd));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(NtcPeerError::Cbor(e.to_string()));
                     }
                 }
             }
