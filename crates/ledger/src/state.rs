@@ -2829,6 +2829,12 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                crate::plutus_validation::validate_script_data_hash(
+                    tx.body.script_data_hash,
+                    Some(&tx.witness_set.to_cbor_bytes()),
+                    self.protocol_params.as_ref(),
+                    false,
+                )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Alonzo(o.clone()))
@@ -2889,6 +2895,12 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                crate::plutus_validation::validate_script_data_hash(
+                    tx.body.script_data_hash,
+                    Some(&tx.witness_set.to_cbor_bytes()),
+                    self.protocol_params.as_ref(),
+                    true,
+                )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
@@ -2955,6 +2967,12 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                crate::plutus_validation::validate_script_data_hash(
+                    tx.body.script_data_hash,
+                    Some(&tx.witness_set.to_cbor_bytes()),
+                    self.protocol_params.as_ref(),
+                    true,
+                )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
@@ -3467,6 +3485,12 @@ impl LedgerState {
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
             )?;
+            crate::plutus_validation::validate_script_data_hash(
+                body.script_data_hash,
+                witness_bytes.as_deref(),
+                self.protocol_params.as_ref(),
+                false,
+            )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -3661,6 +3685,12 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+            )?;
+            crate::plutus_validation::validate_script_data_hash(
+                body.script_data_hash,
+                witness_bytes.as_deref(),
+                self.protocol_params.as_ref(),
+                true,
             )?;
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
@@ -3864,6 +3894,12 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+            )?;
+            crate::plutus_validation::validate_script_data_hash(
+                body.script_data_hash,
+                witness_bytes.as_deref(),
+                self.protocol_params.as_ref(),
+                true,
             )?;
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;

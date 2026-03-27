@@ -317,6 +317,14 @@ pub enum LedgerError {
     #[error("Plutus script decode failed for script hash {hash:02x?}: {reason}")]
     PlutusScriptDecodeError { hash: [u8; 28], reason: String },
 
+    #[error(
+        "script integrity hash mismatch: declared {declared:02x?}, computed {computed:02x?}"
+    )]
+    PPViewHashesDontMatch {
+        declared: [u8; 32],
+        computed: [u8; 32],
+    },
+
     // -- Collateral validation errors ---------------------------------------
 
     #[error("no collateral inputs in script transaction")]

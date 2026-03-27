@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::cbor::CborDecode;
+use crate::cbor::{CborDecode, CborEncode};
 use crate::eras::conway::{ProposalProcedure, Voter, VotingProcedures};
 use crate::error::LedgerError;
 use crate::eras::alonzo::{ExUnits, Redeemer};
@@ -27,6 +27,7 @@ use crate::eras::shelley::ShelleyTxIn;
 use crate::plutus::PlutusData;
 use crate::types::{Address, DCert, RewardAccount, StakeCredential};
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
+use crate::protocol_params::ProtocolParameters;
 
 // ---------------------------------------------------------------------------
 // Plutus language version
@@ -193,6 +194,172 @@ pub fn plutus_script_hash(version: PlutusVersion, script_bytes: &[u8]) -> [u8; 2
     buf.push(version.language_tag());
     buf.extend_from_slice(script_bytes);
     yggdrasil_crypto::blake2b::hash_bytes_224(&buf).0
+}
+
+/// Compute the Alonzo-family script integrity hash (`script_data_hash`) from
+/// witness-set content and protocol parameters.
+///
+/// This is the local parity helper for `PPViewHashesDontMatch` checks.
+/// The preimage is built as:
+/// - redeemers encoding (legacy array for Alonzo, map for Conway-style)
+/// - optional datums encoding
+/// - language views encoding derived from used Plutus script versions
+pub fn compute_script_data_hash(
+    witness_bytes: Option<&[u8]>,
+    protocol_params: Option<&ProtocolParameters>,
+    conway_redeemer_format: bool,
+) -> Result<[u8; 32], LedgerError> {
+    let ws = match witness_bytes {
+        Some(wb) => crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?,
+        None => crate::eras::shelley::ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+    };
+
+    let redeemers_bytes = encode_redeemers_for_script_data_hash(&ws.redeemers, conway_redeemer_format);
+    let datums_bytes = encode_datums_for_script_data_hash(&ws.plutus_data);
+    let language_views = encode_language_views_for_script_data_hash(&ws, protocol_params);
+
+    let mut preimage = Vec::with_capacity(
+        redeemers_bytes.len() + datums_bytes.len() + language_views.len(),
+    );
+    preimage.extend_from_slice(&redeemers_bytes);
+    preimage.extend_from_slice(&datums_bytes);
+    preimage.extend_from_slice(&language_views);
+
+    Ok(yggdrasil_crypto::hash_bytes_256(&preimage).0)
+}
+
+/// Validate a declared `script_data_hash` against locally computed value.
+///
+/// Returns `Ok(())` when no hash is declared.
+pub fn validate_script_data_hash(
+    declared: Option<[u8; 32]>,
+    witness_bytes: Option<&[u8]>,
+    protocol_params: Option<&ProtocolParameters>,
+    conway_redeemer_format: bool,
+) -> Result<(), LedgerError> {
+    let Some(declared_hash) = declared else {
+        return Ok(());
+    };
+    let computed = compute_script_data_hash(
+        witness_bytes,
+        protocol_params,
+        conway_redeemer_format,
+    )?;
+    if computed != declared_hash {
+        return Err(LedgerError::PPViewHashesDontMatch {
+            declared: declared_hash,
+            computed,
+        });
+    }
+    Ok(())
+}
+
+fn encode_redeemers_for_script_data_hash(
+    redeemers: &[Redeemer],
+    conway_redeemer_format: bool,
+) -> Vec<u8> {
+    let mut enc = crate::cbor::Encoder::new();
+    if conway_redeemer_format {
+        // Conway map format: { [tag, index] => [data, ex_units] }
+        let mut sorted = redeemers.to_vec();
+        sorted.sort_by_key(|r| (r.tag, r.index));
+        enc.map(sorted.len() as u64);
+        for r in sorted {
+            enc.array(2)
+                .unsigned(r.tag as u64)
+                .unsigned(r.index);
+            enc.array(2);
+            r.data.encode_cbor(&mut enc);
+            r.ex_units.encode_cbor(&mut enc);
+        }
+    } else {
+        // Alonzo legacy array format: [* redeemer]
+        enc.array(redeemers.len() as u64);
+        for r in redeemers {
+            r.encode_cbor(&mut enc);
+        }
+    }
+    enc.into_bytes()
+}
+
+fn encode_datums_for_script_data_hash(datums: &[PlutusData]) -> Vec<u8> {
+    if datums.is_empty() {
+        return Vec::new();
+    }
+    let mut enc = crate::cbor::Encoder::new();
+    enc.array(datums.len() as u64);
+    for d in datums {
+        d.encode_cbor(&mut enc);
+    }
+    enc.into_bytes()
+}
+
+fn encode_cost_model_values(values: &[i64], indefinite: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    if indefinite {
+        // 0x9f = start indefinite-length array
+        out.push(0x9f);
+        for v in values {
+            let mut enc = crate::cbor::Encoder::new();
+            enc.signed(*v);
+            out.extend_from_slice(&enc.into_bytes());
+        }
+        // 0xff = break
+        out.push(0xff);
+    } else {
+        let mut enc = crate::cbor::Encoder::new();
+        enc.array(values.len() as u64);
+        for v in values {
+            enc.signed(*v);
+        }
+        out = enc.into_bytes();
+    }
+    out
+}
+
+fn encode_language_views_for_script_data_hash(
+    ws: &crate::eras::shelley::ShelleyWitnessSet,
+    protocol_params: Option<&ProtocolParameters>,
+) -> Vec<u8> {
+    let mut langs: Vec<u8> = Vec::new();
+    if !ws.plutus_v1_scripts.is_empty() {
+        langs.push(0);
+    }
+    if !ws.plutus_v2_scripts.is_empty() {
+        langs.push(1);
+    }
+    if !ws.plutus_v3_scripts.is_empty() {
+        langs.push(2);
+    }
+    langs.sort_unstable();
+    langs.dedup();
+
+    let cost_models = protocol_params.and_then(|p| p.cost_models.as_ref());
+
+    let mut enc = crate::cbor::Encoder::new();
+    // Local canonical map by integer language tag.
+    enc.map(langs.len() as u64);
+    for lang in langs {
+        enc.unsigned(lang as u64);
+        let cm_bytes = if let Some(cm) = cost_models.and_then(|m| m.get(&lang)) {
+            // V1 uses the historical indefinite-array quirk.
+            encode_cost_model_values(cm, lang == 0)
+        } else {
+            // Missing cost model -> null
+            vec![0xf6]
+        };
+        enc.bytes(&cm_bytes);
+    }
+    enc.into_bytes()
 }
 
 // ---------------------------------------------------------------------------
