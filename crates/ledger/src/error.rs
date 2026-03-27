@@ -308,6 +308,9 @@ pub enum LedgerError {
     #[error("Plutus script not found for script hash {hash:02x?}")]
     PlutusScriptNotFound { hash: [u8; 28] },
 
+    #[error("required script witness not found for script hash {hash:02x?}")]
+    MissingScriptWitness { hash: [u8; 28] },
+
     #[error("no matching redeemer for script hash {hash:02x?} (purpose {purpose})")]
     MissingRedeemer { hash: [u8; 28], purpose: String },
 

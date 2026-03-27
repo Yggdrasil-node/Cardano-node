@@ -3305,7 +3305,18 @@ impl LedgerState {
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
             }
-            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            let native_satisfied = validate_native_scripts_if_present(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                slot,
+            )?;
+            validate_required_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                &native_satisfied,
+                &staged,
+                None,
+            )?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -3411,7 +3422,18 @@ impl LedgerState {
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
             }
-            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            let native_satisfied = validate_native_scripts_if_present(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                slot,
+            )?;
+            validate_required_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                &native_satisfied,
+                &staged,
+                None,
+            )?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -3547,7 +3569,18 @@ impl LedgerState {
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
             }
-            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            let native_satisfied = validate_native_scripts_if_present(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                slot,
+            )?;
+            validate_required_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                &native_satisfied,
+                &staged,
+                None,
+            )?;
             // ── is_valid bifurcation (Phase-2 / collateral-only) ──
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Alonzo)
@@ -3753,7 +3786,18 @@ impl LedgerState {
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
             }
-            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            let native_satisfied = validate_native_scripts_if_present(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                slot,
+            )?;
+            validate_required_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                &native_satisfied,
+                &staged,
+                body.reference_inputs.as_deref(),
+            )?;
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Babbage)
             {
@@ -3986,7 +4030,18 @@ impl LedgerState {
                     &mut required_scripts,
                 );
             }
-            validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            let native_satisfied = validate_native_scripts_if_present(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                slot,
+            )?;
+            validate_required_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                &native_satisfied,
+                &staged,
+                body.reference_inputs.as_deref(),
+            )?;
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Conway)
             {
@@ -5627,16 +5682,17 @@ fn validate_native_scripts_if_present(
     witness_bytes: Option<&[u8]>,
     required_script_hashes: &HashSet<[u8; 28]>,
     current_slot: u64,
-) -> Result<(), LedgerError> {
+) -> Result<HashSet<[u8; 28]>, LedgerError> {
     if required_script_hashes.is_empty() {
-        return Ok(());
+        return Ok(HashSet::new());
     }
     let witness_bytes = match witness_bytes {
         Some(wb) => wb,
-        None => return Ok(()),
+        None => return Ok(HashSet::new()),
     };
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
     let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
+    let mut native_satisfied = HashSet::new();
 
     // Build a lookup from script hash → native script
     let mut script_map: std::collections::HashMap<[u8; 28], &crate::eras::allegra::NativeScript> =
@@ -5658,10 +5714,58 @@ fn validate_native_scripts_if_present(
                     hash: *required_hash,
                 });
             }
+            native_satisfied.insert(*required_hash);
         }
         // When a required script is not in the native_scripts witness
-        // list, it may be a Plutus script (validated by Phase-2).
-        // For now, skip missing scripts rather than fail.
+        // list, it may be a Plutus script and is checked separately.
+    }
+
+    Ok(native_satisfied)
+}
+
+/// Ensures every required script hash is present in either native or Plutus
+/// script witnesses (including reference scripts).
+fn validate_required_script_witnesses(
+    witness_bytes: Option<&[u8]>,
+    required_script_hashes: &HashSet<[u8; 28]>,
+    native_satisfied: &HashSet<[u8; 28]>,
+    spending_utxo: &MultiEraUtxo,
+    reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+) -> Result<(), LedgerError> {
+    if required_script_hashes.is_empty() {
+        return Ok(());
+    }
+
+    let witness_bytes = match witness_bytes {
+        Some(wb) => wb,
+        None => {
+            let missing = required_script_hashes
+                .iter()
+                .find(|hash| !native_satisfied.contains(*hash))
+                .copied();
+            return match missing {
+                Some(hash) => Err(LedgerError::MissingScriptWitness { hash }),
+                None => Ok(()),
+            };
+        }
+    };
+
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
+    let plutus_scripts = crate::plutus_validation::collect_all_plutus_scripts(
+        &ws,
+        spending_utxo,
+        reference_inputs,
+    );
+
+    for required_hash in required_script_hashes {
+        if native_satisfied.contains(required_hash) {
+            continue;
+        }
+        if !plutus_scripts.contains_key(required_hash) {
+            return Err(LedgerError::MissingScriptWitness {
+                hash: *required_hash,
+            });
+        }
     }
 
     Ok(())

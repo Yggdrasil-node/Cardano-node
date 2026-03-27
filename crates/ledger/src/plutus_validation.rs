@@ -516,7 +516,7 @@ pub fn resolve_script_purpose(
 // ---------------------------------------------------------------------------
 
 /// Collects all Plutus scripts from a witness set and from reference input UTxOs.
-fn collect_all_plutus_scripts(
+pub(crate) fn collect_all_plutus_scripts(
     ws: &crate::eras::shelley::ShelleyWitnessSet,
     utxo: &crate::utxo::MultiEraUtxo,
     reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,

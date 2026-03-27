@@ -4180,6 +4180,62 @@ fn allegra_block_rejects_native_script_failure() {
 }
 
 #[test]
+fn allegra_block_rejects_missing_required_script_witness() {
+    let script = NativeScript::InvalidBefore(0);
+    let script_hash = native_script_hash(&script);
+    let addr = enterprise_scripthash_address(&script_hash);
+
+    let mut state = LedgerState::new(Era::Allegra);
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: addr.clone(),
+            amount: 5_000_000,
+        },
+    );
+
+    let tx_body = AllegraTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: addr,
+            amount: 4_800_000,
+        }],
+        fee: 200_000,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+    };
+
+    let body_bytes = tx_body.to_cbor_bytes();
+    let tx_id_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
+    let ws = witness_set_with_vkeys_and_scripts(vec![], vec![]);
+
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id_hash.0),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
+        is_valid: None,
+    };
+
+    let block = make_allegra_block_raw(500, 1, 0xCD, vec![tx]);
+    let err = state.apply_block(&block).unwrap_err();
+    assert!(
+        matches!(err, LedgerError::MissingScriptWitness { hash } if hash == script_hash),
+        "expected MissingScriptWitness, got: {err:?}"
+    );
+}
+
+#[test]
 fn allegra_block_accepts_native_script_timelock_in_range() {
     // NativeScript::InvalidBefore(100) — requires slot >= 100.
     let script = NativeScript::InvalidBefore(100);
