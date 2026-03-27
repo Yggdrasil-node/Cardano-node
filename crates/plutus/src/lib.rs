@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! UPLC (Untyped Plutus Lambda Calculus) evaluator for Cardano scripts.
 //!
 //! This crate implements a pure-Rust CEK machine that evaluates Plutus

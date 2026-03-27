@@ -198,5 +198,9 @@ impl ImmutableStore for FileImmutable {
 
 /// Encode a byte slice as lowercase hex.
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+        use std::fmt::Write;
+        let _ = write!(acc, "{b:02x}");
+        acc
+    })
 }

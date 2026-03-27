@@ -517,6 +517,7 @@ fn ensure_supported_period(period: KesPeriod) -> Result<(), CryptoError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::test_vectors::simple_kes_two_period_test_vectors;

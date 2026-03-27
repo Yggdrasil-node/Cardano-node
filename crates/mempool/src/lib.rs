@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Mempool-facing queue and entry abstractions.
 
 mod queue;

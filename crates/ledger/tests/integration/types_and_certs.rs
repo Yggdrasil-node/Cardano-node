@@ -421,11 +421,12 @@ fn byron_address_validate_rejects_bad_checksum() {
 }
 
 fn make_valid_byron_address(payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.push(0x82);
-    out.push(0xd8);
-    out.push(24);
-    out.push(0x40 + payload.len() as u8);
+    let mut out = vec![
+        0x82,
+        0xd8,
+        24,
+        0x40 + payload.len() as u8,
+    ];
     out.extend_from_slice(payload);
     let crc = crc32_ieee(payload);
     if crc <= 23 {

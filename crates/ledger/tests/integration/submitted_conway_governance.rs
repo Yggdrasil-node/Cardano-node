@@ -14,6 +14,7 @@
 
 use super::*;
 
+#[allow(dead_code)]
 fn enterprise_addr(network: u8, keyhash: &[u8; 28]) -> Vec<u8> {
     let mut addr = vec![0x60 | (network & 0x0f)];
     addr.extend_from_slice(keyhash);

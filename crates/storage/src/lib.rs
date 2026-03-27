@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Storage-facing abstractions for immutable blocks, volatile rollback windows,
 //! and ledger snapshots.
 //!

@@ -617,7 +617,7 @@ pub fn validate_supplemental_datums(
     for txin in spending_inputs {
         if let Some(txout) = spending_utxo.get(txin) {
             // Only count if the input is Plutus-locked (not VKey/native).
-            if let Some(script_hash) = spending_script_hash_from_txout(&txout) {
+            if let Some(script_hash) = spending_script_hash_from_txout(txout) {
                 if plutus_scripts.contains_key(&script_hash) {
                     if let Some(dh) = txout.datum_hash() {
                         input_hashes.insert(dh);
@@ -673,7 +673,7 @@ pub fn validate_unspendable_utxo_no_datum_hash(
     for txin in spending_inputs {
         if let Some(txout) = spending_utxo.get(txin) {
             // Check if this output is script-locked
-            if let Some(script_hash) = spending_script_hash_from_txout(&txout) {
+            if let Some(script_hash) = spending_script_hash_from_txout(txout) {
                 // Skip if this script was satisfied by a native script
                 if native_satisfied.contains(&script_hash) {
                     continue;
@@ -1023,7 +1023,7 @@ fn certifying_script_hash_from_cert(cert: &DCert) -> Option<[u8; 28]> {
         | DCert::DelegationToStakePoolAndDrep(cred, _, drep)
         | DCert::AccountRegistrationDelegationToDrep(cred, drep, _)
         | DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, _, drep, _) => {
-            credential_script_hash(cred).or_else(|| match drep {
+            credential_script_hash(cred).or(match drep {
                 DRep::ScriptHash(hash) => Some(*hash),
                 _ => None,
             })

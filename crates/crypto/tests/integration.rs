@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use yggdrasil_crypto::{
     Blake2bHash, CompactKesSignature, CryptoError, KesPeriod, KesSigningKey,
     Signature, SigningKey, SimpleCompactKesSignature, SimpleKesSignature,

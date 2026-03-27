@@ -91,7 +91,7 @@ pub fn validate_output_boot_addr_attrs(
 ) -> Result<(), LedgerError> {
     for output in outputs {
         let addr_bytes = output.address();
-        if let Some(attrs_size) = byron_addr_attrs_size(&addr_bytes) {
+        if let Some(attrs_size) = byron_addr_attrs_size(addr_bytes) {
             if attrs_size > BOOT_ADDR_ATTRS_MAX {
                 return Err(LedgerError::OutputBootAddrAttrsTooBig {
                     size: attrs_size,

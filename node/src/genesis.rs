@@ -611,10 +611,12 @@ pub fn build_genesis_enact_state(
         None => None,
     };
 
-    let mut enact = EnactState::default();
-    enact.constitution = yggdrasil_ledger::eras::conway::Constitution {
-        anchor,
-        guardrails_script_hash,
+    let enact = EnactState {
+        constitution: yggdrasil_ledger::eras::conway::Constitution {
+            anchor,
+            guardrails_script_hash,
+        },
+        ..EnactState::default()
     };
     Ok(Some(enact))
 }
@@ -1368,7 +1370,11 @@ mod tests {
         let mut shelley = sample_shelley();
         let mut address = vec![0x60];
         address.extend_from_slice(&[0x11; 28]);
-        let address_hex = address.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let address_hex = address.iter().fold(String::with_capacity(address.len() * 2), |mut acc, byte| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{byte:02x}");
+            acc
+        });
         shelley.initial_funds.insert(address_hex, 123);
 
         let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");

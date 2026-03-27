@@ -308,23 +308,24 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Feature | Scope | Haskell | Rust | Status | Notes |
 |---------|-------|---------|------|--------|-------|
 | **Trace Events** |
-| Structured events | Typed trace messages | ✅ | ⚠️ | Partial | Basic framework present; most events incomplete
-| Namespace hierarchy | net., chain., ledger., etc | ✅ | ⏸️ | In Design | Namespace framework only
-| Filtering & routing | Selector expressions | ✅ | ⏸️ | Not Started | Filtering logic needed
+| Structured events | Typed trace messages | ✅ | ✅ | Complete | NodeTracer with namespace/severity dispatch and upstream-style trace objects
+| Namespace hierarchy | net., chain., ledger., etc | ✅ | ✅ | Complete | Namespace-based routing with per-namespace maxFrequency
+| Filtering & routing | Selector expressions | ✅ | ⚠️ | Partial | maxFrequency filtering works; selector expressions not implemented
 | **Transports** |
-| Stdout | Console output | ✅ | ⚠️ | Partial | Basic stderr output
-| JSON | Structured output | ✅ | ⏸️ | Not Started | JSON serialization needed
+| Stdout | Console output | ✅ | ✅ | Complete | NodeTracer stdout dispatch with human/machine formats
+| JSON | Structured output | ✅ | ✅ | Complete | GET /metrics/json endpoint + JSON MetricsSnapshot serialization
 | Socket | Remote tracer | ✅ | ⏸️ | Not Started | Socket transport not implemented
 | **Metrics** |
-| EKG integration | Live metrics endpoint | ✅ | ⏸️ | Not Started | Counter/gauge infrastructure
-| Prometheus export | /metrics endpoint | ✅ | ⏸️ | Not Started | Prometheus format output
-| Key metrics |  Block height, peers, mempool size | ✅ | ⏸️ | Not Started | Metric collection
+| EKG integration | Live metrics endpoint | ✅ | ✅ | Complete | 25+ atomic counters/gauges in NodeMetrics
+| Prometheus export | /metrics endpoint | ✅ | ✅ | Complete | MetricsSnapshot::to_prometheus_text() with Prometheus text exposition
+| Key metrics | Block height, peers, mempool size | ✅ | ✅ | Complete | blocks_synced, current_slot, block_no, peers (6 variants), checkpoint, rollbacks, uptime_ms
+| Health endpoint | Orchestrator liveness | ✅ | ✅ | Complete | GET /health with status, uptime, blocks_synced, current_slot
 | **Profiling** |
 | CPU profiling | Bottleneck identification | ✅ | ⏸️ | Not Started | Profiling integration
 | Memory profiling | Heap analysis | ✅ | ⏸️ | Not Started | Allocation tracking
 | Latency tracing | Operation timing | ✅ | ⏸️ | Not Started | Latency measurement
 
-**Monitoring Summary**: ~25% feature complete, significant remaining work on tracer infrastructure and metrics export.
+**Monitoring Summary**: ~75% feature complete. NodeMetrics (25+ counters/gauges), Prometheus/JSON/health endpoints, and NodeTracer with namespace filtering all implemented. Remaining: socket transport, selector expressions, profiling.
 
 ---
 

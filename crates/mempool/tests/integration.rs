@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Era, MultiEraSubmittedTx,
     ProtocolParameters,

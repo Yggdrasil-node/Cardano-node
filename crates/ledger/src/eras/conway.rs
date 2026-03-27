@@ -1597,7 +1597,7 @@ mod tests {
     fn gov_action_update_committee_round_trip() {
         let cred = StakeCredential::AddrKeyHash([0x11; 28]);
         let mut to_add = BTreeMap::new();
-        to_add.insert(cred.clone(), 300u64);
+        to_add.insert(cred, 300u64);
         let a = GovAction::UpdateCommittee {
             prev_action_id: None,
             members_to_remove: vec![StakeCredential::ScriptHash([0x22; 28])],

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use yggdrasil_network::{
     BatchResponse, Bearer, BearerError, BlockFetchClient, BlockFetchMessage, BlockFetchState,
     ChainRange, ChainSyncMessage,
@@ -2011,7 +2012,7 @@ async fn chainsync_client_request_next_typed_decodes_points() {
     let mut client = ChainSyncClient::new(c_handle);
     let point = Point::BlockPoint(SlotNo(12), HeaderHash([0x12; 32]));
     let tip = Point::BlockPoint(SlotNo(15), HeaderHash([0x15; 32]));
-    let tip_obj = Tip::Tip(tip.clone(), BlockNo(15));
+    let tip_obj = Tip::Tip(tip, BlockNo(15));
 
     let server = tokio::spawn(async move {
         let mut sh = s_handle;
@@ -2041,7 +2042,7 @@ async fn chainsync_client_request_next_decoded_header_decodes_shelley_header() {
     let mut client = ChainSyncClient::new(c_handle);
     let header = sample_shelley_header();
     let tip = Point::BlockPoint(SlotNo(500), HeaderHash([0xCC; 32]));
-    let tip_obj = Tip::Tip(tip.clone(), BlockNo(500));
+    let tip_obj = Tip::Tip(tip, BlockNo(500));
     let expected_header = header.clone();
 
     let server = tokio::spawn(async move {
@@ -2176,7 +2177,7 @@ async fn chainsync_client_find_intersect_points_decodes_points() {
     let mut client = ChainSyncClient::new(c_handle);
     let wanted = Point::BlockPoint(SlotNo(99), HeaderHash([0x99; 32]));
     let tip = Point::BlockPoint(SlotNo(120), HeaderHash([0xAB; 32]));
-    let tip_obj = Tip::Tip(tip.clone(), BlockNo(120));
+    let tip_obj = Tip::Tip(tip, BlockNo(120));
 
     let server = tokio::spawn(async move {
         let mut sh = s_handle;

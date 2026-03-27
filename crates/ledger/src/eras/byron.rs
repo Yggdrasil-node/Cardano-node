@@ -630,7 +630,10 @@ impl ByronBlock {
         // pubkey — 64-byte extended Ed25519 public key
         let pubkey_raw = dec.bytes()?;
         let issuer_vkey: [u8; 32] = if pubkey_raw.len() >= 32 {
-            pubkey_raw[..32].try_into().unwrap()
+            pubkey_raw[..32].try_into().map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: pubkey_raw.len(),
+            })?
         } else {
             return Err(LedgerError::CborInvalidLength {
                 expected: 32,

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainCandidate, ChainEntry, ChainState, ConsensusError, EpochSize, Header,
     HeaderBody, NonceEvolutionConfig, NonceEvolutionState, OpCert, SecurityParam,

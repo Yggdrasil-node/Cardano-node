@@ -150,8 +150,11 @@ impl Tip {
 fn hex_short(bytes: &[u8; 32]) -> String {
     bytes[..8]
         .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>()
+        .fold(String::new(), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
         + "…"
 }
 

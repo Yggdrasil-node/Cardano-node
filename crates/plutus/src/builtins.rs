@@ -201,7 +201,7 @@ pub fn evaluate_builtin(
         ChooseUnit => {
             // args: [unit_val, result]
             // Just returns the second argument (forces the unit check).
-            let _ = get_unit(&args[0])?;
+            get_unit(&args[0])?;
             Ok(args[1].clone())
         }
 
@@ -411,11 +411,11 @@ pub fn evaluate_builtin(
         }
         MkNilData => {
             // Takes a Unit argument, returns empty list of Data.
-            let _ = get_unit(&args[0])?;
+            get_unit(&args[0])?;
             Ok(Value::Constant(Constant::ProtoList(Type::Data, Vec::new())))
         }
         MkNilPairData => {
-            let _ = get_unit(&args[0])?;
+            get_unit(&args[0])?;
             Ok(Value::Constant(Constant::ProtoList(
                 Type::Pair(Box::new(Type::Data), Box::new(Type::Data)),
                 Vec::new(),
@@ -530,12 +530,12 @@ pub fn evaluate_builtin(
         Bls12_381_MillerLoop => {
             let g1 = get_g1(&args[0])?;
             let g2 = get_g2(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_MlResult(bls12_381::miller_loop(g1, g2))))
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(bls12_381::miller_loop(g1, g2)))))
         }
         Bls12_381_MulMlResult => {
             let a = get_ml(&args[0])?;
             let b = get_ml(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_MlResult(bls12_381::mul_ml_result(a, b))))
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(bls12_381::mul_ml_result(a, b)))))
         }
         Bls12_381_FinalVerify => {
             let a = get_ml(&args[0])?;
@@ -892,7 +892,7 @@ fn get_g2(val: &Value) -> Result<&yggdrasil_crypto::G2Element, MachineError> {
 
 fn get_ml(val: &Value) -> Result<&yggdrasil_crypto::MlResult, MachineError> {
     match val.as_constant()? {
-        Constant::Bls12_381_MlResult(r) => Ok(r),
+        Constant::Bls12_381_MlResult(r) => Ok(r.as_ref()),
         other => Err(MachineError::TypeMismatch {
             expected: "bls12_381_MlResult",
             actual: constant_type_name(other),
@@ -1216,28 +1216,32 @@ fn shift_bytestring(bs: &[u8], shift: i128) -> Vec<u8> {
 
     let mut result = vec![0u8; bs.len()];
 
-    if shift > 0 {
-        // Shift left: MSB direction.
-        for i in 0..bs.len() {
-            if i + byte_shift < bs.len() {
-                result[i] = bs[i + byte_shift] << bit_shift;
-                if bit_shift > 0 && i + byte_shift + 1 < bs.len() {
-                    result[i] |= bs[i + byte_shift + 1] >> (8 - bit_shift);
+    match shift.cmp(&0) {
+        std::cmp::Ordering::Greater => {
+            // Shift left: MSB direction.
+            for i in 0..bs.len() {
+                if i + byte_shift < bs.len() {
+                    result[i] = bs[i + byte_shift] << bit_shift;
+                    if bit_shift > 0 && i + byte_shift + 1 < bs.len() {
+                        result[i] |= bs[i + byte_shift + 1] >> (8 - bit_shift);
+                    }
                 }
             }
         }
-    } else if shift < 0 {
-        // Shift right: LSB direction.
-        for i in (0..bs.len()).rev() {
-            if i >= byte_shift {
-                result[i] = bs[i - byte_shift] >> bit_shift;
-                if bit_shift > 0 && i > byte_shift {
-                    result[i] |= bs[i - byte_shift - 1] << (8 - bit_shift);
+        std::cmp::Ordering::Less => {
+            // Shift right: LSB direction.
+            for i in (0..bs.len()).rev() {
+                if i >= byte_shift {
+                    result[i] = bs[i - byte_shift] >> bit_shift;
+                    if bit_shift > 0 && i > byte_shift {
+                        result[i] |= bs[i - byte_shift - 1] << (8 - bit_shift);
+                    }
                 }
             }
         }
-    } else {
-        result.copy_from_slice(bs);
+        std::cmp::Ordering::Equal => {
+            result.copy_from_slice(bs);
+        }
     }
 
     result

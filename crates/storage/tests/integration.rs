@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use yggdrasil_ledger::{
     Block, BlockHeader, BlockNo, CborEncode, Era, HeaderHash, LedgerState, MultiEraTxOut,
     Point, ShelleyTxIn, ShelleyTxOut, SlotNo, Tx, TxId,

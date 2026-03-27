@@ -443,74 +443,78 @@ pub fn update_sum_kes(
 
     let half = total / 2;
 
-    if current_period + 1 < half {
-        // Still in the left subtree — update the left child.
-        let child_sk = extract_child_sk(sk);
-        let child_updated = update_sum_kes(&child_sk, current_period)?;
-        match child_updated {
-            Some(new_child) => {
-                let seed_right = extract_seed_right(sk);
-                let vk_left = extract_vk_left_from_sk(sk);
-                let vk_right = extract_vk_right_from_sk(sk);
+    match (current_period + 1).cmp(&half) {
+        std::cmp::Ordering::Less => {
+            // Still in the left subtree — update the left child.
+            let child_sk = extract_child_sk(sk);
+            let child_updated = update_sum_kes(&child_sk, current_period)?;
+            match child_updated {
+                Some(new_child) => {
+                    let seed_right = extract_seed_right(sk);
+                    let vk_left = extract_vk_left_from_sk(sk);
+                    let vk_right = extract_vk_right_from_sk(sk);
 
-                let mut data = Vec::with_capacity(sk_size(sk.depth));
-                data.extend_from_slice(&new_child.data);
-                data.extend_from_slice(&seed_right);
-                data.extend_from_slice(&vk_left);
-                data.extend_from_slice(&vk_right);
+                    let mut data = Vec::with_capacity(sk_size(sk.depth));
+                    data.extend_from_slice(&new_child.data);
+                    data.extend_from_slice(&seed_right);
+                    data.extend_from_slice(&vk_left);
+                    data.extend_from_slice(&vk_right);
 
-                Ok(Some(SumKesSigningKey {
-                    depth: sk.depth,
-                    data,
-                }))
+                    Ok(Some(SumKesSigningKey {
+                        depth: sk.depth,
+                        data,
+                    }))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
         }
-    } else if current_period + 1 == half {
-        // Transition from left to right — generate right subtree from seed.
-        let seed_right = extract_seed_right(sk);
-        let seed_right_arr: [u8; SEED_SIZE] = seed_right
-            .try_into()
-            .map_err(|_| CryptoError::InvalidKesKeyMaterialLength(0))?;
-        let new_child = gen_sum_kes_signing_key(&seed_right_arr, sk.depth - 1)?;
+        std::cmp::Ordering::Equal => {
+            // Transition from left to right — generate right subtree from seed.
+            let seed_right = extract_seed_right(sk);
+            let seed_right_arr: [u8; SEED_SIZE] = seed_right
+                .try_into()
+                .map_err(|_| CryptoError::InvalidKesKeyMaterialLength(0))?;
+            let new_child = gen_sum_kes_signing_key(&seed_right_arr, sk.depth - 1)?;
 
-        let vk_left = extract_vk_left_from_sk(sk);
-        let vk_right = extract_vk_right_from_sk(sk);
+            let vk_left = extract_vk_left_from_sk(sk);
+            let vk_right = extract_vk_right_from_sk(sk);
 
-        // Zero out the saved seed (it is no longer needed).
-        let zeroed_seed = [0u8; SEED_SIZE];
-        let mut data = Vec::with_capacity(sk_size(sk.depth));
-        data.extend_from_slice(&new_child.data);
-        data.extend_from_slice(&zeroed_seed);
-        data.extend_from_slice(&vk_left);
-        data.extend_from_slice(&vk_right);
+            // Zero out the saved seed (it is no longer needed).
+            let zeroed_seed = [0u8; SEED_SIZE];
+            let mut data = Vec::with_capacity(sk_size(sk.depth));
+            data.extend_from_slice(&new_child.data);
+            data.extend_from_slice(&zeroed_seed);
+            data.extend_from_slice(&vk_left);
+            data.extend_from_slice(&vk_right);
 
-        Ok(Some(SumKesSigningKey {
-            depth: sk.depth,
-            data,
-        }))
-    } else {
-        // In the right subtree — update the right child.
-        let child_sk = extract_child_sk(sk);
-        let child_updated = update_sum_kes(&child_sk, current_period - half)?;
-        match child_updated {
-            Some(new_child) => {
-                let zeroed_seed = [0u8; SEED_SIZE]; // seed already consumed
-                let vk_left = extract_vk_left_from_sk(sk);
-                let vk_right = extract_vk_right_from_sk(sk);
+            Ok(Some(SumKesSigningKey {
+                depth: sk.depth,
+                data,
+            }))
+        }
+        std::cmp::Ordering::Greater => {
+            // In the right subtree — update the right child.
+            let child_sk = extract_child_sk(sk);
+            let child_updated = update_sum_kes(&child_sk, current_period - half)?;
+            match child_updated {
+                Some(new_child) => {
+                    let zeroed_seed = [0u8; SEED_SIZE]; // seed already consumed
+                    let vk_left = extract_vk_left_from_sk(sk);
+                    let vk_right = extract_vk_right_from_sk(sk);
 
-                let mut data = Vec::with_capacity(sk_size(sk.depth));
-                data.extend_from_slice(&new_child.data);
-                data.extend_from_slice(&zeroed_seed);
-                data.extend_from_slice(&vk_left);
-                data.extend_from_slice(&vk_right);
+                    let mut data = Vec::with_capacity(sk_size(sk.depth));
+                    data.extend_from_slice(&new_child.data);
+                    data.extend_from_slice(&zeroed_seed);
+                    data.extend_from_slice(&vk_left);
+                    data.extend_from_slice(&vk_right);
 
-                Ok(Some(SumKesSigningKey {
-                    depth: sk.depth,
-                    data,
-                }))
+                    Ok(Some(SumKesSigningKey {
+                        depth: sk.depth,
+                        data,
+                    }))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
         }
     }
 }
@@ -551,10 +555,9 @@ fn extract_vk_right_from_sk(sk: &SumKesSigningKey) -> [u8; VK_SIZE] {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-
-    // ── Helpers ──────────────────────────────────────────────────────────
 
     fn test_seed(byte: u8) -> [u8; SEED_SIZE] {
         [byte; SEED_SIZE]

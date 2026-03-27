@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Consensus-facing types for chain selection, epoch math, and Praos helpers.
 
 /// Chain selection helpers.

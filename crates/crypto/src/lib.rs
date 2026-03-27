@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Cryptographic primitives and compatibility fixtures used across the workspace.
 
 /// Blake2b hashing helpers.

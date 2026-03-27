@@ -887,13 +887,13 @@ impl ProtocolParameters {
             self.n_opt = value;
         }
         if let Some(ref value) = update.a0 {
-            self.a0 = value.clone();
+            self.a0 = *value;
         }
         if let Some(ref value) = update.rho {
-            self.rho = value.clone();
+            self.rho = *value;
         }
         if let Some(ref value) = update.tau {
-            self.tau = value.clone();
+            self.tau = *value;
         }
         if let Some(value) = update.protocol_version {
             self.protocol_version = Some(value);
@@ -908,16 +908,16 @@ impl ProtocolParameters {
             self.coins_per_utxo_byte = Some(value);
         }
         if let Some(ref value) = update.price_mem {
-            self.price_mem = Some(value.clone());
+            self.price_mem = Some(*value);
         }
         if let Some(ref value) = update.price_step {
-            self.price_step = Some(value.clone());
+            self.price_step = Some(*value);
         }
         if let Some(ref value) = update.max_tx_ex_units {
-            self.max_tx_ex_units = Some(value.clone());
+            self.max_tx_ex_units = Some(*value);
         }
         if let Some(ref value) = update.max_block_ex_units {
-            self.max_block_ex_units = Some(value.clone());
+            self.max_block_ex_units = Some(*value);
         }
         if let Some(value) = update.max_val_size {
             self.max_val_size = Some(value);
@@ -956,7 +956,7 @@ impl ProtocolParameters {
             self.cost_models = Some(cm.clone());
         }
         if let Some(ref val) = update.min_fee_ref_script_cost_per_byte {
-            self.min_fee_ref_script_cost_per_byte = Some(val.clone());
+            self.min_fee_ref_script_cost_per_byte = Some(*val);
         }
     }
 }

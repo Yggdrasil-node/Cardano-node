@@ -1703,6 +1703,7 @@ mod tests {
         ShelleyTxIn { transaction_id: [byte; 32], index: idx }
     }
 
+    #[allow(dead_code)]
     fn mk_txout(amt: u64) -> ShelleyTxOut {
         ShelleyTxOut { address: vec![0x61; 29], amount: amt }
     }

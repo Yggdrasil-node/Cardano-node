@@ -763,6 +763,11 @@ impl DrepState {
         self.entries.len()
     }
 
+    /// Returns `true` if there are no registered DReps.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Returns the set of DReps that are inactive according to the
     /// upstream Conway `drepExpiry` rule.
     ///
@@ -784,7 +789,7 @@ impl DrepState {
                     .last_active_epoch
                     .is_some_and(|e| e.0.saturating_add(drep_activity) < epoch.0)
             })
-            .map(|(drep, _)| drep.clone())
+            .map(|(drep, _)| *drep)
             .collect()
     }
 }
@@ -1112,6 +1117,11 @@ impl CommitteeState {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+
+    /// Returns `true` if there are no known committee members.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1398,7 +1408,7 @@ fn enact_gov_action_at_epoch(
                     continue;
                 }
                 // Register the new member with no hot-key authorization.
-                if committee.register(cred.clone()) {
+                if committee.register(*cred) {
                     added += 1;
                 }
             }
@@ -2008,7 +2018,7 @@ impl CborDecode for LedgerState {
                 let genesis_hash: GenesisHash = {
                     let bytes = dec.bytes()?;
                     let mut arr = [0u8; 28];
-                    arr.copy_from_slice(&bytes);
+                    arr.copy_from_slice(bytes);
                     arr
                 };
                 let inner_len = dec.array()?;
@@ -2021,13 +2031,13 @@ impl CborDecode for LedgerState {
                 let delegate: GenesisDelegateHash = {
                     let bytes = dec.bytes()?;
                     let mut arr = [0u8; 28];
-                    arr.copy_from_slice(&bytes);
+                    arr.copy_from_slice(bytes);
                     arr
                 };
                 let vrf: VrfKeyHash = {
                     let bytes = dec.bytes()?;
                     let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&bytes);
+                    arr.copy_from_slice(bytes);
                     arr
                 };
                 delegs.insert(genesis_hash, GenesisDelegationState { delegate, vrf });
@@ -2048,7 +2058,7 @@ impl CborDecode for LedgerState {
                     let genesis_hash: GenesisHash = {
                         let bytes = dec.bytes()?;
                         let mut arr = [0u8; 28];
-                        arr.copy_from_slice(&bytes);
+                        arr.copy_from_slice(bytes);
                         arr
                     };
                     let update = crate::protocol_params::ProtocolParameterUpdate::decode_cbor(dec)?;
@@ -6362,8 +6372,7 @@ fn validate_alonzo_plus_tx(
     // collateral is mandatory.
     // Reference: Cardano.Ledger.Alonzo.Rules.Utxo — feesOK Part 2.
     if has_redeemers {
-        let has_collateral = collateral_inputs
-            .map_or(false, |c| !c.is_empty());
+        let has_collateral = collateral_inputs.is_some_and(|c| !c.is_empty());
         if !has_collateral {
             return Err(LedgerError::MissingCollateralForScripts);
         }
@@ -7413,11 +7422,11 @@ mod tests {
         let d3 = DRep::ScriptHash([0x03; 28]);
 
         // d1: active epoch 80
-        ds.register(d1.clone(), RegisteredDrep::new_active(1, None, EpochNo(80)));
+        ds.register(d1, RegisteredDrep::new_active(1, None, EpochNo(80)));
         // d2: active epoch 95
-        ds.register(d2.clone(), RegisteredDrep::new_active(1, None, EpochNo(95)));
+        ds.register(d2, RegisteredDrep::new_active(1, None, EpochNo(95)));
         // d3: no activity epoch (legacy)
-        ds.register(d3.clone(), RegisteredDrep::new(1, None));
+        ds.register(d3, RegisteredDrep::new(1, None));
 
         // drep_activity=10, epoch=100: d1 (80+10=90 < 100) is expired, d2 (95+10=105 >= 100) active
         let expired = ds.inactive_dreps(EpochNo(100), 10);
@@ -7527,7 +7536,7 @@ mod tests {
         let mut es = EnactState::new();
         let mut committee = CommitteeState::new();
         let cred = crate::StakeCredential::AddrKeyHash([0x11; 28]);
-        committee.register(cred.clone());
+        committee.register(cred);
         assert_eq!(committee.len(), 1);
 
         let mut pp = None;
@@ -7560,8 +7569,8 @@ mod tests {
         let existing = crate::StakeCredential::AddrKeyHash([0x01; 28]);
         let to_remove = crate::StakeCredential::AddrKeyHash([0x02; 28]);
         let new_member = crate::StakeCredential::AddrKeyHash([0x03; 28]);
-        committee.register(existing.clone());
-        committee.register(to_remove.clone());
+        committee.register(existing);
+        committee.register(to_remove);
         assert_eq!(committee.len(), 2);
 
         let mut pp = None;
@@ -7570,14 +7579,14 @@ mod tests {
         let action_id = sample_gov_action_id(4);
 
         let mut members_to_add = std::collections::BTreeMap::new();
-        members_to_add.insert(new_member.clone(), 500); // term epoch
+        members_to_add.insert(new_member, 500); // term epoch
 
         let outcome = enact_gov_action(
             &mut es,
             action_id.clone(),
             &GovAction::UpdateCommittee {
                 prev_action_id: None,
-                members_to_remove: vec![to_remove.clone()],
+                members_to_remove: vec![to_remove],
                 members_to_add,
                 quorum: UnitInterval {
                     numerator: 2,
@@ -7776,8 +7785,8 @@ mod tests {
         let ra2 = sample_reward_account(2);
         let ra_unknown = sample_reward_account(99);
         let mut ra = RewardAccounts::new();
-        ra.insert(ra1.clone(), RewardAccountState::new(1000, None));
-        ra.insert(ra2.clone(), RewardAccountState::new(500, None));
+        ra.insert(ra1, RewardAccountState::new(1000, None));
+        ra.insert(ra2, RewardAccountState::new(500, None));
         let mut acc = AccountingState {
             treasury: 5000,
             reserves: 100_000,
@@ -7785,9 +7794,9 @@ mod tests {
         let action_id = sample_gov_action_id(6);
 
         let mut withdrawals = std::collections::BTreeMap::new();
-        withdrawals.insert(ra1.clone(), 200);
-        withdrawals.insert(ra2.clone(), 100);
-        withdrawals.insert(ra_unknown.clone(), 50); // unregistered — should be ignored
+        withdrawals.insert(ra1, 200);
+        withdrawals.insert(ra2, 100);
+        withdrawals.insert(ra_unknown, 50); // unregistered — should be ignored
 
         let outcome = enact_gov_action(
             &mut es,
@@ -7841,7 +7850,7 @@ mod tests {
         );
         assert_eq!(outcome, EnactOutcome::ParameterChangeRecorded);
         assert_eq!(es.prev_pparams_update(), Some(&action_id));
-        assert_eq!(pp.as_ref().and_then(|p| Some(p.min_fee_a)), Some(500));
+        assert_eq!(pp.as_ref().map(|p| p.min_fee_a), Some(500));
     }
 
     #[test]
@@ -7913,7 +7922,7 @@ mod tests {
         let mut committee = CommitteeState::new();
         let existing = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
         let ghost = crate::StakeCredential::AddrKeyHash([0xA2; 28]);
-        committee.register(existing.clone());
+        committee.register(existing);
         assert_eq!(committee.len(), 1);
 
         let mut pp = None;
@@ -8016,11 +8025,11 @@ mod tests {
         let mut pp = None;
         let ra1 = sample_reward_account(10);
         let mut ra = RewardAccounts::new();
-        ra.insert(ra1.clone(), RewardAccountState::new(500, None));
+        ra.insert(ra1, RewardAccountState::new(500, None));
         let mut acc = AccountingState { treasury: 1000, reserves: 0 };
 
         let mut withdrawals = std::collections::BTreeMap::new();
-        withdrawals.insert(ra1.clone(), 0);
+        withdrawals.insert(ra1, 0);
 
         let outcome = enact_gov_action(
             &mut es,
@@ -8049,13 +8058,13 @@ mod tests {
         let ra1 = sample_reward_account(20);
         let ra2 = sample_reward_account(21);
         let mut ra = RewardAccounts::new();
-        ra.insert(ra1.clone(), RewardAccountState::new(0, None));
-        ra.insert(ra2.clone(), RewardAccountState::new(0, None));
+        ra.insert(ra1, RewardAccountState::new(0, None));
+        ra.insert(ra2, RewardAccountState::new(0, None));
         let mut acc = AccountingState { treasury: 100, reserves: 0 };
 
         let mut withdrawals = std::collections::BTreeMap::new();
-        withdrawals.insert(ra1.clone(), 80);
-        withdrawals.insert(ra2.clone(), 80);
+        withdrawals.insert(ra1, 80);
+        withdrawals.insert(ra2, 80);
 
         let outcome = enact_gov_action(
             &mut es,
@@ -8081,14 +8090,14 @@ mod tests {
         let mut es = EnactState::new();
         let mut committee = CommitteeState::new();
         let existing = crate::StakeCredential::AddrKeyHash([0xB1; 28]);
-        committee.register(existing.clone());
+        committee.register(existing);
 
         let mut pp = None;
         let mut ra = RewardAccounts::new();
         let mut acc = AccountingState::default();
 
         let mut members_to_add = std::collections::BTreeMap::new();
-        members_to_add.insert(existing.clone(), 100); // already exists
+        members_to_add.insert(existing, 100); // already exists
 
         let outcome = enact_gov_action(
             &mut es,
@@ -9768,12 +9777,12 @@ mod tests {
         let mut drep_state = DrepState::new();
         let drep_a = DRep::KeyHash([1; 28]);
         let drep_b = DRep::KeyHash([2; 28]);
-        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
-        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_a, RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_b, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut stake = BTreeMap::new();
-        stake.insert(drep_a.clone(), 700);
-        stake.insert(drep_b.clone(), 300);
+        stake.insert(drep_a, 700);
+        stake.insert(drep_b, 300);
 
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
         action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::No);
@@ -9793,13 +9802,13 @@ mod tests {
         let drep_a = DRep::KeyHash([1; 28]);
         let drep_b = DRep::KeyHash([2; 28]);
         // A: active epoch 90. Activity window 10. At epoch 105: 90+10=100 < 105 → inactive.
-        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(90)));
+        drep_state.register(drep_a, RegisteredDrep::new_active(0, None, EpochNo(90)));
         // B: active epoch 100. 100+10=110 >= 105 → active.
-        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(100)));
+        drep_state.register(drep_b, RegisteredDrep::new_active(0, None, EpochNo(100)));
 
         let mut stake = BTreeMap::new();
-        stake.insert(drep_a.clone(), 500);
-        stake.insert(drep_b.clone(), 500);
+        stake.insert(drep_a, 500);
+        stake.insert(drep_b, 500);
 
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes); // inactive, excluded
         action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::Yes);
@@ -10400,7 +10409,7 @@ mod tests {
         let committee_state = CommitteeState::default();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -10455,7 +10464,7 @@ mod tests {
 
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
         // DRep votes no.
@@ -10491,7 +10500,7 @@ mod tests {
         // DRep: 1 drep, votes yes.
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([2; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::Yes);
@@ -10561,7 +10570,7 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(90)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(90)));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -10579,7 +10588,7 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(90)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(90)));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -10596,7 +10605,7 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new(0, None));
+        drep_state.register(drep, RegisteredDrep::new(0, None));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 500);
@@ -10613,7 +10622,7 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(50)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(50)));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -10633,7 +10642,7 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(u64::MAX - 5)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(u64::MAX - 5)));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -10682,7 +10691,7 @@ mod tests {
         let action = test_hf_action(); // no DRep votes
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -10699,7 +10708,7 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -10749,7 +10758,7 @@ mod tests {
         let mut action = test_no_confidence_action();
         let mut drep_state = DrepState::new();
         let drep_a = DRep::KeyHash([1; 28]);
-        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_a, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut stake = BTreeMap::new();
         stake.insert(DRep::AlwaysNoConfidence, 4000);
@@ -10774,7 +10783,7 @@ mod tests {
         let mut action = test_no_confidence_action();
         let mut drep_state = DrepState::new();
         let drep_a = DRep::KeyHash([1; 28]);
-        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_a, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut stake = BTreeMap::new();
         stake.insert(DRep::AlwaysNoConfidence, 5000);
@@ -11019,7 +11028,7 @@ mod tests {
     ) -> (DrepState, BTreeMap<DRep, u64>) {
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([drep_id; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut stake = BTreeMap::new();
         stake.insert(drep, stake_amount);
         action.votes.insert(Voter::DRepKeyHash([drep_id; 28]), Vote::Yes);
@@ -11062,7 +11071,7 @@ mod tests {
         // DRep votes no
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
@@ -11192,7 +11201,7 @@ mod tests {
         // DRep votes no.
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
@@ -11237,7 +11246,7 @@ mod tests {
 
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
@@ -11303,7 +11312,7 @@ mod tests {
 
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
@@ -11376,9 +11385,9 @@ mod tests {
         // BUT: let's add a second DRep that is active and votes No.
         let mut drep_state = DrepState::new();
         let drep_inactive = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep_inactive.clone(), RegisteredDrep::new_active(0, None, EpochNo(10)));
+        drep_state.register(drep_inactive, RegisteredDrep::new_active(0, None, EpochNo(10)));
         let drep_active = DRep::KeyHash([0xD2; 28]);
-        drep_state.register(drep_active.clone(), RegisteredDrep::new_active(0, None, EpochNo(20)));
+        drep_state.register(drep_active, RegisteredDrep::new_active(0, None, EpochNo(20)));
 
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep_inactive, 1000);
@@ -11407,9 +11416,9 @@ mod tests {
         // Inactive DRep with large NO stake is excluded; active DRep votes yes.
         let mut drep_state = DrepState::new();
         let drep_inactive = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep_inactive.clone(), RegisteredDrep::new_active(0, None, EpochNo(10)));
+        drep_state.register(drep_inactive, RegisteredDrep::new_active(0, None, EpochNo(10)));
         let drep_active = DRep::KeyHash([0xD2; 28]);
-        drep_state.register(drep_active.clone(), RegisteredDrep::new_active(0, None, EpochNo(20)));
+        drep_state.register(drep_active, RegisteredDrep::new_active(0, None, EpochNo(20)));
 
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep_inactive, 9000);
@@ -11443,8 +11452,8 @@ mod tests {
         let mut drep_state = DrepState::new();
         let drep_a = DRep::KeyHash([0xD1; 28]);
         let drep_b = DRep::KeyHash([0xD2; 28]);
-        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
-        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_a, RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_b, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep_a, 400);
@@ -11475,8 +11484,8 @@ mod tests {
         let mut drep_state = DrepState::new();
         let drep_a = DRep::KeyHash([0xD1; 28]);
         let drep_b = DRep::KeyHash([0xD2; 28]);
-        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
-        drep_state.register(drep_b.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_a, RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep_b, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep_a, 500);
@@ -11523,7 +11532,7 @@ mod tests {
 
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Abstain);
@@ -12295,7 +12304,7 @@ mod tests {
 
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
         let mut procedures = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
         let mut votes = BTreeMap::new();
@@ -12665,7 +12674,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         // Register a DRep for delegation target.
-        let drep_cred = crate::StakeCredential::AddrKeyHash([0xD3; 28]);
+        let _drep_cred = crate::StakeCredential::AddrKeyHash([0xD3; 28]);
         let drep = DRep::KeyHash([0xD3; 28]);
         ds.register(drep, RegisteredDrep::new(0, None));
         let mut ra = RewardAccounts::new();
@@ -13085,14 +13094,14 @@ mod tests {
         let mut cs = CommitteeState::new();
         let cold = crate::StakeCredential::AddrKeyHash([0xDA; 28]);
         let hot = crate::StakeCredential::AddrKeyHash([0xDB; 28]);
-        cs.register(cold.clone());
+        cs.register(cold);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
-        let certs = vec![DCert::CommitteeAuthorization(cold.clone(), hot.clone())];
+        let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
@@ -13128,14 +13137,14 @@ mod tests {
         let mut sc = StakeCredentials::new();
         let mut cs = CommitteeState::new();
         let cold = crate::StakeCredential::AddrKeyHash([0xEA; 28]);
-        cs.register(cold.clone());
+        cs.register(cold);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
-        let certs = vec![DCert::CommitteeResignation(cold.clone(), None)];
+        let certs = vec![DCert::CommitteeResignation(cold, None)];
         apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
@@ -13149,7 +13158,7 @@ mod tests {
         let mut sc = StakeCredentials::new();
         let mut cs = CommitteeState::new();
         let cold = crate::StakeCredential::AddrKeyHash([0xEB; 28]);
-        cs.register(cold.clone());
+        cs.register(cold);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
@@ -13157,7 +13166,7 @@ mod tests {
         let ctx = sample_cert_ctx();
 
         // First resign.
-        let certs1 = vec![DCert::CommitteeResignation(cold.clone(), None)];
+        let certs1 = vec![DCert::CommitteeResignation(cold, None)];
         apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs1), None,
@@ -13289,13 +13298,13 @@ mod tests {
         let mut ds = DrepState::new();
         let ra_key = RewardAccount { network: 1, credential: cred };
         let mut ra = RewardAccounts::new();
-        ra.insert(ra_key.clone(), RewardAccountState::new(100, None));
+        ra.insert(ra_key, RewardAccountState::new(100, None));
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
         let mut withdrawals = std::collections::BTreeMap::new();
-        withdrawals.insert(ra_key.clone(), 100); // withdraw entire balance
+        withdrawals.insert(ra_key, 100); // withdraw entire balance
 
         let total = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,

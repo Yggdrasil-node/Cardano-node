@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use yggdrasil_cddl_codegen::{
     FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr,
     generate_module, generate_module_with_codecs, parse_schema,
@@ -511,47 +512,47 @@ fn codec_gen_fixed_bytes_decode() {
 
 #[test]
 fn error_empty_schema() {
-    assert_eq!(parse_schema("").unwrap_err(), ParseError::Empty);
+    assert_eq!(parse_schema("").expect_err("should fail on empty"), ParseError::Empty);
 }
 
 #[test]
 fn error_comments_only_is_empty() {
-    assert_eq!(parse_schema("; just a comment\n").unwrap_err(), ParseError::Empty);
+    assert_eq!(parse_schema("; just a comment\n").expect_err("should fail on comments-only"), ParseError::Empty);
 }
 
 #[test]
 fn error_missing_assignment() {
-    let err = parse_schema("no_equals_sign\n").unwrap_err();
+    let err = parse_schema("no_equals_sign\n").expect_err("should fail on missing assignment");
     assert!(matches!(err, ParseError::MissingAssignment(_)));
 }
 
 #[test]
 fn error_invalid_type_name_leading_digit() {
-    let err = parse_schema("123bad = uint\n").unwrap_err();
+    let err = parse_schema("123bad = uint\n").expect_err("should fail on invalid type name");
     assert!(matches!(err, ParseError::InvalidTypeName(_)));
 }
 
 #[test]
 fn error_empty_definition() {
-    let err = parse_schema("foo = \n").unwrap_err();
+    let err = parse_schema("foo = \n").expect_err("should fail on empty definition");
     assert!(matches!(err, ParseError::EmptyDefinition(_)));
 }
 
 #[test]
 fn error_invalid_map_field_no_colon() {
-    let err = parse_schema("m = { badfield }\n").unwrap_err();
+    let err = parse_schema("m = { badfield }\n").expect_err("should fail on invalid field");
     assert!(matches!(err, ParseError::InvalidField(_)));
 }
 
 #[test]
 fn error_invalid_size_non_numeric() {
-    let err = parse_schema("h = bytes .size abc\n").unwrap_err();
+    let err = parse_schema("h = bytes .size abc\n").expect_err("should fail on non-numeric size");
     assert!(matches!(err, ParseError::InvalidSize(_)));
 }
 
 #[test]
 fn error_invalid_tag_no_parens() {
-    let err = parse_schema("t = #6.258\n").unwrap_err();
+    let err = parse_schema("t = #6.258\n").expect_err("should fail on invalid tag");
     assert!(matches!(err, ParseError::InvalidSize(_)));
 }
 

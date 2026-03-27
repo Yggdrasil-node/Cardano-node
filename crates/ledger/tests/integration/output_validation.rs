@@ -70,7 +70,7 @@ fn byron_address_with_attrs_size(attrs_size: usize) -> Vec<u8> {
         } else {
             5
         };
-        let padding_len = if attrs_size > overhead { attrs_size - overhead } else { 0 };
+        let padding_len = attrs_size.saturating_sub(overhead);
 
         let mut enc = Encoder::new();
         enc.map(1);

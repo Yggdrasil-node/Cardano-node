@@ -1750,7 +1750,7 @@ mod tests {
         let mut enc = Encoder::new();
         enc.bool(true);
         let bytes = enc.into_bytes();
-        assert_eq!(Decoder::new(&bytes).bool().unwrap(), true);
+        assert!(Decoder::new(&bytes).bool().unwrap());
     }
 
     #[test]
@@ -1758,7 +1758,7 @@ mod tests {
         let mut enc = Encoder::new();
         enc.bool(false);
         let bytes = enc.into_bytes();
-        assert_eq!(Decoder::new(&bytes).bool().unwrap(), false);
+        assert!(!Decoder::new(&bytes).bool().unwrap());
     }
 
     // ── null ────────────────────────────────────────────────────────────
@@ -1878,7 +1878,7 @@ mod tests {
         let bytes = enc.into_bytes();
         let mut dec = Decoder::new(&bytes);
         dec.skip().unwrap(); // skip tagged item
-        assert_eq!(dec.bool().unwrap(), true);
+        assert!(dec.bool().unwrap());
     }
 
     // ── slice ───────────────────────────────────────────────────────────

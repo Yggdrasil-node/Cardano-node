@@ -244,7 +244,7 @@ pub struct TxSubmissionMempoolReader<'a> {
     mempool: &'a Mempool,
 }
 
-impl<'a> TxSubmissionMempoolReader<'a> {
+impl TxSubmissionMempoolReader<'_> {
     /// Grab a pure snapshot of the current mempool contents.
     pub fn mempool_get_snapshot(&self) -> MempoolSnapshot {
         self.mempool.snapshot()

@@ -409,7 +409,7 @@ fn cbor_golden_alonzo_submitted_tx_round_trip() {
     let decoded = AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(&cbor)
         .expect("decode Alonzo");
     assert_eq!(decoded.body, tx.body);
-    assert_eq!(decoded.is_valid, true);
+    assert!(decoded.is_valid);
     let re_encoded = decoded.to_cbor_bytes();
     assert_eq!(cbor, re_encoded, "Alonzo submitted tx CBOR round-trip must be byte-identical");
 

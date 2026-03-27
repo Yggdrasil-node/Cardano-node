@@ -1274,6 +1274,7 @@ where
 /// This variant mirrors [`run_verified_sync_service`] but promotes stable
 /// volatile prefixes into immutable storage as soon as the tracked
 /// [`ChainState`] drains them.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_verified_sync_service_chaindb<I, V, L, F>(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,

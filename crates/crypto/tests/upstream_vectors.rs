@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -76,7 +77,7 @@ fn bls_vector_dir() -> PathBuf {
 
 fn read_hex_lines(path: &Path) -> Vec<Vec<u8>> {
     let content = fs::read_to_string(path).expect("vector file should be readable as UTF-8");
-    content.lines().map(|line| decode_hex_vec(line)).collect()
+    content.lines().map(decode_hex_vec).collect()
 }
 
 #[test]

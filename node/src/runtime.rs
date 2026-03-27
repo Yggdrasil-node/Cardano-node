@@ -266,8 +266,8 @@ impl OutboundPeerManager {
             {
                 Ok(resp) => {
                     let tip = match &resp {
-                        yggdrasil_network::TypedIntersectResponse::Found { tip, .. } => tip.clone(),
-                        yggdrasil_network::TypedIntersectResponse::NotFound { tip } => tip.clone(),
+                        yggdrasil_network::TypedIntersectResponse::Found { tip, .. } => *tip,
+                        yggdrasil_network::TypedIntersectResponse::NotFound { tip } => *tip,
                     };
                     if let Ok(mut registry) = peer_registry.write() {
                         let _ = registry.set_hot_tip_slot(peer, tip.slot().map(|slot| slot.0));
@@ -826,6 +826,7 @@ fn governor_action_peer(action: &GovernorAction) -> SocketAddr {
 /// refreshes ledger peers from the current ChainDb recovery view plus optional
 /// peer snapshot file, drives warm-peer KeepAlive traffic, and then executes
 /// governor actions against the shared peer registry and outbound warm sessions.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_governor_loop<I, V, L, F>(
     node_config: NodeConfig,
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,

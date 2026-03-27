@@ -1402,7 +1402,7 @@ mod tests {
         let mut ledger = make_ledger_with_pool(14);
         let drep = DRep::KeyHash([0x01; 28]);
         ledger.drep_state_mut().register(
-            drep.clone(),
+            drep,
             RegisteredDrep::new_active(500_000_000, None, EpochNo(1)),
         );
 
@@ -1424,7 +1424,7 @@ mod tests {
         let drep = DRep::KeyHash([0x02; 28]);
         // Active in epoch 80.
         ledger.drep_state_mut().register(
-            drep.clone(),
+            drep,
             RegisteredDrep::new_active(500_000_000, None, EpochNo(80)),
         );
 
@@ -1445,7 +1445,7 @@ mod tests {
         let drep = DRep::KeyHash([0x03; 28]);
         // Active in epoch 79 → 79 + 20 = 99 < 100 → expired.
         ledger.drep_state_mut().register(
-            drep.clone(),
+            drep,
             RegisteredDrep::new_active(500_000_000, None, EpochNo(79)),
         );
 
@@ -1467,7 +1467,7 @@ mod tests {
 
         let drep = DRep::KeyHash([0x04; 28]);
         ledger.drep_state_mut().register(
-            drep.clone(),
+            drep,
             RegisteredDrep::new(500_000_000, None),
         );
 
@@ -1487,19 +1487,19 @@ mod tests {
         // DRep A: active in epoch 85 → 85+10=95 < 100 → expired.
         let drep_a = DRep::KeyHash([0x05; 28]);
         ledger.drep_state_mut().register(
-            drep_a.clone(),
+            drep_a,
             RegisteredDrep::new_active(500_000_000, None, EpochNo(85)),
         );
         // DRep B: active in epoch 95 → 95+10=105 >= 100 → still active.
         let drep_b = DRep::ScriptHash([0x06; 28]);
         ledger.drep_state_mut().register(
-            drep_b.clone(),
+            drep_b,
             RegisteredDrep::new_active(500_000_000, None, EpochNo(95)),
         );
         // DRep C: legacy, no activity epoch → not expired.
         let drep_c = DRep::KeyHash([0x07; 28]);
         ledger.drep_state_mut().register(
-            drep_c.clone(),
+            drep_c,
             RegisteredDrep::new(500_000_000, None),
         );
 
@@ -1523,7 +1523,7 @@ mod tests {
         let drep = DRep::KeyHash([0x08; 28]);
         // Initially active in epoch 80.
         ledger.drep_state_mut().register(
-            drep.clone(),
+            drep,
             RegisteredDrep::new_active(500_000_000, None, EpochNo(80)),
         );
         // Simulate a vote in epoch 95 → touch_activity.
@@ -2159,7 +2159,7 @@ mod tests {
     fn test_enacted_action_deposit_refunded_to_return_account() {
         let deposit = 500_000_000u64;
         let ra_byte = 0x50;
-        let (mut ledger, gai) = make_ledger_with_deposited_info_action(deposit, ra_byte);
+        let (mut ledger, _gai) = make_ledger_with_deposited_info_action(deposit, ra_byte);
         let ra = test_reward_account(ra_byte);
 
         let balance_before = ledger.reward_accounts().balance(&ra);
@@ -2221,7 +2221,7 @@ mod tests {
             .governance_actions_mut()
             .insert(gai.clone(), GovernanceActionState::new(proposal));
 
-        let treasury_before = ledger.accounting().treasury;
+        let _treasury_before = ledger.accounting().treasury;
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
@@ -2893,7 +2893,7 @@ mod tests {
 
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(ledger.governance_actions().contains_key(&gai));
-        assert!(ledger.committee_state().len() > 0); // committee still present
+        assert!(!ledger.committee_state().is_empty()); // committee still present
     }
 
     // -----------------------------------------------------------------------
@@ -3482,7 +3482,7 @@ mod tests {
             credential: StakeCredential::AddrKeyHash([0xE0; 28]),
         };
         ledger.reward_accounts_mut().insert(
-            ra.clone(),
+            ra,
             RewardAccountState::new(0, None),
         );
 

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use yggdrasil_network::{
@@ -187,7 +188,7 @@ async fn spawn_verified_batch_responder_from_point(
         let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
         assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
 
-        let tip_obj = Tip::Tip(tip.clone(), BlockNo(0));
+        let tip_obj = Tip::Tip(tip, BlockNo(0));
         cs.send(
             ChainSyncMessage::MsgRollForward {
                 header: vec![0x82, 0x00, 0x01],

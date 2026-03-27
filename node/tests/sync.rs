@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use std::net::SocketAddr;
 
 use yggdrasil_network::{

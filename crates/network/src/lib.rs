@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Networking types for Ouroboros handshake, multiplexing, and mini-protocol
 //! state machines.
 //!

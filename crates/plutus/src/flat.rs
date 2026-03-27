@@ -65,7 +65,7 @@ fn unwrap_cbor_bytestring(bytes: &[u8]) -> &[u8] {
     match additional {
         0..=23 => {
             let len = additional as usize;
-            if bytes.len() >= 1 + len {
+            if bytes.len() > len {
                 &bytes[1..1 + len]
             } else {
                 bytes

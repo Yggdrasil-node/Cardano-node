@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use std::{fs, path::PathBuf};
 use yggdrasil_cddl_codegen::{generate_module, parse_schema};
 

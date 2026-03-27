@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Small deterministic CDDL parsing and Rust generation helpers.
 
 /// Rust code generation from parsed schema definitions.

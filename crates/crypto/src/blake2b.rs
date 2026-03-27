@@ -45,6 +45,7 @@ pub fn hash_bytes_224(bytes: &[u8]) -> Blake2b224Hash {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -78,7 +79,11 @@ mod tests {
     fn blake2b_512_known_vector() {
         // Blake2b-512("abc") — reference vector (unkeyed, 64-byte digest).
         let h = hash_bytes(b"abc");
-        let hex: String = h.0.iter().map(|b| format!("{:02x}", b)).collect();
+        let hex: String = h.0.iter().fold(String::new(), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{:02x}", b);
+            acc
+        });
         assert_eq!(
             hex,
             "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1\
@@ -115,7 +120,11 @@ mod tests {
     fn blake2b_256_known_vector() {
         // Blake2b-256("abc") — well-known test vector.
         let h = hash_bytes_256(b"abc");
-        let hex: String = h.0.iter().map(|b| format!("{:02x}", b)).collect();
+        let hex: String = h.0.iter().fold(String::new(), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{:02x}", b);
+            acc
+        });
         assert_eq!(
             hex,
             "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319"

@@ -115,7 +115,7 @@ pub enum Constant {
     Bls12_381_G2_Element(yggdrasil_crypto::G2Element),
     /// BLS12-381 Miller loop intermediate result.
     #[allow(non_camel_case_types)]
-    Bls12_381_MlResult(yggdrasil_crypto::MlResult),
+    Bls12_381_MlResult(Box<yggdrasil_crypto::MlResult>),
 }
 
 // ---------------------------------------------------------------------------

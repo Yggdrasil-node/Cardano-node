@@ -69,7 +69,7 @@ impl<'de> Deserialize<'de> for UseLedgerPeers {
     {
         struct UseLedgerPeersVisitor;
 
-        impl<'de> Visitor<'de> for UseLedgerPeersVisitor {
+        impl Visitor<'_> for UseLedgerPeersVisitor {
             type Value = UseLedgerPeers;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

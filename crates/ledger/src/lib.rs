@@ -1,3 +1,7 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
 //! Ledger-facing state, transaction, and era abstractions.
 //!
 //! This crate provides typed protocol-level identifiers (`SlotNo`, `BlockNo`,

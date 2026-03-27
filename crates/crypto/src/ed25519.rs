@@ -96,6 +96,7 @@ impl Signature {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::test_vectors::ed25519_rfc8032_vectors;

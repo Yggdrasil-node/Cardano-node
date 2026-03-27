@@ -4362,7 +4362,7 @@ mod tests {
         let mut tx_ctx = test_tx_ctx();
         let cred = StakeCredential::AddrKeyHash([0xC1; 28]);
         tx_ctx.withdrawals.insert(
-            RewardAccount { network: 1, credential: cred.clone() },
+            RewardAccount { network: 1, credential: cred },
             99,
         );
 
@@ -4457,8 +4457,8 @@ mod tests {
         let cred1 = StakeCredential::AddrKeyHash([0x01; 28]);
         let cred2 = StakeCredential::ScriptHash([0x02; 28]);
         tx_ctx.withdrawals = BTreeMap::from([
-            (RewardAccount { network: 1, credential: cred1.clone() }, 100),
-            (RewardAccount { network: 1, credential: cred2.clone() }, 200),
+            (RewardAccount { network: 1, credential: cred1 }, 100),
+            (RewardAccount { network: 1, credential: cred2 }, 200),
         ]);
 
         let tx_info = expect_tx_info(PlutusVersion::V3, &tx_ctx);
