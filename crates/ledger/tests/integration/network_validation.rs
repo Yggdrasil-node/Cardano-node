@@ -675,15 +675,15 @@ fn submitted_conway_tx_rejects_wrong_withdrawal_network() {
 
 #[test]
 fn submitted_babbage_tx_rejects_missing_reference_input() {
-    let keyhash = [0xAA; 28];
-    let mainnet_addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xBA; 32]);
+    let addr = signer.enterprise_addr();
 
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
         ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
         MultiEraTxOut::Babbage(BabbageTxOut {
-            address: mainnet_addr.clone(),
+            address: addr.clone(),
             amount: Value::Coin(5_000_000),
             datum_option: None,
             script_ref: None,
@@ -693,7 +693,7 @@ fn submitted_babbage_tx_rejects_missing_reference_input() {
     let body = BabbageTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
         outputs: vec![BabbageTxOut {
-            address: mainnet_addr,
+            address: addr,
             amount: Value::Coin(5_000_000),
             datum_option: None,
             script_ref: None,
@@ -716,7 +716,9 @@ fn submitted_babbage_tx_rejects_missing_reference_input() {
             ShelleyTxIn { transaction_id: [0xFF; 32], index: 99 }, // not in UTxO
         ]),
     };
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Babbage(
         yggdrasil_ledger::AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );

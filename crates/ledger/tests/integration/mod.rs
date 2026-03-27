@@ -17,6 +17,39 @@ use yggdrasil_ledger::{
 	BYRON_SLOTS_PER_EPOCH, compute_tx_id, native_script_hash, vkey_hash,
 };
 
+/// Deterministic Ed25519 test key for submitted-tx tests that require valid
+/// VKey witnesses. Derives a key pair from a fixed 32-byte seed, provides
+/// the corresponding VKey hash (for addresses) and a signing function that
+/// produces real Ed25519 signatures that pass `verify_vkey_signatures`.
+struct TestSigner {
+    signing_key: yggdrasil_crypto::ed25519::SigningKey,
+    pub vkey: [u8; 32],
+    pub vkey_hash: [u8; 28],
+}
+
+impl TestSigner {
+    /// Creates a signer from a deterministic seed.
+    fn new(seed: [u8; 32]) -> Self {
+        let signing_key = yggdrasil_crypto::ed25519::SigningKey::from_bytes(seed);
+        let vk = signing_key.verification_key().expect("ed25519 vkey");
+        let hash = yggdrasil_ledger::vkey_hash(&vk.0);
+        Self { signing_key, vkey: vk.0, vkey_hash: hash }
+    }
+
+    /// Signs a transaction body hash and returns a valid VKey witness.
+    fn witness(&self, tx_body_hash: &[u8; 32]) -> ShelleyVkeyWitness {
+        let sig = self.signing_key.sign(tx_body_hash).expect("ed25519 sign");
+        ShelleyVkeyWitness { vkey: self.vkey, signature: sig.0 }
+    }
+
+    /// Enterprise key-hash address (type 6, network 1) for this signer.
+    fn enterprise_addr(&self) -> Vec<u8> {
+        let mut addr = vec![0x61]; // 0110_0001 = type 6 (enterprise), network 1
+        addr.extend_from_slice(&self.vkey_hash);
+        addr
+    }
+}
+
 mod block_ex_units;
 mod core_cbor;
 mod duplicate_inputs;

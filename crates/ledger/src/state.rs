@@ -2690,6 +2690,23 @@ impl LedgerState {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
                     }
                 }
+                // VKey witness validation (Shelley submitted).
+                {
+                    let mut required = HashSet::new();
+                    crate::witnesses::required_vkey_hashes_from_inputs_shelley(
+                        &tx.body.inputs, &self.shelley_utxo, &mut required,
+                    );
+                    if let Some(certs) = &tx.body.certificates {
+                        for cert in certs {
+                            crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                        }
+                    }
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                    }
+                    let tx_body_hash = crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0;
+                    validate_witnesses_typed(&tx.witness_set, &required, &tx_body_hash)?;
+                }
                 let mut staged = self.shelley_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -2749,6 +2766,22 @@ impl LedgerState {
                     if let Some(withdrawals) = &tx.body.withdrawals {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
                     }
+                }
+                // VKey witness validation (Allegra submitted).
+                {
+                    let mut required = HashSet::new();
+                    crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                    );
+                    if let Some(certs) = &tx.body.certificates {
+                        for cert in certs {
+                            crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                        }
+                    }
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                    }
+                    validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 // Native script validation (Allegra submitted path)
@@ -2841,6 +2874,22 @@ impl LedgerState {
                     if let Some(withdrawals) = &tx.body.withdrawals {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
                     }
+                }
+                // VKey witness validation (Mary submitted).
+                {
+                    let mut required = HashSet::new();
+                    crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                    );
+                    if let Some(certs) = &tx.body.certificates {
+                        for cert in certs {
+                            crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                        }
+                    }
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                    }
+                    validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 // Native script validation (Mary submitted path)
@@ -2954,6 +3003,27 @@ impl LedgerState {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
                     }
                     validate_tx_body_network_id(expected_net, tx.body.network_id)?;
+                }
+                // VKey witness validation (Alonzo submitted).
+                {
+                    let mut required = HashSet::new();
+                    crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                    );
+                    if let Some(certs) = &tx.body.certificates {
+                        for cert in certs {
+                            crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                        }
+                    }
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                    }
+                    if let Some(signers) = &tx.body.required_signers {
+                        for signer in signers {
+                            required.insert(*signer);
+                        }
+                    }
+                    validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 let mut required_scripts = HashSet::new();
@@ -3107,6 +3177,27 @@ impl LedgerState {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
                     }
                     validate_tx_body_network_id(expected_net, tx.body.network_id)?;
+                }
+                // VKey witness validation (Babbage submitted).
+                {
+                    let mut required = HashSet::new();
+                    crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                    );
+                    if let Some(certs) = &tx.body.certificates {
+                        for cert in certs {
+                            crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                        }
+                    }
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                    }
+                    if let Some(signers) = &tx.body.required_signers {
+                        for signer in signers {
+                            required.insert(*signer);
+                        }
+                    }
+                    validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 // Reference input validation (Babbage+ rule)
@@ -3271,6 +3362,33 @@ impl LedgerState {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
                     }
                     validate_tx_body_network_id(expected_net, tx.body.network_id)?;
+                }
+                // VKey witness validation (Conway submitted).
+                {
+                    let mut required = HashSet::new();
+                    crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
+                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                    );
+                    if let Some(certs) = &tx.body.certificates {
+                        for cert in certs {
+                            crate::witnesses::required_vkey_hashes_from_cert(cert, &mut required);
+                        }
+                    }
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                    }
+                    if let Some(signers) = &tx.body.required_signers {
+                        for signer in signers {
+                            required.insert(*signer);
+                        }
+                    }
+                    if let Some(voting_procedures) = &tx.body.voting_procedures {
+                        crate::witnesses::required_vkey_hashes_from_voting_procedures(
+                            voting_procedures,
+                            &mut required,
+                        );
+                    }
+                    validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 // Reference input validation (Babbage+ rule)
@@ -6240,6 +6358,20 @@ fn validate_witnesses_if_present(
         None => return Ok(()),
     };
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
+    let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
+    crate::witnesses::validate_vkey_witnesses(required, &vkey_hashes)?;
+    crate::witnesses::verify_vkey_signatures(tx_body_hash, &ws.vkey_witnesses)?;
+    crate::witnesses::verify_bootstrap_witnesses(tx_body_hash, &ws.bootstrap_witnesses)
+}
+
+/// Validates VKey witnesses given a typed witness set (no re-parse).
+///
+/// Used by submitted-tx paths where the witness set is already decoded.
+fn validate_witnesses_typed(
+    ws: &crate::eras::shelley::ShelleyWitnessSet,
+    required: &HashSet<[u8; 28]>,
+    tx_body_hash: &[u8; 32],
+) -> Result<(), LedgerError> {
     let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
     crate::witnesses::validate_vkey_witnesses(required, &vkey_hashes)?;
     crate::witnesses::verify_vkey_signatures(tx_body_hash, &ws.vkey_witnesses)?;

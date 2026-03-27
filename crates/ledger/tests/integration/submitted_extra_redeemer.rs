@@ -130,6 +130,7 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
 /// Alonzo submitted tx without redeemers should pass the ExtraRedeemer check.
 #[test]
 fn alonzo_submitted_tx_no_redeemers_passes() {
+    let signer = TestSigner::new([0xA2; 32]);
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
@@ -137,7 +138,7 @@ fn alonzo_submitted_tx_no_redeemers_passes() {
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
-            address: vkey_addr(),
+            address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
             datum_hash: None,
         }),
@@ -146,7 +147,7 @@ fn alonzo_submitted_tx_no_redeemers_passes() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: vkey_addr(),
+            address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
             datum_hash: None,
         }],
@@ -164,14 +165,14 @@ fn alonzo_submitted_tx_no_redeemers_passes() {
         network_id: None,
     };
 
-    let raw_cbor = body.to_cbor_bytes();
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx {
-        body,
-        witness_set: empty_witness_set(),
-        is_valid: true,
-        auxiliary_data: None,
-        raw_cbor,
-    });
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let ws = ShelleyWitnessSet {
+        vkey_witnesses: vec![signer.witness(&tx_body_hash)],
+        ..empty_witness_set()
+    };
+    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
+        body, ws, true, None,
+    ));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10));
     assert!(result.is_ok(), "expected Ok for redeemer-free Alonzo submitted tx, got: {result:?}");
@@ -356,6 +357,7 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
 /// script must be rejected with ExtraRedeemer (tag=1).
 #[test]
 fn conway_submitted_tx_rejects_extra_minting_redeemer() {
+    let signer = TestSigner::new([0xD2; 32]);
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(permissive_params());
 
@@ -363,7 +365,7 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
-            address: vkey_addr(),
+            address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
             datum_option: None,
             script_ref: None,
@@ -393,7 +395,7 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
     let body = ConwayTxBody {
         inputs: vec![input],
         outputs: vec![BabbageTxOut {
-            address: vkey_addr(),
+            address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
             datum_option: None,
             script_ref: None,
@@ -418,7 +420,9 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
         treasury_donation: None,
     };
 
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     ws.native_scripts.push(native);
     ws.redeemers.push(Redeemer {
         tag: 1,   // Minting
@@ -427,14 +431,9 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
         ex_units: ExUnits { mem: 100, steps: 100 },
     });
 
-    let raw_cbor = body.to_cbor_bytes();
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx {
-        body,
-        witness_set: ws,
-        is_valid: true,
-        auxiliary_data: None,
-        raw_cbor,
-    });
+    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
+        body, ws, true, None,
+    ));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10));
     assert!(

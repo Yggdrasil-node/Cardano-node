@@ -268,6 +268,7 @@ fn allegra_submitted_tx_accepts_native_script_witness() {
 
 #[test]
 fn mary_submitted_tx_rejects_missing_native_script_for_mint() {
+    let signer = TestSigner::new([0x51; 32]);
     let script_hash = [0xEE; 28];
     let output_addr = enterprise_addr(1, &[0x11; 28]);
 
@@ -282,7 +283,7 @@ fn mary_submitted_tx_rejects_missing_native_script_for_mint() {
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Mary(MaryTxOut {
-            address: enterprise_addr(1, &[0x11; 28]),
+            address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
         }),
     );
@@ -308,8 +309,12 @@ fn mary_submitted_tx_rejects_missing_native_script_for_mint() {
         mint: Some(mint_map),
     };
 
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
+
     let submitted = MultiEraSubmittedTx::Mary(
-        ShelleyCompatibleSubmittedTx::new(body, empty_witness_set(), None),
+        ShelleyCompatibleSubmittedTx::new(body, ws, None),
     );
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10));

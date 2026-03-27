@@ -62,8 +62,8 @@ fn seed_shelley_utxo(state: &mut LedgerState, addr: &[u8]) {
 
 #[test]
 fn shelley_submitted_tx_rejects_duplicate_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xAA; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Shelley);
     state.set_protocol_params(mainnet_params());
     seed_shelley_utxo(&mut state, &addr);
@@ -79,7 +79,9 @@ fn shelley_submitted_tx_rejects_duplicate_inputs() {
         update: None,
         auxiliary_data_hash: None,
     };
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Shelley(
         ShelleyTx { body, witness_set: ws, auxiliary_data: None },
     );
@@ -94,8 +96,8 @@ fn shelley_submitted_tx_rejects_duplicate_inputs() {
 
 #[test]
 fn shelley_submitted_tx_accepts_unique_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xAB; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Shelley);
     state.set_protocol_params(mainnet_params());
     seed_shelley_utxo(&mut state, &addr);
@@ -110,7 +112,9 @@ fn shelley_submitted_tx_accepts_unique_inputs() {
         update: None,
         auxiliary_data_hash: None,
     };
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Shelley(
         ShelleyTx { body, witness_set: ws, auxiliary_data: None },
     );
@@ -125,8 +129,8 @@ fn shelley_submitted_tx_accepts_unique_inputs() {
 
 #[test]
 fn babbage_submitted_tx_rejects_duplicate_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xAC; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     seed_utxo(&mut state, &addr);
@@ -156,7 +160,9 @@ fn babbage_submitted_tx_rejects_duplicate_inputs() {
         total_collateral: None,
         reference_inputs: None,
     };
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Babbage(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -175,8 +181,8 @@ fn babbage_submitted_tx_rejects_duplicate_inputs() {
 
 #[test]
 fn conway_submitted_tx_rejects_duplicate_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xAD; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(mainnet_params());
     seed_utxo(&mut state, &addr);
@@ -209,7 +215,9 @@ fn conway_submitted_tx_rejects_duplicate_inputs() {
         current_treasury_value: None,
         treasury_donation: None,
     };
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Conway(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -307,8 +315,8 @@ fn duplicate_inputs_unit_rejects_identical_pair() {
 
 #[test]
 fn duplicate_inputs_same_txid_different_index_is_ok() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xAE; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Shelley);
     state.set_protocol_params(mainnet_params());
     // Two separate outputs from the same transaction
@@ -334,7 +342,9 @@ fn duplicate_inputs_same_txid_different_index_is_ok() {
         update: None,
         auxiliary_data_hash: None,
     };
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Shelley(
         ShelleyTx { body, witness_set: ws, auxiliary_data: None },
     );

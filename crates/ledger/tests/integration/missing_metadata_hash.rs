@@ -107,16 +107,43 @@ fn shelley_block_rejects_aux_data_without_hash() {
 /// aux data present but no hash → reject on submitted path too
 #[test]
 fn shelley_submitted_tx_rejects_aux_data_without_hash() {
+    let signer = TestSigner::new([0x61; 32]);
     let mut state = LedgerState::new(Era::Shelley);
     state.set_protocol_params(permissive_params());
-    seed_shelley_utxo(&mut state);
+    let addr = signer.enterprise_addr();
+    let input = ShelleyTxIn {
+        transaction_id: [0x61; 32],
+        index: 0,
+    };
+    state.utxo_mut().insert(
+        input.clone(),
+        ShelleyTxOut {
+            address: addr.clone(),
+            amount: 5_000_000,
+        },
+    );
 
-    let body = sample_shelley_tx_body();
+    let body = ShelleyTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: addr,
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
     let aux_data = vec![0xA1, 0x01, 0x63, 0x66, 0x6F, 0x6F]; // {1: "foo"}
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
 
     let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
         body,
-        witness_set: empty_witness_set(),
+        witness_set: ws,
         auxiliary_data: Some(aux_data),
     });
 
@@ -131,14 +158,41 @@ fn shelley_submitted_tx_rejects_aux_data_without_hash() {
 /// no aux data, no hash → OK
 #[test]
 fn shelley_submitted_tx_accepts_no_aux_no_hash() {
+    let signer = TestSigner::new([0x62; 32]);
     let mut state = LedgerState::new(Era::Shelley);
     state.set_protocol_params(permissive_params());
-    seed_shelley_utxo(&mut state);
+    let addr = signer.enterprise_addr();
+    let input = ShelleyTxIn {
+        transaction_id: [0x61; 32],
+        index: 0,
+    };
+    state.utxo_mut().insert(
+        input.clone(),
+        ShelleyTxOut {
+            address: addr.clone(),
+            amount: 5_000_000,
+        },
+    );
 
-    let body = sample_shelley_tx_body();
+    let body = ShelleyTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: addr,
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
         body,
-        witness_set: empty_witness_set(),
+        witness_set: ws,
         auxiliary_data: None,
     });
 

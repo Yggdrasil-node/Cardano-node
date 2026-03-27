@@ -152,8 +152,8 @@ fn total_ref_scripts_size_no_inputs_returns_zero() {
 
 #[test]
 fn conway_submitted_tx_rejects_oversized_ref_scripts() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0x10; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(mainnet_params());
 
@@ -178,7 +178,9 @@ fn conway_submitted_tx_rejects_oversized_ref_scripts() {
         Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Conway(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -193,8 +195,8 @@ fn conway_submitted_tx_rejects_oversized_ref_scripts() {
 
 #[test]
 fn conway_submitted_tx_accepts_ref_scripts_at_limit() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0x20; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(mainnet_params());
 
@@ -218,7 +220,9 @@ fn conway_submitted_tx_accepts_ref_scripts_at_limit() {
         Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Conway(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -229,8 +233,8 @@ fn conway_submitted_tx_accepts_ref_scripts_at_limit() {
 
 #[test]
 fn conway_submitted_tx_accepts_no_ref_scripts() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0x30; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(mainnet_params());
 
@@ -249,7 +253,9 @@ fn conway_submitted_tx_accepts_no_ref_scripts() {
         None,
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Conway(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -375,8 +381,8 @@ fn conway_block_accepts_ref_scripts_under_limit() {
 
 #[test]
 fn conway_submitted_tx_cumulates_scripts_across_both_input_types() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0x40; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(mainnet_params());
 
@@ -396,7 +402,9 @@ fn conway_submitted_tx_cumulates_scripts_across_both_input_types() {
         Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Conway(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );

@@ -41,8 +41,8 @@ fn seed_utxo(state: &mut LedgerState, txin: ShelleyTxIn, addr: &[u8], amount: u6
 
 #[test]
 fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xA1; 32]);
+    let addr = signer.enterprise_addr();
 
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
@@ -83,9 +83,13 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
         network_id: None,
     };
 
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws2 = empty_witness_set();
+    ws2.vkey_witnesses.push(signer.witness(&tx_body_hash));
+
     let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
         body,
-        ws,
+        ws2,
         true,
         None,
     ));

@@ -129,8 +129,8 @@ fn conway_body_with_ref_inputs(
 
 #[test]
 fn babbage_submitted_tx_rejects_overlapping_reference_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xB1; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     seed_babbage_utxo(&mut state, &addr);
@@ -142,7 +142,9 @@ fn babbage_submitted_tx_rejects_overlapping_reference_inputs() {
         Some(vec![overlap_input]),
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Babbage(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -157,8 +159,8 @@ fn babbage_submitted_tx_rejects_overlapping_reference_inputs() {
 
 #[test]
 fn babbage_submitted_tx_accepts_disjoint_reference_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xB2; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     seed_babbage_utxo(&mut state, &addr);
@@ -169,7 +171,9 @@ fn babbage_submitted_tx_accepts_disjoint_reference_inputs() {
         Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Babbage(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -180,8 +184,8 @@ fn babbage_submitted_tx_accepts_disjoint_reference_inputs() {
 
 #[test]
 fn babbage_submitted_tx_accepts_no_reference_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xB3; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     seed_babbage_utxo(&mut state, &addr);
@@ -191,7 +195,9 @@ fn babbage_submitted_tx_accepts_no_reference_inputs() {
         None,
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Babbage(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -206,8 +212,8 @@ fn babbage_submitted_tx_accepts_no_reference_inputs() {
 
 #[test]
 fn conway_submitted_tx_rejects_overlapping_reference_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xB4; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(mainnet_params());
     seed_babbage_utxo(&mut state, &addr);
@@ -218,7 +224,9 @@ fn conway_submitted_tx_rejects_overlapping_reference_inputs() {
         Some(vec![overlap_input]),
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Conway(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
@@ -233,8 +241,8 @@ fn conway_submitted_tx_rejects_overlapping_reference_inputs() {
 
 #[test]
 fn conway_submitted_tx_accepts_disjoint_reference_inputs() {
-    let keyhash = [0xAA; 28];
-    let addr = enterprise_addr(1, &keyhash);
+    let signer = TestSigner::new([0xB5; 32]);
+    let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(mainnet_params());
     seed_babbage_utxo(&mut state, &addr);
@@ -244,7 +252,9 @@ fn conway_submitted_tx_accepts_disjoint_reference_inputs() {
         Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
         addr,
     );
-    let ws = empty_witness_set();
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     let submitted = MultiEraSubmittedTx::Conway(
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
