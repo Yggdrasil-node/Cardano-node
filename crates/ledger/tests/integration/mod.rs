@@ -37,6 +37,7 @@ mod network_validation;
 mod output_validation;
 mod plutus_evaluation;
 mod plutus_scripts;
+mod ref_scripts_size;
 mod reference_input_contention;
 mod shelley;
 mod txbody_keys;

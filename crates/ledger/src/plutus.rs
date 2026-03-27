@@ -279,6 +279,21 @@ pub enum Script {
     PlutusV3(Vec<u8>),
 }
 
+impl Script {
+    /// Returns the serialized binary size of the script content.
+    ///
+    /// For Plutus scripts, this is the length of the stored byte blob.
+    /// For native scripts, this is the CBOR-encoded length.
+    ///
+    /// Reference: `Cardano.Ledger.Core` — `getScriptBinary`.
+    pub fn binary_size(&self) -> usize {
+        match self {
+            Self::Native(ns) => ns.to_cbor_bytes().len(),
+            Self::PlutusV1(bytes) | Self::PlutusV2(bytes) | Self::PlutusV3(bytes) => bytes.len(),
+        }
+    }
+}
+
 impl CborEncode for Script {
     fn encode_cbor(&self, enc: &mut Encoder) {
         match self {

@@ -10,6 +10,12 @@
 use std::collections::HashMap;
 
 use crate::eras::allegra::AllegraTxBody;
+
+/// Maximum total reference-script size (in bytes) per transaction.
+///
+/// Hardcoded upstream constant (not a governable protocol parameter).
+/// Reference: `Cardano.Ledger.Conway.PParams` — `ppMaxRefScriptSizePerTxG`.
+pub const MAX_REF_SCRIPT_SIZE_PER_TX: usize = 204_800;
 use crate::eras::alonzo::{AlonzoTxBody, AlonzoTxOut};
 use crate::eras::babbage::{BabbageTxBody, BabbageTxOut};
 use crate::eras::byron::ByronTx;
@@ -737,6 +743,51 @@ impl MultiEraUtxo {
                     return Err(LedgerError::ReferenceInputContention);
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Computes the total serialized reference script size across all given
+    /// UTxO entries referenced by a transaction (both spending and reference
+    /// inputs).
+    ///
+    /// The upstream function `txNonDistinctRefScriptsSize` sums sizes without
+    /// deduplication — if two inputs reference the same UTxO, the script is
+    /// counted twice.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.UTxO` — `txNonDistinctRefScriptsSize`.
+    pub fn total_ref_scripts_size(
+        &self,
+        spending_inputs: &[ShelleyTxIn],
+        ref_inputs: Option<&[ShelleyTxIn]>,
+    ) -> usize {
+        let mut total = 0usize;
+        for input in spending_inputs.iter().chain(ref_inputs.unwrap_or(&[]).iter()) {
+            if let Some(txout) = self.entries.get(input) {
+                if let Some(sr) = txout.script_ref() {
+                    total = total.saturating_add(sr.0.binary_size());
+                }
+            }
+        }
+        total
+    }
+
+    /// Validates that the total reference-script size for a transaction does
+    /// not exceed `MAX_REF_SCRIPT_SIZE_PER_TX` (Conway+ LEDGER rule).
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Ledger` —
+    /// `ConwayTxRefScriptsSizeTooBig`.
+    pub fn validate_tx_ref_scripts_size(
+        &self,
+        spending_inputs: &[ShelleyTxIn],
+        ref_inputs: Option<&[ShelleyTxIn]>,
+    ) -> Result<(), LedgerError> {
+        let actual = self.total_ref_scripts_size(spending_inputs, ref_inputs);
+        if actual > MAX_REF_SCRIPT_SIZE_PER_TX {
+            return Err(LedgerError::TxRefScriptsSizeTooBig {
+                actual,
+                max_allowed: MAX_REF_SCRIPT_SIZE_PER_TX,
+            });
         }
         Ok(())
     }

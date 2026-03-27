@@ -424,6 +424,18 @@ pub enum LedgerError {
     #[error("auxiliary data hash declared but no auxiliary data present in block")]
     AuxiliaryDataMissing,
 
+    /// Total reference script size across all referenced UTxO entries exceeds
+    /// the maximum allowed per transaction (Conway+ rule).
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Ledger` — `ConwayTxRefScriptsSizeTooBig`.
+    #[error(
+        "total reference script size {actual} exceeds maximum {max_allowed} bytes"
+    )]
+    TxRefScriptsSizeTooBig {
+        actual: usize,
+        max_allowed: usize,
+    },
+
     // -- Epoch boundary errors ----------------------------------------------
 
     #[error("protocol parameters are required but missing")]

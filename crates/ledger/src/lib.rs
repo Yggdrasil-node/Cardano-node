@@ -92,7 +92,7 @@ pub use types::{
 pub use plutus::{PlutusData, Script, ScriptRef};
 
 // -- UTxO re-exports ----------------------------------------------------------
-pub use utxo::{MultiEraTxOut, MultiEraUtxo};
+pub use utxo::{MultiEraTxOut, MultiEraUtxo, MAX_REF_SCRIPT_SIZE_PER_TX};
 
 // -- Stake distribution re-exports --------------------------------------------
 pub use stake::{

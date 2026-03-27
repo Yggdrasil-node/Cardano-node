@@ -2973,6 +2973,11 @@ impl LedgerState {
                     staged.validate_reference_inputs(ref_inputs)?;
                     MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
                 }
+                // Conway LEDGER rule: total reference script size limit
+                staged.validate_tx_ref_scripts_size(
+                    &tx.body.inputs,
+                    tx.body.reference_inputs.as_deref(),
+                )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3780,6 +3785,11 @@ impl LedgerState {
                 staged.validate_reference_inputs(ref_inputs)?;
                 MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
             }
+            // Conway LEDGER rule: total reference script size limit
+            staged.validate_tx_ref_scripts_size(
+                &body.inputs,
+                body.reference_inputs.as_deref(),
+            )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
