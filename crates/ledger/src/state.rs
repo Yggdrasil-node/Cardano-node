@@ -3313,6 +3313,10 @@ impl LedgerState {
                         &ref_utxos,
                     )?;
                 }
+                // Conway UTXO rule: validate current_treasury_value declaration.
+                let current_treasury = self.accounting.treasury;
+                validate_conway_current_treasury_value(tx.body.current_treasury_value, current_treasury)?;
+
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3320,7 +3324,96 @@ impl LedgerState {
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
+                let mut staged_governance_actions = self.governance_actions.clone();
                 let cert_ctx = self.certificate_validation_context();
+
+                // Conway governance validation (voters, proposals, votes).
+                let unregistered_drep_voters = collect_conway_unregistered_drep_voters(
+                    tx.body.certificates.as_deref(),
+                );
+
+                if tx.body.voting_procedures.is_some()
+                    || tx.body.proposal_procedures.is_some()
+                    || !unregistered_drep_voters.is_empty()
+                {
+                    let (
+                        governance_pool_state,
+                        governance_stake_credentials,
+                        governance_committee_state,
+                        governance_drep_state,
+                    ) = conway_governance_state_after_certificates(
+                        &staged_pool_state,
+                        &staged_stake_credentials,
+                        &staged_committee_state,
+                        &staged_drep_state,
+                        &staged_reward_accounts,
+                        &staged_deposit_pot,
+                        &staged_gen_delegs,
+                        &cert_ctx,
+                        tx.body.certificates.as_deref(),
+                    )?;
+
+                    let mut governance_actions_for_tx = staged_governance_actions.clone();
+
+                    if let Some(voting_procedures) = &tx.body.voting_procedures {
+                        validate_conway_voters(
+                            voting_procedures,
+                            &governance_pool_state,
+                            &governance_committee_state,
+                            &governance_drep_state,
+                        )?;
+                    }
+
+                    if let Some(proposal_procedures) = &tx.body.proposal_procedures {
+                        stage_conway_proposals(
+                            tx.tx_id(),
+                            self.current_epoch,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.gov_action_lifetime),
+                            proposal_procedures,
+                            &mut governance_actions_for_tx,
+                        );
+                        validate_conway_proposals(
+                            tx.tx_id(),
+                            proposal_procedures,
+                            self.current_epoch,
+                            &governance_actions_for_tx,
+                            &governance_stake_credentials,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.protocol_version),
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.gov_action_deposit),
+                            self.expected_network_id,
+                            self.protocol_params.as_ref(),
+                            &self.enact_state,
+                        )?;
+                    }
+
+                    if let Some(voting_procedures) = &tx.body.voting_procedures {
+                        validate_conway_vote_targets(voting_procedures, &governance_actions_for_tx)?;
+                        validate_conway_voter_permissions(
+                            self.current_epoch,
+                            voting_procedures,
+                            &governance_actions_for_tx,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.protocol_version),
+                        )?;
+                    }
+
+                    staged_governance_actions = governance_actions_for_tx;
+                    if let Some(voting_procedures) = &tx.body.voting_procedures {
+                        apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch);
+                    }
+                    remove_conway_drep_votes(
+                        &unregistered_drep_voters,
+                        &mut staged_governance_actions,
+                    );
+                }
+
                 let withdrawal_total = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
@@ -3333,6 +3426,12 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
+                // Track DRep activity for registration and update certificates.
+                touch_drep_activity_for_certs(
+                    tx.body.certificates.as_deref(),
+                    &mut staged_drep_state,
+                    self.current_epoch,
+                );
                 staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
@@ -3342,6 +3441,7 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                self.governance_actions = staged_governance_actions;
             }
         }
 
