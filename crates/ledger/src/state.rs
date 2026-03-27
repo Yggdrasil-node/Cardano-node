@@ -3424,6 +3424,14 @@ impl LedgerState {
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
+        // BBODY rule: block-level ExUnits limit.
+        {
+            let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
+                .map(|(_, _, _, wb, _)| wb.as_deref())
+                .collect();
+            validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
+        }
+
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -3575,6 +3583,14 @@ impl LedgerState {
                 Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
+
+        // BBODY rule: block-level ExUnits limit.
+        {
+            let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
+                .map(|(_, _, _, wb, _)| wb.as_deref())
+                .collect();
+            validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
+        }
 
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
@@ -3732,6 +3748,14 @@ impl LedgerState {
                 Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
+
+        // BBODY rule: block-level ExUnits limit.
+        {
+            let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
+                .map(|(_, _, _, wb, _)| wb.as_deref())
+                .collect();
+            validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
+        }
 
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
@@ -5276,6 +5300,7 @@ fn validate_pre_alonzo_tx(
     crate::fees::validate_tx_size(params, tx_body_size)?;
     crate::fees::validate_fee(params, tx_body_size, None, declared_fee)?;
     crate::min_utxo::validate_all_outputs_min_utxo(params, outputs)?;
+    crate::min_utxo::validate_output_boot_addr_attrs(outputs)?;
     Ok(())
 }
 
@@ -5309,6 +5334,8 @@ fn validate_alonzo_plus_tx(
         crate::fees::validate_tx_ex_units(params, eu)?;
     }
     crate::min_utxo::validate_all_outputs_min_utxo(params, outputs)?;
+    crate::min_utxo::validate_output_not_too_big(params, outputs)?;
+    crate::min_utxo::validate_output_boot_addr_attrs(outputs)?;
 
     // When the transaction carries phase-2 scripts (redeemers ≠ ∅),
     // collateral is mandatory.
@@ -5328,6 +5355,46 @@ fn validate_alonzo_plus_tx(
                 collateral_return, total_collateral,
             )?;
         }
+    }
+    Ok(())
+}
+
+/// Validates that the total execution units across all transactions in a block
+/// do not exceed `max_block_ex_units` from protocol parameters.
+///
+/// Implements the upstream Alonzo BBODY rule:
+/// `totalExUnits(txs) <= maxBlockExUnits(pp)`.
+///
+/// Each transaction's redeemer ExUnits are summed from their witness sets.
+/// When protocol parameters or `max_block_ex_units` are absent the check is
+/// skipped (soft-skip semantics for pre-Alonzo eras or missing params).
+fn validate_block_ex_units(
+    params: Option<&crate::protocol_params::ProtocolParameters>,
+    witness_sets: &[Option<&[u8]>],
+) -> Result<(), LedgerError> {
+    let params = match params {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    let max = match &params.max_block_ex_units {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+    let mut block_mem: u64 = 0;
+    let mut block_steps: u64 = 0;
+    for wb in witness_sets {
+        if let Some(eu) = sum_redeemer_ex_units_from_bytes(*wb) {
+            block_mem = block_mem.saturating_add(eu.mem);
+            block_steps = block_steps.saturating_add(eu.steps);
+        }
+    }
+    if block_mem > max.mem || block_steps > max.steps {
+        return Err(LedgerError::BlockExUnitsExceeded {
+            block_mem,
+            block_steps,
+            max_mem: max.mem,
+            max_steps: max.steps,
+        });
     }
     Ok(())
 }

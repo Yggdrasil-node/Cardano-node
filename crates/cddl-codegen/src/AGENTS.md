@@ -1,8 +1,4 @@
----
-name: cddl-codegen-src-subagent
-description: Guidance for parser and generator internals in cddl-codegen
----
-
+# Guidance for parser and generator internals in cddl-codegen
 Focus on small parser and generator internals that are deterministic, testable, and easy to extend without hidden heuristics.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 
@@ -19,14 +15,14 @@ Focus on small parser and generator internals that are deterministic, testable, 
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Shelley CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl/cddl-files>
-- Allegra CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/allegra/impl/cddl-files>
-- Mary CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/mary/impl/cddl-files>
-- Alonzo CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl-files>
-- Babbage CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/impl/cddl-files>
-- Conway CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/impl/cddl-files>
-- Byron CDDL spec: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/cddl-spec>
-- Ledger binary library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
+- [Shelley CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl/cddl-files)
+- [Allegra CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/allegra/impl/cddl-files)
+- [Mary CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/mary/impl/cddl-files)
+- [Alonzo CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl-files)
+- [Babbage CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/impl/cddl-files)
+- [Conway CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/impl/cddl-files)
+- [Byron CDDL spec](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/cddl-spec)
+- [Ledger binary library](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/)
 
 ## Current Phase
 - Parser AST uses `TypeExpr` enum (Named, Sized, VarArray, Optional, Tagged) for type expressions, `FieldKey` enum (Label, Index) for map keys, and `ArrayItem` with optional names for array elements.

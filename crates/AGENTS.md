@@ -14,15 +14,15 @@ Keep this directory as a crate index, not as a place for cross-cutting implement
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Workspace architecture anchor: <https://github.com/IntersectMBO/cardano-node/>
-- Ledger era package layout: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-- Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/>
-- Consensus package layout: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/>
-- Consensus protocol modules: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/>
-- Networking package layout: <https://github.com/IntersectMBO/ouroboros-network/>
-- Network mini-protocol packages: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/>
-- Crypto package layout: <https://github.com/IntersectMBO/cardano-base/>
-- Plutus core and CEK machine: <https://github.com/IntersectMBO/plutus/>
+- [Workspace architecture anchor](https://github.com/IntersectMBO/cardano-node/)
+- [Ledger era package layout](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/)
+- [Ledger support libraries](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/)
+- [Consensus package layout](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/)
+- [Consensus protocol modules](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/)
+- [Networking package layout](https://github.com/IntersectMBO/ouroboros-network/)
+- [Network mini-protocol packages](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/)
+- [Crypto package layout](https://github.com/IntersectMBO/cardano-base/)
+- [Plutus core and CEK machine](https://github.com/IntersectMBO/plutus/)
 
 ## Current Layout
 - `crypto`: cryptographic primitives and encodings.

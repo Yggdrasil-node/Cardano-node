@@ -250,6 +250,19 @@ pub enum LedgerError {
     #[error("output too small: minimum {minimum} lovelace, actual {actual}")]
     OutputTooSmall { minimum: u64, actual: u64 },
 
+    /// Serialized value in an output exceeds `max_val_size` protocol parameter.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `OutputTooBigUTxO`.
+    #[error("output value too big: serialized size {actual} exceeds max {max}")]
+    OutputTooBig { actual: usize, max: usize },
+
+    /// A Byron bootstrap address in a Shelley+ transaction output has
+    /// attributes larger than the 64-byte limit.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `OutputBootAddrAttrsTooBig`.
+    #[error("Byron bootstrap address attributes too big: {size} bytes (max 64)")]
+    OutputBootAddrAttrsTooBig { size: usize },
+
     // -- Network validation errors ------------------------------------------
 
     /// One or more transaction outputs carry an address whose network ID

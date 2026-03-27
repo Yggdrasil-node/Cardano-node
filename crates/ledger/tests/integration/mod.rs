@@ -17,6 +17,7 @@ use yggdrasil_ledger::{
 	BYRON_SLOTS_PER_EPOCH, compute_tx_id, native_script_hash, vkey_hash,
 };
 
+mod block_ex_units;
 mod core_cbor;
 mod eras_allegra_mary;
 mod eras_alonzo;

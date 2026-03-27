@@ -16,14 +16,14 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Multiplexer (`network-mux`): <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux>
-- Network framework and handshake: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework>
-- Typed mini-protocol implementations: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols>
-- Outbound governor and peer selection: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network>
-- Cardano diffusion layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/cardano-diffusion>
-- Shelley networking spec PDF: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
-- Network design document: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design>
-- Network Haddock: <https://ouroboros-network.cardano.intersectmbo.org/>
+- [Multiplexer (`network-mux`):](https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux)
+- [Network framework and handshake:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework)
+- [Typed mini-protocol implementations:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols)
+- [Outbound governor and peer selection:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network)
+- [Cardano diffusion layer:](https://github.com/IntersectMBO/ouroboros-network/tree/main/cardano-diffusion)
+- [Shelley networking spec PDF:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec)
+- [Network design document:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design)
+- [Network Haddock:](https://ouroboros-network.cardano.intersectmbo.org/)
 
 ## Current Phase
 - TCP bearer and SDU framing are implemented and tested.

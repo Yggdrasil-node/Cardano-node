@@ -1,8 +1,4 @@
----
-name: plutus-crate-agent
-description: Guidance for the UPLC evaluator and Plutus script execution engine
----
-
+# Guidance for the UPLC evaluator and Plutus script execution engine
 Focus on deterministic CEK machine behavior, cost model accuracy, and upstream parity with the official Plutus evaluator.
 
 ## Scope
@@ -21,11 +17,11 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 - Always read the folder specific `**/AGENTS.md` files.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Plutus core repository: <https://github.com/IntersectMBO/plutus>
-- CEK machine: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek>
-- Builtin semantics: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs>
-- Cost model parameters: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model>
-- Flat encoding spec: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/plutus-core/src/PlutusCore/Flat>
+- [Plutus core repository](https://github.com/IntersectMBO/plutus)
+- [CEK machine](https://github.com/IntersectMBO/plutus/tree/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek)
+- [Builtin semantics](https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs)
+- [Cost model parameters](https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model)
+- [Flat encoding spec](https://github.com/IntersectMBO/plutus/tree/master/plutus-core/plutus-core/src/PlutusCore/Flat)
 
 ## Current Status
 - **CEK machine**: complete. De Bruijn indices, closures, partial application. Per-step-kind cost differentiation matching upstream (9 distinct `StepKind` variants: Constant, Var, LamAbs, Apply, Delay, Force, Builtin, Constr, Case). Return phase (`apply_fun`, `force_value`) does not charge step costs, matching upstream semantics.

@@ -14,14 +14,14 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger>
-- Binary serialization library (`cardano-ledger-binary`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
-- Core ledger library (`cardano-ledger-core`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-core>
-- Shelley ledger support (`cardano-ledger-shelley`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl>
-- Protocol parameters in ledger: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-protocol-tpraos>
-- Formal ledger specification (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications>
-- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
-- Ledger Haddock documentation: <https://cardano-ledger.cardano.intersectmbo.org/>
+- [Ledger repository root](https://github.com/IntersectMBO/cardano-ledger)
+- [Binary serialization library (`cardano-ledger-binary`)](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary)
+- [Core ledger library (`cardano-ledger-core`)](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-core)
+- [Shelley ledger support (`cardano-ledger-shelley`)](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl)
+- [Protocol parameters in ledger](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-protocol-tpraos)
+- [Formal ledger specification (Agda)](https://github.com/IntersectMBO/formal-ledger-specifications)
+- [Published formal spec site](https://intersectmbo.github.io/formal-ledger-specifications/site)
+- [Ledger Haddock documentation](https://cardano-ledger.cardano.intersectmbo.org/)
 
 ## Current Phase
 - Hand-rolled CBOR encoder/decoder supports major Cardano-required primitives including signed integers (`integer()`).

@@ -16,19 +16,19 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger/>
-- Era-specific sources: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/> — each era has `impl/`, `formal-spec/`, `test-suite/`, and `cddl/` subdirectories
-  - Byron ledger rules and CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/>
-  - Shelley rules (`impl/src/`), design spec, formal spec, CDDL (`impl/cddl/data/`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/>
-  - Allegra/Mary rules and shared formal spec: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley-ma/>
-  - Alonzo rules, formal spec, CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/>
-  - Babbage rules, formal spec, CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/>
-  - Conway rules (governance, DRep, voting), formal spec, CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/>
-- Ledger support libraries (binary serialization, core types): <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/>
-- Binary serialization library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
-- Formal ledger specifications (Agda, Conway-complete): <https://github.com/IntersectMBO/formal-ledger-specifications/>
-- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site/>
-- Haddock documentation: <https://cardano-ledger.cardano.intersectmbo.org/>
+- [Ledger repository root:](https://github.com/IntersectMBO/cardano-ledger/)
+- [Era-specific sources:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/) — each era has `impl/`, `formal-spec/`, `test-suite/`, and `cddl/` subdirectories
+  - [Byron ledger rules and CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/)
+  - [Shelley rules (`impl/src/`), design spec, formal spec, CDDL (`impl/cddl/data/`):](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/)
+  - [Allegra/Mary rules and shared formal spec:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley-ma/)
+  - [Alonzo rules, formal spec, CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/)
+  - [Babbage rules, formal spec, CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/)
+  - [Conway rules (governance, DRep, voting), formal spec, CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/)
+- [Ledger support libraries (binary serialization, core types):](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/)
+- [Binary serialization library:](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/)
+- [Formal ledger specifications (Agda, Conway-complete):](https://github.com/IntersectMBO/formal-ledger-specifications/)
+- [Published formal spec site:](https://intersectmbo.github.io/formal-ledger-specifications/site/)
+- [Haddock documentation:](https://cardano-ledger.cardano.intersectmbo.org/)
 
 ## Current Phase
 - Core protocol types (`SlotNo`, `BlockNo`, `EpochNo`, `HeaderHash`, `TxId`, `Point`) are landed in `types.rs`.

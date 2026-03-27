@@ -1,8 +1,4 @@
----
-name: crypto-crate-agent
-description: Guidance for pure Rust Cardano cryptography work
----
-
+# Guidance for pure Rust Cardano cryptography work
 Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 
 ## Scope
@@ -22,12 +18,12 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Crypto class abstractions (hashing, signatures, VRF, KES): <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/>
-- Praos VRF and KES implementations and test vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/>
-- Peras-era crypto extensions: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras/>
-- Shared Cardano base packages: <https://github.com/IntersectMBO/cardano-base/>
-- Haddock documentation: <https://base.cardano.intersectmbo.org/>
-- VRF batch-verification fork of libsodium: <https://github.com/input-output-hk/libsodium/tree/iquerejeta/vrf_batchverify> (behavioral reference only — this crate uses pure Rust)
+- [Crypto class abstractions (hashing, signatures, VRF, KES)](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/)
+- [Praos VRF and KES implementations and test vectors](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/)
+- [Peras-era crypto extensions](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras/)
+- [Shared Cardano base packages](https://github.com/IntersectMBO/cardano-base/)
+- [Haddock documentation](https://base.cardano.intersectmbo.org/)
+- [VRF batch-verification fork of libsodium](https://github.com/input-output-hk/libsodium/tree/iquerejeta/vrf_batchverify) (behavioral reference only — this crate uses pure Rust)
 
 ## Current Phase
 - Blake2b, Ed25519, and SimpleKES (two-period) are implemented with vector coverage.

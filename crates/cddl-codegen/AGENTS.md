@@ -1,8 +1,4 @@
----
-name: cddl-codegen-crate-agent
-description: Guidance for generating Rust types from pinned Cardano CDDL sources
----
-
+# Guidance for generating Rust types from pinned Cardano CDDL sources
 Focus on deterministic parsing and reproducible generated artifacts.
 
 ## Scope
@@ -21,15 +17,15 @@ Focus on deterministic parsing and reproducible generated artifacts.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Per-era CDDL schemas (each era subdirectory has `impl/cddl/data/` with per-era `.cddl` files): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-- Byron CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/ledger/impl/cddl-spec/>
-- Shelley CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl/cddl/data/>
-- Alonzo CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl/data/>
-- Babbage CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/impl/cddl/data/>
-- Conway CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/impl/cddl/data/>
-- Binary serialization library (`cardano-ledger-binary`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
-- Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/>
-- Formal ledger specification (type definitions): <https://github.com/IntersectMBO/formal-ledger-specifications/>
+- [Per-era CDDL schemas (each era subdirectory has `impl/cddl/data/` with per-era `.cddl` files)](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/)
+- [Byron CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/ledger/impl/cddl-spec/)
+- [Shelley CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl/cddl/data/)
+- [Alonzo CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl/data/)
+- [Babbage CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/impl/cddl/data/)
+- [Conway CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/impl/cddl/data/)
+- [Binary serialization library (`cardano-ledger-binary`)](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/)
+- [Ledger support libraries](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/)
+- [Formal ledger specification (type definitions)](https://github.com/IntersectMBO/formal-ledger-specifications/)
 
 ## Current Phase
 - Parser supports: comments, aliases, flat maps, flat arrays, size constraints (`.size N`), integer-keyed map fields, optional fields (`?`), variable-length arrays (`[* type]`), nil alternatives (`type / nil`), named array fields, multi-line definitions, CBOR tag annotations (`#6.N(type)`), and group choices (`//`).

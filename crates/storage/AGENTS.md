@@ -16,14 +16,14 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Storage modules (ChainDB, ImmutableDB, VolatileDB, LedgerDB): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/>
-- ChainDB coordination: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/>
-- ImmutableDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ImmutableDB/>
-- VolatileDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/VolatileDB/>
-- LedgerDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/>
-- Consensus tech report (storage design rationale): <https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf>
-- Consensus documentation and architecture notes: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/>
-- Node integration reference for operational storage concerns: <https://github.com/IntersectMBO/cardano-node/>
+- [Storage modules (ChainDB, ImmutableDB, VolatileDB, LedgerDB)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/)
+- [ChainDB coordination](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/)
+- [ImmutableDB](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ImmutableDB/)
+- [VolatileDB](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/VolatileDB/)
+- [LedgerDB](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/)
+- [Consensus tech report (storage design rationale)](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf)
+- [Consensus documentation and architecture notes](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/)
+- [Node integration reference for operational storage concerns](https://github.com/IntersectMBO/cardano-node/)
 
 ## Current Phase
 - Traits `ImmutableStore`, `VolatileStore`, and `LedgerStore` are landed and exported.

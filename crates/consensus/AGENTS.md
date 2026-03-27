@@ -1,8 +1,4 @@
----
-name: consensus-crate-agent
-description: Guidance for Ouroboros consensus work
----
-
+# Guidance for Ouroboros consensus work
 Focus on deterministic chain selection, epoch math, rollback handling, and leader-election boundaries.
 
 ## Scope
@@ -20,13 +16,13 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Core consensus modules (Protocol, Storage, Mempool, Block, HardFork): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/>
-- Protocol abstractions (`Abstract.hs`), BFT, PBFT, `ModChainSel`, `Signed`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/>
-- Cardano-specific Praos/TPraos integration (`Praos.hs`, `Praos/Common.hs`, `TPraos.hs`): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol/>
-- Formal consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec/>
-- Consensus tech report (mandatory reading for chain selection and protocol design): <https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf>
-- Consensus Haddock documentation: <https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>
-- Cardano-specific consensus integration (hard-fork combinator, era dispatch): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/>
+- [Core consensus modules (Protocol, Storage, Mempool, Block, HardFork)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/)
+- [Protocol abstractions (`Abstract.hs`), BFT, PBFT, `ModChainSel`, `Signed`)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/)
+- [Cardano-specific Praos/TPraos integration (`Praos.hs`, `Praos/Common.hs`, `TPraos.hs`)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol/)
+- [Formal consensus Agda specification](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec/)
+- [Consensus tech report (mandatory reading for chain selection and protocol design)](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf)
+- [Consensus Haddock documentation](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/)
+- [Cardano-specific consensus integration (hard-fork combinator, era dispatch)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/)
 
 ## Current Phase
 - Epoch math (`slot_to_epoch`, `epoch_first_slot`, `is_new_epoch`) operates on typed `SlotNo`/`EpochNo`/`EpochSize` from `yggdrasil-ledger`.

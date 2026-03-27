@@ -121,7 +121,7 @@ pub use protocol_params::{
 pub use fees::{min_fee_linear, script_fee, total_min_fee, validate_fee, validate_tx_ex_units, validate_tx_size};
 
 // -- Min-UTxO re-exports ------------------------------------------------------
-pub use min_utxo::{validate_all_outputs_min_utxo, validate_min_utxo};
+pub use min_utxo::{validate_all_outputs_min_utxo, validate_min_utxo, validate_output_not_too_big, validate_output_boot_addr_attrs};
 
 // -- Native script re-exports -------------------------------------------------
 pub use native_script::{NativeScriptContext, evaluate_native_script, native_script_hash};

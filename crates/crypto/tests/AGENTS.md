@@ -1,8 +1,4 @@
----
-name: crypto-tests
-description: Guidance for cryptographic vector and regression tests in the crypto crate.
----
-
+# Guidance for cryptographic vector and regression tests in the crypto crate.
 Use this directory for deterministic vector-backed crypto validation.
 
 ## Scope
@@ -16,11 +12,11 @@ Use this directory for deterministic vector-backed crypto validation.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Praos VRF/KES test vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test_vectors/>
-- BLS12-381 test vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>
-- `cardano-crypto-class` tests: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/test>
-- `cardano-crypto-praos` tests: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test>
-- `cardano-base` root: <https://github.com/IntersectMBO/cardano-base/tree/master/>
+- [Praos VRF/KES test vectors](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test_vectors/)
+- [BLS12-381 test vectors](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/bls12-381-test-vectors/test_vectors/)
+- [`cardano-crypto-class` tests](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/test)
+- [`cardano-crypto-praos` tests](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test)
+- [`cardano-base` root](https://github.com/IntersectMBO/cardano-base/tree/master/)
 
 ## Current Phase
 - Tests in this directory validate Ed25519, KES, Praos VRF proof generation and verification, and upstream vector parity.

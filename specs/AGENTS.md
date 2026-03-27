@@ -14,13 +14,13 @@ This directory holds reproducible specification inputs and pinned upstream artif
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Per-era CDDL schemas: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-- Ledger binary support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
-- Formal ledger specifications (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications>
-- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
-- Node integration reference: <https://github.com/IntersectMBO/cardano-node/>
-- Upstream crypto vectors: <https://github.com/IntersectMBO/cardano-base/>
-- Plutus core specification: <https://github.com/IntersectMBO/plutus/>
+- [Per-era CDDL schemas](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/)
+- [Ledger binary support libraries](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/)
+- [Formal ledger specifications (Agda)](https://github.com/IntersectMBO/formal-ledger-specifications)
+- [Published formal spec site](https://intersectmbo.github.io/formal-ledger-specifications/site)
+- [Node integration reference](https://github.com/IntersectMBO/cardano-node/)
+- [Upstream crypto vectors](https://github.com/IntersectMBO/cardano-base/)
+- [Plutus core specification](https://github.com/IntersectMBO/plutus/)
 
 ## Current Contents
 - `mini-ledger.cddl`: reduced pinned CDDL fixture used by `crates/cddl-codegen` tests and examples.

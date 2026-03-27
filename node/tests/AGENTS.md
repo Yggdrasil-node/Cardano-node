@@ -12,10 +12,10 @@ Keep tests in this directory focused on node orchestration and cross-crate integ
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Node runtime integration (`cardano-node`): <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
-- Submit API integration behavior: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
-- Consensus integration tests: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/>
-- Consensus diffusion integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion>
+- [Node runtime integration (`cardano-node`)](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/)
+- [Submit API integration behavior](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/)
+- [Consensus integration tests](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/)
+- [Consensus diffusion integration](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion)
 
 ## Current Phase
 - Tests in this directory cover runtime bootstrap, sync orchestration, verified service shutdown, TxSubmission integration behavior, and coordinated-storage recovery behavior across the node crate boundary, including first-Shelley activation of pending genesis initial funds and static stake delegations during replay.

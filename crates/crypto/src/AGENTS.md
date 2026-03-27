@@ -1,8 +1,4 @@
----
-name: crypto-src
-description: Guidance for cryptographic implementation modules in the crypto crate.
----
-
+# Guidance for cryptographic implementation modules in the crypto crate.
 This directory is for pure Rust cryptographic implementation code and protocol-facing encodings.
 
 ## Scope
@@ -16,12 +12,12 @@ This directory is for pure Rust cryptographic implementation code and protocol-f
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- `cardano-crypto-class` source tree (hash, Ed25519, VRF, KES abstractions): <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/src/Cardano/Crypto>
-- `cardano-crypto-praos` source tree (Praos VRF and KES implementations): <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/src/Cardano/Crypto>
-- Peras-era crypto extensions: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras>
-- BLS12-381 class bindings: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/src/Cardano/Crypto/EllipticCurve>
-- `cardano-base` root (shared crypto packages): <https://github.com/IntersectMBO/cardano-base/tree/master/>
-- Haddock documentation: <https://cardano-base.cardano.intersectmbo.org/haddocks/>
+- [`cardano-crypto-class` source tree](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/src/Cardano/Crypto) (hash, Ed25519, VRF, KES abstractions)
+- [`cardano-crypto-praos` source tree](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/src/Cardano/Crypto) (Praos VRF and KES implementations)
+- [Peras-era crypto extensions](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras)
+- [BLS12-381 class bindings](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/src/Cardano/Crypto/EllipticCurve)
+- [`cardano-base` root](https://github.com/IntersectMBO/cardano-base/tree/master/) (shared crypto packages)
+- [Haddock documentation](https://cardano-base.cardano.intersectmbo.org/haddocks/)
 
 ## Current Phase
 - Preserve upstream-compatible VRF and KES behavior while avoiding any hidden FFI dependency.

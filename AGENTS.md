@@ -36,60 +36,60 @@
 ## Official Upstream References *"Always research references and add or update links as needed"*
 
 ### Cryptography (`crates/crypto`)
-- Crypto abstractions (hashing, signatures, VRF, KES): <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class>
-- Praos VRF and KES implementations: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
-- Peras-era crypto extensions: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras>
+- [Crypto abstractions (hashing, signatures, VRF, KES)](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class)
+- [Praos VRF and KES implementations](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos)
+- [Peras-era crypto extensions](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras)
 
 ### CDDL Code Generation (`crates/cddl-codegen`)
-- Per-era CDDL schemas (Byron through Conway): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>
-- Binary serialization library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
-- Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs>
+- [Per-era CDDL schemas (Byron through Conway)](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras)
+- [Binary serialization library](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary)
+- [Ledger support libraries](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs)
 
 ### Ledger (`crates/ledger`)
-- Ledger repository (eras, libs, formal specs): <https://github.com/IntersectMBO/cardano-ledger>
-- Per-era rule implementations: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras> (each era has `impl/`, `formal-spec/`, and `cddl/` subdirectories)
-- Formal ledger specifications (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications>
-- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
+- [Ledger repository (eras, libs, formal specs)](https://github.com/IntersectMBO/cardano-ledger)
+- [Per-era rule implementations](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras) (each era has `impl/`, `formal-spec/`, and `cddl/` subdirectories)
+- [Formal ledger specifications (Agda)](https://github.com/IntersectMBO/formal-ledger-specifications)
+- [Published formal spec site](https://intersectmbo.github.io/formal-ledger-specifications/site)
 
 ### Storage (`crates/storage`)
-- ChainDB, ImmutableDB, VolatileDB, LedgerDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage>
-- Consensus storage documentation and tech reports: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs>
+- [ChainDB, ImmutableDB, VolatileDB, LedgerDB](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage)
+- [Consensus storage documentation and tech reports](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs)
 
 ### Consensus (`crates/consensus`)
-- Core consensus protocol modules: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol>
-- Cardano-specific consensus integration (Praos, TPraos): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol>
-- Formal consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec>
-- Consensus tech report: <https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf>
+- [Core consensus protocol modules](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol)
+- [Cardano-specific consensus integration (Praos, TPraos)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol)
+- [Formal consensus Agda specification](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec)
+- [Consensus tech report](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf)
 
 ### Mempool (`crates/mempool`)
-- Consensus Mempool module (API, TxSeq, Capacity, Init): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool>
-- Transaction submission API: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api>
+- [Consensus Mempool module (API, TxSeq, Capacity, Init)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool)
+- [Transaction submission API](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api)
 
 ### Network (`crates/network`)
-- Networking repository root: <https://github.com/IntersectMBO/ouroboros-network>
-- Multiplexer implementation: <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux>
-- Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework>
-- Mini-protocol implementations (ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing): <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols>
-- Outbound governor and peer selection: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network>
-- Shelley networking spec PDF: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
-- Network design document: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design>
+- [Networking repository root](https://github.com/IntersectMBO/ouroboros-network)
+- [Multiplexer implementation](https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux)
+- [Framework and handshake layer](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework)
+- [Mini-protocol implementations (ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing)](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols)
+- [Outbound governor and peer selection](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network)
+- [Shelley networking spec PDF](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec)
+- [Network design document](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design)
 
 ### Plutus (`crates/plutus`)
-- Plutus core repository: <https://github.com/IntersectMBO/plutus>
-- CEK machine: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek>
-- Builtin semantics: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs>
-- Cost model parameters: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model>
+- [Plutus core repository](https://github.com/IntersectMBO/plutus)
+- [CEK machine](https://github.com/IntersectMBO/plutus/tree/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek)
+- [Builtin semantics](https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs)
+- [Cost model parameters](https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model)
 
 ### Node (`node/`)
-- Node integration repository: <https://github.com/IntersectMBO/cardano-node>
-- Node runtime and packaging: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node>
-- Network configuration files: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration>
-- Transaction submit API: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api>
+- [Node integration repository](https://github.com/IntersectMBO/cardano-node)
+- [Node runtime and packaging](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node)
+- [Network configuration files](https://github.com/IntersectMBO/cardano-node/tree/master/configuration)
+- [Transaction submit API](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api)
 
 ### Cross-Cutting Documentation
-- Cardano developer portal: <https://github.com/cardano-foundation/developer-portal/tree/staging/docs/>
-- Cardano blueprint: <https://github.com/cardano-scaling/cardano-blueprint/tree/main/src> or <https://cardano-scaling.github.io/cardano-blueprint/>
-- Haddock documentation: ledger (<https://cardano-ledger.cardano.intersectmbo.org/>), consensus (<https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>), network (<https://ouroboros-network.cardano.intersectmbo.org/>)
+- [Cardano developer portal](https://github.com/cardano-foundation/developer-portal/tree/staging/docs/)
+- [Cardano blueprint](https://github.com/cardano-scaling/cardano-blueprint/tree/main/src) or [https://cardano-scaling.github.io/cardano-blueprint/](https://cardano-scaling.github.io/cardano-blueprint/)
+- [Haddock documentation: ledger](https://cardano-ledger.cardano.intersectmbo.org/), [consensus](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/), [network](https://ouroboros-network.cardano.intersectmbo.org/)
 
 ##  Rules *Non-Negotiable*
 - Always write typesafe Rust code.

@@ -11,5 +11,5 @@ This directory contains preview reference configuration artifacts only.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Preview configuration files: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preview/>
-- Cardano Operations Book — preview: <https://book.play.dev.cardano.org/>
+- [Preview configuration files](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preview/)
+- [Cardano Operations Book — preview](https://book.play.dev.cardano.org/)

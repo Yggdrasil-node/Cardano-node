@@ -1,8 +1,4 @@
----
-name: cddl-codegen-tests
-description: Guidance for parser and generator regression coverage in the cddl-codegen crate.
----
-
+# Guidance for parser and generator regression coverage in the cddl-codegen crate.
 Keep tests in this directory focused on deterministic parser and generator behavior.
 
 ## Scope
@@ -16,10 +12,10 @@ Keep tests in this directory focused on deterministic parser and generator behav
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Era CDDL roots (each era has `impl/cddl-files/` and `impl/cddl/data/`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-- Shelley CDDL files: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl/cddl-files>
-- Conway CDDL files: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/impl/cddl-files>
-- Ledger binary support library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
+- [Era CDDL roots (each era has `impl/cddl-files/` and `impl/cddl/data/`)](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/)
+- [Shelley CDDL files](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl/cddl-files)
+- [Conway CDDL files](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/impl/cddl-files)
+- [Ledger binary support library](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/)
 
 ## Current Phase
 - 26 integration tests in `integration.rs`:

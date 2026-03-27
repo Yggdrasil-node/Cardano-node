@@ -17,13 +17,13 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Node integration repository: <https://github.com/IntersectMBO/cardano-node/>
-- Node runtime and packaging (`cardano-node/`): <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
-- Default network configuration files (mainnet, preprod, preview): <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
-- Transaction submit API: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
-- Cardano Operations Book (environment configs): <https://book.world.dev.cardano.org/env-mainnet.html>, <https://book.world.dev.cardano.org/env-preprod.html>, <https://book.world.dev.cardano.org/env-preview.html>
-- Consensus integration (ChainDB, Node runner): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/>
-- Network diffusion layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/cardano-diffusion/>
+- [Node integration repository](https://github.com/IntersectMBO/cardano-node/)
+- [Node runtime and packaging](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/)
+- [Default network configuration files (mainnet, preprod, preview)](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/)
+- [Transaction submit API](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/)
+- [Cardano Operations Book (environment configs)](https://book.world.dev.cardano.org/env-mainnet.html), [preprod](https://book.world.dev.cardano.org/env-preprod.html), [preview](https://book.world.dev.cardano.org/env-preview.html)
+- [Consensus integration (ChainDB, Node runner)](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/)
+- [Network diffusion layer](https://github.com/IntersectMBO/ouroboros-network/tree/main/cardano-diffusion/)
 
 ## Current Phase
 - Keep the node crate thin and integration-focused.
