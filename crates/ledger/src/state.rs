@@ -2909,6 +2909,7 @@ impl LedgerState {
                 // Reference input validation (Babbage+ rule)
                 if let Some(ref_inputs) = &tx.body.reference_inputs {
                     staged.validate_reference_inputs(ref_inputs)?;
+                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -2970,6 +2971,7 @@ impl LedgerState {
                 // Reference input validation (Babbage+ rule)
                 if let Some(ref_inputs) = &tx.body.reference_inputs {
                     staged.validate_reference_inputs(ref_inputs)?;
+                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -3608,6 +3610,7 @@ impl LedgerState {
             )?;
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
+                MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
             }
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
@@ -3775,6 +3778,7 @@ impl LedgerState {
             )?;
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
+                MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
             }
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {

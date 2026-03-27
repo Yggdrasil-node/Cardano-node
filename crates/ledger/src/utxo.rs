@@ -722,6 +722,24 @@ impl MultiEraUtxo {
         }
         Ok(())
     }
+
+    /// Validates that spending inputs and reference inputs are disjoint.
+    ///
+    /// Babbage+ UTXO rule: the sets of spending and reference inputs must not
+    /// overlap.  Upstream: `disjoint txins refInputs`.
+    pub fn validate_reference_input_disjointness(
+        inputs: &[ShelleyTxIn],
+        ref_inputs: &[ShelleyTxIn],
+    ) -> Result<(), LedgerError> {
+        for ri in ref_inputs {
+            for inp in inputs {
+                if ri == inp {
+                    return Err(LedgerError::ReferenceInputContention);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

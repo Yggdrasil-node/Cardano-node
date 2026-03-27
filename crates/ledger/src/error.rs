@@ -42,6 +42,9 @@ pub enum LedgerError {
     #[error("reference input not found in UTxO set")]
     ReferenceInputNotInUtxo,
 
+    #[error("spending input also appears in reference inputs (Babbage+ disjointness rule)")]
+    ReferenceInputContention,
+
     #[error(
         "value not preserved: consumed {consumed} lovelace != produced {produced} + fee {fee}"
     )]
