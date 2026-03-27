@@ -1,0 +1,228 @@
+//! Integration tests for ExtraneousScriptWitness predicate failure.
+//!
+//! Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.extraneousScriptWitnessesUTXOW`
+
+use super::*;
+
+fn permissive_params() -> ProtocolParameters {
+    let mut params = ProtocolParameters::default();
+    params.min_fee_a = 0;
+    params.min_fee_b = 0;
+    params
+}
+
+fn sample_addr() -> Vec<u8> {
+    // Enterprise key-hash address (type 6, network 1) → VKey-locked, no script
+    let mut addr = vec![0x61]; // 0110_0001
+    addr.extend_from_slice(&[0x11; 28]);
+    addr
+}
+
+/// Seed a VKey-locked UTxO so the transaction's input resolves.
+fn seed_utxo(state: &mut LedgerState, seed: u8) {
+    let input = ShelleyTxIn {
+        transaction_id: [seed; 32],
+        index: 0,
+    };
+    state.utxo_mut().insert(
+        input,
+        ShelleyTxOut {
+            address: sample_addr(),
+            amount: 5_000_000,
+        },
+    );
+}
+
+fn empty_witness_set() -> ShelleyWitnessSet {
+    ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    }
+}
+
+// ── Allegra submitted path: extraneous native script ───────────────────
+
+/// A native script that is NOT required by any input, cert, or withdrawal
+/// but IS present in the witness set should be rejected.
+#[test]
+fn allegra_submitted_tx_rejects_extraneous_native_script() {
+    let mut state = LedgerState::new(Era::Allegra);
+    state.set_protocol_params(permissive_params());
+    seed_utxo(&mut state, 0xA1);
+
+    let body = AllegraTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xA1; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: sample_addr(),
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        validity_interval_start: None,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    // An unrequired ScriptAll([]) native script in witness set.
+    let unrequired_script = NativeScript::ScriptAll(vec![]);
+    let unrequired_hash = native_script_hash(&unrequired_script);
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(unrequired_script);
+
+    let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: None,
+        raw_cbor: vec![0x80], // dummy
+    });
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ExtraneousScriptWitness { hash }) if hash == unrequired_hash
+        ),
+        "expected ExtraneousScriptWitness, got: {:?}",
+        result,
+    );
+}
+
+// ── Allegra: required native script is NOT extraneous ──────────────────
+
+/// When a native script IS required (input at a script address), it should
+/// be accepted (no extraneous error).
+#[test]
+fn allegra_submitted_tx_accepts_required_native_script() {
+    let mut state = LedgerState::new(Era::Allegra);
+    state.set_protocol_params(permissive_params());
+
+    // Create a script-locked UTxO: address type 0x71 = enterprise script-hash
+    let required_script = NativeScript::ScriptAll(vec![]); // always true
+    let script_hash = native_script_hash(&required_script);
+    let mut script_addr = vec![0x71]; // enterprise script-hash, network 1
+    script_addr.extend_from_slice(&script_hash);
+
+    let input = ShelleyTxIn {
+        transaction_id: [0xA2; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: script_addr.clone(),
+            amount: 5_000_000,
+        }),
+    );
+
+    let body = AllegraTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: sample_addr(),
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        validity_interval_start: None,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(required_script);
+
+    let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: None,
+        raw_cbor: vec![0x80],
+    });
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    assert!(
+        result.is_ok(),
+        "expected Ok for required native script, got: {:?}",
+        result,
+    );
+}
+
+// ── Block path: extraneous native script in Allegra block ──────────────
+
+/// Block path should also reject extraneous script witnesses.
+#[test]
+fn allegra_block_rejects_extraneous_native_script() {
+    let mut state = LedgerState::new(Era::Allegra);
+    state.set_protocol_params(permissive_params());
+    seed_utxo(&mut state, 0xA3);
+
+    let body = AllegraTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xA3; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: sample_addr(),
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        validity_interval_start: None,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    let unrequired_script = NativeScript::ScriptAll(vec![]);
+    let unrequired_hash = native_script_hash(&unrequired_script);
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(unrequired_script);
+
+    let body_bytes = body.to_cbor_bytes();
+    let ws_bytes = ws.to_cbor_bytes();
+
+    let tx = Tx {
+        id: compute_tx_id(&body_bytes),
+        body: body_bytes,
+        witnesses: Some(ws_bytes),
+        auxiliary_data: None,
+        is_valid: None,
+    };
+
+    let block = Block {
+        era: Era::Allegra,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+    };
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ExtraneousScriptWitness { hash }) if hash == unrequired_hash
+        ),
+        "expected ExtraneousScriptWitness, got: {:?}",
+        result,
+    );
+}

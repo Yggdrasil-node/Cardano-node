@@ -37,6 +37,7 @@ mod ledger_state_pools_rewards_queries;
 mod ledger_state_stake_and_drep;
 mod missing_metadata_hash;
 mod multi_era_utxo;
+mod extraneous_script_witness;
 mod network_validation;
 mod output_validation;
 mod plutus_evaluation;

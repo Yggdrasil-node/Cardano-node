@@ -2785,6 +2785,10 @@ impl LedgerState {
                     &staged,
                     None,
                 )?;
+                validate_no_extraneous_script_witnesses_typed(
+                    &tx.witness_set,
+                    &required_scripts,
+                )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -2875,6 +2879,10 @@ impl LedgerState {
                     &native_satisfied,
                     &staged,
                     None,
+                )?;
+                validate_no_extraneous_script_witnesses_typed(
+                    &tx.witness_set,
+                    &required_scripts,
                 )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -2982,6 +2990,10 @@ impl LedgerState {
                     &native_satisfied,
                     &staged,
                     None,
+                )?;
+                validate_no_extraneous_script_witnesses_typed(
+                    &tx.witness_set,
+                    &required_scripts,
                 )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -3094,6 +3106,10 @@ impl LedgerState {
                     &native_satisfied,
                     &staged,
                     tx.body.reference_inputs.as_deref(),
+                )?;
+                validate_no_extraneous_script_witnesses_typed(
+                    &tx.witness_set,
+                    &required_scripts,
                 )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -3223,6 +3239,10 @@ impl LedgerState {
                     &native_satisfied,
                     &staged,
                     tx.body.reference_inputs.as_deref(),
+                )?;
+                validate_no_extraneous_script_witnesses_typed(
+                    &tx.witness_set,
+                    &required_scripts,
                 )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -3532,6 +3552,10 @@ impl LedgerState {
                 &staged,
                 None,
             )?;
+            validate_no_extraneous_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+            )?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -3648,6 +3672,10 @@ impl LedgerState {
                 &native_satisfied,
                 &staged,
                 None,
+            )?;
+            validate_no_extraneous_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
             )?;
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
@@ -3795,6 +3823,10 @@ impl LedgerState {
                 &native_satisfied,
                 &staged,
                 None,
+            )?;
+            validate_no_extraneous_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
             )?;
             // ── is_valid bifurcation (Phase-2 / collateral-only) ──
             let run_phase2 = || -> Result<(), LedgerError> {
@@ -4012,6 +4044,10 @@ impl LedgerState {
                 &native_satisfied,
                 &staged,
                 body.reference_inputs.as_deref(),
+            )?;
+            validate_no_extraneous_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
             )?;
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Babbage)
@@ -4256,6 +4292,10 @@ impl LedgerState {
                 &native_satisfied,
                 &staged,
                 body.reference_inputs.as_deref(),
+            )?;
+            validate_no_extraneous_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
             )?;
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Conway)
@@ -5983,6 +6023,74 @@ fn validate_required_script_witnesses(
         }
     }
 
+    Ok(())
+}
+
+/// Collect the set of script hashes provided in the witness set (native
+/// scripts + Plutus V1/V2/V3 scripts).
+fn provided_script_hashes_from_witnesses(
+    ws: &crate::eras::shelley::ShelleyWitnessSet,
+) -> HashSet<[u8; 28]> {
+    let mut provided = HashSet::new();
+    for ns in &ws.native_scripts {
+        provided.insert(crate::native_script::native_script_hash(ns));
+    }
+    for s in &ws.plutus_v1_scripts {
+        provided.insert(crate::plutus_validation::plutus_script_hash(
+            crate::plutus_validation::PlutusVersion::V1,
+            s,
+        ));
+    }
+    for s in &ws.plutus_v2_scripts {
+        provided.insert(crate::plutus_validation::plutus_script_hash(
+            crate::plutus_validation::PlutusVersion::V2,
+            s,
+        ));
+    }
+    for s in &ws.plutus_v3_scripts {
+        provided.insert(crate::plutus_validation::plutus_script_hash(
+            crate::plutus_validation::PlutusVersion::V3,
+            s,
+        ));
+    }
+    provided
+}
+
+/// Validates that no scripts in the witness set are extraneous — every
+/// provided script must be required by an input, certificate, withdrawal,
+/// mint, vote, or proposal in the transaction.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.extraneousScriptWitnessesUTXOW`.
+fn validate_no_extraneous_script_witnesses(
+    witness_bytes: Option<&[u8]>,
+    required_script_hashes: &HashSet<[u8; 28]>,
+) -> Result<(), LedgerError> {
+    let witness_bytes = match witness_bytes {
+        Some(wb) => wb,
+        None => return Ok(()),
+    };
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
+    let provided = provided_script_hashes_from_witnesses(&ws);
+    for hash in &provided {
+        if !required_script_hashes.contains(hash) {
+            return Err(LedgerError::ExtraneousScriptWitness { hash: *hash });
+        }
+    }
+    Ok(())
+}
+
+/// Typed variant for submitted-path where we already have a decoded
+/// `ShelleyWitnessSet`.
+fn validate_no_extraneous_script_witnesses_typed(
+    ws: &crate::eras::shelley::ShelleyWitnessSet,
+    required_script_hashes: &HashSet<[u8; 28]>,
+) -> Result<(), LedgerError> {
+    let provided = provided_script_hashes_from_witnesses(ws);
+    for hash in &provided {
+        if !required_script_hashes.contains(hash) {
+            return Err(LedgerError::ExtraneousScriptWitness { hash: *hash });
+        }
+    }
     Ok(())
 }
 

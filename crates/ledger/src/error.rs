@@ -311,6 +311,13 @@ pub enum LedgerError {
     #[error("required script witness not found for script hash {hash:02x?}")]
     MissingScriptWitness { hash: [u8; 28] },
 
+    /// A script witness was provided but is not required by any input,
+    /// certificate, withdrawal, mint, vote, or proposal in the transaction.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.extraneousScriptWitnessesUTXOW`.
+    #[error("extraneous script witness: script hash {hash:02x?} not required by transaction")]
+    ExtraneousScriptWitness { hash: [u8; 28] },
+
     #[error("no matching redeemer for script hash {hash:02x?} (purpose {purpose})")]
     MissingRedeemer { hash: [u8; 28], purpose: String },
 
