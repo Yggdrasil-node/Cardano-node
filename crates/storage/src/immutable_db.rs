@@ -1,4 +1,4 @@
-use yggdrasil_ledger::{Block, HeaderHash, Point};
+use yggdrasil_ledger::{Block, HeaderHash, Point, SlotNo};
 
 use crate::error::StorageError;
 
@@ -34,6 +34,17 @@ pub trait ImmutableStore {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Removes all immutable blocks with slots strictly before `slot`.
+    ///
+    /// Returns the number of blocks removed. Blocks at `slot` or later are
+    /// retained. This is the immutable-store analogue of
+    /// `VolatileStore::prune_up_to`.
+    ///
+    /// Reference: `Ouroboros.Consensus.Storage.ImmutableDB` GC semantics —
+    /// the official node periodically garbage-collects immutable chunks that
+    /// are no longer needed for chain recovery or ledger replay.
+    fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError>;
 }
 
 /// In-memory immutable store for tests and interface stabilization.
@@ -88,5 +99,11 @@ impl ImmutableStore for InMemoryImmutable {
 
     fn len(&self) -> usize {
         self.blocks.len()
+    }
+
+    fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
+        let before = self.blocks.len();
+        self.blocks.retain(|b| b.header.slot_no >= slot);
+        Ok(before - self.blocks.len())
     }
 }

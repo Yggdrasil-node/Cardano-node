@@ -354,6 +354,18 @@ where
         Ok(blocks.len())
     }
 
+    /// Garbage-collects immutable blocks with slots strictly before `slot`.
+    ///
+    /// This is the coordinated counterpart to `ImmutableStore::trim_before_slot`.
+    /// The caller is responsible for choosing a slot that preserves enough
+    /// history for ledger replay (typically the oldest retained ledger
+    /// checkpoint slot).
+    ///
+    /// Returns the number of blocks removed.
+    pub fn gc_immutable_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
+        self.immutable.trim_before_slot(slot)
+    }
+
     /// Borrows the immutable store.
     pub fn immutable(&self) -> &I {
         &self.immutable

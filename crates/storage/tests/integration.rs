@@ -1208,3 +1208,162 @@ fn chaindb_recovery_empty_stores() {
     assert_eq!(recovery.tip, Point::Origin);
     assert_eq!(recovery.ledger_snapshot_slot, None);
 }
+
+// ---------------------------------------------------------------------------
+// ImmutableStore::trim_before_slot — InMemory
+// ---------------------------------------------------------------------------
+
+#[test]
+fn immutable_trim_before_slot_removes_older_blocks() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 10)).unwrap();
+    store.append_block(test_block(0x02, 20)).unwrap();
+    store.append_block(test_block(0x03, 30)).unwrap();
+    store.append_block(test_block(0x04, 40)).unwrap();
+
+    let removed = store.trim_before_slot(SlotNo(25)).unwrap();
+    assert_eq!(removed, 2, "slots 10 and 20 should be removed");
+    assert_eq!(store.len(), 2);
+    assert!(store.get_block(&HeaderHash([0x01; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x03; 32])).is_some());
+    assert!(store.get_block(&HeaderHash([0x04; 32])).is_some());
+}
+
+#[test]
+fn immutable_trim_before_slot_zero_is_noop() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 5)).unwrap();
+    store.append_block(test_block(0x02, 10)).unwrap();
+
+    let removed = store.trim_before_slot(SlotNo(0)).unwrap();
+    assert_eq!(removed, 0);
+    assert_eq!(store.len(), 2);
+}
+
+#[test]
+fn immutable_trim_before_slot_beyond_tip_clears_all() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 5)).unwrap();
+    store.append_block(test_block(0x02, 10)).unwrap();
+
+    let removed = store.trim_before_slot(SlotNo(999)).unwrap();
+    assert_eq!(removed, 2);
+    assert!(store.is_empty());
+    assert_eq!(store.get_tip(), Point::Origin);
+}
+
+#[test]
+fn immutable_trim_before_slot_on_empty_store() {
+    let mut store = InMemoryImmutable::default();
+    let removed = store.trim_before_slot(SlotNo(100)).unwrap();
+    assert_eq!(removed, 0);
+}
+
+#[test]
+fn immutable_trim_before_slot_exact_boundary() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 10)).unwrap();
+    store.append_block(test_block(0x02, 20)).unwrap();
+    store.append_block(test_block(0x03, 30)).unwrap();
+
+    // trim_before_slot(20) keeps slot 20 and later
+    let removed = store.trim_before_slot(SlotNo(20)).unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(store.len(), 2);
+    assert!(store.get_block(&HeaderHash([0x01; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_some());
+    assert!(store.get_block(&HeaderHash([0x03; 32])).is_some());
+}
+
+#[test]
+fn immutable_trim_preserves_tip() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 10)).unwrap();
+    store.append_block(test_block(0x02, 20)).unwrap();
+
+    store.trim_before_slot(SlotNo(15)).unwrap();
+    assert_eq!(
+        store.get_tip(),
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ImmutableStore::trim_before_slot — File-backed
+// ---------------------------------------------------------------------------
+
+#[test]
+fn file_immutable_trim_before_slot_removes_older_blocks() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let mut store = FileImmutable::open(dir.path()).expect("open store");
+    store.append_block(test_block(0x01, 10)).unwrap();
+    store.append_block(test_block(0x02, 20)).unwrap();
+    store.append_block(test_block(0x03, 30)).unwrap();
+
+    let removed = store.trim_before_slot(SlotNo(25)).unwrap();
+    assert_eq!(removed, 2);
+    assert_eq!(store.len(), 1);
+    assert!(store.get_block(&HeaderHash([0x03; 32])).is_some());
+
+    // Verify files are actually deleted — re-open and confirm
+    let store2 = FileImmutable::open(dir.path()).expect("reopen store");
+    assert_eq!(store2.len(), 1);
+    assert!(store2.get_block(&HeaderHash([0x01; 32])).is_none());
+    assert!(store2.get_block(&HeaderHash([0x03; 32])).is_some());
+}
+
+#[test]
+fn file_immutable_trim_before_slot_on_empty() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let mut store = FileImmutable::open(dir.path()).expect("open store");
+    let removed = store.trim_before_slot(SlotNo(100)).unwrap();
+    assert_eq!(removed, 0);
+}
+
+// ---------------------------------------------------------------------------
+// ChainDb::gc_immutable_before_slot
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chaindb_gc_immutable_before_slot() {
+    let mut immutable = InMemoryImmutable::default();
+    immutable.append_block(test_block(0x01, 10)).unwrap();
+    immutable.append_block(test_block(0x02, 20)).unwrap();
+    immutable.append_block(test_block(0x03, 30)).unwrap();
+    immutable.append_block(test_block(0x04, 40)).unwrap();
+
+    let mut chain_db = ChainDb::new(
+        immutable,
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    let removed = chain_db.gc_immutable_before_slot(SlotNo(25)).unwrap();
+    assert_eq!(removed, 2);
+    assert_eq!(chain_db.immutable().len(), 2);
+}
+
+#[test]
+fn chaindb_gc_preserves_volatile_and_ledger() {
+    let mut immutable = InMemoryImmutable::default();
+    immutable.append_block(test_block(0x01, 10)).unwrap();
+    immutable.append_block(test_block(0x02, 20)).unwrap();
+
+    let mut volatile = InMemoryVolatile::default();
+    volatile.add_block(test_block(0x03, 30)).unwrap();
+
+    let mut ledger = InMemoryLedgerStore::default();
+    ledger.save_snapshot(SlotNo(20), vec![1, 2, 3]).unwrap();
+
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    // GC immutable blocks before slot 15 — should remove only slot 10
+    let removed = chain_db.gc_immutable_before_slot(SlotNo(15)).unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(chain_db.immutable().len(), 1);
+
+    // Volatile and ledger stores are untouched
+    assert!(chain_db.volatile().get_block(&HeaderHash([0x03; 32])).is_some());
+    assert!(chain_db.ledger().latest_snapshot().is_some());
+}

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use yggdrasil_ledger::{Block, HeaderHash, Point};
+use yggdrasil_ledger::{Block, HeaderHash, Point, SlotNo};
 
 use crate::error::StorageError;
 use crate::immutable_db::ImmutableStore;
@@ -141,6 +141,25 @@ impl ImmutableStore for FileImmutable {
 
     fn len(&self) -> usize {
         self.chain.len()
+    }
+
+    fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
+        let to_remove: Vec<HeaderHash> = self
+            .chain
+            .iter()
+            .filter(|hash| self.index[hash].header.slot_no < slot)
+            .copied()
+            .collect();
+        let removed = to_remove.len();
+        for hash in &to_remove {
+            let path = self.block_path(hash);
+            if path.exists() {
+                fs::remove_file(&path)?;
+            }
+            self.index.remove(hash);
+        }
+        self.chain.retain(|hash| !to_remove.contains(hash));
+        Ok(removed)
     }
 }
 
