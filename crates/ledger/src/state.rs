@@ -3014,6 +3014,29 @@ impl LedgerState {
                         &[],
                     )?;
                 }
+                // ExtraRedeemer check (Alonzo submitted — Phase-1 UTXOW).
+                {
+                    let mut sorted_inputs = tx.body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    crate::plutus_validation::validate_no_extra_redeemers(
+                        Some(&witness_bytes),
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
+                        None,
+                    )?;
+                }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3153,6 +3176,29 @@ impl LedgerState {
                         &tx.body.inputs,
                         &tx_outputs,
                         &ref_utxos,
+                    )?;
+                }
+                // ExtraRedeemer check (Babbage submitted — Phase-1 UTXOW).
+                {
+                    let mut sorted_inputs = tx.body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    crate::plutus_validation::validate_no_extra_redeemers(
+                        Some(&witness_bytes),
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
+                        tx.body.reference_inputs.as_deref(),
                     )?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
@@ -3311,6 +3357,40 @@ impl LedgerState {
                         &tx.body.inputs,
                         &tx_outputs,
                         &ref_utxos,
+                    )?;
+                }
+                // ExtraRedeemer check (Conway submitted — Phase-1 UTXOW).
+                {
+                    let mut sorted_inputs = tx.body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    let sorted_voters: Vec<crate::eras::conway::Voter> = tx.body.voting_procedures.as_ref()
+                        .map(|vp| {
+                            let mut vs: Vec<_> = vp.procedures.keys().cloned().collect();
+                            vs.sort();
+                            vs
+                        })
+                        .unwrap_or_default();
+                    let proposal_slice: Vec<crate::eras::conway::ProposalProcedure> = tx.body.proposal_procedures
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .to_vec();
+                    crate::plutus_validation::validate_no_extra_redeemers(
+                        Some(&witness_bytes),
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &sorted_voters,
+                        &proposal_slice,
+                        tx.body.reference_inputs.as_deref(),
                     )?;
                 }
                 // Conway UTXO rule: validate current_treasury_value declaration.

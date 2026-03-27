@@ -704,6 +704,85 @@ pub fn validate_unspendable_utxo_no_datum_hash(
     Ok(())
 }
 
+/// Phase-1 ExtraRedeemers check: every redeemer must target a purpose backed
+/// by a Plutus script.
+///
+/// This is a standalone extraction of the UTXOW `hasExactSetOfRedeemers`
+/// predicate so it can be called from both block-apply and submitted-tx
+/// paths.  The block path also runs this implicitly via
+/// [`validate_plutus_scripts`], but submitted-tx paths skip Phase-2
+/// evaluation and need this check independently.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.hasExactSetOfRedeemers`
+pub fn validate_no_extra_redeemers(
+    witness_bytes: Option<&[u8]>,
+    spending_utxo: &MultiEraUtxo,
+    sorted_inputs: &[crate::eras::shelley::ShelleyTxIn],
+    sorted_policy_ids: &[[u8; 28]],
+    certificates: &[DCert],
+    sorted_reward_accounts: &[Vec<u8>],
+    sorted_voters: &[Voter],
+    proposal_procedures: &[ProposalProcedure],
+    reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+) -> Result<(), LedgerError> {
+    let wb = match witness_bytes {
+        Some(wb) => wb,
+        None => return Ok(()),
+    };
+
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
+    if ws.redeemers.is_empty() {
+        return Ok(());
+    }
+
+    let plutus_scripts = collect_all_plutus_scripts(&ws, spending_utxo, reference_inputs);
+
+    for redeemer in &ws.redeemers {
+        let purpose = resolve_script_purpose(
+            redeemer,
+            sorted_inputs,
+            sorted_policy_ids,
+            certificates,
+            sorted_reward_accounts,
+            sorted_voters,
+            proposal_procedures,
+        )?;
+        let target_hash = match &purpose {
+            ScriptPurpose::Spending { tx_id, index } => {
+                let txin = crate::eras::shelley::ShelleyTxIn {
+                    transaction_id: *tx_id,
+                    index: *index as u16,
+                };
+                spending_utxo
+                    .get(&txin)
+                    .and_then(spending_script_hash_from_txout)
+            }
+            ScriptPurpose::Minting { policy_id } => Some(*policy_id),
+            ScriptPurpose::Certifying { certificate, .. } => {
+                certifying_script_hash_from_cert(certificate)
+            }
+            ScriptPurpose::Rewarding { reward_account } => {
+                credential_script_hash(&reward_account.credential)
+            }
+            ScriptPurpose::Voting { voter } => voting_voter_script_hash(voter),
+            ScriptPurpose::Proposing { proposal, .. } => {
+                proposal_script_hash_from_proposal(proposal)
+            }
+        };
+        match target_hash {
+            Some(hash) if plutus_scripts.contains_key(&hash) => {}
+            _ => {
+                return Err(LedgerError::ExtraRedeemer {
+                    tag: redeemer.tag,
+                    index: redeemer.index,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Validates all Plutus scripts referenced by a transaction.
 ///
 /// This is the main entry point called from per-era `apply_block()` functions.
