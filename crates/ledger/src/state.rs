@@ -2829,9 +2829,10 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
-                    Some(&tx.witness_set.to_cbor_bytes()),
+                    Some(&witness_bytes),
                     self.protocol_params.as_ref(),
                     false,
                 )?;
@@ -2860,6 +2861,41 @@ impl LedgerState {
                     validate_tx_body_network_id(expected_net, tx.body.network_id)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &staged,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
+                }
+                if let Some(mint) = &tx.body.mint {
+                    crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+                }
+                let native_satisfied = validate_native_scripts_if_present(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    current_slot.0,
+                )?;
+                validate_required_script_witnesses(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    &native_satisfied,
+                    &staged,
+                    None,
+                )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -2895,9 +2931,10 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
-                    Some(&tx.witness_set.to_cbor_bytes()),
+                    Some(&witness_bytes),
                     self.protocol_params.as_ref(),
                     true,
                 )?;
@@ -2932,6 +2969,41 @@ impl LedgerState {
                     staged.validate_reference_inputs(ref_inputs)?;
                     MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
                 }
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &staged,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
+                }
+                if let Some(mint) = &tx.body.mint {
+                    crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+                }
+                let native_satisfied = validate_native_scripts_if_present(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    current_slot.0,
+                )?;
+                validate_required_script_witnesses(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    &native_satisfied,
+                    &staged,
+                    tx.body.reference_inputs.as_deref(),
+                )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -2967,9 +3039,10 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
-                    Some(&tx.witness_set.to_cbor_bytes()),
+                    Some(&witness_bytes),
                     self.protocol_params.as_ref(),
                     true,
                 )?;
@@ -3007,6 +3080,53 @@ impl LedgerState {
                 // Conway LEDGER rule: total reference script size limit
                 staged.validate_tx_ref_scripts_size(
                     &tx.body.inputs,
+                    tx.body.reference_inputs.as_deref(),
+                )?;
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &staged,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
+                }
+                if let Some(mint) = &tx.body.mint {
+                    crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+                }
+                if let Some(voting_procedures) = &tx.body.voting_procedures {
+                    crate::witnesses::required_script_hashes_from_voting_procedures(
+                        voting_procedures,
+                        &mut required_scripts,
+                    );
+                }
+                if let Some(proposal_procedures) = &tx.body.proposal_procedures {
+                    crate::witnesses::required_script_hashes_from_proposal_procedures(
+                        proposal_procedures,
+                        &mut required_scripts,
+                    );
+                }
+                let native_satisfied = validate_native_scripts_if_present(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    current_slot.0,
+                )?;
+                validate_required_script_witnesses(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    &native_satisfied,
+                    &staged,
                     tx.body.reference_inputs.as_deref(),
                 )?;
                 let mut staged_pool_state = self.pool_state.clone();

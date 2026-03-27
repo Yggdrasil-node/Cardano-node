@@ -43,6 +43,7 @@ mod ref_scripts_size;
 mod reference_input_contention;
 mod shelley;
 mod script_data_hash;
+mod submitted_script_witness;
 mod txbody_keys;
 mod types_and_certs;
 mod witness_validation;
