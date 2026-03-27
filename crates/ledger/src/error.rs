@@ -328,6 +328,15 @@ pub enum LedgerError {
     #[error("extra redeemer: tag {tag} index {index} does not target a Plutus script purpose")]
     ExtraRedeemer { tag: u8, index: u64 },
 
+    /// A datum in the witness set is not required by any Plutus spending input
+    /// and its hash does not appear on any transaction output (or reference-
+    /// input UTxO in Babbage+).
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.validateRequiredDatums`
+    /// (`NotAllowedSupplementalDatums`).
+    #[error("witness datum with hash {hash:02x?} is not allowed as supplemental")]
+    NotAllowedSupplementalDatums { hash: [u8; 32] },
+
     #[error("datum not found for spending input (tx {tx_id:02x?} index {index})")]
     MissingDatum { tx_id: [u8; 32], index: u64 },
 

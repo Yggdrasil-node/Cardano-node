@@ -127,6 +127,26 @@ impl MultiEraTxOut {
             _ => None,
         }
     }
+
+    /// Returns the datum hash attached to this output, if any.
+    ///
+    /// - Shelley/Mary: always `None` (no datum support).
+    /// - Alonzo: returns `AlonzoTxOut.datum_hash`.
+    /// - Babbage: returns `Some(h)` for `DatumOption::Hash(h)`, `None` for
+    ///   inline datums and absent datum options.
+    ///
+    /// This matches upstream `dataHashTxOutL` which returns `SNothing` for
+    /// inline datums (they are not counted as "datum hash" outputs).
+    pub fn datum_hash(&self) -> Option<[u8; 32]> {
+        match self {
+            Self::Shelley(_) | Self::Mary(_) => None,
+            Self::Alonzo(o) => o.datum_hash,
+            Self::Babbage(o) => match &o.datum_option {
+                Some(crate::eras::babbage::DatumOption::Hash(h)) => Some(*h),
+                _ => None,
+            },
+        }
+    }
 }
 
 /// A multi-era UTxO set.

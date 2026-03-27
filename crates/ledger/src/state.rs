@@ -4,7 +4,7 @@ use crate::eras::babbage::BabbageTxBody;
 use crate::eras::byron::ByronTx;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
-use crate::eras::shelley::{ShelleyTxBody, ShelleyUtxo};
+use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyUtxo};
 use crate::types::{
     Address, Anchor, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, Point,
     PoolKeyHash, PoolParams, RewardAccount, Relay, StakeCredential, UnitInterval,
@@ -2995,6 +2995,19 @@ impl LedgerState {
                     &tx.witness_set,
                     &required_scripts,
                 )?;
+                // Supplemental datum check (Alonzo submitted — no reference inputs).
+                {
+                    let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Alonzo(o.clone()))
+                        .collect();
+                    crate::plutus_validation::validate_supplemental_datums(
+                        Some(&witness_bytes),
+                        &staged,
+                        &tx.body.inputs,
+                        &tx_outputs,
+                        &[],
+                    )?;
+                }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3111,6 +3124,25 @@ impl LedgerState {
                     &tx.witness_set,
                     &required_scripts,
                 )?;
+                // Supplemental datum check (Babbage submitted — includes reference inputs).
+                {
+                    let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                        .collect();
+                    let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx.body.reference_inputs
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter_map(|txin| staged.get(txin).map(|txout| (txin.clone(), txout.clone())))
+                        .collect();
+                    crate::plutus_validation::validate_supplemental_datums(
+                        Some(&witness_bytes),
+                        &staged,
+                        &tx.body.inputs,
+                        &tx_outputs,
+                        &ref_utxos,
+                    )?;
+                }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3244,6 +3276,25 @@ impl LedgerState {
                     &tx.witness_set,
                     &required_scripts,
                 )?;
+                // Supplemental datum check (Conway submitted — includes reference inputs).
+                {
+                    let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                        .collect();
+                    let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx.body.reference_inputs
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter_map(|txin| staged.get(txin).map(|txout| (txin.clone(), txout.clone())))
+                        .collect();
+                    crate::plutus_validation::validate_supplemental_datums(
+                        Some(&witness_bytes),
+                        &staged,
+                        &tx.body.inputs,
+                        &tx_outputs,
+                        &ref_utxos,
+                    )?;
+                }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3828,6 +3879,19 @@ impl LedgerState {
                 witness_bytes.as_deref(),
                 &required_scripts,
             )?;
+            // Supplemental datum check (Alonzo — no reference inputs).
+            {
+                let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Alonzo(o.clone()))
+                    .collect();
+                crate::plutus_validation::validate_supplemental_datums(
+                    witness_bytes.as_deref(),
+                    &staged,
+                    &body.inputs,
+                    &tx_outputs,
+                    &[], // no reference inputs in Alonzo
+                )?;
+            }
             // ── is_valid bifurcation (Phase-2 / collateral-only) ──
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Alonzo)
@@ -4049,6 +4113,25 @@ impl LedgerState {
                 witness_bytes.as_deref(),
                 &required_scripts,
             )?;
+            // Supplemental datum check (Babbage — includes reference inputs).
+            {
+                let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                    .collect();
+                let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body.reference_inputs
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter_map(|txin| staged.get(txin).map(|txout| (txin.clone(), txout.clone())))
+                    .collect();
+                crate::plutus_validation::validate_supplemental_datums(
+                    witness_bytes.as_deref(),
+                    &staged,
+                    &body.inputs,
+                    &tx_outputs,
+                    &ref_utxos,
+                )?;
+            }
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Babbage)
             {
@@ -4297,6 +4380,25 @@ impl LedgerState {
                 witness_bytes.as_deref(),
                 &required_scripts,
             )?;
+            // Supplemental datum check (Conway — includes reference inputs).
+            {
+                let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                    .collect();
+                let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body.reference_inputs
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter_map(|txin| staged.get(txin).map(|txout| (txin.clone(), txout.clone())))
+                    .collect();
+                crate::plutus_validation::validate_supplemental_datums(
+                    witness_bytes.as_deref(),
+                    &staged,
+                    &body.inputs,
+                    &tx_outputs,
+                    &ref_utxos,
+                )?;
+            }
             let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Conway)
             {

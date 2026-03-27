@@ -15,7 +15,7 @@
 //!
 //! Reference: `Cardano.Ledger.Alonzo.PlutusScriptApi`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::cbor::{CborDecode, CborEncode};
 use crate::eras::conway::{ProposalProcedure, Voter, VotingProcedures};
@@ -560,6 +560,93 @@ pub(crate) fn collect_all_plutus_scripts(
         }
     }
     scripts
+}
+
+// ---------------------------------------------------------------------------
+// Supplemental datum validation
+// ---------------------------------------------------------------------------
+
+/// Validates that every witness datum not required by a Plutus spending input
+/// is "allowed" — its hash matches a datum hash on a transaction output or
+/// (Babbage+) a reference-input UTxO.
+///
+/// # Sets
+///
+/// * **`input_hashes`** — datum hashes from spending-input UTxOs locked by a
+///   Plutus script.
+/// * **`tx_hashes`** — Blake2b-256 hashes of all datums in the witness set
+///   (`plutus_data`).
+/// * **`allowed_supplemental`** — datum hashes on transaction outputs (Alonzo)
+///   plus reference-input UTxOs (Babbage+).
+///
+/// Supplemental = `tx_hashes \ input_hashes`.  Every supplemental hash must
+/// be in `allowed_supplemental`.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums`
+/// (`NotAllowedSupplementalDatums`).
+pub fn validate_supplemental_datums(
+    witness_bytes: Option<&[u8]>,
+    spending_utxo: &MultiEraUtxo,
+    spending_inputs: &[crate::eras::shelley::ShelleyTxIn],
+    tx_outputs: &[MultiEraTxOut],
+    reference_input_utxos: &[(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)],
+) -> Result<(), LedgerError> {
+    let wb = match witness_bytes {
+        Some(wb) => wb,
+        None => return Ok(()),
+    };
+
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
+
+    // tx_hashes: all datum hashes from witness set
+    let tx_hashes: HashSet<[u8; 32]> = collect_datum_map(&ws).into_keys().collect();
+    if tx_hashes.is_empty() {
+        return Ok(());
+    }
+
+    // Collect Plutus scripts (witness + reference) to identify Plutus-locked inputs.
+    let ref_txins: Vec<_> = reference_input_utxos.iter().map(|(txin, _)| txin.clone()).collect();
+    let plutus_scripts = collect_all_plutus_scripts(
+        &ws,
+        spending_utxo,
+        if ref_txins.is_empty() { None } else { Some(&ref_txins) },
+    );
+
+    // input_hashes: datum hashes from Plutus-locked spending-input UTxOs.
+    let mut input_hashes = HashSet::new();
+    for txin in spending_inputs {
+        if let Some(txout) = spending_utxo.get(txin) {
+            // Only count if the input is Plutus-locked (not VKey/native).
+            if let Some(script_hash) = spending_script_hash_from_txout(&txout) {
+                if plutus_scripts.contains_key(&script_hash) {
+                    if let Some(dh) = txout.datum_hash() {
+                        input_hashes.insert(dh);
+                    }
+                }
+            }
+        }
+    }
+
+    // allowed_supplemental: datum hashes from tx outputs + reference-input UTxOs (Babbage+).
+    let mut allowed = HashSet::new();
+    for txout in tx_outputs {
+        if let Some(dh) = txout.datum_hash() {
+            allowed.insert(dh);
+        }
+    }
+    for (_, ref_txout) in reference_input_utxos {
+        if let Some(dh) = ref_txout.datum_hash() {
+            allowed.insert(dh);
+        }
+    }
+
+    // supplemental = tx_hashes \ input_hashes — must all be allowed.
+    for dh in &tx_hashes {
+        if !input_hashes.contains(dh) && !allowed.contains(dh) {
+            return Err(LedgerError::NotAllowedSupplementalDatums { hash: *dh });
+        }
+    }
+    Ok(())
 }
 
 /// Validates all Plutus scripts referenced by a transaction.
