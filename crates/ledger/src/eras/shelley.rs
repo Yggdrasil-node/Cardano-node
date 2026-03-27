@@ -945,6 +945,9 @@ impl ShelleyUtxo {
             return Err(LedgerError::NoOutputs);
         }
 
+        // 1b. Duplicate input check.
+        crate::utxo::validate_no_duplicate_inputs(&body.inputs)?;
+
         // 2. TTL check.
         if current_slot > body.ttl {
             return Err(LedgerError::TxExpired {

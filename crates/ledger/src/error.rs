@@ -424,6 +424,13 @@ pub enum LedgerError {
     #[error("auxiliary data hash declared but no auxiliary data present in block")]
     AuxiliaryDataMissing,
 
+    /// Transaction spending inputs contain duplicates.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `BadInputsUTxO`
+    /// (the upstream check subsumes duplicate detection via set conversion).
+    #[error("duplicate spending input in transaction")]
+    DuplicateInput,
+
     /// Total reference script size across all referenced UTxO entries exceeds
     /// the maximum allowed per transaction (Conway+ rule).
     ///

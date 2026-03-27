@@ -326,6 +326,7 @@ impl MultiEraUtxo {
         withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
+        validate_no_duplicate_inputs(&body.inputs)?;
 
         // TTL check (mandatory in Shelley).
         if current_slot > body.ttl {
@@ -382,6 +383,7 @@ impl MultiEraUtxo {
         withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
+        validate_no_duplicate_inputs(&body.inputs)?;
 
         // TTL check (optional in Allegra).
         if let Some(ttl) = body.ttl {
@@ -446,6 +448,7 @@ impl MultiEraUtxo {
         withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
+        validate_no_duplicate_inputs(&body.inputs)?;
 
         if let Some(ttl) = body.ttl {
             if current_slot > ttl {
@@ -510,6 +513,7 @@ impl MultiEraUtxo {
         withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
+        validate_no_duplicate_inputs(&body.inputs)?;
 
         if let Some(ttl) = body.ttl {
             if current_slot > ttl {
@@ -572,6 +576,7 @@ impl MultiEraUtxo {
         withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
+        validate_no_duplicate_inputs(&body.inputs)?;
 
         if let Some(ttl) = body.ttl {
             if current_slot > ttl {
@@ -636,6 +641,7 @@ impl MultiEraUtxo {
         withdrawal_total: u64,
     ) -> Result<(), LedgerError> {
         validate_nonempty(&body.inputs, &body.outputs)?;
+        validate_no_duplicate_inputs(&body.inputs)?;
 
         if let Some(ttl) = body.ttl {
             if current_slot > ttl {
@@ -804,6 +810,21 @@ fn validate_nonempty<I, O>(inputs: &[I], outputs: &[O]) -> Result<(), LedgerErro
     }
     if outputs.is_empty() {
         return Err(LedgerError::NoOutputs);
+    }
+    Ok(())
+}
+
+/// Validates that spending inputs contain no duplicates.
+///
+/// Upstream Shelley UTXO rules convert the input list to a set; any difference
+/// in cardinality implies duplicates.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `BadInputsUTxO`.
+pub(crate) fn validate_no_duplicate_inputs(inputs: &[ShelleyTxIn]) -> Result<(), LedgerError> {
+    use std::collections::HashSet;
+    let set: HashSet<_> = inputs.iter().collect();
+    if set.len() != inputs.len() {
+        return Err(LedgerError::DuplicateInput);
     }
     Ok(())
 }
