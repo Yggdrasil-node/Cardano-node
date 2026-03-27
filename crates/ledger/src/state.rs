@@ -3724,7 +3724,7 @@ impl LedgerState {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
             }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
-            if tx_is_valid {
+            let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Babbage)
             {
                 let mut sorted_inputs = body.inputs.clone();
@@ -3755,8 +3755,20 @@ impl LedgerState {
                     &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                     &tx_ctx,
-                )?;
+                )
             }
+            };
+            if tx_is_valid {
+                match run_phase2() {
+                    Ok(()) => {}
+                    Err(LedgerError::PlutusScriptFailed { .. }) if evaluator.is_some() => {
+                        return Err(LedgerError::ValidationTagMismatch {
+                            claimed: true,
+                            actual: false,
+                        });
+                    }
+                    Err(e) => return Err(e),
+                }
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -3771,6 +3783,18 @@ impl LedgerState {
             )?;
             staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
             } else {
+                if evaluator.is_some() {
+                    match run_phase2() {
+                        Ok(()) => {
+                            return Err(LedgerError::ValidationTagMismatch {
+                                claimed: false,
+                                actual: true,
+                            });
+                        }
+                        Err(LedgerError::PlutusScriptFailed { .. }) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
                 // is_valid = false: collateral-only transition.
                 crate::utxo::apply_collateral_only(
                     &mut staged,
@@ -3927,7 +3951,7 @@ impl LedgerState {
                 );
             }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
-            if tx_is_valid {
+            let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Conway)
             {
                 let mut sorted_inputs = body.inputs.clone();
@@ -3967,8 +3991,20 @@ impl LedgerState {
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
                     &sorted_voters, proposal_slice,
                     &tx_ctx,
-                )?;
+                )
             }
+            };
+            if tx_is_valid {
+                match run_phase2() {
+                    Ok(()) => {}
+                    Err(LedgerError::PlutusScriptFailed { .. }) if evaluator.is_some() => {
+                        return Err(LedgerError::ValidationTagMismatch {
+                            claimed: true,
+                            actual: false,
+                        });
+                    }
+                    Err(e) => return Err(e),
+                }
             let unregistered_drep_voters = collect_conway_unregistered_drep_voters(
                 body.certificates.as_deref(),
             );
@@ -4074,6 +4110,18 @@ impl LedgerState {
             );
             staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
             } else {
+                if evaluator.is_some() {
+                    match run_phase2() {
+                        Ok(()) => {
+                            return Err(LedgerError::ValidationTagMismatch {
+                                claimed: false,
+                                actual: true,
+                            });
+                        }
+                        Err(LedgerError::PlutusScriptFailed { .. }) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
                 // is_valid = false: collateral-only transition.
                 crate::utxo::apply_collateral_only(
                     &mut staged,

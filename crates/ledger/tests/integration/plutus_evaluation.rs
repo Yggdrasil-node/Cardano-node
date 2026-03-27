@@ -377,6 +377,162 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
     assert!(result.is_ok(), "Babbage Plutus V2 minting should succeed: {:?}", result);
 }
 
+#[test]
+fn babbage_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
+    let prev_tx_id = [0xD1; 32];
+    let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let addr = enterprise_keyhash_address(&keyhash);
+
+    let script_hash = plutus_script_hash(PlutusVersion::V2, DUMMY_SCRIPT);
+    let mut mint = BTreeMap::new();
+    let mut assets = BTreeMap::new();
+    assets.insert(b"nft".to_vec(), 1i64);
+    mint.insert(script_hash, assets);
+    let mut output_assets = BTreeMap::new();
+    let mut output_policy_assets = BTreeMap::new();
+    output_policy_assets.insert(b"nft".to_vec(), 1u64);
+    output_assets.insert(script_hash, output_policy_assets);
+
+    let body = BabbageTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: addr.clone(),
+            amount: Value::CoinAndAssets(4_800_000, output_assets),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: Some(mint),
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    };
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
+    let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V2);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
+        is_valid: Some(true),
+    };
+    let block = make_block(Era::Babbage, 210, 5, 0x11, vec![tx]);
+
+    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txout = MultiEraTxOut::Babbage(BabbageTxOut {
+        address: addr,
+        amount: Value::Coin(5_000_000),
+        datum_option: None,
+        script_ref: None,
+    });
+    let mut state = LedgerState::new(Era::Babbage);
+    state.multi_era_utxo_mut().insert(txin, txout);
+
+    let evaluator = AlwaysFails;
+    let result = state.apply_block_validated(&block, Some(&evaluator));
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ValidationTagMismatch {
+                claimed: true,
+                actual: false,
+            })
+        ),
+        "expected ValidationTagMismatch(claimed=true, actual=false), got: {:?}",
+        result,
+    );
+}
+
+#[test]
+fn babbage_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() {
+    let prev_tx_id = [0xD2; 32];
+    let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let addr = enterprise_keyhash_address(&keyhash);
+
+    let script_hash = plutus_script_hash(PlutusVersion::V2, DUMMY_SCRIPT);
+    let mut mint = BTreeMap::new();
+    let mut assets = BTreeMap::new();
+    assets.insert(b"nft".to_vec(), 1i64);
+    mint.insert(script_hash, assets);
+    let mut output_assets = BTreeMap::new();
+    let mut output_policy_assets = BTreeMap::new();
+    output_policy_assets.insert(b"nft".to_vec(), 1u64);
+    output_assets.insert(script_hash, output_policy_assets);
+
+    let body = BabbageTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: addr.clone(),
+            amount: Value::CoinAndAssets(4_800_000, output_assets),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: Some(mint),
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    };
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
+    let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V2);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
+        is_valid: Some(false),
+    };
+    let block = make_block(Era::Babbage, 211, 6, 0x12, vec![tx]);
+
+    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txout = MultiEraTxOut::Babbage(BabbageTxOut {
+        address: addr,
+        amount: Value::Coin(5_000_000),
+        datum_option: None,
+        script_ref: None,
+    });
+    let mut state = LedgerState::new(Era::Babbage);
+    state.multi_era_utxo_mut().insert(txin, txout);
+
+    let evaluator = AlwaysSucceeds;
+    let result = state.apply_block_validated(&block, Some(&evaluator));
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ValidationTagMismatch {
+                claimed: false,
+                actual: true,
+            })
+        ),
+        "expected ValidationTagMismatch(claimed=false, actual=true), got: {:?}",
+        result,
+    );
+}
+
 // ===========================================================================
 // Conway Plutus V3 minting — evaluator succeeds
 // ===========================================================================
@@ -452,6 +608,168 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
     let evaluator = AlwaysSucceeds;
     let result = state.apply_block_validated(&block, Some(&evaluator));
     assert!(result.is_ok(), "Conway Plutus V3 minting should succeed: {:?}", result);
+}
+
+#[test]
+fn conway_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
+    let prev_tx_id = [0xE1; 32];
+    let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let addr = enterprise_keyhash_address(&keyhash);
+
+    let script_hash = plutus_script_hash(PlutusVersion::V3, DUMMY_SCRIPT);
+    let mut mint = BTreeMap::new();
+    let mut assets = BTreeMap::new();
+    assets.insert(b"gov".to_vec(), 1i64);
+    mint.insert(script_hash, assets);
+    let mut output_assets = BTreeMap::new();
+    let mut output_policy_assets = BTreeMap::new();
+    output_policy_assets.insert(b"gov".to_vec(), 1u64);
+    output_assets.insert(script_hash, output_policy_assets);
+
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: addr.clone(),
+            amount: Value::CoinAndAssets(4_800_000, output_assets),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: Some(mint),
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
+    let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V3);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
+        is_valid: Some(true),
+    };
+    let block = make_block(Era::Conway, 310, 7, 0x13, vec![tx]);
+
+    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txout = MultiEraTxOut::Babbage(BabbageTxOut {
+        address: addr,
+        amount: Value::Coin(5_000_000),
+        datum_option: None,
+        script_ref: None,
+    });
+    let mut state = LedgerState::new(Era::Conway);
+    state.multi_era_utxo_mut().insert(txin, txout);
+
+    let evaluator = AlwaysFails;
+    let result = state.apply_block_validated(&block, Some(&evaluator));
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ValidationTagMismatch {
+                claimed: true,
+                actual: false,
+            })
+        ),
+        "expected ValidationTagMismatch(claimed=true, actual=false), got: {:?}",
+        result,
+    );
+}
+
+#[test]
+fn conway_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() {
+    let prev_tx_id = [0xE2; 32];
+    let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
+    let addr = enterprise_keyhash_address(&keyhash);
+
+    let script_hash = plutus_script_hash(PlutusVersion::V3, DUMMY_SCRIPT);
+    let mut mint = BTreeMap::new();
+    let mut assets = BTreeMap::new();
+    assets.insert(b"gov".to_vec(), 1i64);
+    mint.insert(script_hash, assets);
+    let mut output_assets = BTreeMap::new();
+    let mut output_policy_assets = BTreeMap::new();
+    output_policy_assets.insert(b"gov".to_vec(), 1u64);
+    output_assets.insert(script_hash, output_policy_assets);
+
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: addr.clone(),
+            amount: Value::CoinAndAssets(4_800_000, output_assets),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: Some(mint),
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
+    let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V3);
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id),
+        body: body_bytes,
+        witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
+        is_valid: Some(false),
+    };
+    let block = make_block(Era::Conway, 311, 8, 0x14, vec![tx]);
+
+    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txout = MultiEraTxOut::Babbage(BabbageTxOut {
+        address: addr,
+        amount: Value::Coin(5_000_000),
+        datum_option: None,
+        script_ref: None,
+    });
+    let mut state = LedgerState::new(Era::Conway);
+    state.multi_era_utxo_mut().insert(txin, txout);
+
+    let evaluator = AlwaysSucceeds;
+    let result = state.apply_block_validated(&block, Some(&evaluator));
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ValidationTagMismatch {
+                claimed: false,
+                actual: true,
+            })
+        ),
+        "expected ValidationTagMismatch(claimed=false, actual=true), got: {:?}",
+        result,
+    );
 }
 
 // ===========================================================================
