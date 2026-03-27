@@ -20,6 +20,7 @@ use yggdrasil_ledger::{
 mod block_ex_units;
 mod core_cbor;
 mod duplicate_inputs;
+mod epoch_boundary_fees;
 mod eras_allegra_mary;
 mod eras_alonzo;
 mod eras_babbage;

@@ -3688,3 +3688,53 @@ fn promote_then_rollback_collects_only_volatile_tx_ids() {
     // Immutable block is preserved.
     assert!(chain_db.immutable().get_block(&HeaderHash([0x01; 32])).is_some());
 }
+
+// ---------------------------------------------------------------------------
+// total_transaction_fees
+// ---------------------------------------------------------------------------
+
+#[test]
+fn total_transaction_fees_shelley_sums_all_txs() {
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![
+            make_tx_body(100, 999),
+            make_tx_body(250, 999),
+            make_tx_body(50, 999),
+        ],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert_eq!(block.total_transaction_fees(), 400);
+}
+
+#[test]
+fn total_transaction_fees_shelley_empty_block() {
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert_eq!(block.total_transaction_fees(), 0);
+}
+
+#[test]
+fn total_transaction_fees_byron_always_zero() {
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
+    };
+    assert_eq!(block.total_transaction_fees(), 0);
+}

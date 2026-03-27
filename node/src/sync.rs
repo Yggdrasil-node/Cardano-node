@@ -1009,6 +1009,16 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
         }
 
         ledger_state.apply_block_validated(&converted, evaluator)?;
+
+        // Accumulate declared transaction fees into the snapshot fee pot.
+        // This feeds `compute_epoch_rewards()` at the next epoch boundary
+        // so that rewards reflect actual on-chain fee revenue.
+        // Byron fees are implicit and pre-date the Shelley reward system,
+        // so `total_transaction_fees()` returns 0 for Byron blocks.
+        let block_fees = block.total_transaction_fees();
+        if block_fees > 0 {
+            snapshots.accumulate_fees(block_fees);
+        }
         Ok(())
     })?;
     Ok(events)
@@ -1535,6 +1545,24 @@ pub enum MultiEraBlock {
     Babbage(Box<BabbageBlock>),
     /// A fully decoded Conway-era block with `ConwayTxBody` entries.
     Conway(Box<ConwayBlock>),
+}
+
+impl MultiEraBlock {
+    /// Sum the declared transaction fees across all transactions in this block.
+    ///
+    /// Byron blocks return 0 because their fees are implicit (input sum
+    /// minus output sum) and pre-date the Shelley reward system.  For
+    /// Shelley through Conway every transaction body carries an explicit
+    /// `fee` field that is summed here.
+    pub fn total_transaction_fees(&self) -> u64 {
+        match self {
+            Self::Byron { .. } => 0,
+            Self::Shelley(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
+            Self::Alonzo(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
+            Self::Babbage(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
+            Self::Conway(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
+        }
+    }
 }
 
 /// Cardano mainnet era tags used in the multi-era block envelope.
