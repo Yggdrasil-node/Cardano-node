@@ -139,6 +139,11 @@ impl Encoder {
         }
     }
 
+    /// Alias for [`integer`](Self::integer) — encodes a signed `i64`.
+    pub fn signed(&mut self, value: i64) -> &mut Self {
+        self.integer(value)
+    }
+
     /// Encodes a UTF-8 text string (CBOR major type 3).
     pub fn text(&mut self, s: &str) -> &mut Self {
         self.write_type_and_arg(MAJOR_TEXT, s.len() as u64);
@@ -378,6 +383,11 @@ impl<'a> Decoder<'a> {
                 actual: other,
             }),
         }
+    }
+
+    /// Alias for [`integer`](Self::integer) — decodes a signed `i64`.
+    pub fn signed(&mut self) -> Result<i64, LedgerError> {
+        self.integer()
     }
 
     /// Decodes a UTF-8 text string (CBOR major type 3) and returns a

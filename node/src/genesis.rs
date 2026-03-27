@@ -573,6 +573,8 @@ pub fn build_protocol_parameters(
             }),
         min_committee_size: conway.and_then(|c| c.committee_min_size),
         committee_term_limit: conway.and_then(|c| c.committee_max_term_length),
+        cost_models: None,
+        min_fee_ref_script_cost_per_byte: None,
     }
 }
 

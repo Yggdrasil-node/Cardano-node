@@ -835,8 +835,9 @@ impl ProtocolParameterUpdate {
         if self.min_utxo_value.is_some() { count += 1; }
         if self.min_pool_cost.is_some() { count += 1; }
         if self.coins_per_utxo_byte.is_some() { count += 1; }
+        if self.cost_models.is_some() { count += 1; }
+        // key 19 is a single entry (array of price_mem + price_step)
         if self.price_mem.is_some() { count += 1; }
-        if self.price_step.is_some() { count += 1; }
         if self.max_tx_ex_units.is_some() { count += 1; }
         if self.max_block_ex_units.is_some() { count += 1; }
         if self.max_val_size.is_some() { count += 1; }
@@ -850,6 +851,7 @@ impl ProtocolParameterUpdate {
         if self.gov_action_deposit.is_some() { count += 1; }
         if self.drep_deposit.is_some() { count += 1; }
         if self.drep_activity.is_some() { count += 1; }
+        if self.min_fee_ref_script_cost_per_byte.is_some() { count += 1; }
         count
     }
 }
@@ -950,6 +952,12 @@ impl ProtocolParameters {
         if let Some(value) = update.drep_activity {
             self.drep_activity = Some(value);
         }
+        if let Some(ref cm) = update.cost_models {
+            self.cost_models = Some(cm.clone());
+        }
+        if let Some(ref val) = update.min_fee_ref_script_cost_per_byte {
+            self.min_fee_ref_script_cost_per_byte = Some(val.clone());
+        }
     }
 }
 
@@ -972,8 +980,9 @@ impl CborEncode for ProtocolParameterUpdate {
         if self.min_utxo_value.is_some() { count += 1; }
         if self.min_pool_cost.is_some() { count += 1; }
         if self.coins_per_utxo_byte.is_some() { count += 1; }
+        if self.cost_models.is_some() { count += 1; }
+        // key 19 is a single map entry (array of price_mem + price_step)
         if self.price_mem.is_some() { count += 1; }
-        if self.price_step.is_some() { count += 1; }
         if self.max_tx_ex_units.is_some() { count += 1; }
         if self.max_block_ex_units.is_some() { count += 1; }
         if self.max_val_size.is_some() { count += 1; }
@@ -987,6 +996,7 @@ impl CborEncode for ProtocolParameterUpdate {
         if self.gov_action_deposit.is_some() { count += 1; }
         if self.drep_deposit.is_some() { count += 1; }
         if self.drep_activity.is_some() { count += 1; }
+        if self.min_fee_ref_script_cost_per_byte.is_some() { count += 1; }
 
         enc.map(count);
 
@@ -1008,8 +1018,18 @@ impl CborEncode for ProtocolParameterUpdate {
         if let Some(value) = self.min_utxo_value { enc.unsigned(15).unsigned(value); }
         if let Some(value) = self.min_pool_cost { enc.unsigned(16).unsigned(value); }
         if let Some(value) = self.coins_per_utxo_byte { enc.unsigned(17).unsigned(value); }
-        if let Some(ref value) = self.price_mem { enc.unsigned(18); value.encode_cbor(enc); }
-        if let Some(ref value) = self.price_step { enc.unsigned(19); value.encode_cbor(enc); }
+        if let Some(ref cm) = self.cost_models {
+            enc.unsigned(18).map(cm.len() as u64);
+            for (&lang, vals) in cm {
+                enc.unsigned(lang as u64).array(vals.len() as u64);
+                for &v in vals { enc.signed(v); }
+            }
+        }
+        if let (Some(pm), Some(ps)) = (&self.price_mem, &self.price_step) {
+            enc.unsigned(19).array(2);
+            pm.encode_cbor(enc);
+            ps.encode_cbor(enc);
+        }
         if let Some(ref value) = self.max_tx_ex_units { enc.unsigned(20); value.encode_cbor(enc); }
         if let Some(ref value) = self.max_block_ex_units { enc.unsigned(21); value.encode_cbor(enc); }
         if let Some(value) = self.max_val_size { enc.unsigned(22).unsigned(value as u64); }
@@ -1023,6 +1043,10 @@ impl CborEncode for ProtocolParameterUpdate {
         if let Some(value) = self.gov_action_deposit { enc.unsigned(30).unsigned(value); }
         if let Some(value) = self.drep_deposit { enc.unsigned(31).unsigned(value); }
         if let Some(value) = self.drep_activity { enc.unsigned(32).unsigned(value); }
+        if let Some(ref val) = self.min_fee_ref_script_cost_per_byte {
+            enc.unsigned(33);
+            val.encode_cbor(enc);
+        }
     }
 }
 
@@ -1059,8 +1083,33 @@ impl CborDecode for ProtocolParameterUpdate {
                 15 => update.min_utxo_value = Some(dec.unsigned()?),
                 16 => update.min_pool_cost = Some(dec.unsigned()?),
                 17 => update.coins_per_utxo_byte = Some(dec.unsigned()?),
-                18 => update.price_mem = Some(UnitInterval::decode_cbor(dec)?),
-                19 => update.price_step = Some(UnitInterval::decode_cbor(dec)?),
+                18 => {
+                    // cost_models: map(language => [*int64])
+                    let cm_len = dec.map()?;
+                    let mut cm = BTreeMap::new();
+                    for _ in 0..cm_len {
+                        let lang = dec.unsigned()? as u8;
+                        let arr_len = dec.array()?;
+                        let mut vals = Vec::with_capacity(arr_len as usize);
+                        for _ in 0..arr_len {
+                            vals.push(dec.signed()?);
+                        }
+                        cm.insert(lang, vals);
+                    }
+                    update.cost_models = Some(cm);
+                }
+                19 => {
+                    // ex_unit_prices: [mem_price, step_price]
+                    let arr_len = dec.array()?;
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: arr_len as usize,
+                        });
+                    }
+                    update.price_mem = Some(UnitInterval::decode_cbor(dec)?);
+                    update.price_step = Some(UnitInterval::decode_cbor(dec)?);
+                }
                 20 => update.max_tx_ex_units = Some(ExUnits::decode_cbor(dec)?),
                 21 => update.max_block_ex_units = Some(ExUnits::decode_cbor(dec)?),
                 22 => update.max_val_size = Some(dec.unsigned()? as u32),
@@ -1074,6 +1123,7 @@ impl CborDecode for ProtocolParameterUpdate {
                 30 => update.gov_action_deposit = Some(dec.unsigned()?),
                 31 => update.drep_deposit = Some(dec.unsigned()?),
                 32 => update.drep_activity = Some(dec.unsigned()?),
+                33 => update.min_fee_ref_script_cost_per_byte = Some(UnitInterval::decode_cbor(dec)?),
                 _ => dec.skip()?,
             }
         }
@@ -1184,5 +1234,110 @@ mod tests {
         let params = ProtocolParameters::alonzo_defaults();
         // 4310 * (100 + 160) = 1_120_600
         assert_eq!(params.min_lovelace_for_utxo(100), Some(1_120_600));
+    }
+
+    #[test]
+    fn cost_models_round_trip_pp() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        let mut cm = BTreeMap::new();
+        cm.insert(0u8, vec![100, -200, 300, 0, -1]);
+        cm.insert(2u8, vec![42, -99]);
+        params.cost_models = Some(cm);
+
+        let bytes = params.to_cbor_bytes();
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(params, decoded);
+    }
+
+    #[test]
+    fn cost_models_round_trip_ppu() {
+        let mut cm = BTreeMap::new();
+        cm.insert(1u8, vec![-1, 0, 1, i64::MAX, i64::MIN + 1]);
+        let update = ProtocolParameterUpdate {
+            cost_models: Some(cm),
+            ..Default::default()
+        };
+
+        let bytes = update.to_cbor_bytes();
+        let decoded = ProtocolParameterUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(update, decoded);
+    }
+
+    #[test]
+    fn ex_unit_prices_round_trip_ppu() {
+        let update = ProtocolParameterUpdate {
+            price_mem: Some(UnitInterval { numerator: 577, denominator: 10_000 }),
+            price_step: Some(UnitInterval { numerator: 721, denominator: 10_000_000 }),
+            ..Default::default()
+        };
+
+        let bytes = update.to_cbor_bytes();
+        let decoded = ProtocolParameterUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(decoded.price_mem, update.price_mem);
+        assert_eq!(decoded.price_step, update.price_step);
+    }
+
+    #[test]
+    fn min_fee_ref_script_round_trip_pp() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.min_fee_ref_script_cost_per_byte = Some(UnitInterval { numerator: 15, denominator: 1 });
+
+        let bytes = params.to_cbor_bytes();
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(params, decoded);
+    }
+
+    #[test]
+    fn min_fee_ref_script_round_trip_ppu() {
+        let update = ProtocolParameterUpdate {
+            min_fee_ref_script_cost_per_byte: Some(UnitInterval { numerator: 15, denominator: 1 }),
+            ..Default::default()
+        };
+
+        let bytes = update.to_cbor_bytes();
+        let decoded = ProtocolParameterUpdate::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(update, decoded);
+    }
+
+    #[test]
+    fn apply_update_cost_models_and_ref_script() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        assert!(params.cost_models.is_none());
+        assert!(params.min_fee_ref_script_cost_per_byte.is_none());
+
+        let mut cm = BTreeMap::new();
+        cm.insert(0u8, vec![10, 20, 30]);
+        let update = ProtocolParameterUpdate {
+            cost_models: Some(cm.clone()),
+            min_fee_ref_script_cost_per_byte: Some(UnitInterval { numerator: 15, denominator: 1 }),
+            ..Default::default()
+        };
+        params.apply_update(&update);
+
+        assert_eq!(params.cost_models, Some(cm));
+        assert_eq!(params.min_fee_ref_script_cost_per_byte, Some(UnitInterval { numerator: 15, denominator: 1 }));
+    }
+
+    #[test]
+    fn full_conway_params_round_trip() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        let mut cm = BTreeMap::new();
+        cm.insert(0, vec![1, 2, 3]);
+        cm.insert(1, vec![-4, 5]);
+        cm.insert(2, vec![100]);
+        params.cost_models = Some(cm);
+        params.min_fee_ref_script_cost_per_byte = Some(UnitInterval { numerator: 15, denominator: 1 });
+        params.gov_action_lifetime = Some(6);
+        params.gov_action_deposit = Some(100_000_000_000);
+        params.drep_deposit = Some(500_000_000);
+        params.drep_activity = Some(20);
+        params.pool_voting_thresholds = Some(PoolVotingThresholds::default());
+        params.drep_voting_thresholds = Some(DRepVotingThresholds::default());
+        params.min_committee_size = Some(7);
+        params.committee_term_limit = Some(146);
+
+        let bytes = params.to_cbor_bytes();
+        let decoded = ProtocolParameters::from_cbor_bytes(&bytes).expect("round-trip");
+        assert_eq!(params, decoded);
     }
 }
