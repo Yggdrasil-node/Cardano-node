@@ -27,13 +27,16 @@ fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// File-backed immutable block store.
 ///
 /// Blocks are persisted as `{hex_hash}.json` files inside `data_dir`.
-/// The store is append-only: once written, files are never modified or deleted.
+/// The store is append-only: once written, files are never modified or deleted
+/// except via [`ImmutableStore::trim_before_slot`] garbage collection.
 pub struct FileImmutable {
     data_dir: PathBuf,
     /// Ordered list of header hashes matching insertion order.
     chain: Vec<HeaderHash>,
     /// In-memory block cache keyed by header hash.
     index: HashMap<HeaderHash, Block>,
+    /// Number of corrupted or unreadable files skipped during open.
+    skipped_on_open: usize,
 }
 
 impl FileImmutable {
@@ -41,20 +44,36 @@ impl FileImmutable {
     ///
     /// If the directory already exists its contents are scanned and the
     /// chain order is recovered from block slot numbers.
+    ///
+    /// Corrupted or unreadable block files are silently skipped so that an
+    /// incomplete prior shutdown does not prevent the node from restarting.
+    /// The number of skipped files is available via
+    /// [`FileImmutable::skipped_on_open`].
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
 
         let mut blocks = Vec::new();
+        let mut skipped: usize = 0;
         for entry in fs::read_dir(&data_dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                let contents = fs::read_to_string(&path)?;
-                let block: Block = serde_json::from_str(&contents)
-                    .map_err(|e| StorageError::Serialization(e.to_string()))?;
-                blocks.push(block);
+                match fs::read_to_string(&path) {
+                    Ok(contents) => match serde_json::from_str::<Block>(&contents) {
+                        Ok(block) => blocks.push(block),
+                        Err(_) => {
+                            // Corrupted block file — skip rather than fail.
+                            skipped += 1;
+                        }
+                    },
+                    Err(_) => {
+                        // Unreadable file — skip.
+                        skipped += 1;
+                    }
+                }
             }
+            // Also skip leftover .tmp files from atomic writes.
         }
 
         // Sort by slot to recover insertion order.
@@ -66,7 +85,13 @@ impl FileImmutable {
             .map(|b| (b.header.hash, b))
             .collect();
 
-        Ok(Self { data_dir, chain, index })
+        Ok(Self { data_dir, chain, index, skipped_on_open: skipped })
+    }
+
+    /// Returns the number of block files that were skipped during
+    /// [`FileImmutable::open`] due to corruption or read errors.
+    pub fn skipped_on_open(&self) -> usize {
+        self.skipped_on_open
     }
 
     fn block_path(&self, hash: &HeaderHash) -> PathBuf {
@@ -141,6 +166,14 @@ impl ImmutableStore for FileImmutable {
 
     fn len(&self) -> usize {
         self.chain.len()
+    }
+
+    fn get_block_by_slot(&self, slot: SlotNo) -> Option<&Block> {
+        // The chain vec is sorted by slot, so we can binary search.
+        self.chain
+            .binary_search_by_key(&slot, |hash| self.index[hash].header.slot_no)
+            .ok()
+            .and_then(|idx| self.index.get(&self.chain[idx]))
     }
 
     fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {

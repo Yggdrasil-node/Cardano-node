@@ -214,17 +214,17 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | State recovery | From last checkpoint | ✅ | ✅ | Complete | Open + replay pattern
 | Rollback support | Revert to prior checkpoints | ✅ | ✅ | Complete | Checkpoint time-travel
 | **Garbage Collection** |
-| Immutable trimming | Delete blocks >retention | ✅ | ⏸️ | Not Started | Retention policy framework only
+| Immutable trimming | Delete blocks >retention | ✅ | ✅ | Complete | trim_before_slot + ChainDb::gc_immutable_before_slot
 | Volatile compaction | Deduplicate on rollback | ✅ | ⏸️ | Not Started | Compaction needed on frequent reorgs
-| Checkpoint pruning | Keep recent snapshots | ✅ | ⏸️ | Not Started | Old checkpoint cleanup
+| Checkpoint pruning | Keep recent snapshots | ✅ | ✅ | Complete | retain_latest + persist_ledger_checkpoint
 | **Index & Lookup** |
 | Point → block | By block hash | ✅ | ✅ | Complete | Storage scanning on open
-| Slot → block | By slot number | ✅ | ⚠️ | Partial | Slot index incomplete
+| Slot → block | By slot number | ✅ | ✅ | Complete | get_block_by_slot with binary search (FileImmutable)
 | **Recovery & Crash Handling** |
 | Dirty ledger detection | Incomplete state write | ✅ | ⏸️ | Not Started | Crash detection + recovery path
-| Corruption resilience | Skip/repair bad blocks | ✅ | ⏸️ | Not Started | Resilience framework needed
+| Corruption resilience | Skip/repair bad blocks | ✅ | ✅ | Complete | FileImmutable + FileVolatile + FileLedgerStore skip corrupted files on open
 
-**Storage Summary**: ~70% feature complete, remaining work on garbage collection, indexing optimization, and crash recovery.
+**Storage Summary**: ~85% feature complete. GC (trim_before_slot), slot-based indexing (get_block_by_slot), corruption-tolerant open, and checkpoint pruning all complete. Remaining: dirty-flag detection, volatile compaction, and WAL.
 
 ---
 

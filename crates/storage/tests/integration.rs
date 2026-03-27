@@ -1367,3 +1367,87 @@ fn chaindb_gc_preserves_volatile_and_ledger() {
     assert!(chain_db.volatile().get_block(&HeaderHash([0x03; 32])).is_some());
     assert!(chain_db.ledger().latest_snapshot().is_some());
 }
+
+// ---------------------------------------------------------------------------
+// get_block_by_slot — InMemory + File-backed
+// ---------------------------------------------------------------------------
+
+#[test]
+fn immutable_get_block_by_slot_found() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 10)).unwrap();
+    store.append_block(test_block(0x02, 20)).unwrap();
+
+    let block = store.get_block_by_slot(SlotNo(20)).expect("should find slot 20");
+    assert_eq!(block.header.hash, HeaderHash([0x02; 32]));
+}
+
+#[test]
+fn immutable_get_block_by_slot_not_found() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x01, 10)).unwrap();
+    assert!(store.get_block_by_slot(SlotNo(99)).is_none());
+}
+
+#[test]
+fn file_immutable_get_block_by_slot() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let mut store = FileImmutable::open(dir.path()).expect("open store");
+    store.append_block(test_block(0x01, 10)).unwrap();
+    store.append_block(test_block(0x02, 20)).unwrap();
+    store.append_block(test_block(0x03, 30)).unwrap();
+
+    let block = store.get_block_by_slot(SlotNo(20)).expect("should find slot 20");
+    assert_eq!(block.header.hash, HeaderHash([0x02; 32]));
+
+    assert!(store.get_block_by_slot(SlotNo(15)).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Crash-tolerant open — corrupted files skipped
+// ---------------------------------------------------------------------------
+
+#[test]
+fn file_immutable_open_skips_corrupted_files() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    {
+        let mut store = FileImmutable::open(dir.path()).expect("open store");
+        store.append_block(test_block(0x01, 10)).unwrap();
+        store.append_block(test_block(0x02, 20)).unwrap();
+    }
+
+    // Write a corrupted .json file
+    std::fs::write(dir.path().join("deadbeef.json"), b"NOT VALID JSON").unwrap();
+
+    // Reopen — should skip the bad file and load the 2 good blocks
+    let store = FileImmutable::open(dir.path()).expect("reopen should succeed");
+    assert_eq!(store.len(), 2);
+    assert_eq!(store.skipped_on_open(), 1);
+}
+
+#[test]
+fn file_volatile_open_skips_corrupted_files() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    {
+        let mut store = FileVolatile::open(dir.path()).expect("open store");
+        store.add_block(test_block(0x01, 10)).unwrap();
+    }
+
+    // Write a corrupted .json file
+    std::fs::write(dir.path().join("badbad.json"), b"{{{{").unwrap();
+
+    let store = FileVolatile::open(dir.path()).expect("reopen should succeed");
+    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
+    assert_eq!(store.skipped_on_open(), 1);
+}
+
+#[test]
+fn file_immutable_open_handles_empty_json_file() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    // Write an empty .json file (simulates truncated write)
+    std::fs::write(dir.path().join("empty.json"), b"").unwrap();
+
+    let store = FileImmutable::open(dir.path()).expect("open should succeed");
+    assert_eq!(store.len(), 0);
+    assert_eq!(store.skipped_on_open(), 1);
+}

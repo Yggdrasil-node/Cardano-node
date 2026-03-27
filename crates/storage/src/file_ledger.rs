@@ -35,6 +35,7 @@ impl FileLedgerStore {
     /// Opens or creates a file-backed ledger store at `data_dir`.
     ///
     /// Existing snapshot files are scanned and loaded, sorted by slot number.
+    /// Unreadable files are silently skipped.
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
@@ -46,8 +47,12 @@ impl FileLedgerStore {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if let Some(slot_str) = name.strip_prefix("snapshot_").and_then(|s| s.strip_suffix(".dat")) {
                     if let Ok(slot) = slot_str.parse::<u64>() {
-                        let data = fs::read(&path)?;
-                        snapshots.push((SlotNo(slot), data));
+                        match fs::read(&path) {
+                            Ok(data) => snapshots.push((SlotNo(slot), data)),
+                            Err(_) => {
+                                // Skip unreadable snapshot files.
+                            }
+                        }
                     }
                 }
             }

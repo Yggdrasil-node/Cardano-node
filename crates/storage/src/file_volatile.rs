@@ -27,33 +27,46 @@ fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// File-backed volatile block store with rollback support.
 ///
 /// Blocks are persisted as `{hex_hash}.json` files inside `data_dir`.
-/// Rollback removes files for discarded blocks.
+/// Rollback removes files for discarded blocks. Corrupted files are
+/// silently skipped on open so that an incomplete shutdown does not
+/// prevent the node from restarting.
 pub struct FileVolatile {
     data_dir: PathBuf,
     /// Ordered list of header hashes matching insertion order.
     chain: Vec<HeaderHash>,
     /// In-memory block cache keyed by header hash.
     index: HashMap<HeaderHash, Block>,
+    /// Number of corrupted or unreadable files skipped during open.
+    skipped_on_open: usize,
 }
 
 impl FileVolatile {
     /// Opens or creates a file-backed volatile store at `data_dir`.
     ///
     /// If the directory already exists its contents are scanned and the
-    /// chain order is recovered from block slot numbers.
+    /// chain order is recovered from block slot numbers. Corrupted or
+    /// unreadable block files are skipped.
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
 
         let mut blocks = Vec::new();
+        let mut skipped: usize = 0;
         for entry in fs::read_dir(&data_dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                let contents = fs::read_to_string(&path)?;
-                let block: Block = serde_json::from_str(&contents)
-                    .map_err(|e| StorageError::Serialization(e.to_string()))?;
-                blocks.push(block);
+                match fs::read_to_string(&path) {
+                    Ok(contents) => match serde_json::from_str::<Block>(&contents) {
+                        Ok(block) => blocks.push(block),
+                        Err(_) => {
+                            skipped += 1;
+                        }
+                    },
+                    Err(_) => {
+                        skipped += 1;
+                    }
+                }
             }
         }
 
@@ -66,7 +79,13 @@ impl FileVolatile {
             .map(|b| (b.header.hash, b))
             .collect();
 
-        Ok(Self { data_dir, chain, index })
+        Ok(Self { data_dir, chain, index, skipped_on_open: skipped })
+    }
+
+    /// Returns the number of block files that were skipped during open
+    /// due to corruption or read errors.
+    pub fn skipped_on_open(&self) -> usize {
+        self.skipped_on_open
     }
 
     fn block_path(&self, hash: &HeaderHash) -> PathBuf {

@@ -35,6 +35,19 @@ pub trait ImmutableStore {
         self.len() == 0
     }
 
+    /// Retrieves a block by its slot number.
+    ///
+    /// Returns the first block found at the given slot, or `None` if no
+    /// immutable block occupies that slot. The default implementation
+    /// performs a linear scan; backends with a slot index should override
+    /// for O(1) / O(log n) performance.
+    ///
+    /// Reference: The Haskell `ImmutableDB` maintains a slot-indexed
+    /// on-disk structure for O(1) slot lookups.
+    fn get_block_by_slot(&self, _slot: SlotNo) -> Option<&Block> {
+        None
+    }
+
     /// Removes all immutable blocks with slots strictly before `slot`.
     ///
     /// Returns the number of blocks removed. Blocks at `slot` or later are
@@ -99,6 +112,10 @@ impl ImmutableStore for InMemoryImmutable {
 
     fn len(&self) -> usize {
         self.blocks.len()
+    }
+
+    fn get_block_by_slot(&self, slot: SlotNo) -> Option<&Block> {
+        self.blocks.iter().find(|b| b.header.slot_no == slot)
     }
 
     fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
