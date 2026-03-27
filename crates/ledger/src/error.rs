@@ -321,6 +321,13 @@ pub enum LedgerError {
     #[error("no matching redeemer for script hash {hash:02x?} (purpose {purpose})")]
     MissingRedeemer { hash: [u8; 28], purpose: String },
 
+    /// A redeemer was provided for a purpose that is not backed by a Plutus
+    /// script (e.g. a VKey-locked input or a native-script purpose).
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.hasExactSetOfRedeemers`.
+    #[error("extra redeemer: tag {tag} index {index} does not target a Plutus script purpose")]
+    ExtraRedeemer { tag: u8, index: u64 },
+
     #[error("datum not found for spending input (tx {tx_id:02x?} index {index})")]
     MissingDatum { tx_id: [u8; 32], index: u64 },
 

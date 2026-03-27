@@ -623,6 +623,43 @@ pub fn validate_plutus_scripts(
         })
         .collect::<Result<_, LedgerError>>()?;
 
+    // ── ExtraRedeemers check (UTXOW Phase-1) ──────────────────────────
+    // Every redeemer must target a purpose backed by a Plutus script.
+    // Reference: Cardano.Ledger.Alonzo.Rules.Utxow.hasExactSetOfRedeemers
+    for (redeemer, (purpose, _)) in ws.redeemers.iter().zip(&resolved_redeemers) {
+        let target_hash = match purpose {
+            ScriptPurpose::Spending { tx_id, index } => {
+                let txin = crate::eras::shelley::ShelleyTxIn {
+                    transaction_id: *tx_id,
+                    index: *index as u16,
+                };
+                spending_utxo
+                    .get(&txin)
+                    .and_then(spending_script_hash_from_txout)
+            }
+            ScriptPurpose::Minting { policy_id } => Some(*policy_id),
+            ScriptPurpose::Certifying { certificate, .. } => {
+                certifying_script_hash_from_cert(certificate)
+            }
+            ScriptPurpose::Rewarding { reward_account } => {
+                credential_script_hash(&reward_account.credential)
+            }
+            ScriptPurpose::Voting { voter } => voting_voter_script_hash(voter),
+            ScriptPurpose::Proposing { proposal, .. } => {
+                proposal_script_hash_from_proposal(proposal)
+            }
+        };
+        match target_hash {
+            Some(hash) if plutus_scripts.contains_key(&hash) => {}
+            _ => {
+                return Err(LedgerError::ExtraRedeemer {
+                    tag: redeemer.tag,
+                    index: redeemer.index,
+                });
+            }
+        }
+    }
+
     // Build an augmented TxContext with the fields that require access to the
     // witness set and spending UTxO (inputs, certificates, witness_datums).
     // These are not available at the call-sites in state.rs so we populate
