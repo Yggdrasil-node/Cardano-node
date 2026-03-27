@@ -15,10 +15,14 @@ This directory owns consensus implementation modules, not integration glue.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Consensus source tree: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/>
-- Cardano consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/>
+## Official Upstream References *Always research references and add or update links as needed*
+- Consensus source tree: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus>
+- Protocol modules (`Abstract.hs`, `Praos.hs`, `Praos/Common.hs`, `TPraos.hs`): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol>
+- Cardano-specific consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/>
+- Block forge and header validation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block>
 - Consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec/>
+- Consensus tech report PDF: <https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf>
+- Consensus Haddock: <https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>
 
 ## Current Phase
 - Preserve the current separation between header verification, epoch nonce evolution, and volatile chain tracking.

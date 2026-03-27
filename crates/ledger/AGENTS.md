@@ -1,8 +1,4 @@
----
-name: ledger-crate-agent
-description: Guidance for era-aware ledger work
----
-
+# Guidance for era-aware ledger work
 Focus on reusable state-transition interfaces and explicit era boundaries.
 
 ## Scope
@@ -19,11 +15,20 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Ledger behavior MUST be explained by reference to the official node, the ledger repository, and the formal ledger specifications rather than only local interpretation.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
+## Official Upstream References *Always research references and add or update links as needed*
 - Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger/>
-- Era-specific sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-- Formal ledger specification: <https://github.com/IntersectMBO/formal-ledger-specifications/>
+- Era-specific sources: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/> — each era has `impl/`, `formal-spec/`, `test-suite/`, and `cddl/` subdirectories
+  - Byron ledger rules and CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/>
+  - Shelley rules (`impl/src/`), design spec, formal spec, CDDL (`impl/cddl/data/`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/>
+  - Allegra/Mary rules and shared formal spec: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley-ma/>
+  - Alonzo rules, formal spec, CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/>
+  - Babbage rules, formal spec, CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/>
+  - Conway rules (governance, DRep, voting), formal spec, CDDL: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/>
+- Ledger support libraries (binary serialization, core types): <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/>
+- Binary serialization library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/>
+- Formal ledger specifications (Agda, Conway-complete): <https://github.com/IntersectMBO/formal-ledger-specifications/>
 - Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site/>
+- Haddock documentation: <https://cardano-ledger.cardano.intersectmbo.org/>
 
 ## Current Phase
 - Core protocol types (`SlotNo`, `BlockNo`, `EpochNo`, `HeaderHash`, `TxId`, `Point`) are landed in `types.rs`.
@@ -48,7 +53,7 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Block body hash: `compute_block_body_hash` computes Blake2b-256 of elements 1..N (everything after header). Supports 4-element (Shelley) and 5-element (Babbage/Conway) blocks.
 - PlutusData AST landed in `plutus.rs`: recursive `PlutusData` enum (`Constr`/`Map`/`List`/`Integer`/`Bytes`) with CBOR codec supporting compact constructor tags 121–127, general form tag 102, big_uint (#6.2), big_nint (#6.3). `Script` enum (Native/PlutusV1/V2/V3) and `ScriptRef` (tag-24 double encoding). `BabbageTxOut.script_ref` is now typed `Option<ScriptRef>` instead of opaque bytes.
 - Ledger rule foundation modules landed: `ProtocolParameters` (CBOR map codec, Shelley/Alonzo defaults, `min_lovelace_for_utxo()`, `apply_update()`), `ProtocolParameterUpdate` (typed sparse delta for parameter proposals), `fees.rs` (linear fee + script fee calculation/validation), `native_script.rs` (timelock evaluator + Blake2b-224 script hash), `collateral.rs` (Alonzo+ collateral validation), `min_utxo.rs` (per-output minimum lovelace enforcement), `witnesses.rs` (VKey witness sufficiency). `LedgerState` carries `Option<ProtocolParameters>` (CBOR array element 10, backward-compatible with legacy 9-element).
-- Validation wiring is complete: `apply_block()` checks block body size against `max_block_body_size`; per-era block apply methods validate tx size + linear fee + min-UTxO (pre-Alonzo) or tx size + fee with script costs + ex-units + min-UTxO + collateral (Alonzo+); `apply_submitted_tx()` validates full tx CBOR size and includes witness-set ex-units for Alonzo+ eras.
+- Validation wiring is complete: `apply_block()` checks block body size against `max_block_body_size`; per-era block apply methods validate tx size + linear fee + min-UTxO (pre-Alonzo) or tx size + fee with script costs + ex-units + min-UTxO + collateral with VKey-locked address enforcement and mandatory collateral when redeemers are present (Alonzo+); `apply_submitted_tx()` validates full tx CBOR size and includes witness-set ex-units for Alonzo+ eras.
 - Plutus phase-2 bridge landed in `plutus_validation.rs`: `PlutusEvaluator` trait, `PlutusScriptEval`, `PlutusVersion`, script hashing, witness-set Plutus script collection, redeemer-purpose resolution, and `validate_plutus_scripts()` orchestration. `LedgerState::apply_block_validated()` is now the injected-evaluator entry point; `apply_block()` delegates with `None` and soft-skips Plutus evaluation when no evaluator is configured.
 - Required script collection now includes mint policy IDs for every mint-capable era path (Mary, Alonzo, Babbage, Conway) in addition to spending inputs, certificates, and withdrawals. This is required so native minting policies and Plutus minting policies are both enforced during block application.
 - Epoch boundary processing (Phase 4) landed: `stake.rs` (stake distribution snapshots with three-snapshot ring rotation), `rewards.rs` (Shelley Section 10 epoch reward calculation with u128 fixed-point), `epoch_boundary.rs` (NEWEPOCH/SNAP/RUPD orchestration including pool retirement + deposit refunds, governance action expiry + deposit refunds, treasury/reserves accounting). `remove_expired_governance_actions()` implements the upstream Conway EPOCH rule: proposals past their `expires_after` epoch are pruned and deposits refunded to registered return accounts. `DepositPot` and `AccountingState` structs in `state.rs` track key/pool/drep deposits and treasury/reserves. `LedgerState` now 12-field struct with CBOR backward compat (9/10/12 elements). Certificate processing tracks deposits across all 19 `DCert` variants.

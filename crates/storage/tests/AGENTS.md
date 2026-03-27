@@ -15,9 +15,11 @@ Use this directory to pin persistence and rollback expectations for storage back
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Consensus ChainDB and storage context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
-- Node storage integration reference: <https://github.com/IntersectMBO/cardano-node/>
+## Official Upstream References *Always research references and add or update links as needed*
+- ChainDB test suite: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB>
+- ImmutableDB implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ImmutableDB>
+- VolatileDB implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/VolatileDB>
+- LedgerDB implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB>
 
 ## Current Phase
 - Tests in this directory verify trait conformance, persistence after reopen, rollback deletion, snapshot-visible behavior, and volatile→immutable promotion for storage backends.

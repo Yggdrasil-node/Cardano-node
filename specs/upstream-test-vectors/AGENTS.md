@@ -1,9 +1,11 @@
----
-name: upstream-test-vectors
-description: The official upstream vector and golden artifacts used for parity validation.
----
+# The official upstream vector and golden artifacts used for parity validation.
 
 This directory vendors official upstream vector and golden artifacts used for parity validation. Research the official IntersectMBO/Cardano repositories to find the relevant files and paths for implementation work, and use the crate-local `AGENTS.md` files to identify which corpora matter to each subsystem.
+
+## Scope
+- Pinned upstream vector corpora used by workspace parity tests.
+- Provenance and sync guidance for fixture updates under commit-scoped directories.
+- Read-only fixture organization, not feature implementation logic.
 
 ## Source Policy
 
@@ -16,7 +18,7 @@ This directory vendors official upstream vector and golden artifacts used for pa
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
+## Official Upstream References *Always research references and add or update links as needed*
 - Upstream `cardano-base` repository: <https://github.com/IntersectMBO/cardano-base/>
 - Praos vector path: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test_vectors/>
 - BLS12-381 vector path: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>

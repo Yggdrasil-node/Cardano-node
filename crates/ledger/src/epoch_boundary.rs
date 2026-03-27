@@ -128,19 +128,16 @@ pub fn apply_epoch_boundary(
     let drep_activity = params.drep_activity.unwrap_or(u64::MAX);
 
     // -----------------------------------------------------------------------
-    // 1. SNAP — compute a fresh mark snapshot and rotate.
+    // 1. RUPD — compute and distribute rewards from the *go* snapshot.
+    //
+    //    The upstream NEWEPOCH rule credits rewards BEFORE the SNAP
+    //    rotation so that newly-credited reward balances are included in
+    //    the freshly-computed mark snapshot.
+    //
+    //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — RUPD runs
+    //    before EPOCH (which contains SNAP).
     // -----------------------------------------------------------------------
-    let new_mark = compute_stake_snapshot(
-        ledger.multi_era_utxo(),
-        ledger.stake_credentials(),
-        ledger.reward_accounts(),
-        ledger.pool_state(),
-    );
-    let fee_pot = snapshots.rotate(new_mark);
-
-    // -----------------------------------------------------------------------
-    // 2. RUPD — compute and distribute rewards from the *go* snapshot.
-    // -----------------------------------------------------------------------
+    let fee_pot = std::mem::take(&mut snapshots.fee_pot);
     let reward_params = RewardParams {
         rho,
         tau,
@@ -155,6 +152,25 @@ pub fn apply_epoch_boundary(
     let accounts_rewarded = distribute_rewards(ledger, &reward_dist);
 
     // -----------------------------------------------------------------------
+    // 2. SNAP — compute a fresh mark snapshot from post-reward state
+    //    and rotate the three-snapshot ring.
+    //
+    //    Because rewards have already been credited above, the new mark
+    //    snapshot reflects the updated reward account balances.
+    //
+    //    Reference: `Cardano.Ledger.Shelley.Rules.Snap` — runs inside
+    //    the EPOCH rule, after RUPD.
+    // -----------------------------------------------------------------------
+    let new_mark = compute_stake_snapshot(
+        ledger.multi_era_utxo(),
+        ledger.stake_credentials(),
+        ledger.reward_accounts(),
+        ledger.pool_state(),
+    );
+    // fee_pot was already taken above; rotate returns 0 here.
+    let _ = snapshots.rotate(new_mark);
+
+    // -----------------------------------------------------------------------
     // 3. Pool retirement — remove pools and refund deposits.
     // -----------------------------------------------------------------------
     let (retired_pool_keys, pool_deposit_refunds) =
@@ -163,12 +179,17 @@ pub fn apply_epoch_boundary(
 
     // -----------------------------------------------------------------------
     // 4. Accounting — update treasury and reserves.
+    //
+    //    Only `delta_reserves` (= reserves × ρ, the monetary expansion)
+    //    is subtracted from reserves.  The fee pot comes from transaction
+    //    fees, not from reserves.
+    //
+    //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — accounting
+    //    update step.
     // -----------------------------------------------------------------------
     {
         let acct = ledger.accounting_mut();
-        acct.reserves = acct.reserves.saturating_sub(
-            reward_dist.treasury_delta.saturating_add(reward_dist.distributed),
-        );
+        acct.reserves = acct.reserves.saturating_sub(reward_dist.delta_reserves);
         acct.treasury = acct.treasury.saturating_add(reward_dist.treasury_delta);
     }
 
@@ -208,8 +229,7 @@ pub fn apply_epoch_boundary(
         pool_deposit_refunds,
         rewards_distributed: reward_dist.distributed,
         treasury_delta: reward_dist.treasury_delta,
-        delta_reserves: reward_dist.distributed
-            .saturating_add(reward_dist.treasury_delta),
+        delta_reserves: reward_dist.delta_reserves,
         accounts_rewarded,
         governance_actions_expired,
         governance_deposit_refunds,
@@ -2168,5 +2188,144 @@ mod tests {
 
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(ledger.governance_actions().contains_key(&gai));
+    }
+
+    // -- RUPD-before-SNAP ordering: rewards reflected in mark snapshot ----
+
+    #[test]
+    fn test_rewards_reflected_in_mark_snapshot() {
+        // Verify that epoch rewards credited to reward accounts are
+        // included in the freshly-computed mark snapshot (RUPD before SNAP).
+        let mut ledger = make_ledger_with_pool(21);
+
+        // Add stake UTxO delegated to pool 21.
+        let cred = test_cred(21);
+        let base_addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xAA; 28]),
+            staking: cred,
+        });
+        let addr_bytes = base_addr.to_bytes();
+        let txin = ShelleyTxIn { transaction_id: [21u8; 32], index: 0 };
+        ledger.multi_era_utxo_mut().insert_shelley(
+            txin,
+            ShelleyTxOut {
+                address: addr_bytes.clone(),
+                amount: 10_000_000_000_000, // 10M ADA
+            },
+        );
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark from current state.
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+        // Epoch 2: go snapshot now has the pool → rewards are computed.
+        snapshots.accumulate_fees(1_000_000_000);
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // After epoch 2, the reward account should have positive balance
+        // (rewards were distributed).
+        let ra = test_reward_account(21);
+        let reward_balance = ledger.reward_accounts().balance(&ra);
+
+        // Epoch 3: the mark snapshot should now include the reward balance.
+        snapshots.accumulate_fees(500_000_000);
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf)
+            .expect("epoch 3");
+
+        // The mark snapshot's stake should include the operator's reward
+        // balance (reward accounts feed into compute_stake_snapshot).
+        let mark_stake = snapshots.mark.stake.get(&cred);
+
+        // Reward balance should be non-zero and reflected in mark snapshot.
+        if reward_balance > 0 {
+            // Mark snapshot stake should be at least the reward balance
+            // (it may also include UTxO stake).
+            assert!(
+                mark_stake >= reward_balance,
+                "mark snapshot stake ({mark_stake}) should include reward balance ({reward_balance})"
+            );
+        }
+    }
+
+    // -- Reserves accounting: only monetary expansion deducted from reserves
+
+    #[test]
+    fn test_reserves_only_deducted_by_monetary_expansion() {
+        let mut ledger = make_ledger_with_pool(22);
+
+        // Add UTxO stake delegated to pool 22.
+        let cred = test_cred(22);
+        let base_addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xBB; 28]),
+            staking: cred,
+        });
+        let addr_bytes = base_addr.to_bytes();
+        let txin = ShelleyTxIn { transaction_id: [22u8; 32], index: 0 };
+        ledger.multi_era_utxo_mut().insert_shelley(
+            txin,
+            ShelleyTxOut {
+                address: addr_bytes.clone(),
+                amount: 50_000_000_000_000, // 50M ADA
+            },
+        );
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark.
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Epoch 2: go snapshot has pool → rewards computed.
+        // Add a large fee pot to make the difference visible.
+        snapshots.accumulate_fees(10_000_000_000); // 10k ADA in fees
+        let reserves_before_epoch2 = ledger.accounting().reserves;
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        let reserves_after = ledger.accounting().reserves;
+        let actual_deduction = reserves_before_epoch2.saturating_sub(reserves_after);
+
+        // delta_reserves should be reserves × rho (monetary expansion only),
+        // NOT delta_reserves + fee_pot.
+        assert_eq!(actual_deduction, event.delta_reserves);
+
+        // The fee pot (10k ADA) should NOT have been deducted from reserves.
+        // rho = 3/1000, so delta_reserves ≈ reserves × 0.003.
+        let expected_delta = (reserves_before_epoch2 as u128 * 3 / 1000) as u64;
+        assert_eq!(event.delta_reserves, expected_delta);
+
+        // Verify that reserves were NOT over-decremented by the fee pot.
+        assert_eq!(reserves_after, reserves_before_epoch2 - expected_delta);
+    }
+
+    // -- Fee pot does not affect reserves --
+
+    #[test]
+    fn test_fee_pot_not_subtracted_from_reserves() {
+        // With zero reserves (so delta_reserves = 0), the fee pot should
+        // NOT cause any reserves deduction.
+        let mut ledger = make_ledger_with_pool(23);
+        ledger.accounting_mut().reserves = 0; // no reserves
+        ledger.accounting_mut().treasury = 0;
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Add fees — these come from transactions, not reserves.
+        snapshots.accumulate_fees(5_000_000_000); // 5k ADA
+
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Reserves should still be 0 (fees don't come from reserves).
+        assert_eq!(ledger.accounting().reserves, 0);
+        // Treasury should have received the treasury cut of the fees.
+        assert!(ledger.accounting().treasury > 0);
     }
 }

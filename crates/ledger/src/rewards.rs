@@ -345,6 +345,11 @@ pub struct EpochRewardDistribution {
     pub distributed: u64,
     /// Unclaimed rewards (cost-exceeds-apparent, rounding).
     pub unclaimed: u64,
+    /// Monetary expansion drawn from reserves (ΔR = reserves × ρ).
+    ///
+    /// This is the only amount that should be subtracted from reserves;
+    /// the fee pot comes from transaction fees, not reserves.
+    pub delta_reserves: u64,
 }
 
 /// Computes reward distribution for all pools at an epoch boundary.
@@ -422,6 +427,7 @@ pub fn compute_epoch_rewards(
         treasury_delta: pot.treasury_cut.saturating_add(unclaimed),
         distributed: total_distributed,
         unclaimed,
+        delta_reserves: pot.delta_reserves,
     }
 }
 
@@ -705,6 +711,45 @@ mod tests {
         assert_eq!(dist.treasury_delta, dist.unclaimed);
         assert!(dist.distributed > 0);
         assert!(dist.distributed <= 10000);
+        // delta_reserves should match reserves × rho = 100000 × 1/10 = 10000.
+        assert_eq!(dist.delta_reserves, 10000);
+    }
+
+    #[test]
+    fn compute_epoch_rewards_delta_reserves_independent_of_fees() {
+        // delta_reserves should only depend on reserves × rho,
+        // NOT on the fee_pot.
+        let params_no_fees = RewardParams {
+            rho: UnitInterval { numerator: 5, denominator: 100 },
+            tau: UnitInterval { numerator: 0, denominator: 1 },
+            a0: UnitInterval { numerator: 0, denominator: 1 },
+            n_opt: 1,
+            min_pool_cost: 0,
+            reserves: 200_000,
+            fee_pot: 0,
+        };
+        let params_with_fees = RewardParams {
+            fee_pot: 50_000,
+            ..params_no_fees.clone()
+        };
+
+        let pool = test_pool(1);
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.stake.add(test_cred(1), 1000);
+        snapshot.delegations.insert(test_cred(1), pool);
+        snapshot.pool_params.insert(
+            pool,
+            test_pool_params(1, 1000, 0, UnitInterval { numerator: 0, denominator: 1 }),
+        );
+
+        let perf = BTreeMap::from([(pool, UnitInterval { numerator: 1, denominator: 1 })]);
+
+        let dist_no_fees = compute_epoch_rewards(&params_no_fees, &snapshot, &perf);
+        let dist_with_fees = compute_epoch_rewards(&params_with_fees, &snapshot, &perf);
+
+        // delta_reserves = 200000 × 5/100 = 10000 regardless of fee_pot.
+        assert_eq!(dist_no_fees.delta_reserves, 10000);
+        assert_eq!(dist_with_fees.delta_reserves, 10000);
     }
 
     #[test]

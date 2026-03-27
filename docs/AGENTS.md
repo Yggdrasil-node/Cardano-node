@@ -1,7 +1,4 @@
----
-name: workspace-docs
-description: Guidance for maintaining project policy and architecture documents under docs/.
----
+# Guidance for maintaining project policy and architecture documents under docs/.
 
 Keep these documents synchronized with the implemented workspace, not with speculative future goals.
 
@@ -17,12 +14,16 @@ Keep these documents synchronized with the implemented workspace, not with specu
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
+## Official Upstream References *Always research references and add or update links as needed*
 - Node integration and operational behavior: <https://github.com/IntersectMBO/cardano-node/>
-- Ledger implementation and schemas: <https://github.com/IntersectMBO/cardano-ledger/>
-- Formal ledger specifications: <https://github.com/IntersectMBO/formal-ledger-specifications>
-- Consensus implementation and reports: <https://github.com/IntersectMBO/ouroboros-consensus/>
-- Networking implementation and specification: <https://github.com/IntersectMBO/ouroboros-network/>
+- Ledger implementation, per-era rules and CDDL: <https://github.com/IntersectMBO/cardano-ledger/>
+- Formal ledger specifications (Agda, Conway-complete): <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
+- Consensus implementation, tech report, and architecture docs: <https://github.com/IntersectMBO/ouroboros-consensus/>
+- Networking implementation and protocol specification: <https://github.com/IntersectMBO/ouroboros-network/>
+- Cryptographic primitives (hashing, VRF, KES, BLS): <https://github.com/IntersectMBO/cardano-base/>
+- Plutus core and CEK machine: <https://github.com/IntersectMBO/plutus/>
+- Haddock docs: ledger (<https://cardano-ledger.cardano.intersectmbo.org/>), consensus (<https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>), network (<https://ouroboros-network.cardano.intersectmbo.org/>), base (<https://base.cardano.intersectmbo.org/>)
 
 ## Maintenance Guidance
 - Update these docs in the same change when a subsystem milestone materially changes.

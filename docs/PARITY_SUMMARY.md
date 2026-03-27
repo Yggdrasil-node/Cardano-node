@@ -86,7 +86,7 @@
 ### ⚠️ Partially Implemented (Need Completion)
 
 **Ledger**:
-- `validate_collateral()` — Framework present; edge cases incomplete
+- `validate_collateral()` — Complete: VKey-locked address enforcement, mandatory when redeemers present, Babbage return/total-collateral checks
 - `apply_submitted_tx()` — Pre-mempool validation; some checks skipped
 - `compute_epoch_rewards()` — Formula skeleton; exact calculations TBD
 - `ratify_action()` — Vote tallying present; threshold math incomplete

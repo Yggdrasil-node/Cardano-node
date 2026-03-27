@@ -1,8 +1,4 @@
----
-name: mempool-crate-agent
-description: Guidance for transaction admission, ordering, and eviction work
----
-
+# Guidance for transaction admission, ordering, and eviction work
 Focus on deterministic transaction intake and on keeping ledger validation and queue policy separate.
 
 ## Scope
@@ -20,10 +16,11 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Consensus core package, including mempool design context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
-- Consensus repository root: <https://github.com/IntersectMBO/ouroboros-consensus/>
-- Transaction submission integration reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
+## Official Upstream References *Always research references and add or update links as needed*
+- Consensus Mempool module (`API.hs`, `TxSeq.hs`, `Capacity.hs`, `Init.hs`, `Update.hs`, `Query.hs`): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/>
+- Mempool implementation internals: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/Impl/>
+- Consensus repository root (for broader context): <https://github.com/IntersectMBO/ouroboros-consensus/>
+- Transaction submission API: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
 - Node integration reference: <https://github.com/IntersectMBO/cardano-node/>
 
 ## Current Phase
@@ -33,6 +30,7 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - `remove_by_id`, `contains`, `len`, `is_empty`, `size_bytes`, `iter`, and `remove_confirmed` are implemented.
 - Block-application eviction via `remove_confirmed` enables post-sync snipping of confirmed transactions.
 - TTL-aware admission via `insert_checked(entry, current_slot, protocol_params)` rejects transactions whose TTL has expired and, when protocol parameters are supplied, re-validates transaction body size and minimum fee thresholds (`maxTxSize`, `minFeeA`, `minFeeB`) at mempool admission time.
+- For decodable Alonzo/Babbage/Conway submitted transactions, `insert_checked` now also aggregates redeemer `ExUnits`, enforces `maxTxExUnits`, and applies script-fee-aware minimum-fee checks before admission.
 - Periodic TTL expiry purge via `purge_expired(current_slot)` removes all stale entries.
 - Node-side `evict_confirmed_from_mempool` in `node/src/sync.rs` wires mempool eviction into the sync pipeline.
 - Fee ordering remains a queue policy concern; TxSubmission snapshot traversal uses insertion-order indices so networking does not depend on fee-priority layout.

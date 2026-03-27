@@ -21,10 +21,13 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Full cryptographic parity, vector coverage, and encoding compatibility are non-negotiable long-term targets.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Crypto abstractions and shared utilities: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/>
-- Praos-oriented crypto behavior and vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/>
+## Official Upstream References *Always research references and add or update links as needed*
+- Crypto class abstractions (hashing, signatures, VRF, KES): <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/>
+- Praos VRF and KES implementations and test vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/>
+- Peras-era crypto extensions: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras/>
 - Shared Cardano base packages: <https://github.com/IntersectMBO/cardano-base/>
+- Haddock documentation: <https://base.cardano.intersectmbo.org/>
+- VRF batch-verification fork of libsodium: <https://github.com/input-output-hk/libsodium/tree/iquerejeta/vrf_batchverify> (behavioral reference only — this crate uses pure Rust)
 
 ## Current Phase
 - Blake2b, Ed25519, and SimpleKES (two-period) are implemented with vector coverage.

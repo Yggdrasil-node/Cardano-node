@@ -19,9 +19,12 @@ Keep tests in this directory close to ledger rules and era-specific invariants.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Ledger test corpus root: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-- Formal ledger rules: <https://github.com/IntersectMBO/formal-ledger-specifications>
+## Official Upstream References *Always research references and add or update links as needed*
+- Shelley ledger tests: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/test>
+- Alonzo ledger tests: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/test>
+- Conway ledger tests: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/test>
+- Per-era CDDL conformance data: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/> (each era has `impl/cddl/data/`)
+- Formal ledger rules (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications>
 
 ## Current Phase
 - Tests in this directory protect codec round-trips, submitted-transaction handling, UTxO evolution, and era-specific block application behavior.

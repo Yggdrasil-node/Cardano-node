@@ -18,10 +18,17 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Official era names, rule labels, and transition terminology from upstream ledger and node sources MUST be preferred.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Era sources and CDDL roots: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+## Official Upstream References *Always research references and add or update links as needed*
+- Era sources root: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
+- Byron CDDL spec: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/cddl-spec>
+- Shelley era (`impl/`, `formal-spec/`, `cddl/`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley>
+- Allegra era: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/allegra>
+- Mary era: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/mary>
+- Alonzo era: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo>
+- Babbage era: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage>
+- Conway era: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway>
 - Formal ledger specification site: <https://intersectmbo.github.io/formal-ledger-specifications/site/>
-- Formal ledger specification repository: <https://github.com/IntersectMBO/formal-ledger-specifications/>
+- Formal ledger specification repository (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications/>
 
 ## Current Phase
 - Shelley: full block, header, tx body (keys 0–7 including certificates/withdrawals/update), `ShelleyUpdate` (typed `[{genesis_hash => protocol_param_update}, epoch]` with typed `ProtocolParameterUpdate` values), witness set (keys 0–7: vkey, native_scripts, bootstrap_witnesses, plutus_v1/v2/v3 scripts, plutus_data, redeemers), typed `BootstrapWitness`, UTxO, and VRF/OpCert types with CBOR codecs. Block-level field names align with upstream CDDL: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `nonce_vrf`, `leader_vrf`, `block_body_size`, `block_body_hash`, `operational_cert`, `transaction_witness_sets`, `transaction_metadata_set`. OpCert fields: `hot_vkey`, `sequence_number`, `kes_period`, `sigma`. Also defines `PraosHeaderBody` (14-element CBOR array with single `vrf_result` instead of `nonce_vrf`+`leader_vrf`) and `PraosHeader` (`[PraosHeaderBody, kes_signature]`) used by Babbage/Conway blocks.

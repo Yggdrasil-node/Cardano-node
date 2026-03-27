@@ -1,8 +1,4 @@
----
-name: node-src-subagent
-description: Guidance for node runtime and sync orchestration implementation details
----
-
+#  Guidance for node runtime and sync orchestration implementation details
 Focus on runtime composition of network clients and orchestration helpers that remain thin integration layers.
 
 ## Scope
@@ -19,9 +15,15 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- `cardano-node` runtime: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/>
-- `ouroboros-consensus` integration behavior: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
+## Official Upstream References *Always research references and add or update links as needed*
+- `cardano-node` runtime (run, config, toplevel): <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node>
+- `cardano-node` configuration handling: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node/Configuration>
+- `cardano-node` tracing system: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node/Tracing>
+- Consensus diffusion integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion>
+- Cardano-specific consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/>
+- Transaction submit API: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api>
+- Node official configuration files: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration>
+- Cardano Operations Book: <https://book.play.dev.cardano.org/>
 
 ## Current Phase
 - **CLI**: `main.rs` uses `clap` with `run` (connect + sync), `validate-config` (operator preflight for config, peer-snapshot inputs, and any existing storage recovery state), `status` (inspect on-disk storage and report current sync position, block counts, and checkpoint state), and `default-config` (emit JSON) subcommands. CLI flags (`--peer`, `--network-magic`, `--no-verify`, `--batch-size`, `--checkpoint-interval-slots`, `--max-ledger-snapshots`, `--checkpoint-trace-max-frequency`, `--checkpoint-trace-severity`, `--checkpoint-trace-backend`, `--metrics-port`, `--config`, `--network`) override config-file values on `run`. `--network` accepts `mainnet`, `preprod`, or `preview` presets. When `--peer` is omitted, `run` tries the configured primary relay and then topology-derived fallback peers. `--metrics-port` enables a lightweight HTTP endpoint on `127.0.0.1:<port>` serving `GET /metrics` (Prometheus text exposition), `GET /metrics/json` (JSON snapshot), and `GET /health` (JSON health check with `status`, `uptime_seconds`, `blocks_synced`, `current_slot` for orchestrator liveness probes).

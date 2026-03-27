@@ -1685,6 +1685,7 @@ fn re_admit_rolled_back_tx_ids(
             Err(MempoolError::CapacityExceeded { .. }) => stats.capacity_exceeded += 1,
             Err(MempoolError::FeeTooSmall { .. })
             | Err(MempoolError::TxTooLarge { .. })
+            | Err(MempoolError::ExUnitsExceedTxLimit { .. })
             | Err(MempoolError::ProtocolParamValidation(_)) => stats.protocol_rejected += 1,
         }
     }

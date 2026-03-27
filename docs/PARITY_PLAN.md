@@ -75,7 +75,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Witness sufficiency | VKey hash + signature count | ✅ | ✅ | Complete | verify_vkey_signatures with Ed25519
 | Native script eval | Timelock constraints | ✅ | ✅ | Complete | validate_native_scripts_if_present
 | Plutus validation | Script execution + budget | ✅ | ⚠️ | Partial | CEK framework present; execution path incomplete
-| Collateral checks | Alonzo+ collateral UTxO | ✅ | ⏸️ | In Design | validate_collateral skeleton
+| Collateral checks | Alonzo+ collateral UTxO | ✅ | ✅ | Complete | validate_collateral with VKey-locked + mandatory-when-scripts
 | Min UTxO enforcement | Per-output minimum lovelace | ✅ | ✅ | Complete | min_utxo.rs with era-aware calculation
 | **Epoch Boundary** |
 | Stake snapshot | per-pool reward snapshot | ✅ | ✅ | Complete | compute_stake_snapshot with fees

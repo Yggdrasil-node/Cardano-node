@@ -19,15 +19,22 @@ Focus on deterministic chain selection, epoch math, rollback handling, and leade
 - Consensus behavior MUST be explained by reference to the official node and upstream Ouroboros consensus sources before any local terminology is introduced.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Core consensus implementation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
-- Consensus repository documentation: <https://github.com/IntersectMBO/ouroboros-consensus/>
+## Official Upstream References *Always research references and add or update links as needed*
+- Core consensus modules (Protocol, Storage, Mempool, Block, HardFork): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/>
+- Protocol abstractions (`Abstract.hs`), BFT, PBFT, `ModChainSel`, `Signed`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/>
+- Cardano-specific Praos/TPraos integration (`Praos.hs`, `Praos/Common.hs`, `TPraos.hs`): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol/>
 - Formal consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec/>
-- Cardano-specific consensus integration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/>
+- Consensus tech report (mandatory reading for chain selection and protocol design): <https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf>
+- Consensus Haddock documentation: <https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>
+- Cardano-specific consensus integration (hard-fork combinator, era dispatch): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/>
 
 ## Current Phase
 - Epoch math (`slot_to_epoch`, `epoch_first_slot`, `is_new_epoch`) operates on typed `SlotNo`/`EpochNo`/`EpochSize` from `yggdrasil-ledger`.
-- Chain selection uses typed `BlockNo`/`SlotNo` with optional VRF tiebreaker (lower wins).
+- Chain selection now implements the upstream Praos tiebreaker (`comparePraos` from `ouroboros-consensus/Protocol/Praos/Common.hs`):
+  1. Longer chain (higher `block_no`) always wins.
+  2. Equal length, same issuer at same slot → higher OCert issue number wins.
+  3. Otherwise → VRF tiebreaker (lower output wins), subject to `VrfTiebreakerFlavor` (`UnrestrictedVrfTiebreaker` pre-Conway, `RestrictedVrfTiebreaker { max_dist }` post-Conway).
+  `ChainCandidate` carries `issuer_vkey_hash: Option<[u8; 28]>` and `ocert_issue_no: Option<u64>` to support OCert-path comparison. `select_preferred` takes a `VrfTiebreakerFlavor` argument.
 - Praos leader election pipeline is implemented: `vrf_input` → `check_is_leader` → `verify_leader_proof`, backed by the crypto crate's standard VRF (80-byte proofs per CDDL `vrf_cert = [bytes, bytes .size 80]` and upstream `VRF StandardCrypto = PraosVRF`).
 - `Nonce` type (neutral + hash, XOR combination) lives in `yggdrasil-ledger::types`.
 - Leadership threshold uses deterministic fixed-point BigUint arithmetic (`taylorExpCmp` + rational sigma) — matches upstream Haskell `checkLeaderNatValue`. `ActiveSlotCoeff` stores pre-computed `-ln(1-f)` as rational `(log_num, log_den)` BigUint. No floating-point in the chain-deciding path. Dependencies: `num-bigint`, `num-integer`, `num-traits`.

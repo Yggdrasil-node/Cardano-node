@@ -572,6 +572,26 @@ impl Address {
     /// Returns the payment credential for address types that carry one.
     ///
     /// Base, Enterprise, and Pointer addresses carry a payment credential.
+    /// Returns `true` if this address is VKey-locked.
+    ///
+    /// An address is VKey-locked if its payment credential is a key hash
+    /// (not a script hash).  Byron bootstrap addresses are also considered
+    /// VKey-locked (they are always signed by a key).
+    ///
+    /// Reference: `Cardano.Ledger.Address` — `isKeyHashAddr` / `vKeyLocked`.
+    pub fn is_vkey_locked(&self) -> bool {
+        match self {
+            Self::Base(b) => b.payment.is_key_hash(),
+            Self::Enterprise(e) => e.payment.is_key_hash(),
+            Self::Pointer(p) => p.payment.is_key_hash(),
+            // Reward addresses are staking-only; treating as non-VKey per
+            // upstream (they are not used as payment addresses).
+            Self::Reward(_) => false,
+            // Byron bootstrap addresses are always key-signed.
+            Self::Byron(_) => true,
+        }
+    }
+
     /// Reward addresses carry only a staking credential (returned here).
     /// Byron addresses have no extractable credential.
     pub fn payment_credential(&self) -> Option<&StakeCredential> {
@@ -1363,6 +1383,61 @@ mod tests {
     fn payment_credential_byron_is_none() {
         let addr = Address::Byron(vec![0x80, 0x00]);
         assert!(addr.payment_credential().is_none());
+    }
+
+    // ── Address: is_vkey_locked ────────────────────────────────────────
+
+    #[test]
+    fn vkey_locked_base_key_key() {
+        let addr = Address::Base(BaseAddress {
+            network: 0,
+            payment: StakeCredential::AddrKeyHash([0; 28]),
+            staking: StakeCredential::AddrKeyHash([1; 28]),
+        });
+        assert!(addr.is_vkey_locked());
+    }
+
+    #[test]
+    fn vkey_locked_base_script_key_is_not() {
+        let addr = Address::Base(BaseAddress {
+            network: 0,
+            payment: StakeCredential::ScriptHash([0; 28]),
+            staking: StakeCredential::AddrKeyHash([1; 28]),
+        });
+        assert!(!addr.is_vkey_locked());
+    }
+
+    #[test]
+    fn vkey_locked_enterprise_key() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 0,
+            payment: StakeCredential::AddrKeyHash([0; 28]),
+        });
+        assert!(addr.is_vkey_locked());
+    }
+
+    #[test]
+    fn vkey_locked_enterprise_script_is_not() {
+        let addr = Address::Enterprise(EnterpriseAddress {
+            network: 0,
+            payment: StakeCredential::ScriptHash([0; 28]),
+        });
+        assert!(!addr.is_vkey_locked());
+    }
+
+    #[test]
+    fn vkey_locked_byron_is_true() {
+        let addr = Address::Byron(vec![0x82, 0x00]);
+        assert!(addr.is_vkey_locked());
+    }
+
+    #[test]
+    fn vkey_locked_reward_is_false() {
+        let addr = Address::Reward(RewardAccount {
+            network: 0,
+            credential: StakeCredential::AddrKeyHash([0; 28]),
+        });
+        assert!(!addr.is_vkey_locked());
     }
 
     // ── Address: network ───────────────────────────────────────────────

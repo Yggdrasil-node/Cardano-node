@@ -1,8 +1,6 @@
----
-name: yggdrasil-cardano-rust-node
-description: Root agent for the Yggdrasil Rust Cardano node workspace
----
-# Agent Instructions
+## Root agent for the Yggdrasil Rust Cardano node workspace
+
+## Agent Instructions
 - You are implementing a pure typesafe Rust Cardano node with no FFI dependencies, aiming for feature parity with the official Haskell node while maintaining strict alignment with upstream behavior, naming, and design patterns.
 - You are focused on deterministic parsing, byte-accurate serialization, and reproducible generated artifacts. 
 - You are researching the official [IntersectMBO github repositories](https://github.com/orgs/IntersectMBO/repositories/) for guidance on design and behavior decisions, and you are documenting your implementation work with reference to the official node and upstream sources.
@@ -31,19 +29,69 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - `node/` owns orchestration, CLI, and runtime integration.
 - `specs/upstream-test-vectors` officially test-vectors from the `IntersectMBO` repositories.
 
-## Official Upstream References *"Always research referances and add or update links as needed"*
-- `crates/crypto`: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class> and <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
-- `crates/cddl-codegen`: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras> and <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
-- `crates/ledger`: <https://github.com/IntersectMBO/cardano-ledger> and <https://github.com/IntersectMBO/formal-ledger-specifications>
-- `crates/storage`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/>
-- `crates/consensus`: <https://github.com/IntersectMBO/ouroboros-consensus/> and <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec>
-- `crates/mempool`: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/> and <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api/>
-- `crates/network`: <https://github.com/IntersectMBO/ouroboros-network/> and <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
-- `node/`: <https://github.com/IntersectMBO/cardano-node/> and <https://github.com/IntersectMBO/cardano-node/tree/master/configuration/>
-- Cardano developer portal: <https://github.com/cardano-foundation/developer-portal/tree/staging/docs/>
-- cardano- blueprint: <https://github.com/cardano-scaling/cardano-blueprint/tree/main/src> or <https://cardano-scaling.github.io/cardano-blueprint/>
+## Scope
+- This root file defines workspace-wide defaults for naming, upstream parity expectations, and cross-crate boundaries.
+- Subdirectory `AGENTS.md` files override this file for local implementation details and should stay concise and operational.
 
-##  Rules *"Non-Negotiable"*
+## Official Upstream References *"Always research references and add or update links as needed"*
+
+### Cryptography (`crates/crypto`)
+- Crypto abstractions (hashing, signatures, VRF, KES): <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class>
+- Praos VRF and KES implementations: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos>
+- Peras-era crypto extensions: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras>
+
+### CDDL Code Generation (`crates/cddl-codegen`)
+- Per-era CDDL schemas (Byron through Conway): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras>
+- Binary serialization library: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
+- Ledger support libraries: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs>
+
+### Ledger (`crates/ledger`)
+- Ledger repository (eras, libs, formal specs): <https://github.com/IntersectMBO/cardano-ledger>
+- Per-era rule implementations: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras> (each era has `impl/`, `formal-spec/`, and `cddl/` subdirectories)
+- Formal ledger specifications (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
+
+### Storage (`crates/storage`)
+- ChainDB, ImmutableDB, VolatileDB, LedgerDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage>
+- Consensus storage documentation and tech reports: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs>
+
+### Consensus (`crates/consensus`)
+- Core consensus protocol modules: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol>
+- Cardano-specific consensus integration (Praos, TPraos): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol>
+- Formal consensus Agda specification: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/agda-spec>
+- Consensus tech report: <https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf>
+
+### Mempool (`crates/mempool`)
+- Consensus Mempool module (API, TxSeq, Capacity, Init): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool>
+- Transaction submission API: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api>
+
+### Network (`crates/network`)
+- Networking repository root: <https://github.com/IntersectMBO/ouroboros-network>
+- Multiplexer implementation: <https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux>
+- Framework and handshake layer: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework>
+- Mini-protocol implementations (ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing): <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols>
+- Outbound governor and peer selection: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network>
+- Shelley networking spec PDF: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
+- Network design document: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design>
+
+### Plutus (`crates/plutus`)
+- Plutus core repository: <https://github.com/IntersectMBO/plutus>
+- CEK machine: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek>
+- Builtin semantics: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs>
+- Cost model parameters: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model>
+
+### Node (`node/`)
+- Node integration repository: <https://github.com/IntersectMBO/cardano-node>
+- Node runtime and packaging: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node>
+- Network configuration files: <https://github.com/IntersectMBO/cardano-node/tree/master/configuration>
+- Transaction submit API: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api>
+
+### Cross-Cutting Documentation
+- Cardano developer portal: <https://github.com/cardano-foundation/developer-portal/tree/staging/docs/>
+- Cardano blueprint: <https://github.com/cardano-scaling/cardano-blueprint/tree/main/src> or <https://cardano-scaling.github.io/cardano-blueprint/>
+- Haddock documentation: ledger (<https://cardano-ledger.cardano.intersectmbo.org/>), consensus (<https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>), network (<https://ouroboros-network.cardano.intersectmbo.org/>)
+
+##  Rules *Non-Negotiable*
 - Always write typesafe Rust code.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
@@ -56,8 +104,8 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - Explanations of behavior or naming MUST be cross-checked against the official `cardano-node` and the relevant upstream IntersectMBO repositories.
 - Type and function naming MUST stay as close to upstream terminology as practical so parity work and fixture comparison remain tractable.
 - Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
-- When you do not know how to proceed after researching the official node and upstream repositories, you may review <https://github.com/pragma-org/amaru/> and <https://github.com/txpipe/dolos/> for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
-- Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, `docs/CONTRIBUTING.md`, and `docs/UPSTREAM_RESEARCH.md` for project policy and workflow details and keep `./README.md` updated.
+- When you do not know how to proceed after researching the official node and upstream repositories, you may review [Amaru Rust node github repo](https://github.com/pragma-org/amaru/) and [Dolos Data-node github repo](https://github.com/txpipe/dolos/) for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
+- Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, `docs/CONTRIBUTING.md`, `docs/UPSTREAM_RESEARCH.md`, `docs/UPSTREAM_PARITY.md`, `docs/PARITY_SUMMARY.md`, and `docs/PARITY_PLAN.md` for project details and keep `./README.md` updated.
 
 
 ## Verification Expectations
@@ -119,7 +167,7 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
   - Epoch boundary processing (Phase 4): `stake.rs` (stake distribution snapshots — `IndividualStake`, `Delegations`, `StakeSnapshot`, `StakeSnapshots` three-snapshot ring with fee pot, `PoolStakeDistribution`, `compute_stake_snapshot()`), `rewards.rs` (epoch reward calculation — `RewardParams`, `EpochRewardPot`, `EpochRewardDistribution`, `compute_epoch_rewards()`, u128 fixed-point), `epoch_boundary.rs` (`apply_epoch_boundary()` NEWEPOCH/SNAP/RUPD orchestration, `retire_pools_with_refunds()`, `remove_expired_governance_actions()`, DRep inactivity detection, `EpochBoundaryEvent`). Governance action expiry follows the upstream Conway EPOCH rule: proposals whose `expires_after` epoch has passed are pruned at each epoch boundary and deposits are refunded to registered return accounts. DRep inactivity follows the upstream Conway `drepExpiry` rule: DReps whose `last_active_epoch + drep_activity < current_epoch` are counted as inactive but remain registered (excluded from ratification quorum). `ProtocolParameters` carries `drep_deposit` (key 31) and `drep_activity` (key 32) for Conway DRep governance parameters; genesis wiring maps ConwayGenesis `d_rep_deposit`/`d_rep_activity` into these fields. `RegisteredDrep` tracks `last_active_epoch`; activity is touched on registration, update, and vote via `touch_drep_activity_for_certs()` and `apply_conway_votes()`. `DepositPot` and `AccountingState` in `state.rs` track key/pool/drep deposits and treasury/reserves. `LedgerState` now 16-field struct with backward-compatible CBOR (9/10/12/15/16-element decode). Certificate processing tracks deposits across all 19 `DCert` variants. `process_retirements()` on `PoolState`.
   - Governance enactment (Phase 5): `EnactState` struct in `state.rs` tracks the enacted constitution, committee quorum threshold, and four purpose-lineage prev-action-ids (`prev_pparams_update`, `prev_hard_fork`, `prev_committee`, `prev_constitution`) matching upstream `GovRelation`. `enact_gov_action()` free function implements the Conway ENACT rule for all seven `GovAction` variants: InfoAction (no effect), NewConstitution (replace constitution + lineage), NoConfidence (remove all committee members + reset quorum + lineage), UpdateCommittee (add/remove members + set quorum + lineage), HardForkInitiation (update protocol_version + lineage), TreasuryWithdrawals (credit registered reward accounts from treasury), ParameterChange (apply typed `ProtocolParameterUpdate` to `LedgerState.protocol_params` + record lineage). Returns `EnactOutcome` enum. `LedgerState` carries `enact_state: EnactState` (element 16, backward-compatible). `LedgerStateSnapshot` mirrors the field. Enacted-root semantics wired into `validate_conway_proposals()`: `prev_action_id = None` is only valid when `EnactState` has no enacted root for that purpose; `prev_action_id = Some(id)` must match either the enacted root or a stored pending proposal of the same purpose. `NoConfidence` and `UpdateCommittee` share the Committee purpose group. Ratification tally engine: `VoteTally`, `tally_committee_votes`, `tally_drep_votes` (stake-weighted), `tally_spo_votes` (pool-stake-weighted), `drep_threshold_for_action`/`spo_threshold_for_action`, `accepted_by_committee`/`accepted_by_dreps`/`accepted_by_spo` predicates, `ratify_action` combined predicate (reference: `Cardano.Ledger.Conway.Rules.Ratify`). `PoolVotingThresholds` (5 fields, CDDL key 25), `DRepVotingThresholds` (10 fields, CDDL key 26), `min_committee_size` (key 27), `committee_term_limit` (key 28) in `ProtocolParameters`. Epoch-boundary ratification wiring is a future slice.
 - `crates/storage` now includes file-backed implementations (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) with JSON-based on-disk persistence, directory scanning on open, rollback-aware file deletion, and re-open persistence. 19 integration tests cover all trait methods.
-- `crates/consensus` now includes `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain tracker with roll-forward/roll-backward, max rollback depth enforcement, stability window detection (`stable_count`, `drain_stable`), and non-contiguous block rejection. `HeaderBody` carries VRF proof data (`leader_vrf_output`, `leader_vrf_proof`, optional `nonce_vrf_output`/`nonce_vrf_proof` for TPraos). `OpCert` field names aligned with CDDL (`hot_vkey`, `sequence_number`). Epoch nonce evolution state machine (`NonceEvolutionState`) implements UPDN + TICKN rules with `vrf_output_to_nonce` and `NonceEvolutionConfig`. 70 consensus tests.
+- `crates/consensus` now includes `SecurityParam` (Ouroboros `k`), `ChainState` volatile chain tracker with roll-forward/roll-backward, max rollback depth enforcement, stability window detection (`stable_count`, `drain_stable`), and non-contiguous block rejection. `HeaderBody` carries VRF proof data (`leader_vrf_output`, `leader_vrf_proof`, optional `nonce_vrf_output`/`nonce_vrf_proof` for TPraos). `OpCert` field names aligned with CDDL (`hot_vkey`, `sequence_number`). Epoch nonce evolution state machine (`NonceEvolutionState`) implements UPDN + TICKN rules with `vrf_output_to_nonce` and `NonceEvolutionConfig`. Chain selection implements upstream Praos tiebreaker (`comparePraos` from `ouroboros-consensus/Protocol/Praos/Common.hs`): `ChainCandidate` with `issuer_vkey_hash`, `ocert_issue_no`, `vrf_tiebreaker`; `select_preferred` with `VrfTiebreakerFlavor` (unrestricted pre-Conway, restricted post-Conway). 70+ consensus tests.
 - Upstream naming alignment is complete across ledger and consensus crates:
   - Ledger ShelleyHeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `nonce_vrf`, `leader_vrf`, `block_body_size`, `block_body_hash`, `operational_cert` (with `hot_vkey`, `sequence_number`, `kes_period`, `sigma`). 15-element CBOR array (Shelley through Alonzo).
   - Ledger PraosHeaderBody: `block_number`, `slot`, `issuer_vkey`, `vrf_vkey`, `vrf_result`, `block_body_size`, `block_body_hash`, `operational_cert`. 14-element CBOR array with single VRF result (Babbage/Conway).
@@ -130,5 +178,5 @@ description: Root agent for the Yggdrasil Rust Cardano node workspace
 - CBOR golden round-trip parity tests cover `ShelleyTxBody`, `ShelleyBlock`, `PlutusData`, `StakeCredential`, `MultiEraTxOut`, and submitted-transaction round-trips for all seven eras (Byron TX, Shelley, Allegra, Mary, Alonzo, Babbage, Conway), plus `MultiEraSubmittedTx` and TX ID determinism. Cross-subsystem integration tests verify block→ChainState→storage and rollback flows.
 - `crates/cddl-codegen` now provides `generate_module_with_codecs()` which generates struct/enum definitions **plus** `CborEncode`/`CborDecode` implementations for integer-keyed maps (map encode/decode with key dispatch and optional field handling), string-keyed maps, array structs, and group-choice enums. 26 integration tests cover parsing, generation, and codec generation.
 - `crates/ledger` Byron transaction support is complete: `ByronTxIn`, `ByronTxOut`, `ByronTx` (with `tx_id()` via Blake2b-256), `ByronTxWitness`, `ByronTxAux` — all with full CborEncode/CborDecode handling CBOR tag 24 (CBOR-in-CBOR). `ByronBlock::MainBlock` carries `transactions: Vec<ByronTxAux>` decoded from block body `tx_payload`. Byron blocks now have real UTxO state transitions: `apply_byron_block()` decodes `ByronTx` from transaction body bytes, applies each atomically via `MultiEraUtxo::apply_byron_tx()` which validates input existence, non-negative implicit fee, and converts Byron inputs/outputs to the unified `ShelleyTxIn`/`ShelleyTxOut` representation. 15+ Byron-specific tests.
-- 1228 workspace tests pass across all crates, 0 failures.
+- 2881 workspace tests pass across all crates, 0 failures.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.

@@ -1,8 +1,9 @@
 use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainCandidate, ChainEntry, ChainState, ConsensusError, EpochSize, Header,
-    HeaderBody, OpCert, SecurityParam, check_is_leader, check_kes_period, check_leader_value,
-    epoch_first_slot, is_new_epoch, kes_period_of_slot, leadership_threshold, select_preferred,
-    slot_to_epoch, verify_header, verify_leader_proof, verify_opcert_only, vrf_input,
+    HeaderBody, OpCert, SecurityParam, VrfTiebreakerFlavor, check_is_leader, check_kes_period,
+    check_leader_value, epoch_first_slot, is_new_epoch, kes_period_of_slot,
+    leadership_threshold, select_preferred, slot_to_epoch, verify_header, verify_leader_proof,
+    verify_opcert_only, vrf_input,
 };
 use yggdrasil_crypto::ed25519::SigningKey;
 use yggdrasil_crypto::sum_kes::{
@@ -15,65 +16,46 @@ use yggdrasil_ledger::{BlockNo, EpochNo, HeaderHash, Nonce, Point, SlotNo};
 // Chain selection
 // ---------------------------------------------------------------------------
 
-#[test]
-fn prefers_longer_chain_candidate() {
-    let left = ChainCandidate {
-        block_no: BlockNo(4),
-        slot_no: SlotNo(10),
-        vrf_tiebreaker: None,
-    };
-    let right = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(9),
-        vrf_tiebreaker: None,
-    };
-    assert_eq!(select_preferred(left, right), right);
+const UNRESTRICTED: VrfTiebreakerFlavor = VrfTiebreakerFlavor::UnrestrictedVrfTiebreaker;
+
+fn mk_candidate(block_no: u64, slot: u64, vrf: Option<[u8; 32]>) -> ChainCandidate {
+    ChainCandidate {
+        block_no: BlockNo(block_no),
+        slot_no: SlotNo(slot),
+        issuer_vkey_hash: None,
+        ocert_issue_no: None,
+        vrf_tiebreaker: vrf,
+    }
 }
 
 #[test]
-fn equal_height_prefers_earlier_slot() {
-    let left = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(10),
-        vrf_tiebreaker: None,
-    };
-    let right = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(12),
-        vrf_tiebreaker: None,
-    };
-    assert_eq!(select_preferred(left, right), left);
+fn prefers_longer_chain_candidate() {
+    let left = mk_candidate(4, 10, None);
+    let right = mk_candidate(5, 9, None);
+    assert_eq!(select_preferred(left, right, UNRESTRICTED), right);
+}
+
+#[test]
+fn equal_height_vrf_tiebreaker() {
+    // With unrestricted VRF flavor, lower VRF wins regardless of slot.
+    let left = mk_candidate(5, 10, Some([0xFF; 32]));
+    let right = mk_candidate(5, 12, Some([0x00; 32]));
+    assert_eq!(select_preferred(left, right, UNRESTRICTED), right);
 }
 
 #[test]
 fn equal_height_equal_slot_vrf_tiebreaker() {
-    let left = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(10),
-        vrf_tiebreaker: Some([0xFF; 32]),
-    };
-    let right = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(10),
-        vrf_tiebreaker: Some([0x00; 32]),
-    };
+    let left = mk_candidate(5, 10, Some([0xFF; 32]));
+    let right = mk_candidate(5, 10, Some([0x00; 32]));
     // Lower VRF tiebreaker wins.
-    assert_eq!(select_preferred(left, right), right);
+    assert_eq!(select_preferred(left, right, UNRESTRICTED), right);
 }
 
 #[test]
 fn no_vrf_tiebreaker_defaults_to_left() {
-    let left = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(10),
-        vrf_tiebreaker: None,
-    };
-    let right = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(10),
-        vrf_tiebreaker: None,
-    };
-    assert_eq!(select_preferred(left, right), left);
+    let left = mk_candidate(5, 10, None);
+    let right = mk_candidate(5, 10, None);
+    assert_eq!(select_preferred(left, right, UNRESTRICTED), left);
 }
 
 // ---------------------------------------------------------------------------
@@ -1282,46 +1264,27 @@ fn skip_epoch_detects_transition() {
 #[test]
 fn select_preferred_reflexivity() {
     // When both candidates are identical, `select_preferred` returns left.
-    let c = ChainCandidate {
-        block_no: BlockNo(42),
-        slot_no: SlotNo(100),
-        vrf_tiebreaker: Some([0xCC; 32]),
-    };
-    let result = select_preferred(c, c);
+    let c = mk_candidate(42, 100, Some([0xCC; 32]));
+    let result = select_preferred(c, c, UNRESTRICTED);
     assert_eq!(result, c);
 }
 
 #[test]
 fn select_preferred_max_block_no() {
     // Candidates at u64::MAX block height — verify no overflow or panic.
-    let left = ChainCandidate {
-        block_no: BlockNo(u64::MAX),
-        slot_no: SlotNo(10),
-        vrf_tiebreaker: None,
-    };
-    let right = ChainCandidate {
-        block_no: BlockNo(u64::MAX),
-        slot_no: SlotNo(20),
-        vrf_tiebreaker: None,
-    };
-    // Equal block_no → lower slot wins.
-    assert_eq!(select_preferred(left, right), left);
+    let left = mk_candidate(u64::MAX, 10, None);
+    let right = mk_candidate(u64::MAX, 20, None);
+    // Equal block_no, no VRF → incumbent (left) wins.
+    assert_eq!(select_preferred(left, right, UNRESTRICTED), left);
 }
 
 #[test]
 fn select_preferred_max_slot_no() {
-    // Equal block_no: u64::MAX slot vs 0 slot — lower slot (right) wins.
-    let left = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(u64::MAX),
-        vrf_tiebreaker: None,
-    };
-    let right = ChainCandidate {
-        block_no: BlockNo(5),
-        slot_no: SlotNo(0),
-        vrf_tiebreaker: None,
-    };
-    assert_eq!(select_preferred(left, right), right);
+    // Equal block_no, different slots, VRF decides, not slot order.
+    let left = mk_candidate(5, u64::MAX, Some([0x01; 32]));
+    let right = mk_candidate(5, 0, Some([0x00; 32]));
+    // Lower VRF wins (right), not lower slot.
+    assert_eq!(select_preferred(left, right, UNRESTRICTED), right);
 }
 
 // ---------------------------------------------------------------------------

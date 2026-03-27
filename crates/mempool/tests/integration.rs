@@ -2,8 +2,10 @@ use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Era, MultiEraSubmittedTx,
     ProtocolParameters,
     ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyWitnessSet, SlotNo, TxId, Value,
+    ShelleyWitnessSet, SlotNo, TxId, Value, min_fee_linear,
 };
+use yggdrasil_ledger::eras::{ExUnits, Redeemer};
+use yggdrasil_ledger::PlutusData;
 use yggdrasil_mempool::{
     Mempool, MempoolEntry, MempoolError, MempoolRelayError, SharedMempool, MEMPOOL_ZERO_IDX,
 };
@@ -85,6 +87,50 @@ fn sample_alonzo_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
         empty_witness_set(),
         true,
         Some(vec![0x81, seed.wrapping_add(1)]),
+    ))
+}
+
+fn sample_alonzo_submitted_tx_with_redeemers(
+    seed: u8,
+    fee: u64,
+    redeemers: Vec<Redeemer>,
+) -> MultiEraSubmittedTx {
+    MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
+        AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [seed; 32],
+                index: 1,
+            }],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 28],
+                amount: Value::Coin(2_000_000),
+                datum_hash: None,
+            }],
+            fee,
+            ttl: Some(9_999),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        },
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers,
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        true,
+        Some(vec![0x81, 0x01]),
     ))
 }
 
@@ -368,6 +414,81 @@ fn insert_checked_rejects_oversized_tx_with_protocol_params() {
         .insert_checked(entry, SlotNo(10), Some(&params))
         .expect_err("tx size should exceed max");
     assert!(matches!(err, MempoolError::TxTooLarge { .. }));
+}
+
+#[test]
+fn insert_checked_rejects_ex_units_above_protocol_limit_for_decodable_tx() {
+    let mut mempool = Mempool::default();
+    let mut params = ProtocolParameters::alonzo_defaults();
+    params.max_tx_ex_units = Some(ExUnits { mem: 1, steps: 1 });
+
+    let tx = sample_alonzo_submitted_tx_with_redeemers(
+        0x70,
+        5_000_000,
+        vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(1),
+            ex_units: ExUnits {
+                mem: 10,
+                steps: 10,
+            },
+        }],
+    );
+    let entry = MempoolEntry::from_multi_era_submitted_tx(tx, 5_000_000, SlotNo(20_000));
+    let decoded = entry
+        .to_multi_era_submitted_tx()
+        .expect("entry should decode as submitted tx");
+    assert_eq!(
+        decoded.total_ex_units(),
+        Some(ExUnits {
+            mem: 10,
+            steps: 10,
+        })
+    );
+
+    let err = mempool
+        .insert_checked(entry, SlotNo(10), Some(&params))
+        .expect_err("ex units should exceed protocol tx limit");
+    assert!(matches!(err, MempoolError::ExUnitsExceedTxLimit { .. }));
+}
+
+#[test]
+fn insert_checked_uses_script_fee_when_redeemers_present() {
+    let mut mempool = Mempool::default();
+    let params = ProtocolParameters::alonzo_defaults();
+
+    let tx = sample_alonzo_submitted_tx_with_redeemers(
+        0x71,
+        1,
+        vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(2),
+            ex_units: ExUnits {
+                mem: 1_000_000,
+                steps: 1_000_000_000,
+            },
+        }],
+    );
+    let entry = MempoolEntry::from_multi_era_submitted_tx(tx, 1, SlotNo(20_000));
+    let decoded = entry
+        .to_multi_era_submitted_tx()
+        .expect("entry should decode as submitted tx");
+    assert!(decoded.total_ex_units().is_some());
+    let linear_min = min_fee_linear(&params, entry.body.len());
+
+    let err = mempool
+        .insert_checked(entry, SlotNo(10), Some(&params))
+        .expect_err("fee should be too small once script fee is included");
+
+    match err {
+        MempoolError::FeeTooSmall { minimum, declared } => {
+            assert_eq!(declared, 1);
+            assert!(minimum > linear_min, "minimum fee should include script fee");
+        }
+        other => panic!("expected FeeTooSmall, got {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------

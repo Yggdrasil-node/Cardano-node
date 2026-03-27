@@ -2799,10 +2799,12 @@ impl LedgerState {
                         .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                         .collect();
                     let total_eu = sum_redeemer_ex_units(&tx.witness_set);
+                    let has_redeemers = !tx.witness_set.redeemers.is_empty();
                     validate_alonzo_plus_tx(
                         params, &self.multi_era_utxo,
                         tx.raw_cbor.len(), tx.body.fee, &outputs,
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
+                        None, None, has_redeemers,
                     )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
@@ -2842,10 +2844,13 @@ impl LedgerState {
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
                     let total_eu = sum_redeemer_ex_units(&tx.witness_set);
+                    let has_redeemers = !tx.witness_set.redeemers.is_empty();
+                    let coll_ret = tx.body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
                     validate_alonzo_plus_tx(
                         params, &self.multi_era_utxo,
                         tx.raw_cbor.len(), tx.body.fee, &outputs,
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
+                        coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
                     )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
@@ -2885,10 +2890,13 @@ impl LedgerState {
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
                     let total_eu = sum_redeemer_ex_units(&tx.witness_set);
+                    let has_redeemers = !tx.witness_set.redeemers.is_empty();
+                    let coll_ret = tx.body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
                     validate_alonzo_plus_tx(
                         params, &self.multi_era_utxo,
                         tx.raw_cbor.len(), tx.body.fee, &outputs,
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
+                        coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
                     )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
@@ -3337,6 +3345,7 @@ impl LedgerState {
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
                     body.collateral.as_deref(), total_eu.as_ref(),
+                    None, None, total_eu.is_some(),
                 )?;
             }
             let mut required = HashSet::new();
@@ -3477,9 +3486,11 @@ impl LedgerState {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
+                let coll_ret = body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
                     body.collateral.as_deref(), total_eu.as_ref(),
+                    coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
                 )?;
             }
             let mut required = HashSet::new();
@@ -3623,9 +3634,11 @@ impl LedgerState {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
+                let coll_ret = body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
                     body.collateral.as_deref(), total_eu.as_ref(),
+                    coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
                 )?;
             }
             validate_conway_current_treasury_value(body.current_treasury_value, current_treasury)?;
@@ -5136,8 +5149,14 @@ fn validate_pre_alonzo_tx(
 ///
 /// Checks: transaction size limit, fee minimum (including script costs
 /// when `total_ex_units` is provided), min-UTxO per output, per-tx
-/// execution-unit limits, and collateral sufficiency when collateral
-/// inputs are declared.
+/// execution-unit limits, mandatory collateral when redeemers are present,
+/// and collateral sufficiency when collateral inputs are declared.
+///
+/// `has_redeemers` indicates whether the transaction's witness set
+/// contains at least one redeemer (phase-2 scripts).  When `true`,
+/// collateral inputs are mandatory per the upstream `feesOK` rule.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `feesOK`.
 fn validate_alonzo_plus_tx(
     params: &crate::protocol_params::ProtocolParameters,
     utxo: &MultiEraUtxo,
@@ -5146,6 +5165,9 @@ fn validate_alonzo_plus_tx(
     outputs: &[MultiEraTxOut],
     collateral_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
     total_ex_units: Option<&crate::eras::alonzo::ExUnits>,
+    collateral_return: Option<&MultiEraTxOut>,
+    total_collateral: Option<u64>,
+    has_redeemers: bool,
 ) -> Result<(), LedgerError> {
     crate::fees::validate_tx_size(params, tx_body_size)?;
     crate::fees::validate_fee(params, tx_body_size, total_ex_units, declared_fee)?;
@@ -5153,9 +5175,24 @@ fn validate_alonzo_plus_tx(
         crate::fees::validate_tx_ex_units(params, eu)?;
     }
     crate::min_utxo::validate_all_outputs_min_utxo(params, outputs)?;
+
+    // When the transaction carries phase-2 scripts (redeemers ≠ ∅),
+    // collateral is mandatory.
+    // Reference: Cardano.Ledger.Alonzo.Rules.Utxo — feesOK Part 2.
+    if has_redeemers {
+        let has_collateral = collateral_inputs
+            .map_or(false, |c| !c.is_empty());
+        if !has_collateral {
+            return Err(LedgerError::MissingCollateralForScripts);
+        }
+    }
+
     if let Some(collateral) = collateral_inputs {
         if !collateral.is_empty() {
-            crate::collateral::validate_collateral(params, utxo, collateral, declared_fee)?;
+            crate::collateral::validate_collateral(
+                params, utxo, collateral, declared_fee,
+                collateral_return, total_collateral,
+            )?;
         }
     }
     Ok(())
@@ -5436,6 +5473,15 @@ pub(crate) fn tally_committee_votes(
 /// counted. Inactive DReps are excluded from both the vote tally and the
 /// total eligible weight.
 ///
+/// **`AlwaysAbstain`** delegated stake is excluded from the total,
+/// effectively reducing the quorum denominator.
+///
+/// **`AlwaysNoConfidence`** delegated stake is always included in the
+/// total.  When `count_no_confidence_as_yes` is true (i.e. for
+/// `NoConfidence` and `UpdateCommittee`-in-state-of-no-confidence
+/// actions), that stake is additionally counted as automatic "Yes"
+/// votes.
+///
 /// `drep_delegated_stake` maps each `DRep` to the total lovelace
 /// delegated to it. The caller is responsible for computing this from
 /// the stake distribution (see `compute_drep_stake_distribution`).
@@ -5447,6 +5493,7 @@ pub(crate) fn tally_drep_votes(
     drep_delegated_stake: &BTreeMap<DRep, u64>,
     current_epoch: EpochNo,
     drep_activity: u64,
+    count_no_confidence_as_yes: bool,
 ) -> VoteTally {
     use crate::eras::conway::{Vote, Voter};
 
@@ -5456,6 +5503,23 @@ pub(crate) fn tally_drep_votes(
     let mut total: u64 = 0;
 
     for (drep, stake) in drep_delegated_stake {
+        match drep {
+            DRep::AlwaysAbstain => {
+                // Excluded from total — reduces quorum denominator.
+                continue;
+            }
+            DRep::AlwaysNoConfidence => {
+                // Always included in total.  Counted as automatic "Yes"
+                // for NoConfidence/UpdateCommittee(no-confidence) actions.
+                total = total.saturating_add(*stake);
+                if count_no_confidence_as_yes {
+                    yes = yes.saturating_add(*stake);
+                }
+                continue;
+            }
+            _ => {}
+        }
+
         // Only active registered DReps count.
         let Some(reg) = drep_state.get(drep) else {
             continue;
@@ -5473,7 +5537,7 @@ pub(crate) fn tally_drep_votes(
         let voter = match drep {
             DRep::KeyHash(h) => Voter::DRepKeyHash(*h),
             DRep::ScriptHash(h) => Voter::DRepScript(*h),
-            DRep::AlwaysAbstain | DRep::AlwaysNoConfidence => continue,
+            DRep::AlwaysAbstain | DRep::AlwaysNoConfidence => unreachable!(),
         };
 
         match action.votes.get(&voter) {
@@ -5626,6 +5690,12 @@ pub(crate) fn accepted_by_committee(
 /// Returns `true` when:
 /// - The action type does not require DRep approval, or
 /// - The stake-weighted DRep tally meets the per-type threshold.
+///
+/// For `NoConfidence` and `UpdateCommittee`-in-state-of-no-confidence
+/// actions, stake delegated to `AlwaysNoConfidence` is counted as
+/// automatic "Yes" votes.
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `dRepVotesSatisfied`.
 pub(crate) fn accepted_by_dreps(
     action: &GovernanceActionState,
     committee_state: &CommitteeState,
@@ -5642,12 +5712,26 @@ pub(crate) fn accepted_by_dreps(
     ) else {
         return true; // no DRep vote required for this action type
     };
+
+    // AlwaysNoConfidence stake counts as "Yes" for NoConfidence and
+    // UpdateCommittee-in-state-of-no-confidence actions.
+    let count_no_confidence_as_yes = matches!(
+        &action.proposal.gov_action,
+        crate::eras::conway::GovAction::NoConfidence { .. }
+    ) || (
+        matches!(
+            &action.proposal.gov_action,
+            crate::eras::conway::GovAction::UpdateCommittee { .. }
+        ) && !conway_committee_is_elected(committee_state)
+    );
+
     let tally = tally_drep_votes(
         action,
         drep_state,
         drep_delegated_stake,
         current_epoch,
         drep_activity,
+        count_no_confidence_as_yes,
     );
     tally.meets_threshold(&threshold)
 }
@@ -8260,7 +8344,7 @@ mod tests {
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
         action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::No);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
         assert_eq!(tally.yes, 700);
         assert_eq!(tally.no, 300);
         assert_eq!(tally.total, 1000);
@@ -8286,7 +8370,7 @@ mod tests {
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes); // inactive, excluded
         action.votes.insert(Voter::DRepKeyHash([2; 28]), Vote::Yes);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(105), 10);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(105), 10, false);
         // Only DRep B counted (active). A is inactive and excluded.
         assert_eq!(tally.yes, 500);
         assert_eq!(tally.total, 500);
@@ -8302,7 +8386,7 @@ mod tests {
         let mut stake = BTreeMap::new();
         stake.insert(DRep::KeyHash([1; 28]), 1000);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
         assert_eq!(tally.total, 0); // no registered DReps
     }
 
@@ -9049,7 +9133,7 @@ mod tests {
         stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(100), 10);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(100), 10, false);
         assert_eq!(tally.total, 1000, "DRep should be active at exact boundary");
         assert_eq!(tally.yes, 1000);
     }
@@ -9067,7 +9151,7 @@ mod tests {
         stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(101), 10);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(101), 10, false);
         assert_eq!(tally.total, 0, "DRep should be inactive one epoch past boundary");
         assert_eq!(tally.yes, 0);
     }
@@ -9084,7 +9168,7 @@ mod tests {
         stake.insert(drep, 500);
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(999), 10);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(999), 10, false);
         assert_eq!(tally.total, 500, "DRep with no last_active_epoch should be counted");
         assert_eq!(tally.yes, 500);
     }
@@ -9101,11 +9185,11 @@ mod tests {
         stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(50), 0);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(50), 0, false);
         assert_eq!(tally.total, 1000, "DRep active when sum == current with zero window");
 
         // current=51: 50+0=50 < 51 → true → INACTIVE.
-        let tally2 = tally_drep_votes(&action, &drep_state, &stake, EpochNo(51), 0);
+        let tally2 = tally_drep_votes(&action, &drep_state, &stake, EpochNo(51), 0, false);
         assert_eq!(tally2.total, 0, "DRep inactive when sum < current with zero window");
     }
 
@@ -9123,7 +9207,7 @@ mod tests {
 
         // (u64::MAX - 5) + 100 would overflow, saturates to u64::MAX.
         // u64::MAX < u64::MAX is false → DRep is ACTIVE.
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(u64::MAX), 100);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(u64::MAX), 100, false);
         assert_eq!(tally.total, 1000, "saturating_add should prevent overflow");
     }
 
@@ -9139,19 +9223,22 @@ mod tests {
         let mut stake = BTreeMap::new();
         stake.insert(DRep::AlwaysAbstain, 5000);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
         assert_eq!(tally.total, 0, "AlwaysAbstain stake not counted");
     }
 
     #[test]
-    fn drep_tally_always_no_confidence_excluded() {
+    fn drep_tally_always_no_confidence_in_total_not_yes() {
+        // AlwaysNoConfidence stake is included in total but NOT counted as
+        // "Yes" for non-NoConfidence actions.
         let action = test_hf_action();
         let drep_state = DrepState::new();
         let mut stake = BTreeMap::new();
         stake.insert(DRep::AlwaysNoConfidence, 5000);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
-        assert_eq!(tally.total, 0, "AlwaysNoConfidence stake not counted");
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
+        assert_eq!(tally.total, 5000, "AlwaysNoConfidence stake included in total");
+        assert_eq!(tally.yes, 0, "Not counted as Yes for non-NoConfidence action");
     }
 
     #[test]
@@ -9166,7 +9253,7 @@ mod tests {
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
         assert_eq!(tally.total, 1000, "non-voting DRep stake in total");
         assert_eq!(tally.yes, 0);
         assert_eq!(tally.no, 0);
@@ -9184,11 +9271,88 @@ mod tests {
         stake.insert(drep, 1000);
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Abstain);
 
-        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100);
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
         // All abstain → vacuous quorum → passes any threshold.
         let threshold = UnitInterval { numerator: 99, denominator: 100 };
+        assert!(tally.meets_threshold(&threshold));
+    }
+
+    // -----------------------------------------------------------------------
+    // AlwaysNoConfidence auto-yes for NoConfidence actions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn drep_tally_always_no_confidence_auto_yes_for_no_confidence_action() {
+        // AlwaysNoConfidence stake should count as auto-Yes for NoConfidence.
+        let action = test_no_confidence_action();
+        let drep_state = DrepState::new();
+        let mut stake = BTreeMap::new();
+        stake.insert(DRep::AlwaysNoConfidence, 5000);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, true);
+        assert_eq!(tally.total, 5000, "AlwaysNoConfidence stake included in total");
+        assert_eq!(tally.yes, 5000, "AlwaysNoConfidence stake counted as Yes");
+    }
+
+    #[test]
+    fn drep_tally_always_no_confidence_not_yes_for_other_actions() {
+        // For non-NoConfidence actions, AlwaysNoConfidence is in total but NOT Yes.
+        let action = test_hf_action();
+        let drep_state = DrepState::new();
+        let mut stake = BTreeMap::new();
+        stake.insert(DRep::AlwaysNoConfidence, 3000);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
+        assert_eq!(tally.total, 3000);
+        assert_eq!(tally.yes, 0, "Not auto-yes for non-NoConfidence action");
+    }
+
+    #[test]
+    fn drep_tally_always_no_confidence_mixed_with_regular_dreps() {
+        // AlwaysNoConfidence + registered DReps together.
+        let mut action = test_no_confidence_action();
+        let mut drep_state = DrepState::new();
+        let drep_a = DRep::KeyHash([1; 28]);
+        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(DRep::AlwaysNoConfidence, 4000);
+        stake.insert(drep_a, 6000);
+
+        // DRep A votes No; AlwaysNoConfidence auto-yes.
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::No);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, true);
+        assert_eq!(tally.total, 10000);
+        assert_eq!(tally.yes, 4000, "auto-yes from AlwaysNoConfidence");
+        assert_eq!(tally.no, 6000, "explicit No from DRep A");
+
+        // 4000/10000 = 40% vs threshold 67% → does NOT pass.
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        assert!(!tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn drep_tally_always_no_confidence_pushes_no_confidence_past_threshold() {
+        // AlwaysNoConfidence stake tips the balance for a NoConfidence action.
+        let mut action = test_no_confidence_action();
+        let mut drep_state = DrepState::new();
+        let drep_a = DRep::KeyHash([1; 28]);
+        drep_state.register(drep_a.clone(), RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut stake = BTreeMap::new();
+        stake.insert(DRep::AlwaysNoConfidence, 5000);
+        stake.insert(drep_a, 5000);
+
+        // DRep A votes Yes; AlwaysNoConfidence also auto-yes → 10000/10000 = 100%.
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, true);
+        assert_eq!(tally.yes, 10000);
+        assert_eq!(tally.total, 10000);
+        let threshold = UnitInterval { numerator: 67, denominator: 100 };
         assert!(tally.meets_threshold(&threshold));
     }
 
@@ -11735,5 +11899,46 @@ mod tests {
     fn pv_can_follow_rejects_major_jump() {
         // Major +2 is not allowed (per upstream pvCanFollow).
         assert!(!conway_pv_can_follow((9, 0), (11, 0)));
+    }
+
+    // ── validate_alonzo_plus_tx: mandatory collateral for redeemers ────
+
+    #[test]
+    fn alonzo_plus_tx_missing_collateral_with_redeemers() {
+        let params = ProtocolParameters::alonzo_defaults();
+        let utxo = MultiEraUtxo::new();
+        let outputs = vec![];
+        // has_redeemers = true, collateral_inputs = None → must fail
+        let result = validate_alonzo_plus_tx(
+            &params, &utxo, 200, 200_000, &outputs,
+            None, None, None, None, true,
+        );
+        assert!(matches!(result, Err(LedgerError::MissingCollateralForScripts)));
+    }
+
+    #[test]
+    fn alonzo_plus_tx_empty_collateral_with_redeemers() {
+        let params = ProtocolParameters::alonzo_defaults();
+        let utxo = MultiEraUtxo::new();
+        let outputs = vec![];
+        // has_redeemers = true, collateral_inputs = Some(&[]) → must fail
+        let result = validate_alonzo_plus_tx(
+            &params, &utxo, 200, 200_000, &outputs,
+            Some(&[]), None, None, None, true,
+        );
+        assert!(matches!(result, Err(LedgerError::MissingCollateralForScripts)));
+    }
+
+    #[test]
+    fn alonzo_plus_tx_no_redeemers_skips_collateral() {
+        let params = ProtocolParameters::alonzo_defaults();
+        let utxo = MultiEraUtxo::new();
+        let outputs = vec![];
+        // has_redeemers = false, collateral_inputs = None → ok (no scripts)
+        let result = validate_alonzo_plus_tx(
+            &params, &utxo, 200, 200_000, &outputs,
+            None, None, None, None, false,
+        );
+        assert!(result.is_ok());
     }
 }

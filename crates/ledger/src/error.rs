@@ -297,6 +297,24 @@ pub enum LedgerError {
     #[error("collateral output contains non-ADA assets")]
     CollateralContainsNonAda,
 
+    #[error(
+        "total collateral mismatch: declared {declared} lovelace, \
+         but computed balance is {computed}"
+    )]
+    IncorrectTotalCollateralField { declared: u64, computed: u64 },
+
+    #[error(
+        "collateral balance is negative: inputs provide {input_coin} lovelace, \
+         but return output requires {return_coin}"
+    )]
+    CollateralBalanceNegative { input_coin: u64, return_coin: u64 },
+
+    #[error("collateral input is not VKey-locked (script address used as collateral)")]
+    CollateralNotVKeyLocked,
+
+    #[error("transaction contains phase-2 scripts but has no collateral inputs")]
+    MissingCollateralForScripts,
+
     // -- Block validation errors --------------------------------------------
 
     #[error("block body too large: {actual} bytes exceeds max {max}")]
@@ -538,6 +556,18 @@ mod tests {
     fn no_collateral_inputs_display() {
         let e = LedgerError::NoCollateralInputs;
         assert!(e.to_string().contains("no collateral inputs"));
+    }
+
+    #[test]
+    fn collateral_not_vkey_locked_display() {
+        let e = LedgerError::CollateralNotVKeyLocked;
+        assert!(e.to_string().contains("not VKey-locked"));
+    }
+
+    #[test]
+    fn missing_collateral_for_scripts_display() {
+        let e = LedgerError::MissingCollateralForScripts;
+        assert!(e.to_string().contains("phase-2 scripts"));
     }
 
     #[test]

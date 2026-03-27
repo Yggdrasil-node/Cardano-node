@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use yggdrasil_ledger::{
     Era, LedgerError, MultiEraSubmittedTx, ProtocolParameters, ShelleyTxIn,
-    SlotNo, TxId, validate_fee, validate_tx_size,
+    SlotNo, TxId, validate_fee, validate_tx_ex_units, validate_tx_size,
 };
 
 /// Monotonic transaction index used by TxSubmission mempool snapshots.
@@ -161,6 +161,19 @@ pub enum MempoolError {
     /// Unexpected protocol-parameter validation failure.
     #[error("protocol-parameter validation failed: {0}")]
     ProtocolParamValidation(String),
+
+    /// The transaction's declared execution units exceed protocol limits.
+    #[error("transaction ExUnits exceed protocol max: tx(mem={tx_mem}, steps={tx_steps}) > max(mem={max_mem}, steps={max_steps})")]
+    ExUnitsExceedTxLimit {
+        /// Declared memory units for this transaction.
+        tx_mem: u64,
+        /// Declared CPU-step units for this transaction.
+        tx_steps: u64,
+        /// Maximum memory units allowed by protocol parameters.
+        max_mem: u64,
+        /// Maximum CPU-step units allowed by protocol parameters.
+        max_steps: u64,
+    },
 
     /// The transaction conflicts with an existing mempool transaction because
     /// both spend the same UTxO input (double-spend attempt).
@@ -444,11 +457,37 @@ impl Mempool {
             });
         }
         if let Some(params) = protocol_params {
+            // Best-effort decode for submitted transactions. Synthetic entries
+            // may not carry a full relay payload; in that case, keep existing
+            // linear fee + size checks.
+            let total_ex_units = entry
+                .to_multi_era_submitted_tx()
+                .ok()
+                .and_then(|tx| tx.total_ex_units());
+
             validate_tx_size(params, entry.body.len()).map_err(|err| match err {
                 LedgerError::TxTooLarge { actual, max } => MempoolError::TxTooLarge { actual, max },
                 other => MempoolError::ProtocolParamValidation(other.to_string()),
             })?;
-            validate_fee(params, entry.body.len(), None, entry.fee).map_err(|err| match err {
+
+            if let Some(eu) = total_ex_units.as_ref() {
+                validate_tx_ex_units(params, eu).map_err(|err| match err {
+                    LedgerError::ExUnitsExceedTxLimit {
+                        tx_mem,
+                        tx_steps,
+                        max_mem,
+                        max_steps,
+                    } => MempoolError::ExUnitsExceedTxLimit {
+                        tx_mem,
+                        tx_steps,
+                        max_mem,
+                        max_steps,
+                    },
+                    other => MempoolError::ProtocolParamValidation(other.to_string()),
+                })?;
+            }
+
+            validate_fee(params, entry.body.len(), total_ex_units.as_ref(), entry.fee).map_err(|err| match err {
                 LedgerError::FeeTooSmall { minimum, declared } => {
                     MempoolError::FeeTooSmall { minimum, declared }
                 }

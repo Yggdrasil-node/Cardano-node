@@ -17,7 +17,7 @@ pub mod opcert;
 pub mod praos;
 
 /// Chain candidate type and selection helper.
-pub use chain_selection::{ChainCandidate, select_preferred};
+pub use chain_selection::{ChainCandidate, VrfTiebreakerFlavor, select_preferred};
 /// Chain state tracking with rollback depth enforcement.
 pub use chain_state::{ChainEntry, ChainState, SecurityParam};
 /// Epoch size and slot-to-epoch helpers.

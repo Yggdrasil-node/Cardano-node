@@ -1,8 +1,4 @@
----
-name: ledger-src-subagent
-description: Guidance for shared ledger internals outside era-specific modules
----
-
+# Guidance for shared ledger internals outside era-specific modules
 Focus on core ledger plumbing shared across eras: CBOR codec, core types, and state integration surfaces.
 
 ## Scope
@@ -17,9 +13,15 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Ledger repository: <https://github.com/IntersectMBO/cardano-ledger>
-- Formal specs: <https://github.com/IntersectMBO/formal-ledger-specifications>
+## Official Upstream References *Always research references and add or update links as needed*
+- Ledger repository root: <https://github.com/IntersectMBO/cardano-ledger>
+- Binary serialization library (`cardano-ledger-binary`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary>
+- Core ledger library (`cardano-ledger-core`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-core>
+- Shelley ledger support (`cardano-ledger-shelley`): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl>
+- Protocol parameters in ledger: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-protocol-tpraos>
+- Formal ledger specification (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
+- Ledger Haddock documentation: <https://cardano-ledger.cardano.intersectmbo.org/>
 
 ## Current Phase
 - Hand-rolled CBOR encoder/decoder supports major Cardano-required primitives including signed integers (`integer()`).
@@ -35,7 +37,7 @@ Focus on core ledger plumbing shared across eras: CBOR codec, core types, and st
 - `protocol_params.rs`: `ProtocolParameters` struct with all Shelley-through-Conway parameter fields, `Default` (Shelley mainnet), `alonzo_defaults()`, `min_lovelace_for_utxo()`, full CBOR map-based round-trip codec. `ProtocolParameterUpdate` is now a typed sparse delta with matching CBOR-map keys, `is_empty()`, and `ProtocolParameters::apply_update()`. Wired into `LedgerState` as `Option<ProtocolParameters>` (array element 10, backward-compatible with 9-element legacy).
 - `fees.rs`: Fee calculation and validation — `min_fee_linear()`, `script_fee()`, `total_min_fee()`, `validate_fee()`, `validate_tx_ex_units()`, `validate_tx_size()`.
 - `native_script.rs`: Native (timelock) script evaluator — `evaluate_native_script()`, `native_script_hash()` (Blake2b-224 with language tag prefix), `NativeScriptContext`.
-- `collateral.rs`: Alonzo+ collateral validation — `validate_collateral()` checks count limit, UTxO lookup, non-ADA rejection, and percentage-of-fee sufficiency.
+- `collateral.rs`: Alonzo+ collateral validation — `validate_collateral()` checks count limit, UTxO lookup, VKey-locked address enforcement (rejects script-locked collateral per upstream `validateScriptsNotPaidUTxO`), non-ADA rejection (Alonzo) / net-ADA-only (Babbage+), `total_collateral` field consistency, and percentage-of-fee sufficiency. Mandatory collateral for phase-2 scripts (`MissingCollateralForScripts`) enforced in `validate_alonzo_plus_tx()`.
 - `min_utxo.rs`: Minimum UTxO output validation — `validate_min_utxo()`, `validate_all_outputs_min_utxo()` using protocol params.
 - `witnesses.rs`: VKey witness sufficiency and Ed25519 signature verification — `validate_vkey_witnesses()`, `verify_vkey_signatures()` (real Ed25519 verification against tx body hash using `yggdrasil_crypto::ed25519`), `verify_bootstrap_witnesses()` (Ed25519 verification for bootstrap witnesses plus CBOR-map validation of Byron address attributes), `vkey_hash()` (Blake2b-224), `witness_vkey_hash_set()`. Helper functions for collecting required VKey hashes and script hashes from spending inputs, certificates, withdrawals, and Conway voting procedures — both Shelley UTxO and multi-era UTxO variants. All per-era `apply_block()` inner loops now call `validate_witnesses_if_present()` to enforce both VKey witness hash sufficiency and witness signature validity when witness bytes are provided.
 - `witnesses.rs` now also exposes `required_script_hashes_from_mint()` so mint policy IDs participate in required-script collection for Mary, Alonzo, Babbage, and Conway block application.

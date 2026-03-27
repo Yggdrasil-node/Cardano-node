@@ -1,8 +1,8 @@
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::Era;
 use crate::eras::{
-    AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, MaryTxBody, ShelleyTx,
-    ShelleyTxIn, ShelleyWitnessSet,
+    AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, ExUnits,
+    MaryTxBody, ShelleyTx, ShelleyTxIn, ShelleyWitnessSet,
 };
 use crate::error::LedgerError;
 use crate::types::{BlockNo, HeaderHash, SlotNo, TxId};
@@ -339,6 +339,35 @@ impl MultiEraSubmittedTx {
         }
     }
 
+    /// Return the aggregate script execution units declared by redeemers.
+    ///
+    /// Shelley, Allegra, and Mary do not carry redeemers, so this returns
+    /// `None`. Alonzo-family eras return `Some` when at least one redeemer is
+    /// present.
+    pub fn total_ex_units(&self) -> Option<ExUnits> {
+        fn sum_redeemers(witness_set: &ShelleyWitnessSet) -> Option<ExUnits> {
+            if witness_set.redeemers.is_empty() {
+                return None;
+            }
+
+            let mut mem = 0u64;
+            let mut steps = 0u64;
+            for redeemer in &witness_set.redeemers {
+                mem = mem.saturating_add(redeemer.ex_units.mem);
+                steps = steps.saturating_add(redeemer.ex_units.steps);
+            }
+
+            Some(ExUnits { mem, steps })
+        }
+
+        match self {
+            Self::Shelley(_) | Self::Allegra(_) | Self::Mary(_) => None,
+            Self::Alonzo(tx) => sum_redeemers(&tx.witness_set),
+            Self::Babbage(tx) => sum_redeemers(&tx.witness_set),
+            Self::Conway(tx) => sum_redeemers(&tx.witness_set),
+        }
+    }
+
     /// Return the exact or reconstructed CBOR bytes for this submitted
     /// transaction.
     pub fn raw_cbor(&self) -> Vec<u8> {
@@ -448,7 +477,9 @@ pub struct Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eras::{ExUnits, Redeemer};
     use crate::eras::ShelleyTxBody;
+    use crate::plutus::PlutusData;
 
     // ── compute_tx_id ──────────────────────────────────────────────────
 
@@ -673,6 +704,103 @@ mod tests {
         assert_eq!(mstx.fee(), 175_000);
         assert_eq!(mstx.inputs().len(), 2);
         assert_eq!(mstx.expires_at(), Some(SlotNo(200)));
+    }
+
+    #[test]
+    fn multi_era_submitted_tx_total_ex_units_none_without_redeemers() {
+        let tx = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
+            AlonzoTxBody {
+                inputs: vec![],
+                outputs: vec![],
+                fee: 1,
+                ttl: None,
+                validity_interval_start: None,
+                certificates: None,
+                withdrawals: None,
+                update: None,
+                auxiliary_data_hash: None,
+                mint: None,
+                script_data_hash: None,
+                collateral: None,
+                required_signers: None,
+                network_id: None,
+            },
+            ShelleyWitnessSet {
+                vkey_witnesses: vec![],
+                native_scripts: vec![],
+                bootstrap_witnesses: vec![],
+                plutus_v1_scripts: vec![],
+                plutus_data: vec![],
+                redeemers: vec![],
+                plutus_v2_scripts: vec![],
+                plutus_v3_scripts: vec![],
+            },
+            true,
+            None,
+        ));
+
+        assert_eq!(tx.total_ex_units(), None);
+    }
+
+    #[test]
+    fn multi_era_submitted_tx_total_ex_units_sums_redeemers() {
+        let tx = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
+            AlonzoTxBody {
+                inputs: vec![],
+                outputs: vec![],
+                fee: 1,
+                ttl: None,
+                validity_interval_start: None,
+                certificates: None,
+                withdrawals: None,
+                update: None,
+                auxiliary_data_hash: None,
+                mint: None,
+                script_data_hash: None,
+                collateral: None,
+                required_signers: None,
+                network_id: None,
+            },
+            ShelleyWitnessSet {
+                vkey_witnesses: vec![],
+                native_scripts: vec![],
+                bootstrap_witnesses: vec![],
+                plutus_v1_scripts: vec![],
+                plutus_data: vec![],
+                redeemers: vec![
+                    Redeemer {
+                        tag: 0,
+                        index: 0,
+                        data: PlutusData::Integer(0),
+                        ex_units: ExUnits {
+                            mem: 10,
+                            steps: 20,
+                        },
+                    },
+                    Redeemer {
+                        tag: 1,
+                        index: 0,
+                        data: PlutusData::Integer(1),
+                        ex_units: ExUnits {
+                            mem: 30,
+                            steps: 40,
+                        },
+                    },
+                ],
+                plutus_v2_scripts: vec![],
+                plutus_v3_scripts: vec![],
+            },
+            true,
+            None,
+        ));
+
+        assert_eq!(
+            tx.total_ex_units(),
+            Some(ExUnits {
+                mem: 40,
+                steps: 60,
+            })
+        );
     }
 
     // ── BlockHeader / Block ────────────────────────────────────────────

@@ -18,9 +18,12 @@ Keep modules in this folder focused on a single era family or ledger-state subdo
 - Module names MUST describe the rule surface being protected, not the implementation phase that added them.
 - Always update this file when the integration module layout changes.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Ledger test corpus root: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-- Formal ledger rules: <https://github.com/IntersectMBO/formal-ledger-specifications>
+## Official Upstream References *Always research references and add or update links as needed*
+- Shelley ledger tests: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/test>
+- Alonzo ledger tests: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/test>
+- Conway ledger tests (governance, ratification): <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/test>
+- Formal ledger rules (Agda): <https://github.com/IntersectMBO/formal-ledger-specifications>
+- Ledger conformance test utilities: <https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-conformance>
 
 ## Current Phase
 - The integration test crate is organized into focused modules for core CBOR, Shelley, Allegra/Mary, Alonzo, Byron, Babbage, Conway, Praos block envelopes, governance updates, Plutus/script codecs, multi-era UTxO behavior, ledger-state subdomains, and witness validation.

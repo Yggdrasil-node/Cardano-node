@@ -15,9 +15,13 @@ This directory owns storage interfaces and implementations, including rollback-a
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
 
-## Official Upstream References *Always research referances and add or update links as needed*
-- Consensus storage and ChainDB context: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/>
-- Node storage integration reference: <https://github.com/IntersectMBO/cardano-node/>
+## Official Upstream References *Always research references and add or update links as needed*
+- ChainDB orchestration: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB>
+- ImmutableDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ImmutableDB>
+- VolatileDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/VolatileDB>
+- LedgerDB: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB>
+- Consensus storage documentation: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs>
+- Consensus Haddock (storage modules): <https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>
 
 ## Current Phase
 - Storage source modules now provide in-memory and file-backed implementations behind stable traits, plus a minimal `ChainDb` coordination layer that owns best-known tip recovery, volatile-prefix promotion, and rollback-time ledger snapshot truncation while leaving room for future format and recovery upgrades. Rollbacks to points that are already in immutable storage must clear the volatile suffix so recovery metadata does not keep a stale volatile tip.
