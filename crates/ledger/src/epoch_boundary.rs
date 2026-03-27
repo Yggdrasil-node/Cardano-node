@@ -340,26 +340,110 @@ fn remove_expired_governance_actions(
     (expired_ids, total_refunded)
 }
 
-/// Tallies votes for all surviving governance actions, enacts those that
-/// reach acceptance thresholds, removes enacted actions from the ledger,
-/// refunds their deposits, prunes lineage-conflicting proposals, and
-/// returns the enacted action IDs with their outcomes.
+/// Returns `true` if enacting the given action type prevents further
+/// enactments within the same epoch boundary.
 ///
-/// This implements the Conway RATIFY rule at the epoch boundary: after
-/// expired proposals are pruned, each remaining governance action is
-/// evaluated against committee, DRep, and SPO acceptance predicates.
-/// Actions accepted by all required roles are enacted via
-/// `enact_gov_action` and then removed from the pending set.  After
-/// enactment, proposals whose `prev_action_id` references a now-stale
-/// lineage root are also removed (subtree pruning), matching upstream
-/// `proposalsApplyEnactment`.
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify.delayingAction`.
+fn delaying_action(action: &crate::eras::conway::GovAction) -> bool {
+    use crate::eras::conway::GovAction;
+    matches!(
+        action,
+        GovAction::NoConfidence { .. }
+            | GovAction::HardForkInitiation { .. }
+            | GovAction::UpdateCommittee { .. }
+            | GovAction::NewConstitution { .. }
+    )
+}
+
+/// Returns `true` if the proposal's `prev_action_id` matches the current
+/// enacted lineage root for its governance purpose.
 ///
-/// Deposits for all removed actions (enacted + lineage-conflicting) are
-/// refunded to their return reward accounts if registered.  Unclaimed
-/// deposits (unregistered return accounts) are returned separately so
-/// the caller can add them to the treasury.
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify.prevActionAsExpected`.
+fn prev_action_as_expected(
+    action_state: &crate::state::GovernanceActionState,
+    enact_state: &crate::state::EnactState,
+) -> bool {
+    use crate::state::conway_gov_action_purpose;
+
+    let purpose = conway_gov_action_purpose(&action_state.proposal().gov_action);
+    let enacted_root = enact_state.enacted_root(purpose);
+
+    let proposal_prev = gov_action_prev_id(&action_state.proposal().gov_action);
+
+    match proposal_prev {
+        // No lineage tracking for this action type (TreasuryWithdrawals, InfoAction).
+        None => true,
+        Some(prev_opt) => match (prev_opt, enacted_root) {
+            // Proposal says "I am the first" and there is no enacted root.
+            (None, None) => true,
+            // Proposal references a specific predecessor that matches the root.
+            (Some(p), Some(r)) => p == r,
+            // Mismatch: proposal says first but root exists, or vice versa.
+            _ => false,
+        },
+    }
+}
+
+/// Returns `true` if the action's treasury withdrawal amount does not
+/// exceed the current treasury balance.  Non-withdrawal actions always
+/// pass.
 ///
-/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify`,
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify.withdrawalCanWithdraw`.
+fn withdrawal_can_withdraw(
+    action: &crate::eras::conway::GovAction,
+    treasury: u64,
+) -> bool {
+    if let crate::eras::conway::GovAction::TreasuryWithdrawals { withdrawals, .. } = action {
+        let total: u64 = withdrawals.values().sum();
+        total <= treasury
+    } else {
+        true
+    }
+}
+
+/// Returns `true` if all new committee members' expiration epochs are
+/// within the maximum term length from the current epoch.
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify.validCommitteeTerm`.
+fn valid_committee_term(
+    action: &crate::eras::conway::GovAction,
+    committee_max_term_length: Option<u64>,
+    current_epoch: EpochNo,
+) -> bool {
+    let Some(max_term) = committee_max_term_length else {
+        return true;
+    };
+
+    if let crate::eras::conway::GovAction::UpdateCommittee { members_to_add, .. } = action {
+        let max_epoch = current_epoch.0.saturating_add(max_term);
+        members_to_add.values().all(|&expiry| expiry <= max_epoch)
+    } else {
+        true
+    }
+}
+
+/// Tallies votes for surviving governance actions, enacting them one at
+/// a time in `GovActionId` order with iterative `EnactState` updates.
+///
+/// This implements the upstream Conway RATIFY rule's iterative semantics:
+/// proposals are processed in `GovActionId` (BTreeMap) order.  For each
+/// proposal, the function checks—against the **current** `EnactState`:
+///
+/// 1. `prevActionAsExpected` — lineage chains from the current root.
+/// 2. `validCommitteeTerm` — new committee members within max term.
+/// 3. `not delayed` — no delaying action has been enacted this round.
+/// 4. `withdrawalCanWithdraw` — treasury sufficient for withdrawals.
+/// 5. `acceptedByEveryone` — committee, DRep, SPO thresholds met.
+///
+/// When an action is enacted, the `EnactState` is updated (lineage
+/// root advances, committee/params may change).  If the enacted action
+/// is a *delaying* action (NoConfidence, HardFork, UpdateCommittee,
+/// NewConstitution), no further proposals are enacted this epoch.
+///
+/// After all enactments, lineage-conflicting proposals are pruned and
+/// deposits are refunded.
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify.ratifyTransition`,
 /// `Cardano.Ledger.Conway.Governance.Procedures.proposalsApplyEnactment`.
 fn ratify_and_enact(
     ledger: &mut LedgerState,
@@ -369,17 +453,18 @@ fn ratify_and_enact(
 ) -> RatifyAndEnactResult {
     use crate::state::ratify_action;
 
-    // Extract thresholds from protocol params. When Conway-specific threshold
-    // fields are absent, fall back to the built-in Conway defaults rather than
-    // silently skipping ratification.
-    let (pool_thresholds, drep_thresholds, min_committee_size) = match ledger.protocol_params() {
-        Some(pp) => (
-            pp.pool_voting_thresholds.clone().unwrap_or_default(),
-            pp.drep_voting_thresholds.clone().unwrap_or_default(),
-            pp.min_committee_size,
-        ),
-        None => return RatifyAndEnactResult::default(),
-    };
+    // Extract thresholds from protocol params.  When Conway-specific
+    // threshold fields are absent, fall back to Conway defaults.
+    let (pool_thresholds, drep_thresholds, min_committee_size, committee_max_term) =
+        match ledger.protocol_params() {
+            Some(pp) => (
+                pp.pool_voting_thresholds.clone().unwrap_or_default(),
+                pp.drep_voting_thresholds.clone().unwrap_or_default(),
+                pp.min_committee_size,
+                pp.committee_term_limit,
+            ),
+            None => return RatifyAndEnactResult::default(),
+        };
 
     // Compute DRep delegated stake distribution from the mark snapshot.
     let drep_delegated_stake =
@@ -388,74 +473,111 @@ fn ratify_and_enact(
     // Compute SPO pool stake distribution from the mark snapshot.
     let pool_stake_dist = snapshots.mark.pool_stake_distribution();
 
-    // Read committee quorum from enact state.
-    let committee_quorum = ledger.enact_state().committee_quorum;
-
-    // Collect IDs of actions that pass ratification.
-    let ratified_ids: Vec<GovActionId> = ledger
+    // Collect sorted proposal IDs so we iterate in GovActionId order.
+    let sorted_ids: Vec<GovActionId> = ledger
         .governance_actions()
-        .iter()
-        .filter(|(_, action_state)| {
-            if !committee_update_meets_min_size(
-                action_state,
-                ledger.committee_state(),
-                min_committee_size,
-            ) {
-                return false;
-            }
-
-            ratify_action(
-                action_state,
-                ledger.committee_state(),
-                &committee_quorum,
-                ledger.drep_state(),
-                &drep_delegated_stake,
-                current_epoch,
-                drep_activity,
-                &drep_thresholds,
-                &pool_stake_dist,
-                &pool_thresholds,
-            )
-        })
-        .map(|(id, _)| id.clone())
+        .keys()
+        .cloned()
         .collect();
 
-    if ratified_ids.is_empty() {
-        return RatifyAndEnactResult::default();
-    }
-
-    // Remove ratified actions, refund their deposits, and enact each one.
-    // First, collect the affected governance purposes so we can prune
-    // stale proposals of those purposes after enactment.
-    let mut outcomes = Vec::with_capacity(ratified_ids.len());
+    let mut enacted_ids: Vec<GovActionId> = Vec::new();
+    let mut outcomes: Vec<EnactOutcome> = Vec::new();
     let mut deposit_targets: Vec<(Vec<u8>, u64)> = Vec::new();
     let mut enacted_purposes: BTreeSet<crate::state::ConwayGovActionPurpose> = BTreeSet::new();
+    let mut delayed = false;
 
-    for id in &ratified_ids {
-        let action_state = ledger.governance_actions_mut().remove(id);
-        if let Some(state) = action_state {
+    for id in &sorted_ids {
+        // Look up the action (it may have been removed by an earlier
+        // enactment — shouldn't happen, but be defensive).
+        let action_state = match ledger.governance_actions().get(id) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        let gov_action = &action_state.proposal().gov_action;
+
+        // --- Upstream ratifyTransition guard checks (order matters) ---
+
+        // 1. prevActionAsExpected — checked against CURRENT enact state.
+        if !prev_action_as_expected(action_state, ledger.enact_state()) {
+            continue;
+        }
+
+        // 2. validCommitteeTerm — checked against CURRENT protocol params.
+        let cur_term_limit = ledger
+            .protocol_params()
+            .and_then(|pp| pp.committee_term_limit)
+            .or(committee_max_term);
+        if !valid_committee_term(gov_action, cur_term_limit, current_epoch) {
+            continue;
+        }
+
+        // 3. Delay flag — once a delaying action is enacted, stop.
+        if delayed {
+            continue;
+        }
+
+        // 4. withdrawalCanWithdraw — treasury sufficient.
+        if !withdrawal_can_withdraw(gov_action, ledger.accounting().treasury) {
+            continue;
+        }
+
+        // 5. acceptedByEveryone — committee + DRep + SPO thresholds.
+        //    Read committee quorum from CURRENT enact state (may have
+        //    changed after an earlier UpdateCommittee enactment).
+        let committee_quorum = ledger.enact_state().committee_quorum;
+
+        if !committee_update_meets_min_size(
+            action_state,
+            ledger.committee_state(),
+            min_committee_size,
+        ) {
+            continue;
+        }
+
+        if !ratify_action(
+            action_state,
+            ledger.committee_state(),
+            &committee_quorum,
+            ledger.drep_state(),
+            &drep_delegated_stake,
+            current_epoch,
+            drep_activity,
+            &drep_thresholds,
+            &pool_stake_dist,
+            &pool_thresholds,
+        ) {
+            continue;
+        }
+
+        // --- All checks passed: enact ---
+        let removed = ledger.governance_actions_mut().remove(id);
+        if let Some(state) = removed {
             enacted_purposes.insert(
                 crate::state::conway_gov_action_purpose(&state.proposal().gov_action),
             );
-            // Collect deposit for refund.
             deposit_targets.push((
                 state.proposal().reward_account.clone(),
                 state.proposal().deposit,
             ));
             let outcome = ledger.enact_action(id.clone(), &state.proposal().gov_action);
             outcomes.push(outcome);
+            enacted_ids.push(id.clone());
+
+            // Set delay flag if this is a delaying action type.
+            if delaying_action(&state.proposal().gov_action) {
+                delayed = true;
+            }
         }
+    }
+
+    if enacted_ids.is_empty() {
+        return RatifyAndEnactResult::default();
     }
 
     // -----------------------------------------------------------------------
     // Subtree pruning: remove proposals whose prev_action_id no longer
     // chains from the current enacted lineage root for their purpose.
-    //
-    // When an action is enacted, the lineage root for its governance
-    // purpose advances to the enacted action's GovActionId.  Any pending
-    // proposal of that purpose whose chain does not start at the new root
-    // is stale and must be removed.  The pruning is transitive: if
-    // proposal B chains from a stale proposal A, B is also removed.
     //
     // Upstream reference: `proposalsApplyEnactment`.
     // -----------------------------------------------------------------------
@@ -483,7 +605,7 @@ fn ratify_and_enact(
     let mut enacted_refunded: u64 = 0;
     let mut subtree_refunded: u64 = 0;
     let mut unclaimed: u64 = 0;
-    let enacted_count = ratified_ids.len();
+    let enacted_count = enacted_ids.len();
 
     for (i, (raw_account, deposit)) in deposit_targets.iter().enumerate() {
         if let Some(reward_account) = RewardAccount::from_bytes(raw_account) {
@@ -505,7 +627,7 @@ fn ratify_and_enact(
     }
 
     RatifyAndEnactResult {
-        enacted_ids: ratified_ids,
+        enacted_ids,
         outcomes,
         enacted_deposit_refunds: enacted_refunded,
         removed_due_to_enactment,
@@ -3171,5 +3293,255 @@ mod tests {
         assert_eq!(ledger.accounting().reserves, 0);
         // Treasury should have received the treasury cut of the fees.
         assert!(ledger.accounting().treasury > 0);
+    }
+
+    // -- Iterative ratification ordering (upstream Conway RATIFY) ----------
+
+    /// Helper: zero-threshold governance ledger where all proposals
+    /// automatically pass ratification (CC quorum=0, DRep=0, SPO=0).
+    fn make_auto_pass_ledger() -> LedgerState {
+        let mut ledger = make_governance_ledger();
+        ledger.enact_state_mut().committee_quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.hard_fork_initiation = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.update_to_constitution = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.pp_economic_group = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.pp_network_group = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.pp_technical_group = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.pp_gov_group = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 0, denominator: 1 };
+        let mut pool_thresholds = PoolVotingThresholds::default();
+        pool_thresholds.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+        pool_thresholds.hard_fork_initiation = UnitInterval { numerator: 0, denominator: 1 };
+        pool_thresholds.pp_security_group = UnitInterval { numerator: 0, denominator: 1 };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+            pp.pool_voting_thresholds = Some(pool_thresholds);
+        }
+        // Resign the CC member so committee checks don't block.
+        let cc_cred = test_cred(0xC0);
+        ledger
+            .committee_state_mut()
+            .get_mut(&cc_cred)
+            .unwrap()
+            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
+        ledger
+    }
+
+    #[test]
+    fn test_delaying_action_prevents_further_enactments() {
+        // Upstream: after enacting a delaying action (e.g. NoConfidence),
+        // all subsequent proposals are skipped regardless of votes.
+        let mut ledger = make_auto_pass_ledger();
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot (no proposals yet).
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Insert two proposals AFTER epoch 1.  NoConfidence (0x01) will
+        // be processed first (lower GovActionId).  InfoAction (0x02)
+        // would normally pass but must be skipped because NoConfidence
+        // is delaying.
+        let gai_nc = test_gov_action_id(0x01, 0);
+        let gas_nc = GovernanceActionState::new(test_no_confidence_proposal());
+        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
+
+        let gai_info = test_gov_action_id(0x02, 0);
+        let gas_info = GovernanceActionState::new(test_info_proposal());
+        ledger.governance_actions_mut().insert(gai_info.clone(), gas_info);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Only NoConfidence should be enacted (it's a delaying action).
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_gov_action_ids, vec![gai_nc]);
+        // InfoAction should remain pending.
+        assert!(ledger.governance_actions().contains_key(&gai_info));
+    }
+
+    #[test]
+    fn test_non_delaying_action_allows_continuation() {
+        // ParameterChange is non-delaying, so a subsequent InfoAction
+        // should still be enacted in the same epoch.
+        let mut ledger = make_auto_pass_ledger();
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot (no proposals yet).
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Insert both proposals after epoch 1.
+        let gai_pc = test_gov_action_id(0x01, 0);
+        let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
+        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+
+        let gai_info = test_gov_action_id(0x02, 0);
+        let gas_info = GovernanceActionState::new(test_info_proposal());
+        ledger.governance_actions_mut().insert(gai_info.clone(), gas_info);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Both should be enacted (ParameterChange doesn't delay).
+        assert_eq!(event.governance_actions_enacted, 2);
+        assert!(event.enacted_gov_action_ids.contains(&gai_pc));
+        assert!(event.enacted_gov_action_ids.contains(&gai_info));
+        assert!(ledger.governance_actions().is_empty());
+    }
+
+    #[test]
+    fn test_chained_parameter_changes_enacted_iteratively() {
+        // Two ParameterChanges where B chains from A.
+        // Both should be enacted in a single epoch because A is
+        // enacted first, advancing the lineage root, allowing B
+        // to pass prevActionAsExpected.
+        let mut ledger = make_auto_pass_ledger();
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot (no proposals yet).
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Insert both proposals after epoch 1.
+        let gai_a = test_gov_action_id(0x01, 0);
+        let mut proposal_a = test_parameter_change_proposal();
+        if let GovAction::ParameterChange { ref mut protocol_param_update, .. } = proposal_a.gov_action {
+            protocol_param_update.key_deposit = Some(3_000_000);
+        }
+        let gas_a = GovernanceActionState::new(proposal_a);
+        ledger.governance_actions_mut().insert(gai_a.clone(), gas_a);
+
+        let gai_b = test_gov_action_id(0x02, 0);
+        let proposal_b = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: Some(gai_a.clone()),
+                protocol_param_update: ProtocolParameterUpdate {
+                    pool_deposit: Some(600_000_000),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gas_b = GovernanceActionState::new(proposal_b);
+        ledger.governance_actions_mut().insert(gai_b.clone(), gas_b);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // A is enacted first (lower ID), lineage advances, B chains from A.
+        assert_eq!(event.governance_actions_enacted, 2);
+        assert_eq!(event.enacted_gov_action_ids[0], gai_a);
+        assert_eq!(event.enacted_gov_action_ids[1], gai_b);
+        // Both updates applied.
+        assert_eq!(ledger.protocol_params().unwrap().key_deposit, 3_000_000);
+        assert_eq!(ledger.protocol_params().unwrap().pool_deposit, 600_000_000);
+        assert!(ledger.governance_actions().is_empty());
+    }
+
+    #[test]
+    fn test_treasury_withdrawal_exceeding_treasury_skipped() {
+        // A TreasuryWithdrawals proposal requesting more than the
+        // treasury holds should be skipped (withdrawalCanWithdraw).
+        let mut ledger = make_auto_pass_ledger();
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot (no proposals yet).
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Set treasury to a small amount AFTER epoch 1 ran (so
+        // monetary expansion doesn't inflate it before our check).
+        // Also zero reserves to prevent further monetary expansion at
+        // epoch 2 from inflating the treasury via the treasury cut.
+        ledger.accounting_mut().treasury = 1_000;
+        ledger.accounting_mut().reserves = 0;
+
+        // Register the withdrawal target reward account.
+        let ra = crate::RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xE0; 28]),
+        };
+        ledger.reward_accounts_mut().insert(
+            ra.clone(),
+            RewardAccountState::new(0, None),
+        );
+
+        // Propose a withdrawal of 5M (far exceeds 1000 treasury).
+        let gai = test_gov_action_id(0x01, 0);
+        let gas = GovernanceActionState::new(test_treasury_withdrawal_proposal());
+        ledger.governance_actions_mut().insert(gai.clone(), gas);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Should NOT be enacted due to treasury insufficiency.
+        assert_eq!(event.governance_actions_enacted, 0);
+        assert!(ledger.governance_actions().contains_key(&gai));
+    }
+
+    #[test]
+    fn test_prev_action_mismatch_skipped_at_ratification() {
+        // A proposal whose prev_action_id points to the wrong root
+        // should be skipped at ratification time (prevActionAsExpected).
+        let mut ledger = make_auto_pass_ledger();
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot (no proposals yet).
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // No ParameterChange enacted yet → root is None.
+        // Proposal claims prev_action_id = Some(bogus).
+        let bogus_prev = test_gov_action_id(0xFF, 99);
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: Some(bogus_prev),
+                protocol_param_update: ProtocolParameterUpdate {
+                    key_deposit: Some(5_000_000),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0x01, 0);
+        let gas = GovernanceActionState::new(proposal);
+        ledger.governance_actions_mut().insert(gai.clone(), gas);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Should NOT be enacted (lineage mismatch).
+        assert_eq!(event.governance_actions_enacted, 0);
+        assert!(ledger.governance_actions().contains_key(&gai));
+        // key_deposit should be unchanged.
+        assert_eq!(ledger.protocol_params().unwrap().key_deposit, 2_000_000);
     }
 }
