@@ -127,6 +127,7 @@ fn shelley_block_rejects_output_to_wrong_network() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -170,6 +171,7 @@ fn shelley_block_accepts_output_to_correct_network() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -209,6 +211,7 @@ fn network_validation_skipped_when_expected_network_not_set() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -260,6 +263,7 @@ fn shelley_block_rejects_withdrawal_from_wrong_network() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -321,6 +325,7 @@ fn alonzo_block_rejects_wrong_network_in_tx_body() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -378,6 +383,7 @@ fn alonzo_block_accepts_correct_network_in_tx_body() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -431,6 +437,7 @@ fn alonzo_block_accepts_absent_network_in_tx_body() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -494,6 +501,7 @@ fn babbage_block_rejects_output_to_wrong_network() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 

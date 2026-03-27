@@ -202,6 +202,7 @@ fn alonzo_plutus_v1_minting_evaluator_succeeds() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
+    is_valid: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x01, vec![tx]);
 
@@ -226,6 +227,7 @@ fn alonzo_plutus_v1_minting_evaluator_fails() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
+    is_valid: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x02, vec![tx]);
 
@@ -258,6 +260,7 @@ fn alonzo_plutus_v1_minting_no_evaluator_skips() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
+    is_valid: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x03, vec![tx]);
 
@@ -322,6 +325,7 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
+    is_valid: None,
     };
     let block = make_block(Era::Babbage, 200, 2, 0x04, vec![tx]);
 
@@ -398,6 +402,7 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
+    is_valid: None,
     };
     let block = make_block(Era::Conway, 300, 3, 0x05, vec![tx]);
 
@@ -449,6 +454,7 @@ fn alonzo_evaluator_receives_correct_script_metadata() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
+    is_valid: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x06, vec![tx]);
 

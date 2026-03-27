@@ -41,6 +41,16 @@ pub struct Tx {
     /// Used by the ledger to validate `auxiliary_data_hash` integrity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auxiliary_data: Option<Vec<u8>>,
+    /// Phase-2 validation flag (Alonzo+).
+    ///
+    /// `None` for pre-Alonzo eras (Byron/Shelley/Allegra/Mary).
+    /// `Some(true)` when the block producer asserts all Phase-2 scripts passed.
+    /// `Some(false)` when Phase-2 validation failed — the ledger applies a
+    /// collateral-only transition instead of the normal UTxO transition.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Tx` — `isValid`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_valid: Option<bool>,
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:
@@ -515,6 +525,7 @@ mod tests {
             body: body.clone(),
             witnesses: None,
             auxiliary_data: None,
+            is_valid: None,
         };
         assert_eq!(tx.id, id);
         assert_eq!(tx.body, body);
@@ -530,6 +541,7 @@ mod tests {
             body,
             witnesses: Some(vec![0xa0]),
             auxiliary_data: Some(vec![0xa1, 0x01, 0x02]),
+            is_valid: None,
         };
         assert!(tx.witnesses.is_some());
         assert!(tx.auxiliary_data.is_some());

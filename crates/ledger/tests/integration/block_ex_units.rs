@@ -81,6 +81,7 @@ fn make_alonzo_tx(
         body: body_bytes,
         witnesses: wb,
         auxiliary_data: None,
+        is_valid: None,
     }
 }
 
@@ -146,6 +147,7 @@ fn make_babbage_tx(
         body: body_bytes,
         witnesses: wb,
         auxiliary_data: None,
+        is_valid: None,
     }
 }
 
@@ -214,6 +216,7 @@ fn make_conway_tx(
         body: body_bytes,
         witnesses: wb,
         auxiliary_data: None,
+        is_valid: None,
     }
 }
 

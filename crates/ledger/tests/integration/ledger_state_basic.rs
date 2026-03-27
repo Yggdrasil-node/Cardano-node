@@ -16,6 +16,7 @@ pub(super) fn make_shelley_block_with_txs(
                 body: raw,
                 witnesses: None,
                 auxiliary_data: None,
+                is_valid: None,
             }
         })
         .collect();

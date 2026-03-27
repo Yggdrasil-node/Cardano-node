@@ -200,6 +200,7 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
                 auxiliary_data: block.transaction_metadata_set.get(&(idx as u64)).cloned(),
+                is_valid: None,
             }
         })
         .collect();
@@ -1677,6 +1678,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                         body: raw,
                         witnesses: None,
                         auxiliary_data: None,
+                        is_valid: None,
                     }
                 })
                 .collect();
@@ -1715,11 +1717,13 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
         )
         .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
+            let valid = !block.invalid_transactions.contains(&(idx as u64));
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
                 auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
+                is_valid: Some(valid),
             }
         })
         .collect();
@@ -1757,11 +1761,13 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
         )
         .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
+            let valid = !block.invalid_transactions.contains(&(idx as u64));
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
                 auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
+                is_valid: Some(valid),
             }
         })
         .collect();
@@ -1799,11 +1805,13 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
         )
         .map(|((idx, tx_body), ws)| {
             let raw = tx_body.to_cbor_bytes();
+            let valid = !block.invalid_transactions.contains(&(idx as u64));
             Tx {
                 id: compute_tx_id(&raw),
                 body: raw,
                 witnesses: ws.map(|w| w.to_cbor_bytes()),
                 auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
+                is_valid: Some(valid),
             }
         })
         .collect();

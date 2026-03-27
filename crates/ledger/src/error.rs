@@ -431,6 +431,28 @@ pub enum LedgerError {
     #[error("duplicate spending input in transaction")]
     DuplicateInput,
 
+    /// Submitted transaction has `is_valid = false`.
+    ///
+    /// Only a block producer may include transactions with `is_valid = false`
+    /// (after observing Phase-2 script failure during block forging).
+    /// Submitted transactions must always have `is_valid = true`.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Tx` — `IsValid`.
+    #[error("submitted transaction has is_valid = false (Phase-2 script failure)")]
+    SubmittedTxIsInvalid,
+
+    /// The block producer's `is_valid` claim does not match the node's own
+    /// Phase-2 script re-evaluation.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Bbody` — `ValidationTagMismatch`.
+    #[error("Phase-2 validation tag mismatch: block says {claimed}, re-evaluation says {actual}")]
+    ValidationTagMismatch {
+        /// The `is_valid` flag from the block producer.
+        claimed: bool,
+        /// The result of local Phase-2 re-evaluation.
+        actual: bool,
+    },
+
     /// Total reference script size across all referenced UTxO entries exceeds
     /// the maximum allowed per transaction (Conway+ rule).
     ///

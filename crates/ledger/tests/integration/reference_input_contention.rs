@@ -310,6 +310,7 @@ fn babbage_block_rejects_overlapping_reference_inputs() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -343,6 +344,7 @@ fn babbage_block_accepts_disjoint_reference_inputs() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -377,6 +379,7 @@ fn conway_block_rejects_overlapping_reference_inputs() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -410,6 +413,7 @@ fn conway_block_accepts_disjoint_reference_inputs() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 

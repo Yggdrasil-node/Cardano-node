@@ -290,6 +290,7 @@ fn cross_store_block_flow() {
             body: vec![0xCA, 0xFE],
             witnesses: None,
             auxiliary_data: None,
+            is_valid: None,
         }],
         raw_cbor: None,
     };
@@ -639,6 +640,7 @@ fn file_cross_store_block_flow() {
             body: vec![0xCA, 0xFE],
             witnesses: None,
             auxiliary_data: None,
+            is_valid: None,
         }],
         raw_cbor: None,
     };

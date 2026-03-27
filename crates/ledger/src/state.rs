@@ -2824,6 +2824,11 @@ impl LedgerState {
                 self.gen_delegs = staged_gen_delegs;
             }
             crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
+                // Reject submitted transactions with is_valid = false.
+                // Only block producers may include Phase-2-failed transactions.
+                if !tx.is_valid {
+                    return Err(LedgerError::SubmittedTxIsInvalid);
+                }
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Alonzo(o.clone()))
@@ -2880,6 +2885,10 @@ impl LedgerState {
                 self.gen_delegs = staged_gen_delegs;
             }
             crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
+                // Reject submitted transactions with is_valid = false.
+                if !tx.is_valid {
+                    return Err(LedgerError::SubmittedTxIsInvalid);
+                }
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
@@ -2942,6 +2951,10 @@ impl LedgerState {
                 self.gen_delegs = staged_gen_delegs;
             }
             crate::tx::MultiEraSubmittedTx::Conway(tx) => {
+                // Reject submitted transactions with is_valid = false.
+                if !tx.is_valid {
+                    return Err(LedgerError::SubmittedTxIsInvalid);
+                }
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
@@ -3422,19 +3435,19 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, AlonzoTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, AlonzoTxBody, Option<Vec<u8>>, Option<Vec<u8>>, Option<bool>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = AlonzoTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         // BBODY rule: block-level ExUnits limit.
         {
             let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
-                .map(|(_, _, _, wb, _)| wb.as_deref())
+                .map(|(_, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
         }
@@ -3448,7 +3461,8 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
-        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
+            let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
@@ -3510,6 +3524,8 @@ impl LedgerState {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
             }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            // ── is_valid bifurcation (Phase-2 / collateral-only) ──
+            if tx_is_valid {
             // Plutus script validation (Alonzo)
             {
                 let mut sorted_inputs = body.inputs.clone();
@@ -3554,6 +3570,14 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
             )?;
             staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            } else {
+                // is_valid = false: collateral-only transition.
+                // Alonzo has no collateral_return, so only consume collateral inputs.
+                crate::utxo::apply_collateral_only(
+                    &mut staged, tx_id.0,
+                    body.collateral.as_deref(), None,
+                );
+            }
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
@@ -3564,7 +3588,7 @@ impl LedgerState {
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule).
-        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, _is_valid) in &decoded {
             if let Some(ref update) = body.update {
                 self.collect_pparam_proposals(update);
             }
@@ -3582,19 +3606,19 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, BabbageTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, BabbageTxBody, Option<Vec<u8>>, Option<Vec<u8>>, Option<bool>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = BabbageTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         // BBODY rule: block-level ExUnits limit.
         {
             let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
-                .map(|(_, _, _, wb, _)| wb.as_deref())
+                .map(|(_, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
         }
@@ -3608,7 +3632,8 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
-        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
+            let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
@@ -3675,6 +3700,7 @@ impl LedgerState {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
             }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            if tx_is_valid {
             // Plutus script validation (Babbage)
             {
                 let mut sorted_inputs = body.inputs.clone();
@@ -3720,6 +3746,15 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
             )?;
             staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            } else {
+                // is_valid = false: collateral-only transition.
+                crate::utxo::apply_collateral_only(
+                    &mut staged,
+                    tx_id.0,
+                    body.collateral.as_deref(),
+                    body.collateral_return.as_ref(),
+                );
+            }
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
@@ -3730,7 +3765,7 @@ impl LedgerState {
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule).
-        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, _is_valid) in &decoded {
             if let Some(ref update) = body.update {
                 self.collect_pparam_proposals(update);
             }
@@ -3748,19 +3783,19 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, ConwayTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
+        let decoded: Vec<(crate::types::TxId, usize, ConwayTxBody, Option<Vec<u8>>, Option<Vec<u8>>, Option<bool>)> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = ConwayTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         // BBODY rule: block-level ExUnits limit.
         {
             let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
-                .map(|(_, _, _, wb, _)| wb.as_deref())
+                .map(|(_, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
         }
@@ -3776,7 +3811,8 @@ impl LedgerState {
         let mut staged_governance_actions = self.governance_actions.clone();
         let current_treasury = self.accounting.treasury;
         let cert_ctx = self.certificate_validation_context();
-        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+        for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
+            let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
@@ -3867,6 +3903,7 @@ impl LedgerState {
                 );
             }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
+            if tx_is_valid {
             // Plutus script validation (Conway)
             {
                 let mut sorted_inputs = body.inputs.clone();
@@ -4012,6 +4049,15 @@ impl LedgerState {
                 self.current_epoch,
             );
             staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            } else {
+                // is_valid = false: collateral-only transition.
+                crate::utxo::apply_collateral_only(
+                    &mut staged,
+                    tx_id.0,
+                    body.collateral.as_deref(),
+                    body.collateral_return.as_ref(),
+                );
+            }
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;

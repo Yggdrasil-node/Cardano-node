@@ -28,6 +28,7 @@ mod eras_conway;
 mod eras_praos_blocks;
 mod golden;
 mod governance_updates;
+mod is_valid_handling;
 mod ledger_state_basic;
 mod ledger_state_committee;
 mod ledger_state_era_application;

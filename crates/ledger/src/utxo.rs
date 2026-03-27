@@ -829,6 +829,37 @@ pub(crate) fn validate_no_duplicate_inputs(inputs: &[ShelleyTxIn]) -> Result<(),
     Ok(())
 }
 
+/// Applies the collateral-only UTxO transition for an `is_valid = false`
+/// transaction in a block (Alonzo+).
+///
+/// Removes all collateral inputs from the UTxO set and, for Babbage+,
+/// adds the `collateral_return` output if present.
+///
+/// Reference: `Cardano.Ledger.Alonzo.TxSeq` — `applyPlutusScriptFailure`.
+pub(crate) fn apply_collateral_only(
+    utxo: &mut MultiEraUtxo,
+    tx_id: [u8; 32],
+    collateral: Option<&[ShelleyTxIn]>,
+    collateral_return: Option<&BabbageTxOut>,
+) {
+    // Remove collateral inputs.
+    if let Some(collateral_inputs) = collateral {
+        for input in collateral_inputs {
+            utxo.entries.remove(input);
+        }
+    }
+    // Add collateral return output (Babbage+).
+    if let Some(ret) = collateral_return {
+        let ret_txin = ShelleyTxIn {
+            transaction_id: tx_id,
+            // The collateral return uses output index = 2^16 - 1 (65535)
+            // as a sentinel, matching upstream `CollRet` semantics.
+            index: u16::MAX,
+        };
+        utxo.insert(ret_txin, MultiEraTxOut::Babbage(ret.clone()));
+    }
+}
+
 /// Checks coin-level value preservation: `consumed == produced + fee`.
 fn check_coin_preservation(consumed: u64, produced: u64, fee: u64) -> Result<(), LedgerError> {
     if consumed != produced.saturating_add(fee) {

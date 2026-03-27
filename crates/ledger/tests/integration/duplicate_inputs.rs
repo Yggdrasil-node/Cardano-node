@@ -275,6 +275,7 @@ fn conway_block_rejects_duplicate_inputs() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+            is_valid: None,
         }],
         raw_cbor: None,
     };

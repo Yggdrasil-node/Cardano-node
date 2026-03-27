@@ -3478,8 +3478,8 @@ fn collect_rolled_back_tx_ids_returns_txs_after_target() {
     let tx_b = TxId([0xB0; 32]);
     let mut blk2 = test_store_block(0x02, 11);
     blk2.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
-        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     store.add_block(blk2).unwrap();
 
@@ -3487,7 +3487,7 @@ fn collect_rolled_back_tx_ids_returns_txs_after_target() {
     let tx_c = TxId([0xC0; 32]);
     let mut blk3 = test_store_block(0x03, 12);
     blk3.transactions = vec![
-        Tx { id: tx_c, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_c, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     store.add_block(blk3).unwrap();
 
@@ -3514,7 +3514,7 @@ fn collect_rolled_back_tx_ids_origin_returns_all() {
     let tx_a = TxId([0xAA; 32]);
     let mut blk1 = test_store_block(0x01, 10);
     blk1.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     store.add_block(blk1).unwrap();
 
@@ -3541,13 +3541,13 @@ fn rollback_collected_tx_ids_not_evicted_from_mempool() {
     let tx_b = TxId([0xB0; 32]);
     let mut blk1 = test_store_block(0x01, 10);
     blk1.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     store.add_block(blk1).unwrap();
 
     let mut blk2 = test_store_block(0x02, 20);
     blk2.transactions = vec![
-        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     store.add_block(blk2).unwrap();
 
@@ -3606,14 +3606,14 @@ fn apply_rollback_step_discards_volatile_suffix() {
     let tx_a = TxId([0xAA; 32]);
     let mut blk1 = test_store_block(0x01, 10);
     blk1.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     store.add_block(blk1).unwrap();
 
     let tx_b = TxId([0xBB; 32]);
     let mut blk2 = test_store_block(0x02, 20);
     blk2.transactions = vec![
-        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     store.add_block(blk2).unwrap();
 
@@ -3649,21 +3649,21 @@ fn promote_then_rollback_collects_only_volatile_tx_ids() {
     let tx_imm = TxId([0x11; 32]);
     let mut blk1 = test_store_block(0x01, 10);
     blk1.transactions = vec![
-        Tx { id: tx_imm, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_imm, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     chain_db.add_volatile_block(blk1).unwrap();
 
     let tx_vol_a = TxId([0x22; 32]);
     let mut blk2 = test_store_block(0x02, 20);
     blk2.transactions = vec![
-        Tx { id: tx_vol_a, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_vol_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     chain_db.add_volatile_block(blk2).unwrap();
 
     let tx_vol_b = TxId([0x33; 32]);
     let mut blk3 = test_store_block(0x03, 30);
     blk3.transactions = vec![
-        Tx { id: tx_vol_b, body: vec![], witnesses: None, auxiliary_data: None },
+        Tx { id: tx_vol_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
     ];
     chain_db.add_volatile_block(blk3).unwrap();
 

@@ -313,6 +313,7 @@ fn conway_block_rejects_oversized_ref_scripts() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
@@ -360,6 +361,7 @@ fn conway_block_accepts_ref_scripts_under_limit() {
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
+        is_valid: None,
         },
     ]);
 
