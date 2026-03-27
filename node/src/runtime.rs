@@ -38,6 +38,7 @@ use yggdrasil_network::{
 use yggdrasil_ledger::{
     LedgerError, LedgerState, MultiEraSubmittedTx, Point, PoolRelayAccessPoint,
     SlotNo, TxId,
+    plutus_validation::PlutusEvaluator,
 };
 use yggdrasil_mempool::{
     Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
@@ -1048,6 +1049,7 @@ fn add_tx_with<F>(
     ledger: &mut LedgerState,
     tx: MultiEraSubmittedTx,
     current_slot: SlotNo,
+    evaluator: Option<&dyn PlutusEvaluator>,
     mut insert_entry: F,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError>
 where
@@ -1055,7 +1057,7 @@ where
 {
     let tx_id = tx.tx_id();
     let mut staged_ledger = ledger.clone();
-    match staged_ledger.apply_submitted_tx(&tx, current_slot) {
+    match staged_ledger.apply_submitted_tx(&tx, current_slot, evaluator) {
         Ok(()) => {
             insert_entry(admitted_entry(tx), staged_ledger.protocol_params())?;
             *ledger = staged_ledger;
@@ -1077,8 +1079,9 @@ pub fn add_tx_to_mempool(
     mempool: &mut Mempool,
     tx: MultiEraSubmittedTx,
     current_slot: SlotNo,
+    evaluator: Option<&dyn PlutusEvaluator>,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, |entry, protocol_params| {
+    add_tx_with(ledger, tx, current_slot, evaluator, |entry, protocol_params| {
         mempool.insert_checked(entry, current_slot, protocol_params)
     })
 }
@@ -1093,8 +1096,9 @@ pub fn add_tx_to_shared_mempool(
     mempool: &SharedMempool,
     tx: MultiEraSubmittedTx,
     current_slot: SlotNo,
+    evaluator: Option<&dyn PlutusEvaluator>,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, |entry, protocol_params| {
+    add_tx_with(ledger, tx, current_slot, evaluator, |entry, protocol_params| {
         mempool.insert_checked(entry, current_slot, protocol_params)
     })
 }
@@ -1110,12 +1114,13 @@ pub fn add_txs_to_mempool<I>(
     mempool: &mut Mempool,
     txs: I,
     current_slot: SlotNo,
+    evaluator: Option<&dyn PlutusEvaluator>,
 ) -> Result<Vec<MempoolAddTxResult>, MempoolAddTxError>
 where
     I: IntoIterator<Item = MultiEraSubmittedTx>,
 {
     txs.into_iter()
-        .map(|tx| add_tx_to_mempool(ledger, mempool, tx, current_slot))
+        .map(|tx| add_tx_to_mempool(ledger, mempool, tx, current_slot, evaluator))
         .collect()
 }
 
@@ -1128,12 +1133,13 @@ pub fn add_txs_to_shared_mempool<I>(
     mempool: &SharedMempool,
     txs: I,
     current_slot: SlotNo,
+    evaluator: Option<&dyn PlutusEvaluator>,
 ) -> Result<Vec<MempoolAddTxResult>, MempoolAddTxError>
 where
     I: IntoIterator<Item = MultiEraSubmittedTx>,
 {
     txs.into_iter()
-        .map(|tx| add_tx_to_shared_mempool(ledger, mempool, tx, current_slot))
+        .map(|tx| add_tx_to_shared_mempool(ledger, mempool, tx, current_slot, evaluator))
         .collect()
 }
 

@@ -1311,7 +1311,7 @@ fn runtime_add_tx_to_mempool_accepts_valid_tx_and_updates_ledger() {
     let tx_id = tx.tx_id();
     let mut mempool = Mempool::with_capacity(1_000_000);
 
-    let result = add_tx_to_mempool(&mut ledger, &mut mempool, tx, SlotNo(500))
+    let result = add_tx_to_mempool(&mut ledger, &mut mempool, tx, SlotNo(500), None)
         .expect("add tx to mempool");
 
     assert_eq!(result, MempoolAddTxResult::MempoolTxAdded(tx_id));
@@ -1343,7 +1343,7 @@ fn runtime_add_tx_to_shared_mempool_rejects_invalid_tx_without_mutation() {
     let tx = sample_shelley_submitted_tx(0x72);
     let tx_id = tx.tx_id();
 
-    let result = add_tx_to_shared_mempool(&mut ledger, &mempool, tx, SlotNo(500))
+    let result = add_tx_to_shared_mempool(&mut ledger, &mempool, tx, SlotNo(500), None)
         .expect("reject invalid tx cleanly");
 
     assert_eq!(
@@ -1365,7 +1365,7 @@ fn runtime_add_txs_to_mempool_accepts_dependent_transactions_in_order() {
     let child_id = child.tx_id();
     let mut mempool = Mempool::with_capacity(1_000_000);
 
-    let results = add_txs_to_mempool(&mut ledger, &mut mempool, vec![parent, child], SlotNo(500))
+    let results = add_txs_to_mempool(&mut ledger, &mut mempool, vec![parent, child], SlotNo(500), None)
         .expect("add dependent tx batch");
 
     assert_eq!(
@@ -1418,13 +1418,14 @@ fn runtime_add_txs_to_shared_mempool_matches_repeated_single_adds() {
         &batch_mempool,
         vec![parent, child],
         SlotNo(500),
+        None,
     )
     .expect("batch add to shared mempool");
 
     let single_results = vec![
-        add_tx_to_shared_mempool(&mut single_ledger, &single_mempool, parent_single, SlotNo(500))
+        add_tx_to_shared_mempool(&mut single_ledger, &single_mempool, parent_single, SlotNo(500), None)
             .expect("single parent add"),
-        add_tx_to_shared_mempool(&mut single_ledger, &single_mempool, child_single, SlotNo(500))
+        add_tx_to_shared_mempool(&mut single_ledger, &single_mempool, child_single, SlotNo(500), None)
             .expect("single child add"),
     ];
 

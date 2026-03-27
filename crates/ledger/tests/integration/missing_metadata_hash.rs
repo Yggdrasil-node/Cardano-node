@@ -147,7 +147,7 @@ fn shelley_submitted_tx_rejects_aux_data_without_hash() {
         auxiliary_data: Some(aux_data),
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::MissingTxBodyMetadataHash)),
         "expected MissingTxBodyMetadataHash, got: {:?}",
@@ -196,6 +196,6 @@ fn shelley_submitted_tx_accepts_no_aux_no_hash() {
         auxiliary_data: None,
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected OK, got: {:?}", result);
 }

@@ -142,7 +142,7 @@ fn conway_submitted_tx_rejects_unknown_voter() {
         body, ws, true, None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::VotersDoNotExist(ref voters)) if voters.contains(&unknown_voter)),
         "expected VotersDoNotExist, got: {:?}",
@@ -193,7 +193,7 @@ fn conway_submitted_tx_rejects_vote_on_nonexistent_proposal() {
         body, ws, true, None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::GovActionsDoNotExist(_))),
         "expected GovActionsDoNotExist, got: {:?}",
@@ -230,7 +230,7 @@ fn conway_submitted_tx_rejects_wrong_treasury_value() {
         body, ws, true, None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::CurrentTreasuryValueIncorrect { .. })),
         "expected CurrentTreasuryValueIncorrect, got: {:?}",
@@ -261,7 +261,7 @@ fn conway_submitted_tx_accepts_correct_treasury_value() {
         body, ws, true, None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result);
 }
 
@@ -319,7 +319,7 @@ fn conway_submitted_tx_accumulates_votes_into_governance_state() {
         proposal_body, ws, true, None,
     ));
     let proposal_tx_id = proposal_submitted.tx_id();
-    state.apply_submitted_tx(&proposal_submitted, SlotNo(100))
+    state.apply_submitted_tx(&proposal_submitted, SlotNo(100), None)
         .expect("proposal should be accepted");
 
     let gov_action_id = GovActionId {
@@ -356,7 +356,7 @@ fn conway_submitted_tx_accumulates_votes_into_governance_state() {
     let vote_submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
         vote_body, ws, true, None,
     ));
-    state.apply_submitted_tx(&vote_submitted, SlotNo(101))
+    state.apply_submitted_tx(&vote_submitted, SlotNo(101), None)
         .expect("vote should be accepted");
 
     // Verify the vote was recorded.
@@ -400,7 +400,7 @@ fn conway_submitted_tx_tracks_drep_activity_for_registration() {
     let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
         body, ws, true, None,
     ));
-    state.apply_submitted_tx(&submitted, SlotNo(10))
+    state.apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("DRep registration should be accepted");
 
     // Verify the DRep is registered and activity was touched.

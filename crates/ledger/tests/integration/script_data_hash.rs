@@ -94,7 +94,7 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
         None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected success with matching hash: {:?}", result);
 }
 
@@ -141,7 +141,7 @@ fn alonzo_submitted_tx_rejects_mismatched_script_data_hash() {
         None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::PPViewHashesDontMatch { .. })),
         "expected PPViewHashesDontMatch, got: {:?}",

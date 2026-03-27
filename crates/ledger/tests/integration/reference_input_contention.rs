@@ -149,7 +149,7 @@ fn babbage_submitted_tx_rejects_overlapping_reference_inputs() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::ReferenceInputContention)),
         "expected ReferenceInputContention, got: {:?}",
@@ -178,7 +178,7 @@ fn babbage_submitted_tx_accepts_disjoint_reference_inputs() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "disjoint ref inputs should succeed: {:?}", result);
 }
 
@@ -202,7 +202,7 @@ fn babbage_submitted_tx_accepts_no_reference_inputs() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "no ref inputs should succeed: {:?}", result);
 }
 
@@ -231,7 +231,7 @@ fn conway_submitted_tx_rejects_overlapping_reference_inputs() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::ReferenceInputContention)),
         "expected ReferenceInputContention for Conway, got: {:?}",
@@ -259,7 +259,7 @@ fn conway_submitted_tx_accepts_disjoint_reference_inputs() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "disjoint ref inputs should succeed: {:?}", result);
 }
 

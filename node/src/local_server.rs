@@ -121,6 +121,7 @@ pub async fn run_local_tx_submission_session<I, V, L>(
     mut server: LocalTxSubmissionServer,
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
+    evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
 ) -> Result<(), LocalTxSubmissionSessionError>
 where
     I: ImmutableStore + Send + Sync,
@@ -168,11 +169,15 @@ where
                     };
 
                 // Attempt mempool admission.
+                let eval_ref = evaluator.as_ref().map(|e| {
+                    e.as_ref() as &dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator
+                });
                 match add_tx_to_shared_mempool(
                     &mut ledger_state,
                     &mempool,
                     submitted_tx,
                     current_slot,
+                    eval_ref,
                 ) {
                     Ok(MempoolAddTxResult::MempoolTxAdded(_)) => {
                         server.accept().await?;
@@ -437,6 +442,7 @@ pub async fn run_local_client_session<I, V, L>(
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
     dispatcher: Arc<dyn LocalQueryDispatcher>,
+    evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
 ) -> yggdrasil_network::MuxHandle
 where
     I: ImmutableStore + Send + Sync + Clone + 'static,
@@ -471,8 +477,9 @@ where
     // Spawn LocalTxSubmission task.
     let tx_chain_db = Arc::clone(&chain_db);
     let tx_mempool = mempool.clone();
+    let tx_evaluator = evaluator.clone();
     tokio::spawn(async move {
-        let _ = run_local_tx_submission_session(tx_server, tx_chain_db, tx_mempool).await;
+        let _ = run_local_tx_submission_session(tx_server, tx_chain_db, tx_mempool, tx_evaluator).await;
     });
 
     // Spawn LocalStateQuery task.
@@ -516,6 +523,7 @@ pub async fn run_local_accept_loop<I, V, L, F>(
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
     dispatcher: Arc<dyn LocalQueryDispatcher>,
+    evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
     shutdown: F,
 ) -> Result<(), LocalServerError>
 where
@@ -544,9 +552,10 @@ where
                 let db = Arc::clone(&chain_db);
                 let mp = mempool.clone();
                 let disp = Arc::clone(&dispatcher);
+                let eval = evaluator.clone();
 
                 tokio::spawn(async move {
-                    let mux = run_local_client_session(stream, db, mp, disp).await;
+                    let mux = run_local_client_session(stream, db, mp, disp, eval).await;
                     // Mux runs until either protocol task finishes or the
                     // connection drops; we do not abort here since each task
                     // terminates cleanly on `MsgDone` or socket close.

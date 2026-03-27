@@ -88,7 +88,7 @@ fn allegra_submitted_tx_rejects_extraneous_native_script() {
         raw_cbor: vec![0x80], // dummy
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(
             result,
@@ -151,7 +151,7 @@ fn allegra_submitted_tx_accepts_required_native_script() {
         raw_cbor: vec![0x80],
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         result.is_ok(),
         "expected Ok for required native script, got: {:?}",

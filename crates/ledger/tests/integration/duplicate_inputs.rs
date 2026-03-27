@@ -86,7 +86,7 @@ fn shelley_submitted_tx_rejects_duplicate_inputs() {
         ShelleyTx { body, witness_set: ws, auxiliary_data: None },
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::DuplicateInput)),
         "expected DuplicateInput, got: {:?}",
@@ -119,7 +119,7 @@ fn shelley_submitted_tx_accepts_unique_inputs() {
         ShelleyTx { body, witness_set: ws, auxiliary_data: None },
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "unique inputs should succeed: {:?}", result);
 }
 
@@ -167,7 +167,7 @@ fn babbage_submitted_tx_rejects_duplicate_inputs() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::DuplicateInput)),
         "expected DuplicateInput, got: {:?}",
@@ -222,7 +222,7 @@ fn conway_submitted_tx_rejects_duplicate_inputs() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::DuplicateInput)),
         "expected DuplicateInput for Conway, got: {:?}",
@@ -349,6 +349,6 @@ fn duplicate_inputs_same_txid_different_index_is_ok() {
         ShelleyTx { body, witness_set: ws, auxiliary_data: None },
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "same txid different index should succeed: {:?}", result);
 }

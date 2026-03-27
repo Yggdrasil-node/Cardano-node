@@ -84,7 +84,7 @@ fn submitted_alonzo_tx_rejects_is_valid_false() {
         None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::SubmittedTxIsInvalid)),
         "expected SubmittedTxIsInvalid, got: {:?}",
@@ -137,7 +137,7 @@ fn submitted_babbage_tx_rejects_is_valid_false() {
         None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::SubmittedTxIsInvalid)),
         "expected SubmittedTxIsInvalid, got: {:?}",
@@ -193,7 +193,7 @@ fn submitted_conway_tx_rejects_is_valid_false() {
         None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::SubmittedTxIsInvalid)),
         "expected SubmittedTxIsInvalid, got: {:?}",

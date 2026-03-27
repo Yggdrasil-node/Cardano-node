@@ -185,7 +185,7 @@ fn conway_submitted_tx_rejects_oversized_ref_scripts() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::TxRefScriptsSizeTooBig { actual: 204_801, max_allowed: 204_800 })),
         "expected TxRefScriptsSizeTooBig, got: {:?}",
@@ -227,7 +227,7 @@ fn conway_submitted_tx_accepts_ref_scripts_at_limit() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "ref scripts at exact limit should succeed: {:?}", result);
 }
 
@@ -260,7 +260,7 @@ fn conway_submitted_tx_accepts_no_ref_scripts() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "no ref scripts should succeed: {:?}", result);
 }
 
@@ -409,7 +409,7 @@ fn conway_submitted_tx_cumulates_scripts_across_both_input_types() {
         AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::TxRefScriptsSizeTooBig { actual: 204_801, max_allowed: 204_800 })),
         "expected cumulative size to trigger rejection, got: {:?}",

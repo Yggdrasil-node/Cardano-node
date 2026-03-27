@@ -2664,6 +2664,7 @@ impl LedgerState {
         &mut self,
         tx: &crate::tx::MultiEraSubmittedTx,
         current_slot: crate::types::SlotNo,
+        evaluator: Option<&dyn crate::plutus_validation::PlutusEvaluator>,
     ) -> Result<(), LedgerError> {
         match tx {
             crate::tx::MultiEraSubmittedTx::Shelley(tx) => {
@@ -3107,6 +3108,39 @@ impl LedgerState {
                         None,
                     )?;
                 }
+                // Phase-2 Plutus script validation (Alonzo submitted).
+                // Submitted transactions always have is_valid = true (checked above),
+                // so any Phase-2 failure is a hard reject.
+                {
+                    let mut sorted_inputs = tx.body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    let tx_ctx = crate::plutus_validation::TxContext {
+                        tx_hash: tx.tx_id().0,
+                        fee: tx.body.fee,
+                        outputs: tx.body.outputs.iter()
+                            .map(|o| MultiEraTxOut::Alonzo(o.clone()))
+                            .collect(),
+                        validity_start: tx.body.validity_interval_start,
+                        ttl: tx.body.ttl,
+                        required_signers: tx.body.required_signers.clone().unwrap_or_default(),
+                        mint: tx.body.mint.clone().unwrap_or_default(),
+                        withdrawals: tx.body.withdrawals.clone().unwrap_or_default(),
+                        ..Default::default()
+                    };
+                    crate::plutus_validation::validate_plutus_scripts(
+                        evaluator, Some(&witness_bytes), &required_scripts,
+                        &staged,
+                        &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
+                        &tx_ctx,
+                    )?;
+                }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3290,6 +3324,38 @@ impl LedgerState {
                         &[],
                         &[],
                         tx.body.reference_inputs.as_deref(),
+                    )?;
+                }
+                // Phase-2 Plutus script validation (Babbage submitted).
+                {
+                    let mut sorted_inputs = tx.body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    let tx_ctx = crate::plutus_validation::TxContext {
+                        tx_hash: tx.tx_id().0,
+                        fee: tx.body.fee,
+                        outputs: tx.body.outputs.iter()
+                            .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                            .collect(),
+                        validity_start: tx.body.validity_interval_start,
+                        ttl: tx.body.ttl,
+                        required_signers: tx.body.required_signers.clone().unwrap_or_default(),
+                        mint: tx.body.mint.clone().unwrap_or_default(),
+                        withdrawals: tx.body.withdrawals.clone().unwrap_or_default(),
+                        reference_inputs: tx.body.reference_inputs.clone().unwrap_or_default(),
+                        ..Default::default()
+                    };
+                    crate::plutus_validation::validate_plutus_scripts(
+                        evaluator, Some(&witness_bytes), &required_scripts,
+                        &staged,
+                        &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
+                        &tx_ctx,
                     )?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
@@ -3509,6 +3575,47 @@ impl LedgerState {
                         &sorted_voters,
                         &proposal_slice,
                         tx.body.reference_inputs.as_deref(),
+                    )?;
+                }
+                // Phase-2 Plutus script validation (Conway submitted).
+                {
+                    let mut sorted_inputs = tx.body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    let sorted_voters: Vec<crate::eras::conway::Voter> = tx.body.voting_procedures.as_ref()
+                        .map(|v| v.procedures.keys().cloned().collect())
+                        .unwrap_or_default();
+                    let proposal_slice = tx.body.proposal_procedures.as_deref().unwrap_or(&[]);
+                    let tx_ctx = crate::plutus_validation::TxContext {
+                        tx_hash: tx.tx_id().0,
+                        fee: tx.body.fee,
+                        outputs: tx.body.outputs.iter()
+                            .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                            .collect(),
+                        validity_start: tx.body.validity_interval_start,
+                        ttl: tx.body.ttl,
+                        required_signers: tx.body.required_signers.clone().unwrap_or_default(),
+                        mint: tx.body.mint.clone().unwrap_or_default(),
+                        withdrawals: tx.body.withdrawals.clone().unwrap_or_default(),
+                        reference_inputs: tx.body.reference_inputs.clone().unwrap_or_default(),
+                        current_treasury_value: tx.body.current_treasury_value,
+                        treasury_donation: tx.body.treasury_donation,
+                        voting_procedures: tx.body.voting_procedures.clone(),
+                        proposal_procedures: proposal_slice.to_vec(),
+                        ..Default::default()
+                    };
+                    crate::plutus_validation::validate_plutus_scripts(
+                        evaluator, Some(&witness_bytes), &required_scripts,
+                        &staged,
+                        &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
+                        &sorted_voters, proposal_slice,
+                        &tx_ctx,
                     )?;
                 }
                 // Conway UTXO rule: validate current_treasury_value declaration.

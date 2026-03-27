@@ -548,7 +548,7 @@ fn submitted_shelley_tx_rejects_wrong_network_output() {
         auxiliary_data: None,
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::WrongNetwork { expected: 1, found: 0 })),
         "expected WrongNetwork on submitted Shelley tx, got: {:?}",
@@ -598,7 +598,7 @@ fn submitted_alonzo_tx_rejects_wrong_network_in_tx_body() {
         yggdrasil_ledger::AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::WrongNetworkInTxBody { expected: 1, found: 0 })),
         "expected WrongNetworkInTxBody on submitted Alonzo tx, got: {:?}",
@@ -665,7 +665,7 @@ fn submitted_conway_tx_rejects_wrong_withdrawal_network() {
         yggdrasil_ledger::AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::WrongNetworkWithdrawal { expected: 1, found: 0 })),
         "expected WrongNetworkWithdrawal on submitted Conway tx, got: {:?}",
@@ -723,7 +723,7 @@ fn submitted_babbage_tx_rejects_missing_reference_input() {
         yggdrasil_ledger::AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::ReferenceInputNotInUtxo)),
         "expected ReferenceInputNotInUtxo on submitted Babbage tx, got: {:?}",

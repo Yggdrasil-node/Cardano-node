@@ -120,7 +120,7 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         raw_cbor,
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::ExtraRedeemer { tag: 0, index: 0 })),
         "expected ExtraRedeemer for Alonzo submitted tx, got: {result:?}",
@@ -174,7 +174,7 @@ fn alonzo_submitted_tx_no_redeemers_passes() {
         body, ws, true, None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected Ok for redeemer-free Alonzo submitted tx, got: {result:?}");
 }
 
@@ -257,7 +257,7 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         raw_cbor,
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::ExtraRedeemer { tag: 0, index: 0 })),
         "expected ExtraRedeemer for Babbage submitted tx, got: {result:?}",
@@ -346,7 +346,7 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         raw_cbor,
     });
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::ExtraRedeemer { tag: 0, index: 0 })),
         "expected ExtraRedeemer for Conway submitted tx, got: {result:?}",
@@ -435,7 +435,7 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
         body, ws, true, None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::ExtraRedeemer { tag: 1, index: 0 })),
         "expected ExtraRedeemer for minting redeemer with native script, got: {result:?}",

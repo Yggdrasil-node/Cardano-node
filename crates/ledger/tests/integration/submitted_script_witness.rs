@@ -84,7 +84,7 @@ fn alonzo_submitted_tx_rejects_missing_required_script_witness() {
         None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::MissingScriptWitness { hash }) if hash == script_hash),
         "expected MissingScriptWitness, got: {:?}",
@@ -165,7 +165,7 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         None,
     ));
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected success, got: {:?}", result);
 }
 
@@ -209,7 +209,7 @@ fn allegra_submitted_tx_rejects_missing_native_script_witness() {
         ShelleyCompatibleSubmittedTx::new(body, empty_witness_set(), None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::MissingScriptWitness { hash }) if hash == script_hash),
         "expected MissingScriptWitness for Allegra, got: {:?}",
@@ -262,7 +262,7 @@ fn allegra_submitted_tx_accepts_native_script_witness() {
         ShelleyCompatibleSubmittedTx::new(body, ws, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected Allegra accept, got: {:?}", result);
 }
 
@@ -317,7 +317,7 @@ fn mary_submitted_tx_rejects_missing_native_script_for_mint() {
         ShelleyCompatibleSubmittedTx::new(body, ws, None),
     );
 
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::MissingScriptWitness { hash }) if hash == script_hash),
         "expected MissingScriptWitness for Mary mint, got: {:?}",

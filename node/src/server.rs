@@ -78,16 +78,38 @@ pub trait TxSubmissionConsumer: Send + Sync {
 /// This implementation recovers the current ledger state from coordinated
 /// storage, decodes submitted transactions using the current ledger era, and
 /// then admits them into the shared mempool using the existing runtime helper.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SharedTxSubmissionConsumer<I, V, L> {
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
+    evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
+}
+
+impl<I: std::fmt::Debug, V: std::fmt::Debug, L: std::fmt::Debug> std::fmt::Debug
+    for SharedTxSubmissionConsumer<I, V, L>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedTxSubmissionConsumer")
+            .field("chain_db", &self.chain_db)
+            .field("mempool", &self.mempool)
+            .field("evaluator", &self.evaluator.as_ref().map(|_| "<PlutusEvaluator>"))
+            .finish()
+    }
 }
 
 impl<I, V, L> SharedTxSubmissionConsumer<I, V, L> {
     /// Create a new shared TxSubmission consumer from coordinated storage and a mempool.
     pub fn new(chain_db: Arc<RwLock<ChainDb<I, V, L>>>, mempool: SharedMempool) -> Self {
-        Self { chain_db, mempool }
+        Self { chain_db, mempool, evaluator: None }
+    }
+
+    /// Create a new shared TxSubmission consumer with a Plutus evaluator.
+    pub fn with_evaluator(
+        chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
+        mempool: SharedMempool,
+        evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
+    ) -> Self {
+        Self { chain_db, mempool, evaluator }
     }
 
     /// Shared mempool receiving admitted inbound transactions.
@@ -130,7 +152,11 @@ where
             return 0;
         }
 
-        match add_txs_to_shared_mempool(&mut ledger_state, &self.mempool, decoded, current_slot) {
+        let eval_ref = self.evaluator.as_ref().map(|e| {
+            e.as_ref() as &dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator
+        });
+
+        match add_txs_to_shared_mempool(&mut ledger_state, &self.mempool, decoded, current_slot, eval_ref) {
             Ok(results) => results
                 .into_iter()
                 .filter(|result| matches!(result, MempoolAddTxResult::MempoolTxAdded(_)))
