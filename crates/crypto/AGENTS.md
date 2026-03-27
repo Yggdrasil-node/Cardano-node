@@ -15,7 +15,7 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Names MUST stay close to the official node, Cardano specs, and upstream crypto terminology unless a Rust-specific deviation is clearly justified.
 - Parity-sensitive choices MUST be explained by reference to the official `cardano-node` ecosystem and the relevant upstream IntersectMBO crypto packages.
 - Full cryptographic parity, vector coverage, and encoding compatibility are non-negotiable long-term targets.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Crypto class abstractions (hashing, signatures, VRF, KES)](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/)

@@ -14,7 +14,7 @@ Focus on deterministic transaction intake and on keeping ledger validation and q
 - Naming MUST stay close to official node and consensus mempool terminology.
 - Transaction flow and admission policy MUST be explained with reference to the official node and upstream mempool-adjacent sources such as Ouroboros consensus and `cardano-submit-api`.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - Consensus Mempool module (`API.hs`, `TxSeq.hs`, `Capacity.hs`, `Init.hs`, `Update.hs`, `Query.hs`): <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/>

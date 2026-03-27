@@ -9,7 +9,7 @@ Keep tests in this directory focused on deterministic parser and generator behav
 - Tests here MUST validate supported syntax and generation behavior, not speculative future grammar.
 - Fixture inputs MUST remain pinned and traceable to upstream or documented local reductions.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Era CDDL roots (each era has `impl/cddl-files/` and `impl/cddl/data/`)](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/)

@@ -12,7 +12,7 @@ Focus on small parser and generator internals that are deterministic, testable, 
 - Conservative failures MUST be preferred over permissive guessing when schema input is ambiguous.
 - Public parser and generator internals that define supported syntax boundaries, normalization rules, or output guarantees MUST have Rustdocs.
 - Names MUST remain traceable to upstream schema terminology and official node-adjacent ledger naming wherever practical.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Shelley CDDL](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/impl/cddl-files)

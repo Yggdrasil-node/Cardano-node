@@ -13,7 +13,7 @@ This directory owns storage interfaces and implementations, including rollback-a
 - Persistence semantics here MUST remain explicit and independent of node orchestration code.
 - File-format pragmatism is acceptable, but migration and recovery paths MUST remain possible.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [ChainDB orchestration](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB)

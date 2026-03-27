@@ -11,10 +11,19 @@
 //! Reference: `Cardano.Ledger.Shelley.PParams` and per-era extensions
 //! in `cardano-ledger`.
 
+use std::collections::BTreeMap;
+
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::alonzo::ExUnits;
 use crate::error::LedgerError;
 use crate::types::UnitInterval;
+
+/// Cost models for Plutus script languages.
+///
+/// CDDL: `cost_models = {? 0:[*int64], ? 1:[*int64], ? 2:[*int64], *3..255=>[*int64]}`
+///
+/// Key 0 = PlutusV1, 1 = PlutusV2, 2 = PlutusV3.
+pub type CostModels = BTreeMap<u8, Vec<i64>>;
 
 // ---------------------------------------------------------------------------
 // Pool voting thresholds (CDDL key 25)
@@ -274,11 +283,16 @@ pub struct ProtocolParameters {
     /// `coins_per_utxo_word` which is 8× this value).
     pub coins_per_utxo_byte: Option<u64>,
 
+    /// Cost models for Plutus script languages.
+    ///
+    /// CDDL key 18 — `cost_models`.  See [`CostModels`].
+    pub cost_models: Option<CostModels>,
+
     /// Execution unit prices: (price_mem, price_steps) as rationals.
     ///
-    /// CDDL key 19 — `prices`.
+    /// CDDL key 19 — `ex_unit_prices` (2-element array).
     pub price_mem: Option<UnitInterval>,
-    /// CPU step price.
+    /// CPU step price (part of key 19 array).
     pub price_step: Option<UnitInterval>,
 
     /// Maximum execution units per transaction.
@@ -346,6 +360,11 @@ pub struct ProtocolParameters {
     ///
     /// CDDL key 32 — `drep_activity`.
     pub drep_activity: Option<u64>,
+
+    /// Minimum fee for reference-script bytes (Conway, CDDL key 33).
+    ///
+    /// `nonnegative_interval` — `#6.30([uint, positive_int])`.
+    pub min_fee_ref_script_cost_per_byte: Option<UnitInterval>,
 }
 
 impl Default for ProtocolParameters {
@@ -380,6 +399,7 @@ impl Default for ProtocolParameters {
             min_utxo_value: Some(1_000_000),
             min_pool_cost: 340_000_000,
             coins_per_utxo_byte: None,
+            cost_models: None,
             price_mem: None,
             price_step: None,
             max_tx_ex_units: None,
@@ -395,6 +415,7 @@ impl Default for ProtocolParameters {
             drep_voting_thresholds: None,
             min_committee_size: None,
             committee_term_limit: None,
+            min_fee_ref_script_cost_per_byte: None,
         }
     }
 }
@@ -467,7 +488,10 @@ impl CborEncode for ProtocolParameters {
             count += 1;
         }
         if self.price_mem.is_some() {
-            count += 2; // price_mem + price_step
+            count += 1; // key 19 (ex_unit_prices as array(2))
+        }
+        if self.cost_models.is_some() {
+            count += 1;
         }
         if self.max_tx_ex_units.is_some() {
             count += 1;
@@ -494,6 +518,9 @@ impl CborEncode for ProtocolParameters {
             count += 1;
         }
         if self.drep_activity.is_some() {
+            count += 1;
+        }
+        if self.min_fee_ref_script_cost_per_byte.is_some() {
             count += 1;
         }
         if self.pool_voting_thresholds.is_some() {
@@ -540,10 +567,18 @@ impl CborEncode for ProtocolParameters {
         if let Some(val) = self.coins_per_utxo_byte {
             enc.unsigned(17).unsigned(val);
         }
+        if let Some(ref cm) = self.cost_models {
+            enc.unsigned(18).map(cm.len() as u64);
+            for (&lang, vals) in cm {
+                enc.unsigned(lang as u64).array(vals.len() as u64);
+                for &v in vals {
+                    enc.signed(v);
+                }
+            }
+        }
         if let (Some(pm), Some(ps)) = (&self.price_mem, &self.price_step) {
-            enc.unsigned(18);
+            enc.unsigned(19).array(2);
             pm.encode_cbor(enc);
-            enc.unsigned(19);
             ps.encode_cbor(enc);
         }
         if let Some(ref units) = self.max_tx_ex_units {
@@ -589,6 +624,10 @@ impl CborEncode for ProtocolParameters {
         if let Some(val) = self.drep_activity {
             enc.unsigned(32).unsigned(val);
         }
+        if let Some(ref val) = self.min_fee_ref_script_cost_per_byte {
+            enc.unsigned(33);
+            val.encode_cbor(enc);
+        }
     }
 }
 
@@ -621,6 +660,7 @@ impl CborDecode for ProtocolParameters {
             min_utxo_value: None,
             min_pool_cost: 0,
             coins_per_utxo_byte: None,
+            cost_models: None,
             price_mem: None,
             price_step: None,
             max_tx_ex_units: None,
@@ -636,6 +676,7 @@ impl CborDecode for ProtocolParameters {
             drep_voting_thresholds: None,
             min_committee_size: None,
             committee_term_limit: None,
+            min_fee_ref_script_cost_per_byte: None,
         };
 
         for _ in 0..map_len {
@@ -673,8 +714,33 @@ impl CborDecode for ProtocolParameters {
                 15 => params.min_utxo_value = Some(dec.unsigned()?),
                 16 => params.min_pool_cost = dec.unsigned()?,
                 17 => params.coins_per_utxo_byte = Some(dec.unsigned()?),
-                18 => params.price_mem = Some(UnitInterval::decode_cbor(dec)?),
-                19 => params.price_step = Some(UnitInterval::decode_cbor(dec)?),
+                18 => {
+                    // cost_models: map(language => [*int64])
+                    let map_len = dec.map()?;
+                    let mut cm = BTreeMap::new();
+                    for _ in 0..map_len {
+                        let lang = dec.unsigned()? as u8;
+                        let arr_len = dec.array()?;
+                        let mut vals = Vec::with_capacity(arr_len as usize);
+                        for _ in 0..arr_len {
+                            vals.push(dec.signed()?);
+                        }
+                        cm.insert(lang, vals);
+                    }
+                    params.cost_models = Some(cm);
+                }
+                19 => {
+                    // ex_unit_prices: [mem_price, step_price]
+                    let arr_len = dec.array()?;
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: arr_len as usize,
+                        });
+                    }
+                    params.price_mem = Some(UnitInterval::decode_cbor(dec)?);
+                    params.price_step = Some(UnitInterval::decode_cbor(dec)?);
+                }
                 20 => params.max_tx_ex_units = Some(ExUnits::decode_cbor(dec)?),
                 21 => params.max_block_ex_units = Some(ExUnits::decode_cbor(dec)?),
                 22 => params.max_val_size = Some(dec.unsigned()? as u32),
@@ -688,6 +754,7 @@ impl CborDecode for ProtocolParameters {
                 30 => params.gov_action_deposit = Some(dec.unsigned()?),
                 31 => params.drep_deposit = Some(dec.unsigned()?),
                 32 => params.drep_activity = Some(dec.unsigned()?),
+                33 => params.min_fee_ref_script_cost_per_byte = Some(UnitInterval::decode_cbor(dec)?),
                 _ => {
                     // Skip unknown keys: consume one value.
                     dec.skip()?;
@@ -724,6 +791,7 @@ pub struct ProtocolParameterUpdate {
     pub min_utxo_value: Option<u64>,
     pub min_pool_cost: Option<u64>,
     pub coins_per_utxo_byte: Option<u64>,
+    pub cost_models: Option<CostModels>,
     pub price_mem: Option<UnitInterval>,
     pub price_step: Option<UnitInterval>,
     pub max_tx_ex_units: Option<ExUnits>,
@@ -739,6 +807,7 @@ pub struct ProtocolParameterUpdate {
     pub gov_action_deposit: Option<u64>,
     pub drep_deposit: Option<u64>,
     pub drep_activity: Option<u64>,
+    pub min_fee_ref_script_cost_per_byte: Option<UnitInterval>,
 }
 
 impl ProtocolParameterUpdate {

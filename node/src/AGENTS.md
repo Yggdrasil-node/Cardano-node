@@ -13,7 +13,7 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Keep naming close to `cardano-node` operational concepts.
 - Public orchestration helpers MUST include Rustdocs when flow is non-trivial.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [`cardano-node` runtime (run, config, toplevel)](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node)

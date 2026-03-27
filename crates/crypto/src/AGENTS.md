@@ -9,7 +9,7 @@ This directory is for pure Rust cryptographic implementation code and protocol-f
 - Secret material handled here MUST be zeroized or compared in constant time where required.
 - Encodings and proof layouts MUST remain byte-accurate relative to the upstream format being implemented.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [`cardano-crypto-class` source tree](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/src/Cardano/Crypto) (hash, Ed25519, VRF, KES abstractions)

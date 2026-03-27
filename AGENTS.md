@@ -94,7 +94,7 @@
 ##  Rules *Non-Negotiable*
 - Always write typesafe Rust code.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 - Always research the official relevant upstream IntersectMBO repositories before introducing any local terminology, behavior, or design that is not directly traceable to an upstream source.
 - New dependencies MUST be justified in `docs/DEPENDENCIES.md` before they are treated as accepted.
 - FFI-backed cryptography and hidden native dependencies MUST NOT be introduced.

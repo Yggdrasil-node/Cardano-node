@@ -17,7 +17,7 @@ Keep tests in this directory close to ledger rules and era-specific invariants.
 - Keep integration modules grouped by ledger domain or era family, not by arbitrary file size.
 - Shared test helpers in `tests/integration/` MUST stay minimal and use `pub(super)` visibility.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - Shelley ledger tests: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/test>

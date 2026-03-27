@@ -9,7 +9,7 @@ This directory contains reference configuration files and per-network presets us
 - Treat the vendored configuration files here as reference inputs, not as the source of truth for local runtime configuration code.
 - Preserve the official file naming and preset split so parity work stays traceable.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Official configuration tree](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano)

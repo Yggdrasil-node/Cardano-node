@@ -12,7 +12,7 @@ Keep these documents synchronized with the implemented workspace, not with specu
 - Dependency decisions MUST be recorded in `DEPENDENCIES.md` before a new crate is treated as accepted.
 - Architecture and workflow changes MUST stay consistent with the actual crate graph and verification commands used in the workspace.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - Node integration and operational behavior: <https://github.com/IntersectMBO/cardano-node/>

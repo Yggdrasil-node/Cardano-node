@@ -14,7 +14,7 @@ Focus on wiring crates together cleanly, preserving deterministic startup and sh
 - Public node-facing integration types and runtime helpers MUST have Rustdocs when startup, shutdown, configuration, or sync semantics are not obvious.
 - Stay true to the official type naming and terminology for node concepts, network protocols, and ledger types when possible.
 - Integration behavior MUST always be explained by anchoring it in the official node and the relevant upstream IntersectMBO implementation.
-- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant AGENTS.md file.
+- Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Node integration repository](https://github.com/IntersectMBO/cardano-node/)
