@@ -168,3 +168,154 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
     let result = state.apply_submitted_tx(&submitted, SlotNo(10));
     assert!(result.is_ok(), "expected success, got: {:?}", result);
 }
+
+#[test]
+fn allegra_submitted_tx_rejects_missing_native_script_witness() {
+    let script_hash = [0xCC; 28];
+    let input_addr = enterprise_script_addr(1, &script_hash);
+    let output_addr = enterprise_addr(1, &[0x11; 28]);
+
+    let mut state = LedgerState::new(Era::Allegra);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn {
+        transaction_id: [0x41; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: input_addr,
+            amount: 5_000_000,
+        }),
+    );
+
+    let body = AllegraTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: output_addr,
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+    };
+
+    let submitted = MultiEraSubmittedTx::Allegra(
+        ShelleyCompatibleSubmittedTx::new(body, empty_witness_set(), None),
+    );
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    assert!(
+        matches!(result, Err(LedgerError::MissingScriptWitness { hash }) if hash == script_hash),
+        "expected MissingScriptWitness for Allegra, got: {:?}",
+        result,
+    );
+}
+
+#[test]
+fn allegra_submitted_tx_accepts_native_script_witness() {
+    // Use ScriptAll([]) — always evaluates to true without needing VKey witnesses.
+    let always_true_script = NativeScript::ScriptAll(vec![]);
+    let always_true_hash = native_script_hash(&always_true_script);
+    let input_addr = enterprise_script_addr(1, &always_true_hash);
+    let output_addr = enterprise_addr(1, &[0x11; 28]);
+
+    let mut state = LedgerState::new(Era::Allegra);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn {
+        transaction_id: [0x43; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: input_addr,
+            amount: 5_000_000,
+        }),
+    );
+
+    let body = AllegraTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: output_addr,
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts = vec![always_true_script];
+
+    let submitted = MultiEraSubmittedTx::Allegra(
+        ShelleyCompatibleSubmittedTx::new(body, ws, None),
+    );
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    assert!(result.is_ok(), "expected Allegra accept, got: {:?}", result);
+}
+
+#[test]
+fn mary_submitted_tx_rejects_missing_native_script_for_mint() {
+    let script_hash = [0xEE; 28];
+    let output_addr = enterprise_addr(1, &[0x11; 28]);
+
+    let mut state = LedgerState::new(Era::Mary);
+    state.set_protocol_params(permissive_params());
+
+    // Fund a plain key-hash input so UTxO resolution succeeds.
+    let input = ShelleyTxIn {
+        transaction_id: [0x51; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Mary(MaryTxOut {
+            address: enterprise_addr(1, &[0x11; 28]),
+            amount: Value::Coin(5_000_000),
+        }),
+    );
+
+    let mut mint_map = std::collections::BTreeMap::new();
+    let mut asset_map = std::collections::BTreeMap::new();
+    asset_map.insert(vec![0x01], 1i64);
+    mint_map.insert(script_hash, asset_map);
+
+    let body = MaryTxBody {
+        inputs: vec![input],
+        outputs: vec![MaryTxOut {
+            address: output_addr,
+            amount: Value::Coin(5_000_000),
+        }],
+        fee: 0,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: Some(mint_map),
+    };
+
+    let submitted = MultiEraSubmittedTx::Mary(
+        ShelleyCompatibleSubmittedTx::new(body, empty_witness_set(), None),
+    );
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10));
+    assert!(
+        matches!(result, Err(LedgerError::MissingScriptWitness { hash }) if hash == script_hash),
+        "expected MissingScriptWitness for Mary mint, got: {:?}",
+        result,
+    );
+}

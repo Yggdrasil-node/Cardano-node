@@ -2743,6 +2743,40 @@ impl LedgerState {
                     }
                 }
                 let mut staged = self.multi_era_utxo.clone();
+                // Native script validation (Allegra submitted path)
+                let witness_bytes = tx.witness_set.to_cbor_bytes();
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &staged,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
+                }
+                let native_satisfied = validate_native_scripts_if_present(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    current_slot.0,
+                )?;
+                validate_required_script_witnesses(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    &native_satisfied,
+                    &staged,
+                    None,
+                )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -2793,6 +2827,43 @@ impl LedgerState {
                     }
                 }
                 let mut staged = self.multi_era_utxo.clone();
+                // Native script validation (Mary submitted path)
+                let witness_bytes = tx.witness_set.to_cbor_bytes();
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &staged,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
+                }
+                if let Some(mint) = &tx.body.mint {
+                    crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+                }
+                let native_satisfied = validate_native_scripts_if_present(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    current_slot.0,
+                )?;
+                validate_required_script_witnesses(
+                    Some(&witness_bytes),
+                    &required_scripts,
+                    &native_satisfied,
+                    &staged,
+                    None,
+                )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
