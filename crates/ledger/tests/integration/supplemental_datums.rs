@@ -44,12 +44,17 @@ fn empty_witness_set() -> ShelleyWitnessSet {
 /// An Alonzo block with a supplemental datum (in witness set, not required by
 /// any spending input, and not declared in any output) should be rejected with
 /// NotAllowedSupplementalDatums.
+///
+/// Uses a native-script-locked input to avoid VKey witness requirements.
 #[test]
 fn alonzo_block_rejects_unreferenced_supplemental_datum() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_alonzo_params());
 
-    // Seed a simple VKey-locked UTxO (no datum).
+    let native = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&native);
+
+    // Seed a script-locked UTxO (no datum).
     let input = ShelleyTxIn {
         transaction_id: [0xAA; 32],
         index: 0,
@@ -57,7 +62,7 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
-            address: vkey_addr(),
+            address: script_addr(&script_hash),
             amount: Value::Coin(10_000_000),
             datum_hash: None,
         }),
@@ -66,7 +71,7 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: vkey_addr(),
+            address: script_addr(&script_hash),
             amount: Value::Coin(10_000_000),
             datum_hash: None, // output has no datum hash
         }],
@@ -84,8 +89,9 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
         network_id: None,
     };
 
-    // Witness set: a datum that isn't required or referenced anywhere.
+    // Witness set: native script + an orphan datum that isn't referenced anywhere.
     let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
     let orphan_datum = PlutusData::Integer(999.into());
     ws.plutus_data.push(orphan_datum.clone());
     let orphan_hash = {
@@ -127,10 +133,15 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
 
 /// An Alonzo block with a supplemental datum that IS declared in a transaction
 /// output datum hash should pass.
+///
+/// Uses a native-script-locked input.
 #[test]
 fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_alonzo_params());
+
+    let native = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&native);
 
     let input = ShelleyTxIn {
         transaction_id: [0xBB; 32],
@@ -139,7 +150,7 @@ fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
-            address: vkey_addr(),
+            address: script_addr(&script_hash),
             amount: Value::Coin(10_000_000),
             datum_hash: None,
         }),
@@ -156,7 +167,7 @@ fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: vkey_addr(),
+            address: script_addr(&script_hash),
             amount: Value::Coin(10_000_000),
             datum_hash: Some(declared_hash),
         }],
@@ -174,8 +185,9 @@ fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
         network_id: None,
     };
 
-    // Witness set includes the datum that matches the output hash
+    // Witness set includes the native script + datum that matches the output hash
     let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
     ws.plutus_data.push(declared_datum);
 
     let body_bytes = body.to_cbor_bytes();
@@ -211,12 +223,18 @@ fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
 
 /// A Babbage block with a supplemental datum matching a reference-input UTxO
 /// datum hash should pass.
+///
+/// Uses a native-script-locked input. The reference-input UTxO has a datum
+/// hash (not inline), so the witness datum is allowed as supplemental.
 #[test]
 fn babbage_block_accepts_supplemental_datum_from_reference_input() {
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(permissive_alonzo_params());
 
-    // Spending UTxO (VKey-locked)
+    let native = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&native);
+
+    // Spending UTxO (script-locked)
     let spending_input = ShelleyTxIn {
         transaction_id: [0xCC; 32],
         index: 0,
@@ -224,25 +242,30 @@ fn babbage_block_accepts_supplemental_datum_from_reference_input() {
     state.multi_era_utxo_mut().insert(
         spending_input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
-            address: vkey_addr(),
+            address: script_addr(&script_hash),
             amount: Value::Coin(10_000_000),
             datum_option: None,
             script_ref: None,
         }),
     );
 
-    // Reference UTxO with an inline datum
+    // Reference UTxO with a datum hash (not inline)
     let ref_input = ShelleyTxIn {
         transaction_id: [0xDD; 32],
         index: 1,
     };
     let ref_datum = PlutusData::Bytes(vec![0xAA, 0xBB]);
+    let ref_hash = {
+        use yggdrasil_ledger::CborEncode;
+        let cbor = ref_datum.to_cbor_bytes();
+        yggdrasil_crypto::blake2b::hash_bytes_256(&cbor).0
+    };
     state.multi_era_utxo_mut().insert(
         ref_input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: vkey_addr(),
             amount: Value::Coin(5_000_000),
-            datum_option: Some(DatumOption::Inline(ref_datum.clone())),
+            datum_option: Some(DatumOption::Hash(ref_hash)),
             script_ref: None,
         }),
     );
@@ -250,7 +273,7 @@ fn babbage_block_accepts_supplemental_datum_from_reference_input() {
     let body = BabbageTxBody {
         inputs: vec![spending_input],
         outputs: vec![BabbageTxOut {
-            address: vkey_addr(),
+            address: script_addr(&script_hash),
             amount: Value::Coin(10_000_000),
             datum_option: None,
             script_ref: None,
@@ -272,8 +295,9 @@ fn babbage_block_accepts_supplemental_datum_from_reference_input() {
         collateral_return: None,
     };
 
-    // Witness set includes a supplemental datum
+    // Witness set includes the native script + supplemental datum
     let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
     ws.plutus_data.push(ref_datum);
 
     let body_bytes = body.to_cbor_bytes();
