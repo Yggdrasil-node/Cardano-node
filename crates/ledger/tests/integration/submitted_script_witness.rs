@@ -119,7 +119,7 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: input_addr,
             amount: Value::Coin(5_000_000),
-            datum_option: None,
+            datum_option: Some(DatumOption::Hash([0xCC; 32])),
             script_ref: None,
         }),
     );

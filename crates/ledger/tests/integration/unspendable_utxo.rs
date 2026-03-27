@@ -1,6 +1,8 @@
 //! Tests for B6: UnspendableUTxONoDatumHash validation.
 //!
 //! Validates that Plutus-script-locked spending inputs must have datum information.
+//! Uses a Plutus V1 script (not a native script) so the address is NOT
+//! in the `native_satisfied` set and the datum check actually fires.
 
 use super::*;
 
@@ -40,14 +42,23 @@ fn empty_witness_set() -> ShelleyWitnessSet {
     }
 }
 
+/// Fake Plutus V1 script bytes used by all tests in this module.
+const FAKE_PLUTUS_V1_SCRIPT: &[u8] = &[0x01];
+
+/// Pre-computed `Blake2b-224(0x01 || 0x01)` — the Plutus V1 script hash
+/// for `FAKE_PLUTUS_V1_SCRIPT`.
+const FAKE_PLUTUS_SCRIPT_HASH: [u8; 28] = [
+    0x66, 0xdd, 0x6f, 0xfa, 0x0c, 0x08, 0x44, 0xc7,
+    0x05, 0xc9, 0xf4, 0x2a, 0x60, 0x85, 0x8f, 0x79,
+    0x24, 0xf4, 0x7b, 0x71, 0x66, 0x01, 0x56, 0xe9,
+    0x6e, 0xf5, 0xcf, 0xbe,
+];
+
 /// Alonzo block: Plutus-script-locked input with no datum hash should fail.
 #[test]
 fn alonzo_block_rejects_plutus_script_locked_input_without_datum_hash() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_alonzo_params());
-
-    let native = NativeScript::ScriptAll(vec![]);
-    let script_hash = native_script_hash(&native);
 
     // Spending UTxO: Plutus-script-locked but NO datum hash (unspendable).
     let spending_input = ShelleyTxIn {
@@ -57,7 +68,7 @@ fn alonzo_block_rejects_plutus_script_locked_input_without_datum_hash() {
     state.multi_era_utxo_mut().insert(
         spending_input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
-            address: script_addr(&script_hash),
+            address: script_addr(&FAKE_PLUTUS_SCRIPT_HASH),
             amount: Value::Coin(10_000_000),
             datum_hash: None,  // ← NO DATUM HASH
         }),
@@ -84,9 +95,9 @@ fn alonzo_block_rejects_plutus_script_locked_input_without_datum_hash() {
         network_id: None,
     };
 
-    // Witness set with native script (required to identify the script-locked input).
+    // Witness set with the Plutus V1 script whose hash matches the address.
     let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
+    ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
@@ -125,9 +136,6 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_alonzo_params());
 
-    let native = NativeScript::ScriptAll(vec![]);
-    let script_hash = native_script_hash(&native);
-
     // Spending UTxO: Plutus-script-locked WITH datum hash (spendable).
     let spending_input = ShelleyTxIn {
         transaction_id: [0xBB; 32],
@@ -137,7 +145,7 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
     state.multi_era_utxo_mut().insert(
         spending_input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
-            address: script_addr(&script_hash),
+            address: script_addr(&FAKE_PLUTUS_SCRIPT_HASH),
             amount: Value::Coin(10_000_000),
             datum_hash: Some(datum_hash),  // ← HAS DATUM HASH
         }),
@@ -164,9 +172,9 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         network_id: None,
     };
 
-    // Witness set with native script.
+    // Witness set with the Plutus V1 script.
     let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
+    ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
@@ -205,9 +213,6 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(permissive_alonzo_params());
 
-    let native = NativeScript::ScriptAll(vec![]);
-    let script_hash = native_script_hash(&native);
-
     // Spending UTxO: Plutus-script-locked WITH inline datum (spendable).
     let spending_input = ShelleyTxIn {
         transaction_id: [0xDD; 32],
@@ -217,7 +222,7 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
     state.multi_era_utxo_mut().insert(
         spending_input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
-            address: script_addr(&script_hash),
+            address: script_addr(&FAKE_PLUTUS_SCRIPT_HASH),
             amount: Value::Coin(10_000_000),
             datum_option: Some(DatumOption::Inline(inline_datum)),
             script_ref: None,
@@ -249,9 +254,9 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         collateral_return: None,
     };
 
-    // Witness set with native script.
+    // Witness set with the Plutus V1 script.
     let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
+    ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
