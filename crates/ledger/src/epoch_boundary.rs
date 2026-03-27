@@ -3000,6 +3000,101 @@ mod tests {
         }
     }
 
+    // -- Member (non-operator) reward crediting ---------------------------
+
+    /// Verifies that a non-operator delegator's reward account gets
+    /// credited after epoch boundary reward distribution.
+    ///
+    /// Pre-populates the `go` snapshot directly so rewards are computed
+    /// on the first `apply_epoch_boundary` call instead of requiring 4
+    /// rotation epochs.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rewards` — per-member reward
+    /// distribution.
+    #[test]
+    fn test_member_reward_credited_to_individual_account() {
+        // Pool operator: pool_id 30.
+        let mut ledger = make_ledger_with_pool(30);
+
+        // Member delegator: credential 31, NOT the pool operator.
+        let member_cred = test_cred(31);
+        let member_ra = RewardAccount {
+            network: 1,
+            credential: member_cred,
+        };
+
+        // Register member credential + delegation to pool 30.
+        ledger.stake_credentials_mut().register(member_cred);
+        if let Some(cs) = ledger.stake_credentials_mut().get_mut(&member_cred) {
+            cs.set_delegated_pool(Some(test_pool(30)));
+        }
+        ledger
+            .reward_accounts_mut()
+            .insert(member_ra, RewardAccountState::new(0, None));
+
+        // Add UTxO stake delegated to pool 30 via member credential.
+        let base_addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xCC; 28]),
+            staking: member_cred,
+        });
+        let addr_bytes = base_addr.to_bytes();
+        let txin = ShelleyTxIn { transaction_id: [31u8; 32], index: 0 };
+        ledger.multi_era_utxo_mut().insert_shelley(
+            txin,
+            ShelleyTxOut {
+                address: addr_bytes,
+                amount: 10_000_000_000_000, // 10M ADA
+            },
+        );
+
+        // Compute a snapshot from the current state and place it directly
+        // into the `go` position so that `apply_epoch_boundary` finds pool
+        // data in the reward-eligible snapshot without needing 4 rotations.
+        let go_snapshot = compute_stake_snapshot(
+            ledger.multi_era_utxo(),
+            ledger.stake_credentials(),
+            ledger.reward_accounts(),
+            ledger.pool_state(),
+        );
+        let mut snapshots = StakeSnapshots::new();
+        snapshots.go = go_snapshot;
+        snapshots.accumulate_fees(1_000_000_000); // 1000 ADA
+
+        let perf = BTreeMap::new();
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Operator reward account.
+        let operator_ra = test_reward_account(30);
+        let operator_balance = ledger.reward_accounts().balance(&operator_ra);
+        // Member reward account.
+        let member_balance = ledger.reward_accounts().balance(&member_ra);
+
+        // With 14B ADA reserves and the given parameters, both accounts
+        // should get credit (member contributes 10M ADA of stake).
+        assert!(
+            event.rewards_distributed > 0,
+            "expected rewards to be distributed, treasury_delta={}, delta_reserves={}",
+            event.treasury_delta, event.delta_reserves,
+        );
+        assert!(
+            member_balance > 0,
+            "member reward account should have positive balance after epoch boundary, \
+             got {member_balance}"
+        );
+        assert!(
+            operator_balance > 0,
+            "operator reward account should have positive balance, got {operator_balance}"
+        );
+        // Member reward should be a non-trivial fraction of total rewards.
+        assert!(
+            member_balance <= event.rewards_distributed,
+            "member reward ({member_balance}) should not exceed total distributed ({})",
+            event.rewards_distributed,
+        );
+    }
+
     // -- Reserves accounting: only monetary expansion deducted from reserves
 
     #[test]
