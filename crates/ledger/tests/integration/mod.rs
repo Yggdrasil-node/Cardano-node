@@ -34,6 +34,7 @@ mod ledger_state_pools_rewards_queries;
 mod ledger_state_stake_and_drep;
 mod multi_era_utxo;
 mod network_validation;
+mod output_validation;
 mod plutus_evaluation;
 mod plutus_scripts;
 mod shelley;
