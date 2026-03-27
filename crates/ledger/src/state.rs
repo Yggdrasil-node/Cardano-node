@@ -2995,6 +2995,12 @@ impl LedgerState {
                     &tx.witness_set,
                     &required_scripts,
                 )?;
+                // Unspendable UTxO check (Alonzo — no datum on Plutus-locked input).
+                crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+                    &staged,
+                    &tx.body.inputs,
+                    &native_satisfied,
+                )?;
                 // Supplemental datum check (Alonzo submitted — no reference inputs).
                 {
                     let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -3123,6 +3129,12 @@ impl LedgerState {
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
+                )?;
+                // Unspendable UTxO check (Babbage — no datum on Plutus-locked input).
+                crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+                    &staged,
+                    &tx.body.inputs,
+                    &native_satisfied,
                 )?;
                 // Supplemental datum check (Babbage submitted — includes reference inputs).
                 {
@@ -3275,6 +3287,12 @@ impl LedgerState {
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
+                )?;
+                // Unspendable UTxO check (Conway — no datum on Plutus-locked input).
+                crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+                    &staged,
+                    &tx.body.inputs,
+                    &native_satisfied,
                 )?;
                 // Supplemental datum check (Conway submitted — includes reference inputs).
                 {
@@ -3879,6 +3897,12 @@ impl LedgerState {
                 witness_bytes.as_deref(),
                 &required_scripts,
             )?;
+            // Unspendable UTxO check (Alonzo block — no datum on Plutus-locked input).
+            crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+                &staged,
+                &body.inputs,
+                &native_satisfied,
+            )?;
             // Supplemental datum check (Alonzo — no reference inputs).
             {
                 let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -4112,6 +4136,12 @@ impl LedgerState {
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
+            )?;
+            // Unspendable UTxO check (Babbage block — no datum on Plutus-locked input).
+            crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+                &staged,
+                &body.inputs,
+                &native_satisfied,
             )?;
             // Supplemental datum check (Babbage — includes reference inputs).
             {
@@ -4379,6 +4409,12 @@ impl LedgerState {
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
+            )?;
+            // Unspendable UTxO check (Conway block — no datum on Plutus-locked input).
+            crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+                &staged,
+                &body.inputs,
+                &native_satisfied,
             )?;
             // Supplemental datum check (Conway — includes reference inputs).
             {

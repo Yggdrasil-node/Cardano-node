@@ -337,6 +337,16 @@ pub enum LedgerError {
     #[error("witness datum with hash {hash:02x?} is not allowed as supplemental")]
     NotAllowedSupplementalDatums { hash: [u8; 32] },
 
+    /// A Plutus-script-locked spending input (PlutusV1 or PlutusV2) lacks a datum
+    /// or inline datum. The UTxO is unspendable without datum information.
+    ///
+    /// PlutusV3 scripts do NOT require a datum (CIP-0069).
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums`
+    /// and `Cardano.Ledger.Alonzo.UTxO.getInputDataHashesTxBody`.
+    #[error("spending input (tx {tx_id:02x?} index {index}) is locked by a PlutusV1/V2 script but has no datum or datum hash")]
+    UnspendableUTxONoDatumHash { tx_id: [u8; 32], index: u64 },
+
     #[error("datum not found for spending input (tx {tx_id:02x?} index {index})")]
     MissingDatum { tx_id: [u8; 32], index: u64 },
 

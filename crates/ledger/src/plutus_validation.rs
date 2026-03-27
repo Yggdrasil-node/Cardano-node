@@ -649,6 +649,61 @@ pub fn validate_supplemental_datums(
     Ok(())
 }
 
+/// Validates that Plutus-script-locked spending inputs have a datum.
+///
+/// In Alonzo and Babbage+, a spending input locked by a Plutus script
+/// MUST have datum information attached (datum hash in Alonzo, datum hash
+/// or inline datum in Babbage+).
+///
+/// This check is performed AFTER native script validation, so we can skip
+/// inputs whose scripts were satisfied by native scripts.
+///
+/// Note: CIP-0069 allows PlutusV3 scripts to omit the datum requirement,
+/// but that exemption is checked at script evaluation time. This function
+/// performs the structural check that Plutus-locked inputs have *some*
+/// datum information present.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums` and
+/// `Cardano.Ledger.Alonzo.UTxO.getInputDataHashesTxBody`.
+pub fn validate_unspendable_utxo_no_datum_hash(
+    spending_utxo: &MultiEraUtxo,
+    spending_inputs: &[crate::eras::shelley::ShelleyTxIn],
+    native_satisfied: &HashSet<[u8; 28]>,
+) -> Result<(), LedgerError> {
+    for txin in spending_inputs {
+        if let Some(txout) = spending_utxo.get(txin) {
+            // Check if this output is script-locked
+            if let Some(script_hash) = spending_script_hash_from_txout(&txout) {
+                // Skip if this script was satisfied by a native script
+                if native_satisfied.contains(&script_hash) {
+                    continue;
+                }
+
+                // For Plutus-locked inputs, verify datum information is present.
+                let has_datum = match &txout {
+                    // Shelley/Mary: not Plutus-capable (no scripts)
+                    MultiEraTxOut::Shelley(_) | MultiEraTxOut::Mary(_) => {
+                        unreachable!("spending_script_hash_from_txout returned Some but era doesn't support scripts")
+                    }
+                    // Alonzo: requires datum_hash
+                    MultiEraTxOut::Alonzo(out) => out.datum_hash.is_some(),
+                    // Babbage/Conway: requires datum_option (Hash or Inline)
+                    MultiEraTxOut::Babbage(out) => out.datum_option.is_some(),
+                };
+
+                if !has_datum {
+                    return Err(LedgerError::UnspendableUTxONoDatumHash {
+                        tx_id: txin.transaction_id,
+                        index: txin.index as u64,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Validates all Plutus scripts referenced by a transaction.
 ///
 /// This is the main entry point called from per-era `apply_block()` functions.

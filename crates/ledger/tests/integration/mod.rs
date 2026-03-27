@@ -40,6 +40,7 @@ mod multi_era_utxo;
 mod extraneous_script_witness;
 mod extra_redeemer;
 mod supplemental_datums;
+mod unspendable_utxo;
 mod network_validation;
 mod output_validation;
 mod plutus_evaluation;
