@@ -2676,6 +2676,16 @@ impl LedgerState {
                         params, tx_size, tx.body.fee, &outputs,
                     )?;
                 }
+                // Network validation (WrongNetwork / WrongNetworkWithdrawal)
+                if let Some(expected_net) = self.expected_network_id {
+                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Shelley(o.clone()))
+                        .collect();
+                    validate_output_network_ids(expected_net, &outputs)?;
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                    }
+                }
                 let mut staged = self.shelley_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -2722,6 +2732,16 @@ impl LedgerState {
                         params, tx.raw_cbor.len(), tx.body.fee, &outputs,
                     )?;
                 }
+                // Network validation (WrongNetwork / WrongNetworkWithdrawal)
+                if let Some(expected_net) = self.expected_network_id {
+                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Shelley(o.clone()))
+                        .collect();
+                    validate_output_network_ids(expected_net, &outputs)?;
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                    }
+                }
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -2761,6 +2781,16 @@ impl LedgerState {
                     validate_pre_alonzo_tx(
                         params, tx.raw_cbor.len(), tx.body.fee, &outputs,
                     )?;
+                }
+                // Network validation (WrongNetwork / WrongNetworkWithdrawal)
+                if let Some(expected_net) = self.expected_network_id {
+                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Mary(o.clone()))
+                        .collect();
+                    validate_output_network_ids(expected_net, &outputs)?;
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                    }
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
@@ -2806,6 +2836,17 @@ impl LedgerState {
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
                         None, None, has_redeemers,
                     )?;
+                }
+                // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
+                if let Some(expected_net) = self.expected_network_id {
+                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Alonzo(o.clone()))
+                        .collect();
+                    validate_output_network_ids(expected_net, &outputs)?;
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                    }
+                    validate_tx_body_network_id(expected_net, tx.body.network_id)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
@@ -2853,7 +2894,22 @@ impl LedgerState {
                         coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
                     )?;
                 }
+                // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
+                if let Some(expected_net) = self.expected_network_id {
+                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                        .collect();
+                    validate_output_network_ids(expected_net, &outputs)?;
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                    }
+                    validate_tx_body_network_id(expected_net, tx.body.network_id)?;
+                }
                 let mut staged = self.multi_era_utxo.clone();
+                // Reference input validation (Babbage+ rule)
+                if let Some(ref_inputs) = &tx.body.reference_inputs {
+                    staged.validate_reference_inputs(ref_inputs)?;
+                }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -2899,7 +2955,22 @@ impl LedgerState {
                         coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
                     )?;
                 }
+                // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
+                if let Some(expected_net) = self.expected_network_id {
+                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                        .collect();
+                    validate_output_network_ids(expected_net, &outputs)?;
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                    }
+                    validate_tx_body_network_id(expected_net, tx.body.network_id)?;
+                }
                 let mut staged = self.multi_era_utxo.clone();
+                // Reference input validation (Babbage+ rule)
+                if let Some(ref_inputs) = &tx.body.reference_inputs {
+                    staged.validate_reference_inputs(ref_inputs)?;
+                }
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
                 let mut staged_committee_state = self.committee_state.clone();
@@ -3066,6 +3137,16 @@ impl LedgerState {
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
             }
+            // Network validation (Shelley UTXO rule: WrongNetwork / WrongNetworkWithdrawal)
+            if let Some(expected_net) = self.expected_network_id {
+                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Shelley(o.clone()))
+                    .collect();
+                validate_output_network_ids(expected_net, &outputs)?;
+                if let Some(withdrawals) = &body.withdrawals {
+                    validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                }
+            }
             // Witness validation: compute required VKey hashes and check
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_shelley(
@@ -3149,6 +3230,16 @@ impl LedgerState {
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
+            }
+            // Network validation (Allegra UTXO rule)
+            if let Some(expected_net) = self.expected_network_id {
+                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Shelley(o.clone()))
+                    .collect();
+                validate_output_network_ids(expected_net, &outputs)?;
+                if let Some(withdrawals) = &body.withdrawals {
+                    validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                }
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
@@ -3245,6 +3336,16 @@ impl LedgerState {
                     .map(|o| MultiEraTxOut::Mary(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
+            }
+            // Network validation (Mary UTXO rule)
+            if let Some(expected_net) = self.expected_network_id {
+                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Mary(o.clone()))
+                    .collect();
+                validate_output_network_ids(expected_net, &outputs)?;
+                if let Some(withdrawals) = &body.withdrawals {
+                    validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                }
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
@@ -3347,6 +3448,17 @@ impl LedgerState {
                     body.collateral.as_deref(), total_eu.as_ref(),
                     None, None, total_eu.is_some(),
                 )?;
+            }
+            // Network validation (Alonzo UTXO rule: WrongNetwork + WrongNetworkInTxBody)
+            if let Some(expected_net) = self.expected_network_id {
+                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Alonzo(o.clone()))
+                    .collect();
+                validate_output_network_ids(expected_net, &outputs)?;
+                if let Some(withdrawals) = &body.withdrawals {
+                    validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                }
+                validate_tx_body_network_id(expected_net, body.network_id)?;
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
@@ -3492,6 +3604,17 @@ impl LedgerState {
                     body.collateral.as_deref(), total_eu.as_ref(),
                     coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
                 )?;
+            }
+            // Network validation (Babbage UTXO rule: WrongNetwork + WrongNetworkInTxBody)
+            if let Some(expected_net) = self.expected_network_id {
+                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                    .collect();
+                validate_output_network_ids(expected_net, &outputs)?;
+                if let Some(withdrawals) = &body.withdrawals {
+                    validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                }
+                validate_tx_body_network_id(expected_net, body.network_id)?;
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
@@ -3640,6 +3763,17 @@ impl LedgerState {
                     body.collateral.as_deref(), total_eu.as_ref(),
                     coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
                 )?;
+            }
+            // Network validation (Conway UTXO rule: WrongNetwork + WrongNetworkInTxBody)
+            if let Some(expected_net) = self.expected_network_id {
+                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                    .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                    .collect();
+                validate_output_network_ids(expected_net, &outputs)?;
+                if let Some(withdrawals) = &body.withdrawals {
+                    validate_withdrawal_network_ids(expected_net, withdrawals)?;
+                }
+                validate_tx_body_network_id(expected_net, body.network_id)?;
             }
             validate_conway_current_treasury_value(body.current_treasury_value, current_treasury)?;
             let mut required = HashSet::new();
@@ -4255,7 +4389,7 @@ fn conway_proposal_prev_action_id(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum ConwayGovActionPurpose {
     ParameterChange,
     HardFork,
@@ -4265,7 +4399,7 @@ pub(crate) enum ConwayGovActionPurpose {
     Info,
 }
 
-fn conway_gov_action_purpose(
+pub(crate) fn conway_gov_action_purpose(
     gov_action: &crate::eras::conway::GovAction,
 ) -> ConwayGovActionPurpose {
     use crate::eras::conway::GovAction;
@@ -5331,6 +5465,85 @@ fn validate_auxiliary_data(
     }
 }
 
+/// Extracts the network ID from raw Shelley-family address bytes.
+///
+/// Returns `None` for Byron addresses (header type 8) and reserved types
+/// (9–13), and `Some(net)` for Shelley types 0–7 (base/pointer/enterprise)
+/// and 14–15 (reward key/script) where `net = header & 0x0f`.
+fn shelley_address_network_id(addr_bytes: &[u8]) -> Option<u8> {
+    let header = *addr_bytes.first()?;
+    let addr_type = (header >> 4) & 0x0f;
+    // Shelley address types: 0–7 (base/pointer/enterprise), 14–15 (reward).
+    // Byron type 8 and reserved 9–13 do not carry a Shelley network ID.
+    match addr_type {
+        0..=7 | 14 | 15 => Some(header & 0x0f),
+        _ => None,
+    }
+}
+
+/// Validates that all transaction output addresses have the expected network
+/// ID.
+///
+/// Byron addresses are exempt since they do not carry a network ID in the
+/// Shelley sense.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetwork`.
+fn validate_output_network_ids(
+    expected: u8,
+    outputs: &[MultiEraTxOut],
+) -> Result<(), LedgerError> {
+    for output in outputs {
+        let addr_bytes = output.address();
+        if let Some(net) = shelley_address_network_id(addr_bytes) {
+            if net != expected {
+                return Err(LedgerError::WrongNetwork { expected, found: net });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validates that all withdrawal reward accounts have the expected network
+/// ID.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetworkWithdrawal`.
+fn validate_withdrawal_network_ids<'a, I>(
+    expected: u8,
+    withdrawals: I,
+) -> Result<(), LedgerError>
+where
+    I: IntoIterator<Item = (&'a RewardAccount, &'a u64)>,
+{
+    for (acct, _) in withdrawals {
+        if acct.network != expected {
+            return Err(LedgerError::WrongNetworkWithdrawal {
+                expected,
+                found: acct.network,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validates that the `network_id` field declared in the transaction body
+/// (Alonzo+) matches the expected network.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `WrongNetworkInTxBody`.
+fn validate_tx_body_network_id(
+    expected: u8,
+    declared: Option<u8>,
+) -> Result<(), LedgerError> {
+    if let Some(net) = declared {
+        if net != expected {
+            return Err(LedgerError::WrongNetworkInTxBody {
+                expected,
+                found: net,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn accumulate_multi_asset(total: &mut MultiAsset, assets: &MultiAsset) {
     for (policy, entries) in assets {
         let policy_total = total.entry(*policy).or_default();
@@ -5795,6 +6008,7 @@ pub(crate) fn ratify_action(
 mod tests {
     use super::*;
     use crate::eras::conway::{GovAction, Vote, Voter};
+    use crate::eras::shelley::ShelleyTxOut;
     use crate::protocol_params::ProtocolParameters;
     use crate::types::{Relay, RewardAccount, UnitInterval};
 
@@ -11940,5 +12154,135 @@ mod tests {
             None, None, None, None, false,
         );
         assert!(result.is_ok());
+    }
+
+    // ── Network validation tests ───────────────────────────────────────
+
+    #[test]
+    fn shelley_address_network_id_extracts_correctly() {
+        // Base address, network 1 (mainnet): header byte = 0x01
+        assert_eq!(shelley_address_network_id(&[0x01]), Some(1));
+        // Enterprise address, network 0 (testnet): header byte = 0x60
+        assert_eq!(shelley_address_network_id(&[0x60]), Some(0));
+        // Reward address, network 1: header byte = 0xe1
+        assert_eq!(shelley_address_network_id(&[0xe1]), Some(1));
+        // Pointer address, network 0: header byte = 0x40
+        assert_eq!(shelley_address_network_id(&[0x40]), Some(0));
+    }
+
+    #[test]
+    fn shelley_address_network_id_returns_none_for_byron() {
+        // Byron addresses have type nibble >= 8
+        assert_eq!(shelley_address_network_id(&[0x82]), None);
+        assert_eq!(shelley_address_network_id(&[0x83]), None);
+        // Empty slice
+        assert_eq!(shelley_address_network_id(&[]), None);
+    }
+
+    #[test]
+    fn validate_output_network_ids_accepts_matching() {
+        // Mainnet (network=1) base address
+        let mut addr_bytes = vec![0x01u8]; // header: type=0, net=1
+        addr_bytes.extend_from_slice(&[0xaa; 56]); // 28+28 bytes
+        let output = MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: addr_bytes,
+            amount: 1_000_000,
+        });
+        assert!(validate_output_network_ids(1, &[output]).is_ok());
+    }
+
+    #[test]
+    fn validate_output_network_ids_rejects_mismatch() {
+        // Testnet output (network=0) when mainnet (1) expected
+        let mut addr_bytes = vec![0x00u8]; // header: type=0, net=0
+        addr_bytes.extend_from_slice(&[0xaa; 56]);
+        let output = MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: addr_bytes,
+            amount: 1_000_000,
+        });
+        let result = validate_output_network_ids(1, &[output]);
+        assert!(matches!(result, Err(LedgerError::WrongNetwork {
+            expected: 1, found: 0,
+        })));
+    }
+
+    #[test]
+    fn validate_output_network_ids_skips_byron() {
+        // Byron address (starts 0x82) — no network ID
+        let output = MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: vec![0x82, 0xd8, 0x18, 0x58, 0x20],
+            amount: 1_000_000,
+        });
+        assert!(validate_output_network_ids(1, &[output]).is_ok());
+    }
+
+    #[test]
+    fn validate_withdrawal_network_ids_accepts_matching() {
+        let withdrawals = std::collections::BTreeMap::from([(
+            RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xbb; 28]),
+            },
+            50_000u64,
+        )]);
+        assert!(validate_withdrawal_network_ids(1, &withdrawals).is_ok());
+    }
+
+    #[test]
+    fn validate_withdrawal_network_ids_rejects_mismatch() {
+        let withdrawals = std::collections::BTreeMap::from([(
+            RewardAccount {
+                network: 0,
+                credential: crate::StakeCredential::AddrKeyHash([0xbb; 28]),
+            },
+            50_000u64,
+        )]);
+        let result = validate_withdrawal_network_ids(1, &withdrawals);
+        assert!(matches!(result, Err(LedgerError::WrongNetworkWithdrawal {
+            expected: 1, found: 0,
+        })));
+    }
+
+    #[test]
+    fn validate_tx_body_network_id_accepts_matching() {
+        assert!(validate_tx_body_network_id(1, Some(1)).is_ok());
+        assert!(validate_tx_body_network_id(0, Some(0)).is_ok());
+    }
+
+    #[test]
+    fn validate_tx_body_network_id_accepts_absent() {
+        // None means the tx body doesn't declare a network_id — always OK
+        assert!(validate_tx_body_network_id(1, None).is_ok());
+    }
+
+    #[test]
+    fn validate_tx_body_network_id_rejects_mismatch() {
+        let result = validate_tx_body_network_id(1, Some(0));
+        assert!(matches!(result, Err(LedgerError::WrongNetworkInTxBody {
+            expected: 1, found: 0,
+        })));
+    }
+
+    #[test]
+    fn validate_output_network_ids_mixed_valid_and_invalid() {
+        // Two outputs: first matching (net=1), second mismatching (net=0)
+        let mut good_addr = vec![0x01u8];
+        good_addr.extend_from_slice(&[0xaa; 56]);
+        let mut bad_addr = vec![0x00u8];
+        bad_addr.extend_from_slice(&[0xbb; 56]);
+        let outputs = vec![
+            MultiEraTxOut::Shelley(ShelleyTxOut {
+                address: good_addr,
+                amount: 1_000_000,
+            }),
+            MultiEraTxOut::Shelley(ShelleyTxOut {
+                address: bad_addr,
+                amount: 2_000_000,
+            }),
+        ];
+        let result = validate_output_network_ids(1, &outputs);
+        assert!(matches!(result, Err(LedgerError::WrongNetwork {
+            expected: 1, found: 0,
+        })));
     }
 }

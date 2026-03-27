@@ -7,7 +7,7 @@ use yggdrasil_ledger::{
 	EnterpriseAddress, Era, EpochNo, ExUnits, GovAction, GovActionId, HeaderHash, LedgerError,
 	LedgerState, LedgerStateCheckpoint, MaryTxBody, MaryTxOut, MultiEraSubmittedTx, MultiEraTxOut, MultiEraUtxo,
 	NativeScript, Nonce, PlutusData, Point, PointerAddress, PoolMetadata, PoolParams,
-	ProtocolParameterUpdate,
+	ProtocolParameterUpdate, ProtocolParameters,
 	PraosHeader, PraosHeaderBody, ProposalProcedure, Redeemer, RegisteredDrep, Relay,
 	RewardAccount, RewardAccountState, Script, ScriptRef, ShelleyBlock,
 	ShelleyCompatibleSubmittedTx, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
@@ -32,6 +32,7 @@ mod ledger_state_era_application;
 mod ledger_state_pools_rewards_queries;
 mod ledger_state_stake_and_drep;
 mod multi_era_utxo;
+mod network_validation;
 mod plutus_evaluation;
 mod plutus_scripts;
 mod shelley;

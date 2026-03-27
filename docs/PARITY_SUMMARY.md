@@ -12,7 +12,7 @@
 |-----------|--------|--------------|
 | **Cryptography** | All validation primitives (Ed25519, VRF, BLS12-381, secp256k1) fully wired and tested | ✅ 98% |
 | **Ledger Types** | All 7 eras (Byron→Conway) with complete CBOR codec and multi-era UTxO model | ✅ 95% |
-| **Ledger Rules** | Core validation + epoch boundary complete; Plutus execution and collateral edge cases pending | ⚠️ 90% |
+| **Ledger Rules** | Core validation + epoch boundary + network address validation complete; Plutus execution edge cases pending | ⚠️ 92% |
 | **Consensus** | Praos validation + chain state + rollback enforcement complete; density tiebreaker optional | ✅ 95% |
 | **Network Protocols** | All 5 mini-protocols + mux + handshake fully functional with typed clients/servers | ✅ 100% |
 | **Peer Management** | Governor framework + peer registry complete; promotion/demotion scoring needs refinement | ⚠️ 75% |
@@ -35,6 +35,9 @@
 - `enact_gov_action()` — Conway governance enactment (all 7 action types)
 - `validate_witnesses_if_present()` — Ed25519 signature + hash verification
 - `validate_native_scripts_if_present()` — Timelock script evaluation
+- `validate_output_network_ids()` — WrongNetwork check (all eras)
+- `validate_withdrawal_network_ids()` — WrongNetworkWithdrawal check (all eras)
+- `validate_tx_body_network_id()` — WrongNetworkInTxBody check (Alonzo+)
 - `compute_stake_snapshot()` — Per-pool reward slot calculation
 - `MultiEraUtxo` — Unified UTxO model for all eras
 
@@ -87,10 +90,11 @@
 
 **Ledger**:
 - `validate_collateral()` — Complete: VKey-locked address enforcement, mandatory when redeemers present, Babbage return/total-collateral checks
+- `compute_epoch_rewards()` — Complete: upstream RUPD→SNAP ordering, delta_reserves-only reserves debit, fee pot not subtracted from reserves
+- `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; threshold math complete
+- `ratify_and_enact()` — Enacted+expired+subtree-pruned deposit refunds via returnProposalDeposits; unclaimed→treasury
+- `remove_lineage_conflicting_proposals()` — proposalsApplyEnactment: purpose-root chain validation removes stale proposals
 - `apply_submitted_tx()` — Pre-mempool validation; some checks skipped
-- `compute_epoch_rewards()` — Formula skeleton; exact calculations TBD
-- `ratify_action()` — Vote tallying present; threshold math incomplete
-- Governance deposit refund — Post-enactment cleanup incomplete
 
 **Mempool**:
 - Collateral pre-check — Logic not wired into insert_checked
@@ -161,7 +165,7 @@
 | Risk | Severity | Mitigation | Effort |
 |------|----------|-----------|--------|
 | Plutus execution divergence | 🔴 High | Cross-check CEK impl against upstream; test vectors | 2 weeks |
-| Governance state fork | 🔴 High | Exact ratification tally traces upstream path | 1 week |
+| Governance state fork | � Medium | Deposit lifecycle + subtree pruning complete; remaining: epoch-boundary ratification scheduling | 0.5 weeks |
 | Peer selection thrashing | 🟡 Medium | Implement upstream governor scoring; load test | 1.5 weeks |
 | Storage crash corruption | 🟡 Medium | Atomic checkpoints + verification on open | 1 week |
 | CBOR bytes mismatch | 🟡 Medium | Roundtrip golden tests (already passing) | Ongoing |
@@ -173,8 +177,8 @@
 
 ### Phase 1: Ledger Rules (Weeks 1-3)
 - ✅ Collateral validation (all edge cases)
-- ✅ Reward calculation (exact formulas)
-- ✅ Governance ratification tally (all action types)
+- ✅ Reward calculation (upstream RUPD→SNAP ordering + reserves accounting)
+- ✅ Governance ratification tally (AlwaysNoConfidence auto-yes, deposit lifecycle, lineage subtree pruning complete)
 - 📊 **Validation**: Pass 1400+ ledger tests
 - 📊 **Testnet**: Sync 50+ epochs without error
 

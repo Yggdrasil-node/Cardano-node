@@ -250,6 +250,35 @@ pub enum LedgerError {
     #[error("output too small: minimum {minimum} lovelace, actual {actual}")]
     OutputTooSmall { minimum: u64, actual: u64 },
 
+    // -- Network validation errors ------------------------------------------
+
+    /// One or more transaction outputs carry an address whose network ID
+    /// does not match the expected network.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetwork`.
+    #[error(
+        "output address has wrong network: expected {expected}, found {found}"
+    )]
+    WrongNetwork { expected: u8, found: u8 },
+
+    /// One or more withdrawal reward accounts carry a network ID that does
+    /// not match the expected network.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetworkWithdrawal`.
+    #[error(
+        "withdrawal address has wrong network: expected {expected}, found {found}"
+    )]
+    WrongNetworkWithdrawal { expected: u8, found: u8 },
+
+    /// The `network_id` field declared in the transaction body (Alonzo+)
+    /// does not match the expected network.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `WrongNetworkInTxBody`.
+    #[error(
+        "network_id in tx body has wrong network: expected {expected}, found {found}"
+    )]
+    WrongNetworkInTxBody { expected: u8, found: u8 },
+
     // -- Script validation errors -------------------------------------------
 
     #[error("native script not satisfied: script hash {hash:02x?}")]

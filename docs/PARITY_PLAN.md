@@ -62,10 +62,10 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Mary | Multi-asset, minting | ✅ | ✅ | Complete | Value, MultiAsset, minting policies
 | Alonzo | Plutus V1/V2, datums, redeemers | ✅ | ⚠️ | Partial | PlutusData AST, script refs wired; Plutus validation in progress
 | Babbage | Inline datums, inline scripts, Praos | ✅ | ✅ | Complete | PraosHeader, inline datum/script types, DatumOption
-| Conway | Governance, DReps, ratification, votes | ✅ | ⚠️ | Partial | Types complete; ratification tally incomplete
+| Conway | Governance, DReps, ratification, votes | ✅ | ✅ | Complete | Types, ratification, enactment, deposit lifecycle, subtree pruning
 | **Core State** |
 | UTxO tracking | Coin + multi-asset semantics | ✅ | ✅ | Complete | ShelleyUtxo + MultiEraUtxo with era dispatch
-| Account state | Rewards + deposits tracking | ✅ | ⚠️ | Partial | DepositPot, treasury, reserves; reward snapshot incomplete
+| Account state | Rewards + deposits tracking | ✅ | ✅ | Complete | DepositPot, treasury, reserves; reward snapshot + RUPD distribution
 | Pool state | Registration, retirement, performance | ✅ | ✅ | Complete | PoolState, PoolParams, retire queues, stake snapshots
 | Delegation state | Stake delegation per account | ✅ | ✅ | Complete | Delegations mapping
 | **Validation** |
@@ -77,9 +77,10 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Plutus validation | Script execution + budget | ✅ | ⚠️ | Partial | CEK framework present; execution path incomplete
 | Collateral checks | Alonzo+ collateral UTxO | ✅ | ✅ | Complete | validate_collateral with VKey-locked + mandatory-when-scripts
 | Min UTxO enforcement | Per-output minimum lovelace | ✅ | ✅ | Complete | min_utxo.rs with era-aware calculation
+| Network address validation | WrongNetwork + WrongNetworkWithdrawal + WrongNetworkInTxBody | ✅ | ✅ | Complete | validate_output_network_ids, validate_withdrawal_network_ids, validate_tx_body_network_id across all 6 eras
 | **Epoch Boundary** |
 | Stake snapshot | per-pool reward snapshot | ✅ | ✅ | Complete | compute_stake_snapshot with fees
-| Reward calculation | Per-epoch payouts | ✅ | ⚠️ | Partial | compute_epoch_rewards framework; details TBD
+| Reward calculation | Per-epoch payouts | ✅ | ✅ | Complete | compute_epoch_rewards with upstream RUPD→SNAP ordering, delta_reserves accounting
 | Pool retirement | Age-based expiry | ✅ | ✅ | Complete | process_retirements with pool_deposit refund
 | DRep inactivity | drep_activity threshold | ✅ | ✅ | Complete | touch_drep_activity, inactive_dreps
 | Governance expiry | Proposal age limit | ✅ | ✅ | Complete | remove_expired_governance_actions
@@ -87,11 +88,12 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Proposal storage | Action ID + metadata | ✅ | ✅ | Complete | GovActionState with vote maps
 | Vote accumulation | Committee/DRep/SPO votes | ✅ | ✅ | Complete | apply_conway_votes with per-voter class
 | Enacted-root validation | Lineage + prev-action-id | ✅ | ✅ | Complete | validate_conway_proposals with EnactState
-| Ratification tally | Threshold voting | ✅ | ⚠️ | Skeleton | tally_* functions present; quorum calc incomplete
+| Ratification tally | Threshold voting | ✅ | ✅ | Complete | tally_* functions, AlwaysNoConfidence auto-yes, epoch-boundary ratification+enactment+deposit lifecycle
 | Enactment | Constitution, committee, params | ✅ | ✅ | Complete | enact_gov_action with 7 action types
-| Deposit refund | Key/pool/DRep deposit return | ✅ | ⏸️ | In Design | Outline present; edge cases TBD
+| Deposit refund | Key/pool/DRep deposit return | ✅ | ✅ | Complete | Enacted+expired+lineage-pruned deposits refunded; unclaimed→treasury
+| Lineage subtree pruning | proposalsApplyEnactment | ✅ | ✅ | Complete | remove_lineage_conflicting_proposals with purpose-root chain validation
 
-**Ledger Summary**: ~90% feature complete, focused remaining work on Plutus validation details, reward calculation, and ratification tally.
+**Ledger Summary**: ~92% feature complete, focused remaining work on Plutus validation details and edge cases.
 
 ---
 
@@ -369,13 +371,14 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Addresses**: Base/Enterprise/Pointer/Reward/Byron with validation
 
 **What's Missing**:
-- ⚠️ **Collateral validation** (skeleton present; edge cases incomplete)
-- ⚠️ **Reward calculation** (framework present; exact formulas TBD)
+- ✅ **Collateral validation** (VKey-locked enforcement, mandatory when redeemers, Babbage return/total checks)
+- ✅ **Reward calculation** (upstream RUPD→SNAP ordering, delta_reserves-only reserves accounting, fee pot not subtracted from reserves)
 - ⚠️ **Plutus script execution** (CEK machine framework wired; execution details incomplete)
-- ⚠️ **Ratification tally** (voting functions present; threshold logic incomplete)
-- ⏸️ **Deposit refunds** (outline for governance actions; all cases TBD)
+- ✅ **Ratification tally** (voting functions complete incl. AlwaysNoConfidence auto-yes; epoch-boundary ratification+enactment+deposit lifecycle)
+- ✅ **Deposit refunds** (enacted+expired+lineage-pruned deposits refunded via returnProposalDeposits; unclaimed→treasury)
+- ✅ **Lineage subtree pruning** (proposalsApplyEnactment: remove_lineage_conflicting_proposals with purpose-root chain validation)
 
-**Parity Status**: **~90% complete** — All era types and core rules implemented. Remaining work focuses on edge cases in validation and governance post-tally steps.
+**Parity Status**: **~92% complete** — All era types, core rules, and Conway governance lifecycle implemented. Remaining work focuses on Plutus execution details and edge cases in validation.
 
 ---
 
@@ -526,20 +529,20 @@ The Rust Cardano node (Yggdrasil) has achieved:
 **Goal**: Close ledger validation gaps to enable testnet sync.
 
 **Tasks**:
-1. **Collateral validation** (`collateral.rs` complete edge cases)
+1. ✅ **Collateral validation** (`collateral.rs` complete edge cases)
    - Scope: Alonzo+ collateral UTxO sufficiency checks
    - Upstream reference: `Cardano.Ledger.Alonzo.Rules.Utxo`
    - Tests: 5-10 integration tests for edge cases
 
-2. **Reward calculation** (detailed formulas)
-   - Scope: Per-pool + per-account reward math
-   - Upstream reference: `Ledger.Reward` module
-   - Tests: Mainnet rewards reconciliation
+2. ✅ **Reward calculation** (upstream RUPD→SNAP ordering + reserves accounting)
+   - Scope: Per-pool + per-account reward math; RUPD before SNAP ordering; delta_reserves-only reserves debit
+   - Upstream reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` (RUPD→EPOCH), `Ledger.Reward`
+   - Tests: Mainnet rewards reconciliation + 5 new epoch boundary tests
 
-3. **Ratification tally completion** (thresholds + quorum)
-   - Scope: Conway voting thresholds per action type
+3. ⚠️ **Ratification tally completion** (thresholds + quorum + AlwaysNoConfidence)
+   - Scope: Conway voting thresholds per action type; AlwaysNoConfidence auto-yes for NoConfidence and UpdateCommittee-in-no-confidence
    - Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify`
-   - Tests: 20+ governance scenarios
+   - Tests: 20+ governance scenarios + 4 new AlwaysNoConfidence tests
 
 **Success Criteria**:
 - ✅ apply_block() passes all collateral-related tests

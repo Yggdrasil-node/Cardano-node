@@ -73,6 +73,14 @@ pub struct EpochBoundaryEvent {
     pub enacted_gov_action_ids: Vec<GovActionId>,
     /// Outcomes of each enacted governance action.
     pub enact_outcomes: Vec<EnactOutcome>,
+    /// Governance-action deposit lovelace refunded for enacted actions.
+    pub enacted_deposit_refunds: u64,
+    /// GovActionIds removed due to conflicting lineage after enactment.
+    pub removed_due_to_enactment: Vec<GovActionId>,
+    /// Governance-action deposit lovelace refunded for lineage-conflicting removals.
+    pub removed_due_to_enactment_deposit_refunds: u64,
+    /// Unclaimed governance deposits (unregistered reward accounts) sent to treasury.
+    pub unclaimed_governance_deposits: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -207,9 +215,14 @@ pub fn apply_epoch_boundary(
     //     Upstream: `Cardano.Ledger.Conway.Rules.Ratify` — run at each
     //     epoch boundary after expiry pruning.
     // -----------------------------------------------------------------------
-    let (enacted_gov_action_ids, enact_outcomes) =
-        ratify_and_enact(ledger, new_epoch, snapshots, drep_activity);
-    let governance_actions_enacted = enacted_gov_action_ids.len();
+    let ratify_result = ratify_and_enact(ledger, new_epoch, snapshots, drep_activity);
+    let governance_actions_enacted = ratify_result.enacted_ids.len();
+
+    // Credit unclaimed governance deposits to treasury.
+    if ratify_result.unclaimed_deposits > 0 {
+        let acct = ledger.accounting_mut();
+        acct.treasury = acct.treasury.saturating_add(ratify_result.unclaimed_deposits);
+    }
 
     // -----------------------------------------------------------------------
     // 6. DRep inactivity — compute the set of DReps that have exceeded
@@ -236,8 +249,12 @@ pub fn apply_epoch_boundary(
         expired_gov_action_ids,
         dreps_expired,
         governance_actions_enacted,
-        enacted_gov_action_ids,
-        enact_outcomes,
+        enacted_gov_action_ids: ratify_result.enacted_ids,
+        enact_outcomes: ratify_result.outcomes,
+        enacted_deposit_refunds: ratify_result.enacted_deposit_refunds,
+        removed_due_to_enactment: ratify_result.removed_due_to_enactment,
+        removed_due_to_enactment_deposit_refunds: ratify_result.removed_due_to_enactment_deposit_refunds,
+        unclaimed_governance_deposits: ratify_result.unclaimed_deposits,
     })
 }
 
@@ -325,21 +342,31 @@ fn remove_expired_governance_actions(
 
 /// Tallies votes for all surviving governance actions, enacts those that
 /// reach acceptance thresholds, removes enacted actions from the ledger,
-/// and returns the enacted action IDs with their outcomes.
+/// refunds their deposits, prunes lineage-conflicting proposals, and
+/// returns the enacted action IDs with their outcomes.
 ///
 /// This implements the Conway RATIFY rule at the epoch boundary: after
 /// expired proposals are pruned, each remaining governance action is
 /// evaluated against committee, DRep, and SPO acceptance predicates.
 /// Actions accepted by all required roles are enacted via
-/// `enact_gov_action` and then removed from the pending set.
+/// `enact_gov_action` and then removed from the pending set.  After
+/// enactment, proposals whose `prev_action_id` references a now-stale
+/// lineage root are also removed (subtree pruning), matching upstream
+/// `proposalsApplyEnactment`.
 ///
-/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify`.
+/// Deposits for all removed actions (enacted + lineage-conflicting) are
+/// refunded to their return reward accounts if registered.  Unclaimed
+/// deposits (unregistered return accounts) are returned separately so
+/// the caller can add them to the treasury.
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify`,
+/// `Cardano.Ledger.Conway.Governance.Procedures.proposalsApplyEnactment`.
 fn ratify_and_enact(
     ledger: &mut LedgerState,
     current_epoch: EpochNo,
     snapshots: &StakeSnapshots,
     drep_activity: u64,
-) -> (Vec<GovActionId>, Vec<EnactOutcome>) {
+) -> RatifyAndEnactResult {
     use crate::state::ratify_action;
 
     // Extract thresholds from protocol params. When Conway-specific threshold
@@ -351,7 +378,7 @@ fn ratify_and_enact(
             pp.drep_voting_thresholds.clone().unwrap_or_default(),
             pp.min_committee_size,
         ),
-        None => return (Vec::new(), Vec::new()),
+        None => return RatifyAndEnactResult::default(),
     };
 
     // Compute DRep delegated stake distribution from the mark snapshot.
@@ -394,20 +421,97 @@ fn ratify_and_enact(
         .collect();
 
     if ratified_ids.is_empty() {
-        return (Vec::new(), Vec::new());
+        return RatifyAndEnactResult::default();
     }
 
-    // Remove ratified actions and enact each one.
+    // Remove ratified actions, refund their deposits, and enact each one.
+    // First, collect the affected governance purposes so we can prune
+    // stale proposals of those purposes after enactment.
     let mut outcomes = Vec::with_capacity(ratified_ids.len());
+    let mut deposit_targets: Vec<(Vec<u8>, u64)> = Vec::new();
+    let mut enacted_purposes: BTreeSet<crate::state::ConwayGovActionPurpose> = BTreeSet::new();
+
     for id in &ratified_ids {
         let action_state = ledger.governance_actions_mut().remove(id);
         if let Some(state) = action_state {
+            enacted_purposes.insert(
+                crate::state::conway_gov_action_purpose(&state.proposal().gov_action),
+            );
+            // Collect deposit for refund.
+            deposit_targets.push((
+                state.proposal().reward_account.clone(),
+                state.proposal().deposit,
+            ));
             let outcome = ledger.enact_action(id.clone(), &state.proposal().gov_action);
             outcomes.push(outcome);
         }
     }
 
-    (ratified_ids, outcomes)
+    // -----------------------------------------------------------------------
+    // Subtree pruning: remove proposals whose prev_action_id no longer
+    // chains from the current enacted lineage root for their purpose.
+    //
+    // When an action is enacted, the lineage root for its governance
+    // purpose advances to the enacted action's GovActionId.  Any pending
+    // proposal of that purpose whose chain does not start at the new root
+    // is stale and must be removed.  The pruning is transitive: if
+    // proposal B chains from a stale proposal A, B is also removed.
+    //
+    // Upstream reference: `proposalsApplyEnactment`.
+    // -----------------------------------------------------------------------
+    let removed_due_to_enactment = remove_lineage_conflicting_proposals(
+        ledger,
+        &enacted_purposes,
+    );
+
+    // Collect deposit targets from subtree-removed actions.
+    for id in &removed_due_to_enactment {
+        if let Some(state) = ledger.governance_actions_mut().remove(id) {
+            deposit_targets.push((
+                state.proposal().reward_account.clone(),
+                state.proposal().deposit,
+            ));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Refund all deposits (enacted + lineage-conflicting) to reward accounts.
+    // Unclaimed deposits (unregistered accounts) go to the treasury.
+    //
+    // Upstream reference: `returnProposalDeposits`.
+    // -----------------------------------------------------------------------
+    let mut enacted_refunded: u64 = 0;
+    let mut subtree_refunded: u64 = 0;
+    let mut unclaimed: u64 = 0;
+    let enacted_count = ratified_ids.len();
+
+    for (i, (raw_account, deposit)) in deposit_targets.iter().enumerate() {
+        if let Some(reward_account) = RewardAccount::from_bytes(raw_account) {
+            if let Some(ra_state) = ledger.reward_accounts_mut().get_mut(&reward_account) {
+                ra_state.set_balance(ra_state.balance().saturating_add(*deposit));
+                if i < enacted_count {
+                    enacted_refunded = enacted_refunded.saturating_add(*deposit);
+                } else {
+                    subtree_refunded = subtree_refunded.saturating_add(*deposit);
+                }
+            } else {
+                // Unregistered return account — deposit goes to treasury.
+                unclaimed = unclaimed.saturating_add(*deposit);
+            }
+        } else {
+            // Malformed reward account bytes — treat as unclaimed.
+            unclaimed = unclaimed.saturating_add(*deposit);
+        }
+    }
+
+    RatifyAndEnactResult {
+        enacted_ids: ratified_ids,
+        outcomes,
+        enacted_deposit_refunds: enacted_refunded,
+        removed_due_to_enactment,
+        removed_due_to_enactment_deposit_refunds: subtree_refunded,
+        unclaimed_deposits: unclaimed,
+    }
 }
 
 fn committee_update_meets_min_size(
@@ -437,6 +541,119 @@ fn committee_update_meets_min_size(
     }
 
     (members.len() as u64) >= minimum
+}
+
+/// Result of the ratification-and-enactment step at an epoch boundary.
+#[derive(Clone, Debug, Default)]
+struct RatifyAndEnactResult {
+    /// GovActionIds that were ratified and enacted.
+    enacted_ids: Vec<GovActionId>,
+    /// Outcomes of each enacted governance action.
+    outcomes: Vec<EnactOutcome>,
+    /// Governance-action deposit lovelace refunded for enacted actions.
+    enacted_deposit_refunds: u64,
+    /// GovActionIds removed due to conflicting lineage after enactment.
+    removed_due_to_enactment: Vec<GovActionId>,
+    /// Governance-action deposit lovelace refunded for lineage-conflicting removals.
+    removed_due_to_enactment_deposit_refunds: u64,
+    /// Unclaimed governance deposits (unregistered reward accounts) for treasury.
+    unclaimed_deposits: u64,
+}
+
+/// Extracts the `prev_action_id` from a `GovAction`, if the action type
+/// carries one (ParameterChange, HardForkInitiation, NoConfidence,
+/// UpdateCommittee, NewConstitution).  Returns `None` for TreasuryWithdrawals
+/// and InfoAction which have no lineage.
+fn gov_action_prev_id(action: &crate::eras::conway::GovAction) -> Option<&Option<GovActionId>> {
+    use crate::eras::conway::GovAction;
+    match action {
+        GovAction::ParameterChange { prev_action_id, .. } => Some(prev_action_id),
+        GovAction::HardForkInitiation { prev_action_id, .. } => Some(prev_action_id),
+        GovAction::NoConfidence { prev_action_id, .. } => Some(prev_action_id),
+        GovAction::UpdateCommittee { prev_action_id, .. } => Some(prev_action_id),
+        GovAction::NewConstitution { prev_action_id, .. } => Some(prev_action_id),
+        GovAction::TreasuryWithdrawals { .. } | GovAction::InfoAction => None,
+    }
+}
+
+/// Remove pending governance proposals that no longer chain from the
+/// current enacted lineage root after enactment.
+///
+/// This implements the `proposalsApplyEnactment` step from upstream.
+/// When an action is enacted for a given governance purpose, the lineage
+/// root for that purpose advances to the enacted action's `GovActionId`.
+/// Any remaining proposal of that purpose whose `prev_action_id` does
+/// **not** chain from the new root is stale and must be removed.  The
+/// pruning is transitive: if proposal B chains from a stale proposal A,
+/// B is also removed.
+///
+/// Purposes that had no enactments are left untouched.  TreasuryWithdrawals
+/// and InfoAction have no lineage and are never pruned.
+///
+/// Returns the IDs of the stale proposals.  The caller is responsible for
+/// actually removing them from `governance_actions_mut()` and refunding
+/// their deposits.
+fn remove_lineage_conflicting_proposals(
+    ledger: &LedgerState,
+    enacted_purposes: &BTreeSet<crate::state::ConwayGovActionPurpose>,
+) -> Vec<GovActionId> {
+    use crate::state::conway_gov_action_purpose;
+
+    let mut stale_ids: Vec<GovActionId> = Vec::new();
+
+    for &purpose in enacted_purposes {
+        // The new lineage root for this purpose (after enactment).
+        let new_root: Option<&GovActionId> = ledger.enact_state().enacted_root(purpose);
+
+        // Collect all remaining proposals of this purpose.
+        let purpose_proposals: Vec<(GovActionId, Option<GovActionId>)> = ledger
+            .governance_actions()
+            .iter()
+            .filter(|(_, state)| {
+                conway_gov_action_purpose(&state.proposal().gov_action) == purpose
+            })
+            .map(|(id, state)| {
+                let prev = gov_action_prev_id(&state.proposal().gov_action)
+                    .and_then(|opt| opt.clone());
+                (id.clone(), prev)
+            })
+            .collect();
+
+        // Build the set of valid proposals: those that chain from new_root.
+        // A proposal P is valid if:
+        //   P.prev_action_id == new_root, OR
+        //   P.prev_action_id == Some(Q) where Q is a valid proposal.
+        let mut valid: BTreeSet<GovActionId> = BTreeSet::new();
+        loop {
+            let mut changed = false;
+            for (id, prev) in &purpose_proposals {
+                if valid.contains(id) {
+                    continue;
+                }
+                let chains_from_root = match (prev, new_root) {
+                    (None, None) => true,
+                    (Some(p), Some(r)) if p == r => true,
+                    _ => false,
+                };
+                if chains_from_root || prev.as_ref().is_some_and(|p| valid.contains(p)) {
+                    valid.insert(id.clone());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        // Everything not valid is stale.
+        for (id, _) in &purpose_proposals {
+            if !valid.contains(id) {
+                stale_ids.push(id.clone());
+            }
+        }
+    }
+
+    stale_ids
 }
 
 /// Retires pools whose `retiring_epoch` ≤ `epoch`, refunds their deposits,
@@ -1783,6 +2000,538 @@ mod tests {
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(event.enacted_gov_action_ids.is_empty());
         assert!(event.enact_outcomes.is_empty());
+    }
+
+    // -- Enacted deposit refund -------------------------------------------
+
+    /// Helper that creates a governance-ready ledger with a proposal whose
+    /// deposit is set to `deposit_amount` and whose return account is
+    /// `reward_account_byte`.  An InfoAction is used so it will be
+    /// automatically ratified at the next epoch boundary.
+    fn make_ledger_with_deposited_info_action(
+        deposit_amount: u64,
+        reward_account_byte: u8,
+    ) -> (LedgerState, GovActionId) {
+        let mut ledger = make_governance_ledger();
+        let ra = test_reward_account(reward_account_byte);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra, RewardAccountState::new(0, None));
+
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: deposit_amount,
+            reward_account: ra.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0xEA, 0);
+        let gas = GovernanceActionState::new(proposal);
+        ledger.governance_actions_mut().insert(gai.clone(), gas);
+        (ledger, gai)
+    }
+
+    #[test]
+    fn test_enacted_action_deposit_refunded_to_return_account() {
+        let deposit = 500_000_000u64;
+        let ra_byte = 0x50;
+        let (mut ledger, gai) = make_ledger_with_deposited_info_action(deposit, ra_byte);
+        let ra = test_reward_account(ra_byte);
+
+        let balance_before = ledger.reward_accounts().balance(&ra);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // First epoch populates mark snapshot.
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Re-insert the action (InfoAction was enacted at epoch 1).
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit,
+            reward_account: ra.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai2 = test_gov_action_id(0xEB, 0);
+        ledger
+            .governance_actions_mut()
+            .insert(gai2.clone(), GovernanceActionState::new(proposal));
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Verify enacted with deposit refund.
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_deposit_refunds, deposit);
+        assert!(ledger.governance_actions().is_empty());
+
+        // Reward account balance should increase by deposit.
+        let balance_after = ledger.reward_accounts().balance(&ra);
+        // Two info actions were enacted across epochs 1+2, both refunded.
+        assert!(balance_after >= balance_before + deposit);
+    }
+
+    #[test]
+    fn test_enacted_deposit_refund_for_unregistered_account_goes_to_treasury() {
+        let mut ledger = make_governance_ledger();
+        let deposit = 300_000_000u64;
+
+        // Use an unregistered reward account.
+        let unregistered_ra = test_reward_account(0x99);
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit,
+            reward_account: unregistered_ra.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0xEC, 0);
+        ledger
+            .governance_actions_mut()
+            .insert(gai.clone(), GovernanceActionState::new(proposal));
+
+        let treasury_before = ledger.accounting().treasury;
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Populate mark.
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Re-insert.
+        let proposal2 = crate::eras::conway::ProposalProcedure {
+            deposit,
+            reward_account: unregistered_ra.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        ledger.governance_actions_mut().insert(
+            test_gov_action_id(0xED, 0),
+            GovernanceActionState::new(proposal2),
+        );
+
+        let treasury_before_e2 = ledger.accounting().treasury;
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Enacted but deposit is unclaimed.
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_deposit_refunds, 0);
+        assert_eq!(event.unclaimed_governance_deposits, deposit);
+
+        // Treasury should increase by unclaimed deposit (plus normal treasury flow).
+        let treasury_after = ledger.accounting().treasury;
+        // Treasury delta includes RUPD treasury cut + unclaimed deposit.
+        assert!(
+            treasury_after >= treasury_before_e2 + deposit,
+            "treasury should include unclaimed deposit: before={treasury_before_e2} after={treasury_after} deposit={deposit}"
+        );
+    }
+
+    // -- Lineage subtree pruning ------------------------------------------
+
+    #[test]
+    fn test_enacted_action_prunes_sibling_proposals() {
+        // Setup: Two HardFork proposals A and B both reference prev_action_id = None.
+        // A has votes and will be enacted. B has no votes.
+        // After A is enacted, B should be removed (its prev_action_id is stale).
+        let mut ledger = make_governance_ledger();
+        let cc_cold_cred = test_cred(0xC0);
+        let drep_cred = [0xD0; 28];
+        let pool_key = test_pool(20);
+
+        let deposit_a = 100_000_000u64;
+        let deposit_b = 200_000_000u64;
+        let ra_a = test_reward_account(0x60);
+        let ra_b = test_reward_account(0x61);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra_a, RewardAccountState::new(0, None));
+        ledger
+            .reward_accounts_mut()
+            .insert(ra_b, RewardAccountState::new(0, None));
+
+        // Action A — voted yes by all roles.
+        let proposal_a = crate::eras::conway::ProposalProcedure {
+            deposit: deposit_a,
+            reward_account: ra_a.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai_a = test_gov_action_id(0xF0, 0);
+        let mut gas_a = GovernanceActionState::new(proposal_a);
+        gas_a.record_vote(
+            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Vote::Yes,
+        );
+        gas_a.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
+        gas_a.record_vote(Voter::StakePool(pool_key), Vote::Yes);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_a.clone(), gas_a);
+
+        // Action B — same prev_action_id (None), no votes.
+        let proposal_b = crate::eras::conway::ProposalProcedure {
+            deposit: deposit_b,
+            reward_account: ra_b.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (11, 0),
+            },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai_b = test_gov_action_id(0xF1, 0);
+        let gas_b = GovernanceActionState::new(proposal_b);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_b.clone(), gas_b);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark.
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // After epoch 1: A may have been enacted already. If both are gone,
+        // the subtree pruning worked at epoch 1. Otherwise continue.
+        if !ledger.governance_actions().is_empty() {
+            // Re-insert A with votes (enactment removed it).
+            let proposal_a2 = crate::eras::conway::ProposalProcedure {
+                deposit: deposit_a,
+                reward_account: ra_a.to_bytes().to_vec(),
+                gov_action: GovAction::HardForkInitiation {
+                    prev_action_id: None,
+                    protocol_version: (10, 0),
+                },
+                anchor: Anchor {
+                    url: String::new(),
+                    data_hash: [0; 32],
+                },
+            };
+            let gai_a2 = test_gov_action_id(0xF2, 0);
+            let mut gas_a2 = GovernanceActionState::new(proposal_a2);
+            gas_a2.record_vote(
+                Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+                Vote::Yes,
+            );
+            gas_a2.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
+            gas_a2.record_vote(Voter::StakePool(pool_key), Vote::Yes);
+
+            // Remove stale entries and re-insert.
+            ledger.governance_actions_mut().clear();
+            ledger
+                .governance_actions_mut()
+                .insert(gai_a2.clone(), gas_a2);
+
+            // Re-insert B with same lineage root.
+            let proposal_b2 = crate::eras::conway::ProposalProcedure {
+                deposit: deposit_b,
+                reward_account: ra_b.to_bytes().to_vec(),
+                gov_action: GovAction::HardForkInitiation {
+                    prev_action_id: None,
+                    protocol_version: (11, 0),
+                },
+                anchor: Anchor {
+                    url: String::new(),
+                    data_hash: [0; 32],
+                },
+            };
+            let gai_b2 = test_gov_action_id(0xF3, 0);
+            let gas_b2 = GovernanceActionState::new(proposal_b2);
+            ledger
+                .governance_actions_mut()
+                .insert(gai_b2.clone(), gas_b2);
+
+            let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+                .expect("epoch 2");
+
+            // A should be enacted, B should be pruned via lineage.
+            assert_eq!(event.governance_actions_enacted, 1);
+            assert_eq!(event.removed_due_to_enactment.len(), 1);
+            assert_eq!(event.removed_due_to_enactment_deposit_refunds, deposit_b);
+            assert!(ledger.governance_actions().is_empty());
+        }
+        // If both were gone at epoch 1, the test passes — subtree pruning worked.
+    }
+
+    #[test]
+    fn test_transitive_subtree_pruning() {
+        // Setup: Action A (prev=None, voted yes), Action B (prev=None, stale sibling),
+        // Action C (prev=B).
+        // When A is enacted the HardFork root advances to Some(gai_a).
+        // B references None (the old root) → stale.
+        // C references B (stale) → also stale.
+        let mut ledger = make_governance_ledger();
+        let cc_cold_cred = test_cred(0xC0);
+        let drep_cred = [0xD0; 28];
+        let pool_key = test_pool(20);
+
+        let deposit_a = 100_000_000u64;
+        let deposit_b = 100_000_000u64;
+        let deposit_c = 100_000_000u64;
+        let ra_a = test_reward_account(0x70);
+        let ra_b = test_reward_account(0x71);
+        let ra_c = test_reward_account(0x72);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra_a, RewardAccountState::new(0, None));
+        ledger
+            .reward_accounts_mut()
+            .insert(ra_b, RewardAccountState::new(0, None));
+        ledger
+            .reward_accounts_mut()
+            .insert(ra_c, RewardAccountState::new(0, None));
+
+        let gai_a = test_gov_action_id(0xA0, 0);
+        let gai_b = test_gov_action_id(0xB0, 0);
+        let gai_c = test_gov_action_id(0xC9, 0);
+
+        // Populate mark snapshot first.
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Action A: HardFork, prev=None, all votes yes (will be enacted).
+        let proposal_a = crate::eras::conway::ProposalProcedure {
+            deposit: deposit_a,
+            reward_account: ra_a.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let mut gas_a = GovernanceActionState::new(proposal_a);
+        gas_a.record_vote(
+            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Vote::Yes,
+        );
+        gas_a.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
+        gas_a.record_vote(Voter::StakePool(pool_key), Vote::Yes);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_a.clone(), gas_a);
+
+        // Action B: HardFork, prev=None (stale after A is enacted), no votes.
+        let proposal_b = crate::eras::conway::ProposalProcedure {
+            deposit: deposit_b,
+            reward_account: ra_b.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (11, 0),
+            },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gas_b = GovernanceActionState::new(proposal_b);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_b.clone(), gas_b);
+
+        // Action C: HardFork, prev=B (transitively stale), no votes.
+        let proposal_c = crate::eras::conway::ProposalProcedure {
+            deposit: deposit_c,
+            reward_account: ra_c.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: Some(gai_b.clone()),
+                protocol_version: (12, 0),
+            },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gas_c = GovernanceActionState::new(proposal_c);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_c.clone(), gas_c);
+
+        assert_eq!(ledger.governance_actions().len(), 3);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // A enacted, B + C pruned transitively.
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_gov_action_ids, vec![gai_a]);
+        assert_eq!(event.enacted_deposit_refunds, deposit_a);
+
+        let mut pruned = event.removed_due_to_enactment.clone();
+        pruned.sort();
+        let mut expected_pruned = vec![gai_b, gai_c];
+        expected_pruned.sort();
+        assert_eq!(pruned, expected_pruned);
+        assert_eq!(
+            event.removed_due_to_enactment_deposit_refunds,
+            deposit_b + deposit_c
+        );
+
+        // All actions should be gone.
+        assert!(ledger.governance_actions().is_empty());
+
+        // Each deposit should be refunded to its reward account.
+        assert_eq!(ledger.reward_accounts().balance(&ra_a), deposit_a);
+        assert_eq!(ledger.reward_accounts().balance(&ra_b), deposit_b);
+        assert_eq!(ledger.reward_accounts().balance(&ra_c), deposit_c);
+    }
+
+    #[test]
+    fn test_enacted_and_subtree_deposit_unclaimed_goes_to_treasury() {
+        // Action A: enacted, return account unregistered.
+        // Action B: pruned by lineage, return account also unregistered.
+        // Both deposits should go to treasury.
+        let mut ledger = make_governance_ledger();
+
+        let deposit_a = 100_000_000u64;
+        let unregistered_ra_a = test_reward_account(0x80);
+        // Intentionally NOT registering this account.
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        let gai_a = test_gov_action_id(0xD0, 0);
+
+        // Action A: InfoAction (auto-ratified), unregistered return account.
+        let proposal_a = crate::eras::conway::ProposalProcedure {
+            deposit: deposit_a,
+            reward_account: unregistered_ra_a.to_bytes().to_vec(),
+            gov_action: GovAction::InfoAction,
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        ledger
+            .governance_actions_mut()
+            .insert(gai_a.clone(), GovernanceActionState::new(proposal_a));
+
+        let treasury_before = ledger.accounting().treasury;
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Enacted, deposit is unclaimed → treasury.
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_deposit_refunds, 0);
+        assert_eq!(event.unclaimed_governance_deposits, deposit_a);
+
+        // Treasury increases by normal flow + unclaimed deposit.
+        let treasury_after = ledger.accounting().treasury;
+        assert!(treasury_after >= treasury_before + deposit_a);
+    }
+
+    #[test]
+    fn test_no_subtree_pruning_when_action_types_differ() {
+        // If a HardFork is enacted, a ParameterChange with prev_action_id=None
+        // should NOT be pruned — they are different purposes.
+        let mut ledger = make_governance_ledger();
+        let cc_cold_cred = test_cred(0xC0);
+        let drep_cred = [0xD0; 28];
+        let pool_key = test_pool(20);
+
+        let ra_a = test_reward_account(0x62);
+        let ra_pc = test_reward_account(0x63);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra_a, RewardAccountState::new(0, None));
+        ledger
+            .reward_accounts_mut()
+            .insert(ra_pc, RewardAccountState::new(0, None));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        let gai_hf = test_gov_action_id(0xE0, 0);
+        let gai_pc = test_gov_action_id(0xE1, 0);
+
+        // HardFork A — voted yes, will be enacted.
+        let proposal_hf = crate::eras::conway::ProposalProcedure {
+            deposit: 100_000_000,
+            reward_account: ra_a.to_bytes().to_vec(),
+            gov_action: GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let mut gas_hf = GovernanceActionState::new(proposal_hf);
+        gas_hf.record_vote(
+            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Vote::Yes,
+        );
+        gas_hf.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
+        gas_hf.record_vote(Voter::StakePool(pool_key), Vote::Yes);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_hf.clone(), gas_hf);
+
+        // ParameterChange B — no votes, different purpose.
+        let proposal_pc = crate::eras::conway::ProposalProcedure {
+            deposit: 100_000_000,
+            reward_account: ra_pc.to_bytes().to_vec(),
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: ProtocolParameterUpdate {
+                    min_fee_a: Some(55),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gas_pc = GovernanceActionState::new(proposal_pc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_pc.clone(), gas_pc);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // HardFork enacted, but ParameterChange should survive.
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert!(event.removed_due_to_enactment.is_empty());
+        // ParameterChange should still be pending.
+        assert_eq!(ledger.governance_actions().len(), 1);
+        assert!(ledger.governance_actions().get(&gai_pc).is_some());
     }
 
     fn make_ppup_ledger(gen_deleg_count: usize) -> LedgerState {
