@@ -435,6 +435,14 @@ pub enum LedgerError {
     #[error("auxiliary data hash declared but no auxiliary data present in block")]
     AuxiliaryDataMissing,
 
+    /// Auxiliary data is present in the transaction but the tx body does not
+    /// declare the corresponding hash.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxow` —
+    /// `validateMissingTxBodyMetadataHash` / `MissingTxBodyMetadataHash`.
+    #[error("auxiliary data present but tx body missing auxiliary_data_hash")]
+    MissingTxBodyMetadataHash,
+
     /// Transaction spending inputs contain duplicates.
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `BadInputsUTxO`

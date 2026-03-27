@@ -2667,6 +2667,10 @@ impl LedgerState {
     ) -> Result<(), LedgerError> {
         match tx {
             crate::tx::MultiEraSubmittedTx::Shelley(tx) => {
+                validate_auxiliary_data(
+                    tx.body.auxiliary_data_hash.as_ref(),
+                    tx.auxiliary_data.as_deref(),
+                )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Shelley(o.clone()))
@@ -2724,6 +2728,10 @@ impl LedgerState {
                 self.gen_delegs = staged_gen_delegs;
             }
             crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
+                validate_auxiliary_data(
+                    tx.body.auxiliary_data_hash.as_ref(),
+                    tx.auxiliary_data.as_deref(),
+                )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Shelley(o.clone()))
@@ -2808,6 +2816,10 @@ impl LedgerState {
                 self.gen_delegs = staged_gen_delegs;
             }
             crate::tx::MultiEraSubmittedTx::Mary(tx) => {
+                validate_auxiliary_data(
+                    tx.body.auxiliary_data_hash.as_ref(),
+                    tx.auxiliary_data.as_deref(),
+                )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Mary(o.clone()))
@@ -2900,6 +2912,10 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                validate_auxiliary_data(
+                    tx.body.auxiliary_data_hash.as_ref(),
+                    tx.auxiliary_data.as_deref(),
+                )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
@@ -3002,6 +3018,10 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                validate_auxiliary_data(
+                    tx.body.auxiliary_data_hash.as_ref(),
+                    tx.auxiliary_data.as_deref(),
+                )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
@@ -3110,6 +3130,10 @@ impl LedgerState {
                 if !tx.is_valid {
                     return Err(LedgerError::SubmittedTxIsInvalid);
                 }
+                validate_auxiliary_data(
+                    tx.body.auxiliary_data_hash.as_ref(),
+                    tx.auxiliary_data.as_deref(),
+                )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
@@ -5988,10 +6012,11 @@ fn validate_auxiliary_data(
             }
         }
         (Some(_), None) => Err(LedgerError::AuxiliaryDataMissing),
-        // No hash declared — data absent or present-but-unclaimed is OK
-        // per upstream behaviour (some blocks carry auxiliary data without
-        // declaring the hash in the body, though this is rare).
-        (None, _) => Ok(()),
+        // Upstream `validateMissingTxBodyMetadataHash`: if auxiliary data is
+        // present in the transaction, the body MUST declare its hash.
+        (None, Some(_)) => Err(LedgerError::MissingTxBodyMetadataHash),
+        // Neither hash nor data — nothing to validate.
+        (None, None) => Ok(()),
     }
 }
 

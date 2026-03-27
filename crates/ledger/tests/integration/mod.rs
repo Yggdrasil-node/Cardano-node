@@ -12,7 +12,7 @@ use yggdrasil_ledger::{
 	RewardAccount, RewardAccountState, Script, ScriptRef, ShelleyBlock,
 	ShelleyCompatibleSubmittedTx, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx,
 	ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness,
-	ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, TxId, UnitInterval, Value,
+	ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, Tx, TxId, UnitInterval, Value,
 	Vote, Voter, VotingProcedure, VotingProcedures,
 	BYRON_SLOTS_PER_EPOCH, compute_tx_id, native_script_hash, vkey_hash,
 };
@@ -35,6 +35,7 @@ mod ledger_state_committee;
 mod ledger_state_era_application;
 mod ledger_state_pools_rewards_queries;
 mod ledger_state_stake_and_drep;
+mod missing_metadata_hash;
 mod multi_era_utxo;
 mod network_validation;
 mod output_validation;

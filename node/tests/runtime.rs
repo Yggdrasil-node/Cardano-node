@@ -281,7 +281,7 @@ fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
             auxiliary_data_hash: None,
         },
         witness_set: empty_witness_set(),
-        auxiliary_data: Some(vec![0x81, seed]),
+        auxiliary_data: None,
     })
 }
 
