@@ -3525,7 +3525,7 @@ impl LedgerState {
             }
             validate_native_scripts_if_present(witness_bytes.as_deref(), &required_scripts, slot)?;
             // ── is_valid bifurcation (Phase-2 / collateral-only) ──
-            if tx_is_valid {
+            let run_phase2 = || -> Result<(), LedgerError> {
             // Plutus script validation (Alonzo)
             {
                 let mut sorted_inputs = body.inputs.clone();
@@ -3555,8 +3555,20 @@ impl LedgerState {
                     &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                     &tx_ctx,
-                )?;
+                )
             }
+            };
+            if tx_is_valid {
+                match run_phase2() {
+                    Ok(()) => {}
+                    Err(LedgerError::PlutusScriptFailed { .. }) if evaluator.is_some() => {
+                        return Err(LedgerError::ValidationTagMismatch {
+                            claimed: true,
+                            actual: false,
+                        });
+                    }
+                    Err(e) => return Err(e),
+                }
             let withdrawal_total = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -3571,6 +3583,18 @@ impl LedgerState {
             )?;
             staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
             } else {
+                if evaluator.is_some() {
+                    match run_phase2() {
+                        Ok(()) => {
+                            return Err(LedgerError::ValidationTagMismatch {
+                                claimed: false,
+                                actual: true,
+                            });
+                        }
+                        Err(LedgerError::PlutusScriptFailed { .. }) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
                 // is_valid = false: collateral-only transition.
                 // Alonzo has no collateral_return, so only consume collateral inputs.
                 crate::utxo::apply_collateral_only(

@@ -219,7 +219,7 @@ fn alonzo_plutus_v1_minting_evaluator_succeeds() {
 #[test]
 fn alonzo_plutus_v1_minting_evaluator_fails() {
     let prev_tx_id = [0xBB; 32];
-    let (body, script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -227,22 +227,55 @@ fn alonzo_plutus_v1_minting_evaluator_fails() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
-    is_valid: None,
+        is_valid: Some(true),
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x02, vec![tx]);
 
     let mut state = seed_alonzo_state(prev_tx_id);
     let evaluator = AlwaysFails;
     let result = state.apply_block_validated(&block, Some(&evaluator));
-    assert!(result.is_err(), "apply_block_validated should fail");
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ValidationTagMismatch {
+                claimed: true,
+                actual: false,
+            })
+        ),
+        "expected ValidationTagMismatch(claimed=true, actual=false), got: {:?}",
+        result,
+    );
+}
 
-    match result.unwrap_err() {
-        LedgerError::PlutusScriptFailed { hash, reason } => {
-            assert_eq!(hash, script_hash);
-            assert!(reason.contains("always fails"));
-        }
-        other => panic!("unexpected error: {:?}", other),
-    }
+#[test]
+fn alonzo_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() {
+    let prev_tx_id = [0xB0; 32];
+    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
+
+    let tx = yggdrasil_ledger::Tx {
+        id: TxId(tx_id),
+        body: body.to_cbor_bytes(),
+        witnesses: Some(encode_witness_set(&ws)),
+        auxiliary_data: None,
+        is_valid: Some(false),
+    };
+    let block = make_block(Era::Alonzo, 121, 4, 0x04, vec![tx]);
+
+    let mut state = seed_alonzo_state(prev_tx_id);
+    let evaluator = AlwaysSucceeds;
+    let result = state.apply_block_validated(&block, Some(&evaluator));
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ValidationTagMismatch {
+                claimed: false,
+                actual: true,
+            })
+        ),
+        "expected ValidationTagMismatch(claimed=false, actual=true), got: {:?}",
+        result,
+    );
 }
 
 // ===========================================================================
