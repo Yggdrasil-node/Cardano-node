@@ -1,9 +1,10 @@
 use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainCandidate, ChainEntry, ChainState, ConsensusError, EpochSize, Header,
-    HeaderBody, OpCert, SecurityParam, VrfTiebreakerFlavor, check_is_leader, check_kes_period,
-    check_leader_value, epoch_first_slot, is_new_epoch, kes_period_of_slot,
-    leadership_threshold, select_preferred, slot_to_epoch, verify_header, verify_leader_proof,
-    verify_opcert_only, vrf_input,
+    HeaderBody, NonceEvolutionConfig, NonceEvolutionState, OpCert, SecurityParam,
+    VrfTiebreakerFlavor, check_is_leader, check_kes_period, check_leader_value,
+    epoch_first_slot, is_new_epoch, kes_period_of_slot, leadership_threshold, select_preferred,
+    slot_to_epoch, verify_header, verify_leader_proof, verify_opcert_only, vrf_input,
+    vrf_output_to_nonce,
 };
 use yggdrasil_crypto::ed25519::SigningKey;
 use yggdrasil_crypto::sum_kes::{
@@ -956,8 +957,6 @@ fn mainnet_max_kes_evolutions() {
 // Nonce evolution
 // ---------------------------------------------------------------------------
 
-use yggdrasil_consensus::{NonceEvolutionConfig, NonceEvolutionState, vrf_output_to_nonce};
-
 /// Helper: make a deterministic VRF-like output (64 bytes) from a seed byte.
 fn make_vrf_output(seed: u8) -> Vec<u8> {
     let mut out = vec![0u8; 64];
@@ -1549,4 +1548,173 @@ fn nonce_evolution_neutral_extra_entropy() {
         state_neutral.epoch_nonce, state_zero.epoch_nonce,
         "Neutral and Hash([0;32]) are both identity for XOR combine"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Cross-epoch TICKN nonce verification (deterministic values)
+// ---------------------------------------------------------------------------
+
+/// Deterministic end-to-end test for nonce evolution across an epoch boundary.
+///
+/// Applies 4 blocks: two in epoch 0 (before and inside the stability window),
+/// then the first block of epoch 1 (triggering TICKN).  Verifies every
+/// intermediate nonce field against hand-computed expected values so that any
+/// regression in UPDN or TICKN logic is caught immediately.
+///
+/// Reference: `Cardano.Protocol.TPraos.Rules.Updn` (UPDN),
+///            `Cardano.Protocol.TPraos.Rules.Tickn` (TICKN).
+#[test]
+fn cross_epoch_nonce_deterministic_tickn() {
+    let cfg = NonceEvolutionConfig {
+        epoch_size: EpochSize(100),
+        stability_window: 30,
+        extra_entropy: Nonce::Neutral,
+    };
+    let initial = Nonce::Hash([0xAA; 32]);
+    let mut state = NonceEvolutionState::new(initial);
+
+    // ── Block 1: slot 10, epoch 0, outside stability window ─────────
+    let vrf1 = [0x42u8; 64];
+    let prev1 = HeaderHash([0xDD; 32]);
+    state.apply_block(SlotNo(10), &vrf1, Some(prev1), &cfg);
+
+    let eta1 = vrf_output_to_nonce(&vrf1);
+    let expected_evolving_1 = initial.combine(eta1);
+    assert_eq!(state.evolving_nonce, expected_evolving_1, "evolving after block 1");
+    // Not in stability window ⇒ candidate tracks evolving.
+    assert_eq!(state.candidate_nonce, expected_evolving_1, "candidate after block 1");
+    assert_eq!(state.lab_nonce, Nonce::from_header_hash(prev1), "lab after block 1");
+    assert_eq!(state.epoch_nonce, initial, "epoch_nonce unchanged in same epoch");
+
+    // ── Block 2: slot 50, epoch 0, outside stability window ─────────
+    let vrf2 = [0x43u8; 64];
+    let prev2 = HeaderHash([0xEE; 32]);
+    state.apply_block(SlotNo(50), &vrf2, Some(prev2), &cfg);
+
+    let eta2 = vrf_output_to_nonce(&vrf2);
+    let expected_evolving_2 = expected_evolving_1.combine(eta2);
+    assert_eq!(state.evolving_nonce, expected_evolving_2, "evolving after block 2");
+    assert_eq!(state.candidate_nonce, expected_evolving_2, "candidate after block 2");
+    assert_eq!(state.lab_nonce, Nonce::from_header_hash(prev2), "lab after block 2");
+
+    // ── Block 3: slot 80, epoch 0, INSIDE stability window ──────────
+    // slot 80 + stability_window 30 = 110 ≥ 100 (next epoch first slot)
+    let vrf3 = [0x44u8; 64];
+    let prev3 = HeaderHash([0xFF; 32]);
+    state.apply_block(SlotNo(80), &vrf3, Some(prev3), &cfg);
+
+    let eta3 = vrf_output_to_nonce(&vrf3);
+    let expected_evolving_3 = expected_evolving_2.combine(eta3);
+    assert_eq!(state.evolving_nonce, expected_evolving_3, "evolving after block 3");
+    // Candidate should be FROZEN at its pre-stability-window value.
+    assert_eq!(state.candidate_nonce, expected_evolving_2, "candidate frozen in stability window");
+    assert_eq!(state.lab_nonce, Nonce::from_header_hash(prev3), "lab after block 3");
+    assert_eq!(state.epoch_nonce, initial, "epoch_nonce still unchanged");
+    assert_eq!(state.current_epoch, EpochNo(0));
+
+    // ── Block 4: slot 110, epoch 1 — triggers TICKN transition ──────
+    let vrf4 = [0x45u8; 64];
+    let prev4 = HeaderHash([0x11; 32]);
+
+    // Save pre-transition state for TICKN computation.
+    let pre_candidate = state.candidate_nonce;
+    let pre_prev_hash_nonce = state.prev_hash_nonce;
+    let pre_lab_nonce = state.lab_nonce;
+
+    state.apply_block(SlotNo(110), &vrf4, Some(prev4), &cfg);
+
+    // TICKN rule:
+    //   epoch_nonce' = candidate_nonce ⭒ prev_hash_nonce ⭒ extra_entropy
+    //   prev_hash_nonce' = lab_nonce  (from the last block before transition)
+    let expected_epoch_nonce = pre_candidate
+        .combine(pre_prev_hash_nonce)
+        .combine(cfg.extra_entropy);
+    assert_eq!(state.epoch_nonce, expected_epoch_nonce, "TICKN epoch_nonce after transition");
+    assert_eq!(state.prev_hash_nonce, pre_lab_nonce, "prev_hash_nonce = old lab_nonce");
+    assert_eq!(state.current_epoch, EpochNo(1));
+
+    // After transition, UPDN continues for the first block of the new epoch.
+    let eta4 = vrf_output_to_nonce(&vrf4);
+    let expected_evolving_4 = expected_evolving_3.combine(eta4);
+    assert_eq!(state.evolving_nonce, expected_evolving_4, "evolving continues in epoch 1");
+    assert_eq!(state.lab_nonce, Nonce::from_header_hash(prev4), "lab updated for block 4");
+
+    // ── Verify the epoch nonce is a concrete Hash value ─────────────
+    // Since initial was Hash, candidate was Hash, and prev_hash_nonce was
+    // Neutral at transition time, the epoch_nonce = candidate ⭒ Neutral = candidate.
+    assert_eq!(
+        state.epoch_nonce, pre_candidate,
+        "with neutral prev_hash_nonce, epoch_nonce equals frozen candidate"
+    );
+}
+
+/// Two-transition deterministic test: verifies that prev_hash_nonce from the
+/// first epoch carries into the second epoch's TICKN computation.
+#[test]
+fn two_epoch_transitions_nonce_chain() {
+    let cfg = NonceEvolutionConfig {
+        epoch_size: EpochSize(100),
+        stability_window: 30,
+        extra_entropy: Nonce::Neutral,
+    };
+    let initial = Nonce::Hash([0x01; 32]);
+    let mut state = NonceEvolutionState::new(initial);
+
+    // EPOCH 0: one block outside stability window.
+    let prev0 = HeaderHash([0xAA; 32]);
+    state.apply_block(SlotNo(10), &[0x10; 64], Some(prev0), &cfg);
+    let candidate_epoch0 = state.candidate_nonce;
+    let lab_epoch0 = state.lab_nonce;
+
+    // EPOCH 1: triggers first transition.
+    let prev1 = HeaderHash([0xBB; 32]);
+    state.apply_block(SlotNo(110), &[0x20; 64], Some(prev1), &cfg);
+
+    // After first transition:
+    //   epoch_nonce = candidate_epoch0 ⭒ Neutral ⭒ Neutral = candidate_epoch0
+    //   prev_hash_nonce = lab_epoch0
+    assert_eq!(state.epoch_nonce, candidate_epoch0, "first transition: epoch = candidate_0");
+    assert_eq!(state.prev_hash_nonce, lab_epoch0, "first transition: prev_hash = lab_0");
+
+    // Capture state for second transition.
+    let candidate_epoch1 = state.candidate_nonce;
+    let lab_epoch1 = state.lab_nonce;
+
+    // EPOCH 2: triggers second transition.
+    state.apply_block(SlotNo(210), &[0x30; 64], None, &cfg);
+
+    // After second transition:
+    //   epoch_nonce = candidate_epoch1 ⭒ lab_epoch0 ⭒ Neutral
+    //   prev_hash_nonce = lab_epoch1
+    let expected = candidate_epoch1.combine(lab_epoch0);
+    assert_eq!(state.epoch_nonce, expected, "second transition: epoch = candidate_1 ⭒ lab_0");
+    assert_eq!(state.prev_hash_nonce, lab_epoch1, "second transition: prev_hash = lab_1");
+    assert_eq!(state.current_epoch, EpochNo(2));
+}
+
+/// Verifies that non-neutral extra_entropy is correctly XOR'd into the
+/// epoch nonce during TICKN.
+#[test]
+fn tickn_with_non_neutral_extra_entropy() {
+    let extra = Nonce::Hash([0xFF; 32]);
+    let cfg = NonceEvolutionConfig {
+        epoch_size: EpochSize(100),
+        stability_window: 30,
+        extra_entropy: extra,
+    };
+    let initial = Nonce::Hash([0x01; 32]);
+    let mut state = NonceEvolutionState::new(initial);
+
+    // One block in epoch 0.
+    state.apply_block(SlotNo(10), &[0x10; 64], Some(HeaderHash([0xAA; 32])), &cfg);
+    let candidate = state.candidate_nonce;
+
+    // Transition to epoch 1.
+    state.apply_block(SlotNo(100), &[0x20; 64], None, &cfg);
+
+    // epoch_nonce = candidate ⭒ Neutral (prev_hash_nonce was neutral) ⭒ extra
+    let expected = candidate.combine(Nonce::Neutral).combine(extra);
+    assert_eq!(state.epoch_nonce, expected, "extra_entropy XOR'd into epoch nonce");
+    // Verify it's different from what we'd get with neutral extra_entropy.
+    assert_ne!(state.epoch_nonce, candidate, "non-neutral extra changes the result");
 }
