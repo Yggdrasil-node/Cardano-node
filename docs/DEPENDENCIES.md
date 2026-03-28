@@ -17,6 +17,7 @@ This file defines how dependencies are introduced into Yggdrasil.
 - `sha3`: pure Rust SHA3-256 and Keccak-256 hashes from RustCrypto; required by PlutusV2 builtin `Sha3_256` and PlutusV3 builtin `Keccak_256`. No alternative exists in the pure Rust ecosystem. No native build requirements.
 - `serde`: structured data interchange where handwritten or generated types require it.
 - `serde_json`: JSON serialization/deserialization for node configuration files; natural companion to `serde` with no additional native requirements. Matches the Cardano node's JSON-based configuration format.
+- `serde_cbor`: pure Rust CBOR serialization/deserialization for file-backed storage block payloads (`FileImmutable`/`FileVolatile`) to move persisted block blobs from JSON to deterministic binary encoding while retaining legacy JSON read compatibility during migration. Rejected alternatives were (1) adding ad-hoc block CBOR codec duplication inside storage before ledger-level `Block` CBOR traits exist, and (2) keeping JSON block persistence, which is larger/slower and less parity-aligned with upstream binary storage expectations. No native build requirements.
 - `thiserror`: library error types.
 - `eyre`: binary error reporting.
 - `subtle`: constant-time comparisons for secret material.

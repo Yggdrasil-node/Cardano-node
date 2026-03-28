@@ -23,20 +23,27 @@ use serde_json::json;
 use serde_json::Value;
 use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState};
 use yggdrasil_network::{
+    AbstractState, AcquireOutboundResult,
     AfterSlot, BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
+    CmAction, ConnectionManagerState, DataFlow,
+    ControlMessage, TemperatureBundle,
+    ConsensusMode,
     DnsRefreshPolicy, DnsRootPeerProvider,
     GovernorAction, GovernorState, GovernorTargets, LedgerPeerSnapshot,
     LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
     LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
-    NodePeerSharing, PeerConnection, PeerError, PeerRegistry, PeerSelectionMode,
+    NodePeerSharing, PeerConnection, PeerError, PeerRegistry,
     PeerSelectionTimeouts, PeerSharingClient, PeerSource, PeerStatus,
-    AssociationMode, PeerStateAction,
+    PeerStateAction,
     PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
     RootPeerProviderState, TopologyConfig, TxSubmissionClient,
     TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
     governor_action_to_peer_state_action,
     peer_attempt_state, reconcile_ledger_peer_registry_with_policy,
+    ReleaseOutboundResult,
     refresh_root_peer_state_and_registry, resolve_peer_access_points,
+    churn_mode_from_fetch_mode, compute_association_mode,
+    fetch_mode_from_judgement, peer_selection_mode, pick_churn_regime,
 };
 use yggdrasil_ledger::{
     LedgerError, LedgerState, MultiEraSubmittedTx, Point, PoolRelayAccessPoint,
@@ -85,6 +92,32 @@ struct ManagedWarmPeer {
     /// Most recently observed chain tip from this peer, used for chain
     /// selection among hot peers.
     last_known_tip: Option<Point>,
+    /// Runtime-side temperature control state for this peer's mini-protocols.
+    control: TemperatureBundle<ControlMessage>,
+}
+
+fn control_bundle_cold_to_warm() -> TemperatureBundle<ControlMessage> {
+    TemperatureBundle {
+        hot: ControlMessage::Quiesce,
+        warm: ControlMessage::Continue,
+        established: ControlMessage::Continue,
+    }
+}
+
+fn apply_control_activate(bundle: &mut TemperatureBundle<ControlMessage>) {
+    bundle.warm = ControlMessage::Quiesce;
+    bundle.hot = ControlMessage::Continue;
+}
+
+fn apply_control_deactivate(bundle: &mut TemperatureBundle<ControlMessage>) {
+    bundle.hot = ControlMessage::Quiesce;
+    bundle.warm = ControlMessage::Continue;
+}
+
+fn apply_control_close(bundle: &mut TemperatureBundle<ControlMessage>) {
+    bundle.hot = ControlMessage::Terminate;
+    bundle.warm = ControlMessage::Terminate;
+    bundle.established = ControlMessage::Terminate;
 }
 
 impl ManagedWarmPeer {
@@ -95,6 +128,7 @@ impl ManagedWarmPeer {
             next_cookie: 1,
             is_hot: false,
             last_known_tip: None,
+            control: control_bundle_cold_to_warm(),
         }
     }
 
@@ -168,16 +202,20 @@ impl OutboundPeerManager {
         match bootstrap(&peer_config).await {
             Ok(session) => {
                 let connected_peer_addr = session.connected_peer_addr;
-                self.warm_peers.insert(
-                    connected_peer_addr,
-                    ManagedWarmPeer::new(session, Instant::now()),
-                );
+                self.warm_peers
+                    .insert(peer, ManagedWarmPeer::new(session, Instant::now()));
                 governor_state.record_success(peer);
                 tracer.trace_runtime(
                     "Net.Governor",
                     "Info",
                     "warm peer connection established",
-                    trace_fields([("peer", json!(connected_peer_addr.to_string()))]),
+                    trace_fields([
+                        ("peer", json!(peer.to_string())),
+                        (
+                            "connectedPeer",
+                            json!(connected_peer_addr.to_string()),
+                        ),
+                    ]),
                 );
                 true
             }
@@ -199,7 +237,8 @@ impl OutboundPeerManager {
 
     fn demote_to_cold(&mut self, peer: SocketAddr) -> bool {
         match self.warm_peers.remove(&peer) {
-            Some(session) => {
+            Some(mut session) => {
+                apply_control_close(&mut session.control);
                 session.abort();
                 true
             }
@@ -216,6 +255,7 @@ impl OutboundPeerManager {
         match self.warm_peers.get_mut(&peer) {
             Some(managed) if !managed.is_hot => {
                 managed.is_hot = true;
+                apply_control_activate(&mut managed.control);
                 true
             }
             _ => false,
@@ -229,6 +269,7 @@ impl OutboundPeerManager {
         match self.warm_peers.get_mut(&peer) {
             Some(managed) if managed.is_hot => {
                 managed.is_hot = false;
+                apply_control_deactivate(&mut managed.control);
                 true
             }
             _ => false,
@@ -272,6 +313,11 @@ impl OutboundPeerManager {
                         yggdrasil_network::TypedIntersectResponse::Found { tip, .. } => *tip,
                         yggdrasil_network::TypedIntersectResponse::NotFound { tip } => *tip,
                     };
+                    if let Some(slot) = tip.slot() {
+                        governor_state
+                            .metrics
+                            .record_upstreamyness(peer, slot.0);
+                    }
                     if let Ok(mut registry) = peer_registry.write() {
                         let _ = registry.set_hot_tip_slot(peer, tip.slot().map(|slot| slot.0));
                     }
@@ -833,6 +879,99 @@ fn governor_action_peer(action: &GovernorAction) -> Option<SocketAddr> {
     }
 }
 
+fn outbound_cm_local_addr() -> SocketAddr {
+    SocketAddr::from(([0, 0, 0, 0], 0))
+}
+
+fn data_flow_from_version_data(version_data: &NodeToNodeVersionData) -> DataFlow {
+    if version_data.initiator_only_diffusion_mode {
+        DataFlow::Unidirectional
+    } else {
+        DataFlow::Duplex
+    }
+}
+
+fn peer_status_from_cm_state(state: AbstractState) -> PeerStatus {
+    match state {
+        AbstractState::OutboundUniSt
+        | AbstractState::OutboundDupSt(_)
+        | AbstractState::InboundSt(_)
+        | AbstractState::DuplexSt => PeerStatus::PeerWarm,
+        _ => PeerStatus::PeerCold,
+    }
+}
+
+fn update_registry_status_from_cm(
+    connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    peer_registry: &Arc<RwLock<PeerRegistry>>,
+    peer: SocketAddr,
+) -> bool {
+    let state = {
+        let cm = connection_manager
+            .read()
+            .expect("connection manager lock poisoned");
+        cm.abstract_state_of(&peer)
+    };
+    let mut registry = peer_registry
+        .write()
+        .expect("peer registry lock poisoned");
+    registry.set_status(peer, peer_status_from_cm_state(state))
+}
+
+fn apply_cm_actions(
+    peer_manager: &mut OutboundPeerManager,
+    peer_registry: &Arc<RwLock<PeerRegistry>>,
+    actions: Vec<CmAction>,
+    tracer: &NodeTracer,
+) -> bool {
+    let mut changed = false;
+    for cm_action in actions {
+        match cm_action {
+            CmAction::StartConnect(peer) => {
+                tracer.trace_runtime(
+                    "Net.Governor",
+                    "Debug",
+                    "connection-manager start-connect action deferred to caller",
+                    trace_fields([("peer", json!(peer.to_string()))]),
+                );
+            }
+            CmAction::TerminateConnection(conn_id) => {
+                let peer = conn_id.remote;
+                let connection_changed = peer_manager.demote_to_cold(peer);
+                let status_changed = {
+                    let mut registry = peer_registry
+                        .write()
+                        .expect("peer registry lock poisoned");
+                    registry.set_status(peer, PeerStatus::PeerCold)
+                };
+                changed |= connection_changed || status_changed;
+            }
+            CmAction::StartResponderTimeout(conn_id) => {
+                tracer.trace_runtime(
+                    "Net.Governor",
+                    "Debug",
+                    "connection-manager responder timeout requested",
+                    trace_fields([("peer", json!(conn_id.remote.to_string()))]),
+                );
+            }
+            CmAction::PruneConnections(peers) => {
+                for peer in peers {
+                    let connection_changed = peer_manager.demote_to_cold(peer);
+                    let status_changed = {
+                        let mut registry = peer_registry
+                            .write()
+                            .expect("peer registry lock poisoned");
+                        registry.set_status(peer, PeerStatus::PeerCold)
+                    };
+                    changed |= connection_changed || status_changed;
+                }
+            }
+        }
+    }
+
+    changed
+}
+
 /// Run the peer governor loop until shutdown.
 ///
 /// The loop periodically refreshes root peers from DNS-backed providers,
@@ -844,6 +983,7 @@ pub async fn run_governor_loop<I, V, L, F>(
     node_config: NodeConfig,
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     peer_registry: Arc<RwLock<PeerRegistry>>,
+    connection_manager: Arc<RwLock<ConnectionManagerState>>,
     mut governor_state: GovernorState,
     config: RuntimeGovernorConfig,
     topology: TopologyConfig,
@@ -939,6 +1079,14 @@ pub async fn run_governor_loop<I, V, L, F>(
                     .await;
 
                 if let Some(best_peer) = peer_manager.best_hot_peer() {
+                    if let Some(slot) = peer_manager
+                        .warm_peers
+                        .get(&best_peer)
+                        .and_then(|managed| managed.last_known_tip.as_ref())
+                        .and_then(|tip| tip.slot())
+                    {
+                        governor_state.metrics.record_fetchyness(best_peer, slot.0);
+                    }
                     tracer.trace_runtime(
                         "Net.Governor",
                         "Debug",
@@ -968,6 +1116,37 @@ pub async fn run_governor_loop<I, V, L, F>(
                 }
 
                 let local_root_groups = root_sources.local_root_targets();
+                let ledger_state_judgement = {
+                    let chain_db = chain_db
+                        .read()
+                        .expect("chain db lock poisoned");
+                    if recover_ledger_state_chaindb(&chain_db, base_ledger_state.clone())
+                        .is_ok()
+                    {
+                        LedgerStateJudgement::YoungEnough
+                    } else {
+                        LedgerStateJudgement::Unavailable
+                    }
+                };
+
+                let selection_mode = peer_selection_mode(
+                    &topology.bootstrap_peers,
+                    ledger_state_judgement,
+                );
+                let association_mode = compute_association_mode(
+                    &topology.bootstrap_peers,
+                    &topology.use_ledger_peers,
+                    NodePeerSharing::PeerSharingEnabled,
+                    ledger_state_judgement,
+                );
+                governor_state.fetch_mode =
+                    fetch_mode_from_judgement(ledger_state_judgement);
+                governor_state.churn_regime = pick_churn_regime(
+                    churn_mode_from_fetch_mode(governor_state.fetch_mode),
+                    &topology.bootstrap_peers,
+                    ConsensusMode::PraosMode,
+                );
+
                 if let Some(shared_inbound_peers) = inbound_peers.as_ref() {
                     let inbound_snapshot = {
                         let peers = shared_inbound_peers
@@ -979,7 +1158,14 @@ pub async fn run_governor_loop<I, V, L, F>(
                 }
                 let actions = {
                     let registry = peer_registry.read().expect("peer registry lock poisoned");
-                    governor_state.tick(&registry, &config.targets, &local_root_groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now())
+                    governor_state.tick(
+                        &registry,
+                        &config.targets,
+                        &local_root_groups,
+                        selection_mode,
+                        association_mode,
+                        Instant::now(),
+                    )
                 };
 
                 if actions.is_empty() {
@@ -994,26 +1180,123 @@ pub async fn run_governor_loop<I, V, L, F>(
                         match peer_state_action {
                             PeerStateAction::EstablishConnection(peer) => {
                                 governor_state.mark_in_flight_warm(peer);
-                                if peer_manager
-                                    .promote_to_warm(
-                                        &node_config,
-                                        peer,
-                                        &mut governor_state,
-                                        &tracer,
-                                    )
-                                    .await
-                                {
-                                    let mut registry = peer_registry
+                                let (acquire_result, cm_actions) = {
+                                    let mut cm = connection_manager
                                         .write()
-                                        .expect("peer registry lock poisoned");
-                                    let changed =
-                                        registry.set_status(peer, PeerStatus::PeerWarm);
-                                    governor_state.clear_in_flight_warm(&peer);
-                                    changed
-                                } else {
-                                    governor_state.clear_in_flight_warm(&peer);
-                                    false
+                                        .expect("connection manager lock poisoned");
+                                    match cm.acquire_outbound_connection(
+                                        outbound_cm_local_addr(),
+                                        peer,
+                                    ) {
+                                        Ok(result) => result,
+                                        Err(err) => {
+                                            tracer.trace_runtime(
+                                                "Net.Governor",
+                                                "Warning",
+                                                "connection-manager acquire outbound failed",
+                                                trace_fields([
+                                                    ("peer", json!(peer.to_string())),
+                                                    ("error", json!(err.to_string())),
+                                                ]),
+                                            );
+                                            governor_state.clear_in_flight_warm(&peer);
+                                            continue;
+                                        }
+                                    }
+                                };
+
+                                let mut changed = false;
+                                for cm_action in cm_actions {
+                                    match cm_action {
+                                        CmAction::StartConnect(start_peer) => {
+                                            if peer_manager
+                                                .promote_to_warm(
+                                                    &node_config,
+                                                    start_peer,
+                                                    &mut governor_state,
+                                                    &tracer,
+                                                )
+                                                .await
+                                            {
+                                                let data_flow = peer_manager
+                                                    .warm_peers
+                                                    .get(&start_peer)
+                                                    .map(|managed| {
+                                                        data_flow_from_version_data(
+                                                            &managed.session.version_data,
+                                                        )
+                                                    })
+                                                    .unwrap_or(DataFlow::Duplex);
+
+                                                let handshake_result = {
+                                                    let mut cm = connection_manager
+                                                        .write()
+                                                        .expect("connection manager lock poisoned");
+                                                    cm.outbound_handshake_done(
+                                                        outbound_cm_local_addr(),
+                                                        start_peer,
+                                                        data_flow,
+                                                    )
+                                                };
+
+                                                match handshake_result {
+                                                    Ok(_) => {
+                                                        changed |= update_registry_status_from_cm(
+                                                            &connection_manager,
+                                                            &peer_registry,
+                                                            start_peer,
+                                                        );
+                                                    }
+                                                    Err(err) => {
+                                                        let _ = peer_manager.demote_to_cold(start_peer);
+                                                        let mut cm = connection_manager
+                                                            .write()
+                                                            .expect("connection manager lock poisoned");
+                                                        let _ = cm.outbound_connect_failed(start_peer);
+                                                        governor_state.record_failure(start_peer);
+                                                        tracer.trace_runtime(
+                                                            "Net.Governor",
+                                                            "Warning",
+                                                            "connection-manager outbound handshake transition failed",
+                                                            trace_fields([
+                                                                (
+                                                                    "peer",
+                                                                    json!(start_peer.to_string()),
+                                                                ),
+                                                                ("error", json!(err.to_string())),
+                                                            ]),
+                                                        );
+                                                    }
+                                                }
+                                            } else {
+                                                let mut cm = connection_manager
+                                                    .write()
+                                                    .expect("connection manager lock poisoned");
+                                                let _ = cm.outbound_connect_failed(start_peer);
+                                            }
+                                        }
+                                        other => {
+                                            changed |= apply_cm_actions(
+                                                &mut peer_manager,
+                                                &peer_registry,
+                                                vec![other],
+                                                &tracer,
+                                            );
+                                        }
+                                    }
                                 }
+
+                                if matches!(acquire_result, AcquireOutboundResult::Reused(_)) {
+                                    governor_state.record_success(peer);
+                                    changed |= update_registry_status_from_cm(
+                                        &connection_manager,
+                                        &peer_registry,
+                                        peer,
+                                    );
+                                }
+
+                                governor_state.clear_in_flight_warm(&peer);
+                                changed
                             }
                             PeerStateAction::ActivateConnection(peer) => {
                                 governor_state.mark_in_flight_hot(peer);
@@ -1042,15 +1325,47 @@ pub async fn run_governor_loop<I, V, L, F>(
                             }
                             PeerStateAction::CloseConnection(peer) => {
                                 governor_state.mark_in_flight_demote_warm(peer);
-                                let connection_changed = peer_manager.demote_to_cold(peer);
+
+                                let (release_result, cm_actions) = {
+                                    let mut cm = connection_manager
+                                        .write()
+                                        .expect("connection manager lock poisoned");
+                                    cm.release_outbound_connection(peer)
+                                };
+
+                                let mut changed = apply_cm_actions(
+                                    &mut peer_manager,
+                                    &peer_registry,
+                                    cm_actions,
+                                    &tracer,
+                                );
+
+                                match release_result {
+                                    ReleaseOutboundResult::Error(err) => {
+                                        tracer.trace_runtime(
+                                            "Net.Governor",
+                                            "Warning",
+                                            "connection-manager release outbound failed",
+                                            trace_fields([
+                                                ("peer", json!(peer.to_string())),
+                                                ("error", json!(err.to_string())),
+                                            ]),
+                                        );
+                                    }
+                                    ReleaseOutboundResult::DemotedToColdLocal(_)
+                                    | ReleaseOutboundResult::Noop(_) => {
+                                        changed |= update_registry_status_from_cm(
+                                            &connection_manager,
+                                            &peer_registry,
+                                            peer,
+                                        );
+                                    }
+                                }
+
                                 governor_state.clear_in_flight_demote_warm(&peer);
                                 governor_state.clear_in_flight_warm(&peer);
                                 governor_state.clear_in_flight_hot(&peer);
-                                let mut registry = peer_registry
-                                    .write()
-                                    .expect("peer registry lock poisoned");
-                                registry.set_status(peer, PeerStatus::PeerCold)
-                                    || connection_changed
+                                changed
                             }
                         }
                     } else {
@@ -1058,6 +1373,18 @@ pub async fn run_governor_loop<I, V, L, F>(
                             GovernorAction::ForgetPeer(peer) => {
                                 governor_state.clear_in_flight_warm(&peer);
                                 governor_state.clear_in_flight_hot(&peer);
+                                let _ = peer_manager.demote_to_cold(peer);
+                                {
+                                    let mut cm = connection_manager
+                                        .write()
+                                        .expect("connection manager lock poisoned");
+                                    let _ = cm.mark_terminating(
+                                        peer,
+                                        Some("forgotten by governor".to_owned()),
+                                    );
+                                    let _ = cm.time_wait_expired(peer);
+                                    let _ = cm.remove_terminated(&peer);
+                                }
                                 let mut registry = peer_registry
                                     .write()
                                     .expect("peer registry lock poisoned");
@@ -1133,6 +1460,12 @@ pub async fn run_governor_loop<I, V, L, F>(
                             (
                                 "peer",
                                 json!(peer.map(|p| p.to_string()).unwrap_or_else(|| "n/a".to_string())),
+                            ),
+                            (
+                                "metricScore",
+                                json!(peer
+                                    .map(|p| governor_state.metrics.combined_score(&p))
+                                    .unwrap_or(0)),
                             ),
                             ("changed", json!(changed)),
                         ]),
@@ -4083,6 +4416,7 @@ mod tests {
     #[test]
     fn promote_to_hot_marks_warm_peer() {
         use super::OutboundPeerManager;
+        use yggdrasil_network::ControlMessage;
 
         let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
         let mut mgr = OutboundPeerManager::new();
@@ -4097,6 +4431,8 @@ mod tests {
         // First promotion succeeds.
         assert!(mgr.promote_to_hot(addr));
         assert!(mgr.warm_peers[&addr].is_hot);
+        assert_eq!(mgr.warm_peers[&addr].control.hot, ControlMessage::Continue);
+        assert_eq!(mgr.warm_peers[&addr].control.warm, ControlMessage::Quiesce);
 
         // Second promotion is idempotent.
         assert!(!mgr.promote_to_hot(addr));
@@ -4105,6 +4441,7 @@ mod tests {
     #[test]
     fn demote_to_warm_clears_hot_flag() {
         use super::OutboundPeerManager;
+        use yggdrasil_network::ControlMessage;
 
         let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
         let mut mgr = OutboundPeerManager::new();
@@ -4116,9 +4453,43 @@ mod tests {
 
         assert!(mgr.demote_to_warm(addr));
         assert!(!mgr.warm_peers[&addr].is_hot);
+        assert_eq!(mgr.warm_peers[&addr].control.hot, ControlMessage::Quiesce);
+        assert_eq!(mgr.warm_peers[&addr].control.warm, ControlMessage::Continue);
 
         // Demoting an already-warm peer is no-op.
         assert!(!mgr.demote_to_warm(addr));
+    }
+
+    #[test]
+    fn demote_to_cold_terminates_temperature_bundle() {
+        use super::OutboundPeerManager;
+        use yggdrasil_network::ControlMessage;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session(addr);
+        mgr.warm_peers.insert(
+            addr,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+
+        assert!(mgr.demote_to_cold(addr));
+
+        // Internal peer entry is removed after close. This verifies the
+        // close path is reachable and does not panic while applying
+        // terminate controls before aborting the mux.
+        assert!(!mgr.warm_peers.contains_key(&addr));
+
+        // Regression guard for expected control constants used by close.
+        let mut bundle = yggdrasil_network::TemperatureBundle {
+            hot: ControlMessage::Continue,
+            warm: ControlMessage::Continue,
+            established: ControlMessage::Continue,
+        };
+        super::apply_control_close(&mut bundle);
+        assert_eq!(bundle.hot, ControlMessage::Terminate);
+        assert_eq!(bundle.warm, ControlMessage::Terminate);
+        assert_eq!(bundle.established, ControlMessage::Terminate);
     }
 
     #[test]

@@ -210,11 +210,11 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Feature | Scope | Haskell | Rust | Status | Notes |
 |---------|-------|---------|------|--------|-------|
 | **Block Store** |
-| Immutable store | Blocks >3k slots old | ✅ | ✅ | Complete | FileImmutable with JSON persistence
+| Immutable store | Blocks >3k slots old | ✅ | ✅ | Complete | FileImmutable with CBOR persistence (legacy JSON read compatibility)
 | Volatile store | Recent blocks <3k slots | ✅ | ✅ | Complete | FileVolatile with rollback
-| Atomicity | All-or-nothing writes | ✅ | ⚠️ | Partial | File-based approach; crash recovery TBD
+| Atomicity | All-or-nothing writes | ✅ | ✅ | Complete | Atomic write-to-temp + rename in file-backed stores
 | **Ledger State** |
-| Snapshot storage | Checkpoint every N blocks | ✅ | ✅ | Complete | FileLedgerStore with JSONCompat
+| Snapshot storage | Checkpoint every N blocks | ✅ | ✅ | Complete | FileLedgerStore raw-byte snapshots (`.dat`) for typed CBOR checkpoints
 | State recovery | From last checkpoint | ✅ | ✅ | Complete | Open + replay pattern
 | Rollback support | Revert to prior checkpoints | ✅ | ✅ | Complete | Checkpoint time-travel
 | **Garbage Collection** |

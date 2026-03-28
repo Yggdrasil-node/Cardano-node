@@ -1,12 +1,12 @@
 //! File-backed implementation of [`ImmutableStore`].
 //!
-//! Each finalized block is stored as a JSON file named by its hex-encoded
+//! Each finalized block is stored as a CBOR file named by its hex-encoded
 //! header hash. An in-memory index tracks insertion order for tip queries.
 //! On startup the index is rebuilt by scanning the data directory.
 //!
 //! Reference: `Ouroboros.Consensus.Storage.ImmutableDB` in the official node.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -26,7 +26,7 @@ fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 /// File-backed immutable block store.
 ///
-/// Blocks are persisted as `{hex_hash}.json` files inside `data_dir`.
+/// Blocks are persisted as `{hex_hash}.cbor` files inside `data_dir`.
 /// The store is append-only: once written, files are never modified or deleted
 /// except via [`ImmutableStore::trim_before_slot`] garbage collection.
 pub struct FileImmutable {
@@ -53,15 +53,27 @@ impl FileImmutable {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
 
-        let mut blocks = Vec::new();
+        let mut blocks_by_hash: HashMap<HeaderHash, (Block, bool)> = HashMap::new();
         let mut skipped: usize = 0;
         for entry in fs::read_dir(&data_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                match fs::read_to_string(&path) {
-                    Ok(contents) => match serde_json::from_str::<Block>(&contents) {
-                        Ok(block) => blocks.push(block),
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("cbor") => match fs::read(&path) {
+                    Ok(bytes) => match serde_cbor::from_slice::<Block>(&bytes) {
+                        Ok(block) => {
+                            match blocks_by_hash.entry(block.header.hash) {
+                                Entry::Vacant(vacant) => {
+                                    vacant.insert((block, true));
+                                }
+                                Entry::Occupied(mut occupied) => {
+                                    // Prefer CBOR over legacy JSON when both exist.
+                                    if !occupied.get().1 {
+                                        occupied.insert((block, true));
+                                    }
+                                }
+                            }
+                        }
                         Err(_) => {
                             // Corrupted block file — skip rather than fail.
                             skipped += 1;
@@ -71,12 +83,41 @@ impl FileImmutable {
                         // Unreadable file — skip.
                         skipped += 1;
                     }
+                },
+                Some("json") => {
+                    // Backward-compatible read path for legacy JSON block files.
+                    match fs::read_to_string(&path) {
+                        Ok(contents) => match serde_json::from_str::<Block>(&contents) {
+                            Ok(block) => {
+                                match blocks_by_hash.entry(block.header.hash) {
+                                    Entry::Vacant(vacant) => {
+                                        vacant.insert((block, false));
+                                    }
+                                    Entry::Occupied(_) => {
+                                        // Duplicate representation for the same hash.
+                                        // Keep the existing one (CBOR preferred).
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                skipped += 1;
+                            }
+                        },
+                        Err(_) => {
+                            skipped += 1;
+                        }
+                    }
                 }
+                _ => {}
             }
             // Also skip leftover .tmp files from atomic writes.
         }
 
         // Sort by slot to recover insertion order.
+        let mut blocks: Vec<Block> = blocks_by_hash
+            .into_values()
+            .map(|(block, _)| block)
+            .collect();
         blocks.sort_by_key(|b| b.header.slot_no);
 
         let chain: Vec<HeaderHash> = blocks.iter().map(|b| b.header.hash).collect();
@@ -95,6 +136,10 @@ impl FileImmutable {
     }
 
     fn block_path(&self, hash: &HeaderHash) -> PathBuf {
+        self.data_dir.join(format!("{}.cbor", hex_encode(&hash.0)))
+    }
+
+    fn legacy_json_block_path(&self, hash: &HeaderHash) -> PathBuf {
         self.data_dir.join(format!("{}.json", hex_encode(&hash.0)))
     }
 }
@@ -106,9 +151,9 @@ impl ImmutableStore for FileImmutable {
         }
 
         let path = self.block_path(&block.header.hash);
-        let json = serde_json::to_string(&block)
+        let cbor = serde_cbor::to_vec(&block)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
-        atomic_write_file(&path, json.as_bytes())?;
+        atomic_write_file(&path, &cbor)?;
 
         self.chain.push(block.header.hash);
         self.index.insert(block.header.hash, block);
@@ -185,9 +230,13 @@ impl ImmutableStore for FileImmutable {
             .collect();
         let removed = to_remove.len();
         for hash in &to_remove {
-            let path = self.block_path(hash);
-            if path.exists() {
-                fs::remove_file(&path)?;
+            let cbor_path = self.block_path(hash);
+            if cbor_path.exists() {
+                fs::remove_file(&cbor_path)?;
+            }
+            let json_path = self.legacy_json_block_path(hash);
+            if json_path.exists() {
+                fs::remove_file(&json_path)?;
             }
             self.index.remove(hash);
         }

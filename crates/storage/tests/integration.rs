@@ -24,6 +24,16 @@ fn test_block(hash_byte: u8, slot: u64) -> Block {
     }
 }
 
+fn hex_hash(hash: &HeaderHash) -> String {
+    hash.0
+        .iter()
+        .fold(String::with_capacity(64), |mut acc, byte| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{byte:02x}");
+            acc
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Immutable store
 // ---------------------------------------------------------------------------
@@ -398,6 +408,67 @@ fn file_immutable_persists_across_reopens() {
     assert!(store.get_block(&HeaderHash([0x01; 32])).is_some());
 }
 
+#[test]
+fn file_immutable_writes_cbor_block_files() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("imm");
+    let mut store = FileImmutable::open(&path).expect("open");
+    let block = test_block(0xAB, 77);
+    let hash_hex = hex_hash(&block.header.hash);
+
+    store.append_block(block).expect("append");
+
+    assert!(path.join(format!("{hash_hex}.cbor")).exists());
+    assert!(!path.join(format!("{hash_hex}.json")).exists());
+}
+
+#[test]
+fn file_immutable_reads_legacy_json_block_files() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("imm");
+    std::fs::create_dir_all(&path).expect("create dir");
+
+    let block = test_block(0xAC, 88);
+    let hash_hex = hex_hash(&block.header.hash);
+    let json = serde_json::to_vec(&block).expect("serialize legacy json block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json)
+        .expect("write legacy block");
+
+    let store = FileImmutable::open(&path).expect("open legacy store");
+    assert_eq!(store.len(), 1);
+    assert_eq!(
+        store.get_tip(),
+        Point::BlockPoint(SlotNo(88), HeaderHash([0xAC; 32]))
+    );
+}
+
+#[test]
+fn file_immutable_open_prefers_cbor_over_json_for_same_hash() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("imm");
+    std::fs::create_dir_all(&path).expect("create dir");
+
+    // Same block hash in both files, but different slot payload to ensure
+    // we can detect which representation was retained.
+    let cbor_block = test_block(0xAD, 100);
+    let json_block = test_block(0xAD, 50);
+    let hash_hex = hex_hash(&cbor_block.header.hash);
+
+    let cbor = serde_cbor::to_vec(&cbor_block).expect("serialize cbor block");
+    std::fs::write(path.join(format!("{hash_hex}.cbor")), cbor)
+        .expect("write cbor block");
+    let json = serde_json::to_vec(&json_block).expect("serialize json block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json)
+        .expect("write json block");
+
+    let store = FileImmutable::open(&path).expect("open store");
+    assert_eq!(store.len(), 1);
+    let block = store
+        .get_block(&HeaderHash([0xAD; 32]))
+        .expect("block present");
+    assert_eq!(block.header.slot_no, SlotNo(100));
+}
+
 // ===========================================================================
 // File-backed volatile store
 // ===========================================================================
@@ -455,6 +526,59 @@ fn file_volatile_persists_and_rollback_removes_files() {
         Point::BlockPoint(SlotNo(11), HeaderHash([0x02; 32]))
     );
     assert!(store.get_block(&HeaderHash([0x03; 32])).is_none());
+}
+
+#[test]
+fn file_volatile_writes_cbor_block_files() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+    let mut store = FileVolatile::open(&path).expect("open");
+    let block = test_block(0xBA, 90);
+    let hash_hex = hex_hash(&block.header.hash);
+
+    store.add_block(block).expect("add block");
+
+    assert!(path.join(format!("{hash_hex}.cbor")).exists());
+    assert!(!path.join(format!("{hash_hex}.json")).exists());
+}
+
+#[test]
+fn file_volatile_reads_legacy_json_block_files() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+    std::fs::create_dir_all(&path).expect("create dir");
+
+    let block = test_block(0xBB, 91);
+    let hash_hex = hex_hash(&block.header.hash);
+    let json = serde_json::to_vec(&block).expect("serialize legacy json block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json)
+        .expect("write legacy block");
+
+    let store = FileVolatile::open(&path).expect("open legacy store");
+    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(91), HeaderHash([0xBB; 32])));
+    assert!(store.get_block(&HeaderHash([0xBB; 32])).is_some());
+}
+
+#[test]
+fn file_volatile_open_prefers_cbor_over_json_for_same_hash() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+    std::fs::create_dir_all(&path).expect("create dir");
+
+    let cbor_block = test_block(0xBC, 101);
+    let json_block = test_block(0xBC, 60);
+    let hash_hex = hex_hash(&cbor_block.header.hash);
+
+    let cbor = serde_cbor::to_vec(&cbor_block).expect("serialize cbor block");
+    std::fs::write(path.join(format!("{hash_hex}.cbor")), cbor)
+        .expect("write cbor block");
+    let json = serde_json::to_vec(&json_block).expect("serialize json block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json)
+        .expect("write json block");
+
+    let store = FileVolatile::open(&path).expect("open store");
+    assert!(store.get_block(&HeaderHash([0xBC; 32])).is_some());
+    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(101), HeaderHash([0xBC; 32])));
 }
 
 #[test]

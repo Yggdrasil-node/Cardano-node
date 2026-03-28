@@ -15,6 +15,7 @@
 use std::net::SocketAddr;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool};
 use crate::sync::recover_ledger_state_chaindb;
@@ -26,9 +27,12 @@ use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
     ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest,
+    CmAction, ConnectionId, ConnectionManagerState, DataFlow,
+    InboundGovernorAction, InboundGovernorEvent, InboundGovernorState,
     KeepAliveServer, KeepAliveServerError,
     MuxHandle, PeerConnection, PeerListener, PeerListenerError,
     NodePeerSharing,
+    OperationResult, ResponderCounters,
     PeerRegistry, PeerSharingServer, PeerSharingServerError,
     PeerStatus, SharedPeerAddress,
     TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
@@ -180,12 +184,28 @@ where
 #[derive(Clone, Debug)]
 pub struct SharedPeerSharingProvider {
     peer_registry: Arc<RwLock<PeerRegistry>>,
+    inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
 }
 
 impl SharedPeerSharingProvider {
     /// Create a new provider from a shared peer registry.
     pub fn new(peer_registry: Arc<RwLock<PeerRegistry>>) -> Self {
-        Self { peer_registry }
+        Self {
+            peer_registry,
+            inbound_governor: None,
+        }
+    }
+
+    /// Create a new provider from a shared peer registry and optional
+    /// inbound governor state so mature inbound peers can be shared.
+    pub fn with_inbound_governor(
+        peer_registry: Arc<RwLock<PeerRegistry>>,
+        inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
+    ) -> Self {
+        Self {
+            peer_registry,
+            inbound_governor,
+        }
     }
 }
 
@@ -196,7 +216,7 @@ impl PeerSharingProvider for SharedPeerSharingProvider {
             Err(_) => return Vec::new(),
         };
 
-        registry
+        let mut peers = registry
             .iter()
             .filter(|(_, entry)| {
                 matches!(
@@ -204,10 +224,140 @@ impl PeerSharingProvider for SharedPeerSharingProvider {
                     PeerStatus::PeerWarm | PeerStatus::PeerHot
                 )
             })
-            .take(amount as usize)
             .map(|(addr, _)| SharedPeerAddress { addr: *addr })
-            .collect()
+            .collect::<Vec<_>>();
+
+        if let Some(shared_ig) = self.inbound_governor.as_ref() {
+            if let Ok(ig) = shared_ig.read() {
+                for addr in ig.mature_duplex_peer_set().keys() {
+                    if peers.len() >= amount as usize {
+                        break;
+                    }
+                    if !peers.iter().any(|peer| peer.addr == *addr) {
+                        peers.push(SharedPeerAddress { addr: *addr });
+                    }
+                }
+            }
+        }
+
+        peers.truncate(amount as usize);
+        peers
     }
+}
+
+fn now_ms(start: &Instant) -> u64 {
+    start.elapsed().as_millis() as u64
+}
+
+fn execute_cm_actions(cm_actions: Vec<CmAction>) {
+    for action in cm_actions {
+        match action {
+            CmAction::StartResponderTimeout(_)
+            | CmAction::PruneConnections(_)
+            | CmAction::StartConnect(_)
+            | CmAction::TerminateConnection(_) => {
+                // Runtime-side CM effects are tracked by state transitions only in
+                // this slice; concrete transport teardown is handled by session task
+                // lifecycle in the inbound server.
+            }
+        }
+    }
+}
+
+fn apply_inbound_governor_actions(
+    inbound_governor: &Arc<RwLock<InboundGovernorState>>,
+    connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    actions: Vec<InboundGovernorAction>,
+) {
+    let mut pending = actions;
+
+    while let Some(action) = pending.pop() {
+        match action {
+            InboundGovernorAction::PromotedToWarmRemote(conn_id) => {
+                let (_result, cm_actions) = {
+                    let mut cm = connection_manager
+                        .write()
+                        .expect("connection manager lock poisoned");
+                    cm.promoted_to_warm_remote(conn_id.remote)
+                };
+                execute_cm_actions(cm_actions);
+            }
+            InboundGovernorAction::DemotedToColdRemote(conn_id) => {
+                let (_result, cm_actions) = {
+                    let mut cm = connection_manager
+                        .write()
+                        .expect("connection manager lock poisoned");
+                    cm.demoted_to_cold_remote(conn_id.remote)
+                };
+                execute_cm_actions(cm_actions);
+            }
+            InboundGovernorAction::ReleaseInboundConnection(conn_id) => {
+                let (release_result, cm_actions) = {
+                    let mut cm = connection_manager
+                        .write()
+                        .expect("connection manager lock poisoned");
+                    cm.release_inbound_connection(conn_id.remote)
+                };
+                execute_cm_actions(cm_actions);
+
+                if let OperationResult::OperationSuccess(commit_result) =
+                    release_result
+                {
+                    let follow_up = {
+                        let mut ig = inbound_governor
+                            .write()
+                            .expect("inbound governor lock poisoned");
+                        ig.apply_commit_result(conn_id, commit_result)
+                    };
+                    pending.extend(follow_up);
+                }
+            }
+            InboundGovernorAction::UnregisterConnection(_conn_id) => {
+                // The state update already happened in IG; no CM call needed.
+            }
+        }
+    }
+}
+
+fn process_inbound_governor_events(
+    inbound_governor: &Arc<RwLock<InboundGovernorState>>,
+    connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    now_ms: u64,
+    events: Vec<InboundGovernorEvent>,
+) {
+    for event in events {
+        let actions = {
+            let mut ig = inbound_governor
+                .write()
+                .expect("inbound governor lock poisoned");
+            ig.step(event, now_ms)
+        };
+        apply_inbound_governor_actions(inbound_governor, connection_manager, actions);
+    }
+}
+
+fn update_inbound_responder_counters(
+    inbound_governor: &Arc<RwLock<InboundGovernorState>>,
+    connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    peer: SocketAddr,
+    counters: ResponderCounters,
+    now_ms: u64,
+) {
+    let events = {
+        let ig = inbound_governor
+            .read()
+            .expect("inbound governor lock poisoned");
+        ig.update_responder_counters(&peer, counters)
+    };
+
+    {
+        let mut ig = inbound_governor
+            .write()
+            .expect("inbound governor lock poisoned");
+        ig.set_responder_counters(&peer, counters);
+    }
+
+    process_inbound_governor_events(inbound_governor, connection_manager, now_ms, events);
 }
 
 impl InboundPeerSession {
@@ -715,16 +865,99 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     tx_submission_consumer: Option<Arc<dyn TxSubmissionConsumer>>,
     peer_sharing_provider: Option<Arc<dyn PeerSharingProvider>>,
     inbound_peers: Option<Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>>>,
+    connection_manager: Option<Arc<RwLock<ConnectionManagerState>>>,
+    inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
+    let listener_local_addr = listener
+        .local_addr()
+        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0)));
+    let start = Instant::now();
+    let mut inactivity_tick = tokio::time::interval(Duration::from_millis(31_400));
     tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
             biased;
             _ = &mut shutdown => return Ok(()),
+            _ = inactivity_tick.tick() => {
+                if let (Some(shared_ig), Some(shared_cm)) =
+                    (inbound_governor.as_ref(), connection_manager.as_ref())
+                {
+                    process_inbound_governor_events(
+                        shared_ig,
+                        shared_cm,
+                        now_ms(&start),
+                        vec![InboundGovernorEvent::InactivityTimeout],
+                    );
+                }
+            }
             result = listener.accept_peer() => {
                 let (conn, addr) = result?;
+                let data_flow = if conn.version_data.initiator_only_diffusion_mode {
+                    DataFlow::Unidirectional
+                } else {
+                    DataFlow::Duplex
+                };
+                let conn_id = ConnectionId {
+                    local: listener_local_addr,
+                    remote: addr,
+                };
+
+                if let Some(shared_cm) = connection_manager.as_ref() {
+                    let include_result = {
+                        let mut cm = shared_cm
+                            .write()
+                            .expect("connection manager lock poisoned");
+                        cm.include_inbound_connection(conn_id)
+                    };
+
+                    let (_, cm_actions) = match include_result {
+                        Ok(result) => result,
+                        Err(_) => {
+                            conn.mux.abort();
+                            continue;
+                        }
+                    };
+
+                    let handshake_result = {
+                        let mut cm = shared_cm
+                            .write()
+                            .expect("connection manager lock poisoned");
+                        cm.inbound_handshake_done(addr, data_flow)
+                    };
+                    if handshake_result.is_err() {
+                        conn.mux.abort();
+                        continue;
+                    }
+
+                    let should_abort = cm_actions.into_iter().any(|action| {
+                        matches!(
+                            action,
+                            CmAction::TerminateConnection(cid) if cid.remote == addr
+                        )
+                    });
+                    if should_abort {
+                        conn.mux.abort();
+                        continue;
+                    }
+                }
+
+                if let (Some(shared_ig), Some(shared_cm)) =
+                    (inbound_governor.as_ref(), connection_manager.as_ref())
+                {
+                    let actions = {
+                        let mut ig = shared_ig
+                            .write()
+                            .expect("inbound governor lock poisoned");
+                        ig.new_connection_with_data_flow(
+                            conn_id,
+                            data_flow,
+                            now_ms(&start),
+                        )
+                    };
+                    apply_inbound_governor_actions(shared_ig, shared_cm, actions);
+                }
 
                 let session = InboundPeerSession::from_connection(conn, addr)
                     .ok_or(InboundServiceError::MissingProtocol { addr })?;
@@ -745,33 +978,234 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 let tx_consumer = tx_submission_consumer.clone();
                 let ps_provider = peer_sharing_provider.clone();
                 let shared_inbound_peers = inbound_peers.clone();
+                let shared_cm = connection_manager.clone();
+                let shared_ig = inbound_governor.clone();
                 let remote_addr = session.remote_addr;
+                let connection_id = conn_id;
+                let base = start;
+                let responder_counters = Arc::new(tokio::sync::Mutex::new(
+                    ResponderCounters::default(),
+                ));
 
                 tokio::spawn(async move {
-                    let ka = tokio::spawn(run_keepalive_server(session.keep_alive));
+                    let ka = {
+                        let shared_ig = shared_ig.clone();
+                        let shared_cm = shared_cm.clone();
+                        let responder_counters = responder_counters.clone();
+                        tokio::spawn(async move {
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.non_hot_responders += 1;
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
+
+                            let _ = run_keepalive_server(session.keep_alive).await;
+
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.non_hot_responders =
+                                        counters.non_hot_responders.saturating_sub(1);
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
+                        })
+                    };
 
                     let bf = bp.map(|provider| {
+                        let shared_ig = shared_ig.clone();
+                        let shared_cm = shared_cm.clone();
+                        let responder_counters = responder_counters.clone();
                         tokio::spawn(async move {
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.hot_responders += 1;
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
+
                             let _ = run_blockfetch_server(session.block_fetch, &*provider).await;
+
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.hot_responders =
+                                        counters.hot_responders.saturating_sub(1);
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
                         })
                     });
 
                     let cs = cp.map(|provider| {
+                        let shared_ig = shared_ig.clone();
+                        let shared_cm = shared_cm.clone();
+                        let responder_counters = responder_counters.clone();
                         tokio::spawn(async move {
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.hot_responders += 1;
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
+
                             let _ = run_chainsync_server(session.chain_sync, &*provider).await;
+
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.hot_responders =
+                                        counters.hot_responders.saturating_sub(1);
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
                         })
                     });
 
                     let tx = tx_consumer.map(|consumer| {
+                        let shared_ig = shared_ig.clone();
+                        let shared_cm = shared_cm.clone();
+                        let responder_counters = responder_counters.clone();
                         tokio::spawn(async move {
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.hot_responders += 1;
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
+
                             let _ = run_txsubmission_server(session.tx_submission, &*consumer).await;
+
+                            if let (Some(ig), Some(cm)) =
+                                (shared_ig.as_ref(), shared_cm.as_ref())
+                            {
+                                let counters = {
+                                    let mut counters = responder_counters.lock().await;
+                                    counters.hot_responders =
+                                        counters.hot_responders.saturating_sub(1);
+                                    *counters
+                                };
+                                update_inbound_responder_counters(
+                                    ig,
+                                    cm,
+                                    connection_id.remote,
+                                    counters,
+                                    now_ms(&base),
+                                );
+                            }
                         })
                     });
 
                     let ps = session.peer_sharing.and_then(|server| {
                         ps_provider.map(|provider| {
+                            let shared_ig = shared_ig.clone();
+                            let shared_cm = shared_cm.clone();
+                            let responder_counters = responder_counters.clone();
                             tokio::spawn(async move {
+                                if let (Some(ig), Some(cm)) =
+                                    (shared_ig.as_ref(), shared_cm.as_ref())
+                                {
+                                    let counters = {
+                                        let mut counters = responder_counters.lock().await;
+                                        counters.non_hot_responders += 1;
+                                        *counters
+                                    };
+                                    update_inbound_responder_counters(
+                                        ig,
+                                        cm,
+                                        connection_id.remote,
+                                        counters,
+                                        now_ms(&base),
+                                    );
+                                }
+
                                 let _ = run_peersharing_server(server, &*provider).await;
+
+                                if let (Some(ig), Some(cm)) =
+                                    (shared_ig.as_ref(), shared_cm.as_ref())
+                                {
+                                    let counters = {
+                                        let mut counters = responder_counters.lock().await;
+                                        counters.non_hot_responders =
+                                            counters.non_hot_responders.saturating_sub(1);
+                                        *counters
+                                    };
+                                    update_inbound_responder_counters(
+                                        ig,
+                                        cm,
+                                        connection_id.remote,
+                                        counters,
+                                        now_ms(&base),
+                                    );
+                                }
                             })
                         })
                     });
@@ -784,6 +1218,39 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     if let Some(h) = tx { h.abort(); }
                     if let Some(h) = ps { h.abort(); }
                     session.mux.abort();
+
+                    if let (Some(shared_ig), Some(cm_state)) =
+                        (shared_ig.as_ref(), shared_cm.as_ref())
+                    {
+                        process_inbound_governor_events(
+                            shared_ig,
+                            cm_state,
+                            now_ms(&base),
+                            vec![InboundGovernorEvent::MuxFinished(connection_id)],
+                        );
+                    }
+
+                    if let Some(cm_state) = shared_cm {
+                        let mut cm = match cm_state.write() {
+                            Ok(guard) => guard,
+                            Err(_) => return,
+                        };
+                        let (_release_result, cm_actions) =
+                            cm.release_inbound_connection(remote_addr);
+                        for action in cm_actions {
+                            if let CmAction::TerminateConnection(cid) = action {
+                                if cid.remote == remote_addr {
+                                    session.mux.abort();
+                                }
+                            }
+                        }
+                        let _ = cm.mark_terminating(
+                            remote_addr,
+                            Some("inbound session ended".to_owned()),
+                        );
+                        let _ = cm.time_wait_expired(remote_addr);
+                        let _ = cm.remove_terminated(&remote_addr);
+                    }
 
                     if let Some(shared_peers) = shared_inbound_peers {
                         if let Ok(mut peers) = shared_peers.write() {
@@ -996,6 +1463,8 @@ mod tests {
                     None,
                     None,
                     Some(consumer),
+                    None,
+                    None,
                     None,
                     None,
                     async move {

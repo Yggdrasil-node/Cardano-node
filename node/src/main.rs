@@ -30,8 +30,10 @@ use yggdrasil_consensus::{ActiveSlotCoeff, EpochSize, NonceEvolutionConfig, Nonc
 use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
+    ConnectionManagerState,
     GovernorState, GovernorTargets,
     HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
+    InboundGovernorState,
     NodePeerSharing, PeerListener, resolve_peer_access_points,
 };
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, LedgerStore, VolatileStore};
@@ -958,6 +960,8 @@ async fn run_node(
 
     // Shared mempool for governor TTL purge and inbound TxSubmission admission.
     let shared_mempool = SharedMempool::default();
+    let shared_connection_manager = Arc::new(RwLock::new(ConnectionManagerState::new()));
+    let shared_inbound_governor = Arc::new(RwLock::new(InboundGovernorState::new()));
     let shared_inbound_peers: Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>> =
         Arc::new(RwLock::new(BTreeMap::new()));
 
@@ -970,6 +974,7 @@ async fn run_node(
         let governor_topology = topology_config.clone();
         let governor_base_ledger_state = base_ledger_state.clone();
         let governor_mempool = shared_mempool.clone();
+        let governor_connection_manager = Arc::clone(&shared_connection_manager);
         let governor_inbound_peers = Arc::clone(&shared_inbound_peers);
         tokio::spawn(async move {
             let shutdown = async move {
@@ -987,6 +992,7 @@ async fn run_node(
                 governor_node_config,
                 governor_chain_db,
                 governor_registry,
+                governor_connection_manager,
                 GovernorState::default(),
                 governor_config,
                 governor_topology,
@@ -1021,9 +1027,12 @@ async fn run_node(
             Arc::clone(&chain_db),
             shared_mempool.clone(),
         ));
-        let peer_sharing = Arc::new(SharedPeerSharingProvider::new(
+        let peer_sharing = Arc::new(SharedPeerSharingProvider::with_inbound_governor(
             Arc::clone(&peer_registry),
+            Some(Arc::clone(&shared_inbound_governor)),
         ));
+        let inbound_connection_manager = Arc::clone(&shared_connection_manager);
+        let inbound_governor = Arc::clone(&shared_inbound_governor);
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
         let inbound_peers = Arc::clone(&shared_inbound_peers);
@@ -1047,6 +1056,8 @@ async fn run_node(
                 Some(tx_submission_consumer),
                 Some(peer_sharing),
                 Some(inbound_peers),
+                Some(inbound_connection_manager),
+                Some(inbound_governor),
                 shutdown,
             )
             .await

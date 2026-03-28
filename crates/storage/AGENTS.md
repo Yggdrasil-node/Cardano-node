@@ -28,7 +28,7 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 ## Current Phase
 - Traits `ImmutableStore`, `VolatileStore`, and `LedgerStore` are landed and exported.
 - In-memory implementations (`InMemoryImmutable`, `InMemoryVolatile`, `InMemoryLedgerStore`) back each trait.
-- File-backed implementations (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) provide JSON-based on-disk persistence with directory scanning on open, rollback-aware file deletion, and re-open persistence.
+- File-backed implementations (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) provide deterministic on-disk persistence with directory scanning on open, rollback-aware file deletion, and re-open persistence.
 - A minimal `ChainDb` coordinator now lives in the crate to coordinate immutable, volatile, and ledger snapshot stores without pulling sync or consensus policy into `node`. It exposes best-known tip recovery, volatile-prefix promotion into immutable storage, ledger-checkpoint retention helpers, and ledger-snapshot truncation on rollback; rollbacks to immutable points must clear the volatile suffix so the coordinated tip realigns with immutable storage.
 - `VolatileStore` now exposes ordered prefix access and pruning helpers so stable volatile blocks can be immutalized through a crate-owned boundary instead of ad hoc node-side coordination.
 - `LedgerStore` now supports latest-snapshot lookup at or before a slot plus snapshot truncation after rollback, so restart and rollback flows can reuse the storage layer directly.
@@ -37,5 +37,6 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - File-backed stores (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) use atomic file writes (write-to-temp + `fs::rename`) for crash safety, preventing corrupt on-disk state from incomplete writes.
 - Storage operates on typed `Block`, `HeaderHash`, `SlotNo`, and `Point` from `yggdrasil-ledger`.
 - Integration coverage now includes trait behavior, ChainDb coordination for promotion, rollback, and snapshot lookup/truncation across in-memory and file-backed paths, checkpoint fallback recovery tests, and atomic write verification.
-- File-backed stores use `serde_json` serialization; this is a pragmatic initial format, not a long-term commitment.
+- File-backed block stores (`FileImmutable`, `FileVolatile`) now persist blocks as CBOR (`*.cbor`) and keep backward-compatible reads for legacy JSON (`*.json`) block files. `FileLedgerStore` remains raw-byte (`*.dat`) for typed checkpoint encoding flexibility.
+- During open, when both CBOR and legacy JSON files exist for the same block hash, file-backed block stores deduplicate to a single in-memory block and prefer the CBOR representation.
 
