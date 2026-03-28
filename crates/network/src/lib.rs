@@ -56,6 +56,11 @@ pub mod txsubmission_server;
 /// Peer governor — promotion, demotion, and valency enforcement decisions.
 pub mod governor;
 
+/// Inbound governor — pure step-function decision engine for inbound
+/// connection lifecycle, remote peer state tracking, and duplex peer
+/// maturation.
+pub mod inbound_governor;
+
 /// PeerSharing client driver — typed, state-machine-correct protocol loop.
 pub mod peersharing_client;
 
@@ -232,4 +237,10 @@ pub use connection::{
     MaybeUnknown, OperationResult, Provenance, RemoteSt, ResponderCounters,
     Transition, TimeoutExpired, connection_state_to_counters,
     verify_abstract_transition,
+};
+
+// -- Inbound governor re-exports ----------------------------------------------
+pub use inbound_governor::{
+    InboundConnectionEntry, InboundGovernorAction, InboundGovernorState,
+    verify_remote_transition,
 };
