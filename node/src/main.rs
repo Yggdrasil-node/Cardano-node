@@ -2,6 +2,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::collections::BTreeMap;
 
 use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, bail};
@@ -31,7 +32,7 @@ use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
     GovernorState, GovernorTargets,
     HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
-    PeerListener, resolve_peer_access_points,
+    NodePeerSharing, PeerListener, resolve_peer_access_points,
 };
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, LedgerStore, VolatileStore};
 
@@ -957,6 +958,8 @@ async fn run_node(
 
     // Shared mempool for governor TTL purge and inbound TxSubmission admission.
     let shared_mempool = SharedMempool::default();
+    let shared_inbound_peers: Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>> =
+        Arc::new(RwLock::new(BTreeMap::new()));
 
     let governor_task = {
         let mut governor_shutdown = shutdown_rx.clone();
@@ -967,6 +970,7 @@ async fn run_node(
         let governor_topology = topology_config.clone();
         let governor_base_ledger_state = base_ledger_state.clone();
         let governor_mempool = shared_mempool.clone();
+        let governor_inbound_peers = Arc::clone(&shared_inbound_peers);
         tokio::spawn(async move {
             let shutdown = async move {
                 if *governor_shutdown.borrow() {
@@ -988,6 +992,7 @@ async fn run_node(
                 governor_topology,
                 governor_base_ledger_state,
                 Some(governor_mempool),
+                Some(governor_inbound_peers),
                 governor_tracer,
                 shutdown,
             ).await;
@@ -1021,6 +1026,7 @@ async fn run_node(
         ));
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
+        let inbound_peers = Arc::clone(&shared_inbound_peers);
 
         Some(tokio::spawn(async move {
             let shutdown = async move {
@@ -1040,6 +1046,7 @@ async fn run_node(
                 Some(chain_provider),
                 Some(tx_submission_consumer),
                 Some(peer_sharing),
+                Some(inbound_peers),
                 shutdown,
             )
             .await

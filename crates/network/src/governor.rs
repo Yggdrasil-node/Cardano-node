@@ -468,6 +468,90 @@ pub struct PeerFailureRecord {
     pub last_failure: Instant,
 }
 
+/// Backoff state for request-style discovery operations.
+///
+/// This models the signed-counter behavior used by upstream root and
+/// big-ledger peer request loops:
+///
+/// - failure path: `counter = min(counter, 0) - 1`
+/// - no-progress path: `counter = max(counter, 0) + 1`
+/// - delay: `2 ^ min(abs(counter), 8)` seconds
+/// - progress path: `counter = 0`, retry at supplied TTL
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RequestBackoffState {
+    /// Signed backoff counter.
+    ///
+    /// Negative values indicate request failures; positive values indicate
+    /// successful request responses that made no progress.
+    pub counter: i32,
+    /// Earliest time when another request should be attempted.
+    pub next_retry: Option<Instant>,
+    /// Whether a request is currently in-flight.
+    pub in_progress: bool,
+}
+
+impl Default for RequestBackoffState {
+    fn default() -> Self {
+        Self {
+            counter: 0,
+            next_retry: None,
+            in_progress: false,
+        }
+    }
+}
+
+impl RequestBackoffState {
+    /// Return true if a new request may be started at `now`.
+    pub fn can_request(&self, now: Instant) -> bool {
+        !self.in_progress && self.next_retry.is_none_or(|t| now >= t)
+    }
+
+    /// Mark request as dispatched.
+    pub fn mark_request_started(&mut self) {
+        self.in_progress = true;
+    }
+
+    /// Record request failure and schedule exponential retry.
+    pub fn on_failure(&mut self, now: Instant) {
+        self.counter = self.counter.min(0) - 1;
+        let delay = Self::exponential_delay_secs(self.counter);
+        self.next_retry = Some(now + Duration::from_secs(delay));
+        self.in_progress = false;
+    }
+
+    /// Record request result.
+    ///
+    /// When `progress` is true, counter resets to zero and retry time is the
+    /// provided `ttl` (optionally capped by `ttl_cap`).
+    /// When `progress` is false, counter moves in the positive direction and
+    /// retry uses exponential backoff.
+    pub fn on_result(
+        &mut self,
+        now: Instant,
+        progress: bool,
+        ttl: Duration,
+        ttl_cap: Option<Duration>,
+    ) {
+        let delay = if progress {
+            self.counter = 0;
+            match ttl_cap {
+                Some(cap) => ttl.min(cap),
+                None => ttl,
+            }
+        } else {
+            self.counter = self.counter.max(0) + 1;
+            Duration::from_secs(Self::exponential_delay_secs(self.counter))
+        };
+        self.next_retry = Some(now + delay);
+        self.in_progress = false;
+    }
+
+    fn exponential_delay_secs(counter: i32) -> u64 {
+        let exp = u32::try_from(counter.abs()).unwrap_or(u32::MAX).min(8);
+        2u64.saturating_pow(exp)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Pick policy — randomized peer selection (upstream `PickPolicy`)
 // ---------------------------------------------------------------------------
@@ -566,6 +650,14 @@ impl PickPolicy {
     pub fn pick(&mut self, count: usize, mut candidates: Vec<SocketAddr>) -> Vec<SocketAddr> {
         self.rng.partial_shuffle(&mut candidates, count);
         candidates
+    }
+
+    /// Return a randomized coin flip.
+    ///
+    /// Upstream: `random stdGen` boolean used by
+    /// `Governor.KnownPeers.belowTarget` to choose inbound-vs-peer-share.
+    pub fn coin_flip(&mut self) -> bool {
+        (self.rng.next_u64() & 1) == 1
     }
 
     /// Select up to `count` peers from `candidates`, scoring each peer
@@ -780,6 +872,40 @@ pub struct GovernorState {
     /// Upstream: `PeerMetric` in
     /// `Ouroboros.Network.PeerSelection.PeerMetric`.
     pub metrics: PeerMetrics,
+    /// Upstream-style backoff state for public-root peer discovery requests.
+    ///
+    /// Mirrors `publicRootBackoffs` + `publicRootRetryTime` +
+    /// `inProgressPublicRootsReq` from `Governor.RootPeers`.
+    pub public_root_backoff: RequestBackoffState,
+    /// Upstream-style backoff state for big-ledger peer discovery requests.
+    ///
+    /// Mirrors `bigLedgerPeerBackoffs` + `bigLedgerPeerRetryTime` +
+    /// `inProgressBigLedgerPeersReq` from `Governor.BigLedgerPeers`.
+    pub big_ledger_peer_backoff: RequestBackoffState,
+    /// Set of currently available inbound peers eligible for known-peer
+    /// discovery.
+    ///
+    /// Upstream: `inboundPeers` input passed into
+    /// `Governor.KnownPeers.belowTarget`.
+    pub inbound_peers: BTreeMap<SocketAddr, NodePeerSharing>,
+    /// Earliest time when inbound peer discovery is allowed again.
+    ///
+    /// Upstream: `inboundPeersRetryTime`.
+    pub inbound_peers_retry_time: Option<Instant>,
+    /// Minimum delay between inbound-discovery picks.
+    ///
+    /// Upstream: `Policies.inboundPeersRetryDelay` (60s).
+    pub inbound_peers_retry_delay: Duration,
+    /// Maximum inbound peers adopted in a single discovery round.
+    ///
+    /// Upstream: `Policies.maxInboundPeers` (10).
+    pub max_inbound_peers: usize,
+    /// Feature gate for upstream-style public-root and big-ledger request
+    /// actions.
+    ///
+    /// Defaults to `false` to preserve current behavior until runtime wiring
+    /// explicitly enables it.
+    pub enable_root_big_ledger_requests: bool,
 }
 
 impl Default for GovernorState {
@@ -804,6 +930,13 @@ impl Default for GovernorState {
             max_in_progress_peer_share_reqs: 2,
             pick: PickPolicy::new(0xCAFE_BABE_DEAD_BEEF),
             metrics: PeerMetrics::default(),
+            public_root_backoff: RequestBackoffState::default(),
+            big_ledger_peer_backoff: RequestBackoffState::default(),
+            inbound_peers: BTreeMap::new(),
+            inbound_peers_retry_time: None,
+            inbound_peers_retry_delay: Duration::from_secs(60),
+            max_inbound_peers: 10,
+            enable_root_big_ledger_requests: false,
         }
     }
 }
@@ -971,6 +1104,66 @@ impl GovernorState {
     pub fn clear_peer_share_completed(&mut self, count: u32) {
         self.in_progress_peer_share_reqs =
             self.in_progress_peer_share_reqs.saturating_sub(count);
+    }
+
+    /// Mark that a public-root discovery request was dispatched.
+    pub fn mark_public_root_request_started(&mut self) {
+        self.public_root_backoff.mark_request_started();
+    }
+
+    /// Record public-root discovery request completion.
+    ///
+    /// Upstream successful progress uses `min 60 ttl`.
+    pub fn complete_public_root_request(
+        &mut self,
+        now: Instant,
+        progress: bool,
+        ttl: Duration,
+    ) {
+        self.public_root_backoff
+            .on_result(now, progress, ttl, Some(Duration::from_secs(60)));
+    }
+
+    /// Record public-root request failure.
+    pub fn fail_public_root_request(&mut self, now: Instant) {
+        self.public_root_backoff.on_failure(now);
+    }
+
+    /// Mark that a big-ledger peer discovery request was dispatched.
+    pub fn mark_big_ledger_request_started(&mut self) {
+        self.big_ledger_peer_backoff.mark_request_started();
+    }
+
+    /// Record big-ledger discovery request completion.
+    ///
+    /// Upstream successful progress uses unmodified TTL.
+    pub fn complete_big_ledger_request(
+        &mut self,
+        now: Instant,
+        progress: bool,
+        ttl: Duration,
+    ) {
+        self.big_ledger_peer_backoff
+            .on_result(now, progress, ttl, None);
+    }
+
+    /// Record big-ledger request failure.
+    pub fn fail_big_ledger_request(&mut self, now: Instant) {
+        self.big_ledger_peer_backoff.on_failure(now);
+    }
+
+    /// Replace the currently available inbound peers used for known-peer
+    /// discovery.
+    pub fn set_inbound_peers(
+        &mut self,
+        inbound: impl IntoIterator<Item = (SocketAddr, NodePeerSharing)>,
+    ) {
+        self.inbound_peers = inbound.into_iter().collect();
+    }
+
+    /// Record that inbound peer discovery was used.
+    pub fn mark_inbound_peer_pick(&mut self, now: Instant) {
+        self.inbound_peers_retry_time = Some(now + self.inbound_peers_retry_delay);
     }
 
     /// Return targets modified by the current churn phase and regime.
@@ -1152,6 +1345,18 @@ pub enum GovernorAction {
     /// Upstream: `requestPeerShare` in
     /// `Ouroboros.Network.PeerSelection.Governor.KnownPeers.belowTarget`.
     ShareRequest(SocketAddr),
+    /// Request a refresh of public root peers.
+    ///
+    /// Upstream: request branch in `Governor.RootPeers.belowTarget`.
+    RequestPublicRoots,
+    /// Request a refresh of big-ledger peers.
+    ///
+    /// Upstream: request branch in `Governor.BigLedgerPeers.belowTarget`.
+    RequestBigLedgerPeers,
+    /// Add an unknown inbound peer to the known peer set.
+    ///
+    /// Upstream: inbound branch in `Governor.KnownPeers.belowTarget`.
+    AdoptInboundPeer(SocketAddr),
 }
 
 // ---------------------------------------------------------------------------
@@ -1586,6 +1791,56 @@ pub fn evaluate_warm_to_cold_big_ledger_demotions(
         .collect()
 }
 
+/// Evaluate whether a public-root refresh request should be issued.
+///
+/// Upstream analogue: request branch in `Governor.RootPeers.belowTarget`.
+pub fn evaluate_request_public_roots(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+    state: &GovernorState,
+    now: Instant,
+) -> Vec<GovernorAction> {
+    if !state.enable_root_big_ledger_requests {
+        return Vec::new();
+    }
+    let root_count = registry
+        .iter()
+        .filter(|(_, e)| !is_big_ledger(e) && e.is_root_peer())
+        .count();
+    if root_count >= targets.target_root {
+        return Vec::new();
+    }
+    if !state.public_root_backoff.can_request(now) {
+        return Vec::new();
+    }
+    vec![GovernorAction::RequestPublicRoots]
+}
+
+/// Evaluate whether a big-ledger peer refresh request should be issued.
+///
+/// Upstream analogue: request branch in `Governor.BigLedgerPeers.belowTarget`.
+pub fn evaluate_request_big_ledger_peers(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+    state: &GovernorState,
+    now: Instant,
+) -> Vec<GovernorAction> {
+    if !state.enable_root_big_ledger_requests {
+        return Vec::new();
+    }
+    let known_big_ledger = registry
+        .iter()
+        .filter(|(_, e)| is_big_ledger(e))
+        .count();
+    if known_big_ledger >= targets.target_known_big_ledger {
+        return Vec::new();
+    }
+    if !state.big_ledger_peer_backoff.can_request(now) {
+        return Vec::new();
+    }
+    vec![GovernorAction::RequestBigLedgerPeers]
+}
+
 // ---------------------------------------------------------------------------
 // Forget cold peers — known-peer set management
 // ---------------------------------------------------------------------------
@@ -1758,6 +2013,63 @@ pub fn evaluate_peer_share_requests(
         .into_iter()
         .map(GovernorAction::ShareRequest)
         .collect()
+}
+
+/// Evaluate known-peer discovery when below `target_known`.
+///
+/// This mirrors upstream `Governor.KnownPeers.belowTarget`: flip a coin to
+/// either adopt unknown inbound peers or issue peer-share requests. The
+/// inbound branch is only eligible when no peer-share requests are currently
+/// in progress and the inbound retry timer has elapsed.
+pub fn evaluate_known_peer_discovery(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+    state: &GovernorState,
+    pick: &mut PickPolicy,
+    now: Instant,
+) -> Vec<GovernorAction> {
+    let counts = regular_peer_counts(registry);
+    if counts.known >= targets.target_known {
+        return Vec::new();
+    }
+
+    let available_for_peer_share: BTreeSet<SocketAddr> = registry
+        .iter()
+        .filter(|(_, entry)| {
+            matches!(entry.status, PeerStatus::PeerWarm | PeerStatus::PeerHot)
+                && !entry.sources.contains(&PeerSource::PeerSourceLocalRoot)
+                && !entry.sources.contains(&PeerSource::PeerSourceBootstrap)
+                && !is_big_ledger(entry)
+        })
+        .map(|(addr, _)| *addr)
+        .collect();
+
+    let use_inbound_peers = pick.coin_flip();
+    let inbound_retry_elapsed = state
+        .inbound_peers_retry_time
+        .is_none_or(|deadline| now >= deadline);
+    let inbound_available: Vec<SocketAddr> = state
+        .inbound_peers
+        .keys()
+        .copied()
+        .filter(|peer| registry.get(peer).is_none())
+        .collect();
+
+    if state.in_progress_peer_share_reqs == 0
+        && inbound_retry_elapsed
+        && (use_inbound_peers || available_for_peer_share.is_empty())
+        && !inbound_available.is_empty()
+    {
+        let objective = targets.target_known - counts.known;
+        let limit = state.max_inbound_peers.min(objective);
+        return pick
+            .pick(limit, inbound_available)
+            .into_iter()
+            .map(GovernorAction::AdoptInboundPeer)
+            .collect();
+    }
+
+    evaluate_peer_share_requests(registry, targets, state, pick)
 }
 
 // ---------------------------------------------------------------------------
@@ -1960,7 +2272,20 @@ pub fn governor_tick(
             //    sharing discovery.
             if association == AssociationMode::Unrestricted {
                 if let Some(gs) = state {
-                    actions.extend(evaluate_peer_share_requests(registry, targets, gs, pick));
+                    actions.extend(evaluate_request_public_roots(registry, targets, gs, now));
+                    actions.extend(evaluate_request_big_ledger_peers(
+                        registry,
+                        targets,
+                        gs,
+                        now,
+                    ));
+                    actions.extend(evaluate_known_peer_discovery(
+                        registry,
+                        targets,
+                        gs,
+                        pick,
+                        now,
+                    ));
                 }
             }
         }
@@ -2656,6 +2981,14 @@ pub struct PeerSelectionTimeouts {
     ///
     /// Upstream: `policyClearFailCountDelay` = 120 s.
     pub clear_fail_count_delay: Duration,
+    /// Minimal delay between adopting inbound peers into known peers.
+    ///
+    /// Upstream: `inboundPeersRetryDelay` = 60 s.
+    pub inbound_peers_retry_delay: Duration,
+    /// Maximum inbound peers adopted in a single discovery round.
+    ///
+    /// Upstream: `maxInboundPeers` = 10.
+    pub max_inbound_peers: usize,
 }
 
 impl Default for PeerSelectionTimeouts {
@@ -2670,6 +3003,8 @@ impl Default for PeerSelectionTimeouts {
             peer_share_activation_delay: Duration::from_secs(300),
             max_connection_retries: 5,
             clear_fail_count_delay: Duration::from_secs(120),
+            inbound_peers_retry_delay: Duration::from_secs(60),
+            max_inbound_peers: 10,
         }
     }
 }
@@ -3389,6 +3724,60 @@ mod tests {
     }
 
     #[test]
+    fn request_backoff_failure_path_uses_negative_counter() {
+        let now = Instant::now();
+        let mut backoff = RequestBackoffState::default();
+
+        backoff.mark_request_started();
+        backoff.on_failure(now);
+        assert_eq!(backoff.counter, -1);
+        assert_eq!(backoff.next_retry, Some(now + Duration::from_secs(2)));
+        assert!(!backoff.in_progress);
+
+        backoff.mark_request_started();
+        backoff.on_failure(now);
+        assert_eq!(backoff.counter, -2);
+        assert_eq!(backoff.next_retry, Some(now + Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn request_backoff_no_progress_path_uses_positive_counter() {
+        let now = Instant::now();
+        let mut backoff = RequestBackoffState::default();
+
+        backoff.mark_request_started();
+        backoff.on_result(now, false, Duration::from_secs(123), None);
+        assert_eq!(backoff.counter, 1);
+        assert_eq!(backoff.next_retry, Some(now + Duration::from_secs(2)));
+
+        backoff.mark_request_started();
+        backoff.on_result(now, false, Duration::from_secs(123), None);
+        assert_eq!(backoff.counter, 2);
+        assert_eq!(backoff.next_retry, Some(now + Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn request_backoff_progress_resets_counter_and_applies_ttl_cap() {
+        let now = Instant::now();
+        let mut backoff = RequestBackoffState {
+            counter: -3,
+            next_retry: None,
+            in_progress: true,
+        };
+
+        backoff.on_result(
+            now,
+            true,
+            Duration::from_secs(300),
+            Some(Duration::from_secs(60)),
+        );
+
+        assert_eq!(backoff.counter, 0);
+        assert_eq!(backoff.next_retry, Some(now + Duration::from_secs(60)));
+        assert!(!backoff.in_progress);
+    }
+
+    #[test]
     fn failures_decay_over_time() {
         let mut state = GovernorState {
             failure_backoff: Duration::from_secs(10),
@@ -3509,6 +3898,66 @@ mod tests {
         assert!(evaluate_warm_to_hot_big_ledger_promotions(&reg, &targets, &mut test_pick()).is_empty());
         assert!(evaluate_hot_to_warm_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty());
         assert!(evaluate_warm_to_cold_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty());
+    }
+
+    #[test]
+    fn request_public_roots_when_below_target_and_retry_elapsed() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
+        ]);
+        let targets = GovernorTargets {
+            target_root: 3,
+            ..Default::default()
+        };
+        let state = GovernorState {
+            enable_root_big_ledger_requests: true,
+            ..Default::default()
+        };
+
+        let actions = evaluate_request_public_roots(&reg, &targets, &state, Instant::now());
+        assert_eq!(actions, vec![GovernorAction::RequestPublicRoots]);
+    }
+
+    #[test]
+    fn request_public_roots_suppressed_during_backoff() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
+        ]);
+        let targets = GovernorTargets {
+            target_root: 3,
+            ..Default::default()
+        };
+        let now = Instant::now();
+        let state = GovernorState {
+            enable_root_big_ledger_requests: true,
+            public_root_backoff: RequestBackoffState {
+                counter: 1,
+                next_retry: Some(now + Duration::from_secs(5)),
+                in_progress: false,
+            },
+            ..Default::default()
+        };
+
+        let actions = evaluate_request_public_roots(&reg, &targets, &state, now);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn request_big_ledger_peers_when_below_target_and_retry_elapsed() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerWarm),
+        ]);
+        let targets = GovernorTargets {
+            target_known_big_ledger: 3,
+            ..Default::default()
+        };
+        let state = GovernorState {
+            enable_root_big_ledger_requests: true,
+            ..Default::default()
+        };
+
+        let actions = evaluate_request_big_ledger_peers(&reg, &targets, &state, Instant::now());
+        assert_eq!(actions, vec![GovernorAction::RequestBigLedgerPeers]);
     }
 
     // -----------------------------------------------------------------------
@@ -4356,6 +4805,78 @@ mod tests {
         for a in &actions {
             assert!(matches!(a, GovernorAction::ShareRequest(_)));
         }
+    }
+
+    #[test]
+    fn known_peer_discovery_adopts_inbound_when_peer_share_unavailable() {
+        let reg = make_registry(&[
+            // No warm/hot peers eligible for peer-share.
+            (1, PeerSource::PeerSourcePeerShare, PeerStatus::PeerCold),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 10,
+            ..Default::default()
+        };
+        let mut state = GovernorState::default();
+        state.set_inbound_peers([
+            (addr(10), NodePeerSharing::PeerSharingEnabled),
+            (addr(11), NodePeerSharing::PeerSharingEnabled),
+        ]);
+
+        let actions = evaluate_known_peer_discovery(
+            &reg,
+            &targets,
+            &state,
+            &mut test_pick(),
+            Instant::now(),
+        );
+        assert!(!actions.is_empty());
+        assert!(actions
+            .iter()
+            .all(|a| matches!(a, GovernorAction::AdoptInboundPeer(_))));
+    }
+
+    #[test]
+    fn known_peer_discovery_falls_back_to_peer_share_before_inbound_retry() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourcePeerShare, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePeerShare, PeerStatus::PeerWarm),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 10,
+            ..Default::default()
+        };
+        let now = Instant::now();
+        let mut state = GovernorState {
+            inbound_peers_retry_time: Some(now + Duration::from_secs(60)),
+            ..Default::default()
+        };
+        state.set_inbound_peers([(addr(10), NodePeerSharing::PeerSharingEnabled)]);
+
+        let actions = evaluate_known_peer_discovery(
+            &reg,
+            &targets,
+            &state,
+            &mut test_pick(),
+            now,
+        );
+        assert!(actions
+            .iter()
+            .all(|a| matches!(a, GovernorAction::ShareRequest(_))));
+    }
+
+    #[test]
+    fn mark_inbound_peer_pick_sets_retry_deadline() {
+        let now = Instant::now();
+        let mut state = GovernorState {
+            inbound_peers_retry_delay: Duration::from_secs(60),
+            ..Default::default()
+        };
+        state.mark_inbound_peer_pick(now);
+        assert_eq!(
+            state.inbound_peers_retry_time,
+            Some(now + Duration::from_secs(60))
+        );
     }
 
     #[test]
@@ -5298,6 +5819,8 @@ mod tests {
         assert_eq!(t.peer_share_activation_delay, Duration::from_secs(300));
         assert_eq!(t.max_connection_retries, 5);
         assert_eq!(t.clear_fail_count_delay, Duration::from_secs(120));
+        assert_eq!(t.inbound_peers_retry_delay, Duration::from_secs(60));
+        assert_eq!(t.max_inbound_peers, 10);
     }
 
     // -----------------------------------------------------------------------

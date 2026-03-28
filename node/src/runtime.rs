@@ -28,8 +28,9 @@ use yggdrasil_network::{
     GovernorAction, GovernorState, GovernorTargets, LedgerPeerSnapshot,
     LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
     LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
-    PeerConnection, PeerError, PeerRegistry, PeerSelectionMode, PeerSharingClient,
-    PeerSource, PeerStatus, AssociationMode,
+    NodePeerSharing, PeerConnection, PeerError, PeerRegistry, PeerSelectionMode,
+    PeerSelectionTimeouts, PeerSharingClient, PeerSource, PeerStatus,
+    AssociationMode,
     PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
     RootPeerProviderState, TopologyConfig, TxSubmissionClient,
     TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
@@ -812,17 +813,22 @@ fn governor_action_name(action: &GovernorAction) -> &'static str {
         GovernorAction::DemoteToCold(_) => "DemoteToCold",
         GovernorAction::ForgetPeer(_) => "ForgetPeer",
         GovernorAction::ShareRequest(_) => "ShareRequest",
+        GovernorAction::RequestPublicRoots => "RequestPublicRoots",
+        GovernorAction::RequestBigLedgerPeers => "RequestBigLedgerPeers",
+        GovernorAction::AdoptInboundPeer(_) => "AdoptInboundPeer",
     }
 }
 
-fn governor_action_peer(action: &GovernorAction) -> SocketAddr {
+fn governor_action_peer(action: &GovernorAction) -> Option<SocketAddr> {
     match action {
         GovernorAction::PromoteToWarm(peer)
         | GovernorAction::PromoteToHot(peer)
         | GovernorAction::DemoteToWarm(peer)
         | GovernorAction::DemoteToCold(peer)
         | GovernorAction::ForgetPeer(peer)
-        | GovernorAction::ShareRequest(peer) => *peer,
+        | GovernorAction::ShareRequest(peer)
+        | GovernorAction::AdoptInboundPeer(peer) => Some(*peer),
+        GovernorAction::RequestPublicRoots | GovernorAction::RequestBigLedgerPeers => None,
     }
 }
 
@@ -842,6 +848,7 @@ pub async fn run_governor_loop<I, V, L, F>(
     topology: TopologyConfig,
     base_ledger_state: LedgerState,
     mempool: Option<SharedMempool>,
+    inbound_peers: Option<Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>>>,
     tracer: NodeTracer,
     shutdown: F,
 ) where
@@ -853,6 +860,10 @@ pub async fn run_governor_loop<I, V, L, F>(
     let mut interval = tokio::time::interval(config.tick_interval);
     let mut peer_manager = OutboundPeerManager::new();
     let mut root_sources = RuntimeRootPeerSources::new(&topology);
+    let timeouts = PeerSelectionTimeouts::default();
+    governor_state.enable_root_big_ledger_requests = true;
+    governor_state.inbound_peers_retry_delay = timeouts.inbound_peers_retry_delay;
+    governor_state.max_inbound_peers = timeouts.max_inbound_peers;
     tokio::pin!(shutdown);
 
     {
@@ -956,6 +967,15 @@ pub async fn run_governor_loop<I, V, L, F>(
                 }
 
                 let local_root_groups = root_sources.local_root_targets();
+                if let Some(shared_inbound_peers) = inbound_peers.as_ref() {
+                    let inbound_snapshot = {
+                        let peers = shared_inbound_peers
+                            .read()
+                            .expect("inbound peers lock poisoned");
+                        peers.iter().map(|(peer, mode)| (*peer, *mode)).collect::<Vec<_>>()
+                    };
+                    governor_state.set_inbound_peers(inbound_snapshot);
+                }
                 let actions = {
                     let registry = peer_registry.read().expect("peer registry lock poisoned");
                     governor_state.tick(&registry, &config.targets, &local_root_groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now())
@@ -1035,6 +1055,51 @@ pub async fn run_governor_loop<I, V, L, F>(
                             governor_state.mark_peer_share_sent();
                             false
                         }
+                        GovernorAction::RequestPublicRoots => {
+                            governor_state.mark_public_root_request_started();
+                            let refresh_now = Instant::now();
+                            let changed = {
+                                let mut registry = peer_registry
+                                    .write()
+                                    .expect("peer registry lock poisoned");
+                                root_sources.refresh(&mut registry, &tracer)
+                            };
+                            governor_state.complete_public_root_request(
+                                refresh_now,
+                                changed,
+                                Duration::from_secs(60),
+                            );
+                            changed
+                        }
+                        GovernorAction::RequestBigLedgerPeers => {
+                            governor_state.mark_big_ledger_request_started();
+                            let refresh_now = Instant::now();
+                            let changed = {
+                                let mut registry = peer_registry
+                                    .write()
+                                    .expect("peer registry lock poisoned");
+                                refresh_ledger_peer_sources_from_chain_db(
+                                    &mut registry,
+                                    &chain_db,
+                                    &base_ledger_state,
+                                    &topology,
+                                    &tracer,
+                                )
+                            };
+                            governor_state.complete_big_ledger_request(
+                                refresh_now,
+                                changed,
+                                Duration::from_secs(60),
+                            );
+                            changed
+                        }
+                        GovernorAction::AdoptInboundPeer(peer) => {
+                            governor_state.mark_inbound_peer_pick(Instant::now());
+                            let mut registry = peer_registry
+                                .write()
+                                .expect("peer registry lock poisoned");
+                            registry.insert_source(peer, PeerSource::PeerSourcePeerShare)
+                        }
                     };
                     tracer.trace_runtime(
                         "Net.Governor",
@@ -1042,7 +1107,10 @@ pub async fn run_governor_loop<I, V, L, F>(
                         "peer governor action applied",
                         trace_fields([
                             ("action", json!(governor_action_name(&action))),
-                            ("peer", json!(peer.to_string())),
+                            (
+                                "peer",
+                                json!(peer.map(|p| p.to_string()).unwrap_or_else(|| "n/a".to_string())),
+                            ),
                             ("changed", json!(changed)),
                         ]),
                     );

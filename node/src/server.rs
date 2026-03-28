@@ -13,6 +13,7 @@
 //! lifecycle.
 
 use std::net::SocketAddr;
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool};
@@ -27,6 +28,7 @@ use yggdrasil_network::{
     ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest,
     KeepAliveServer, KeepAliveServerError,
     MuxHandle, PeerConnection, PeerListener, PeerListenerError,
+    NodePeerSharing,
     PeerRegistry, PeerSharingServer, PeerSharingServerError,
     PeerStatus, SharedPeerAddress,
     TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
@@ -712,6 +714,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     chain_provider: Option<Arc<dyn ChainProvider>>,
     tx_submission_consumer: Option<Arc<dyn TxSubmissionConsumer>>,
     peer_sharing_provider: Option<Arc<dyn PeerSharingProvider>>,
+    inbound_peers: Option<Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>>>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
     tokio::pin!(shutdown);
@@ -726,10 +729,23 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 let session = InboundPeerSession::from_connection(conn, addr)
                     .ok_or(InboundServiceError::MissingProtocol { addr })?;
 
+                let peer_sharing_mode = if session.peer_sharing.is_some() {
+                    NodePeerSharing::PeerSharingEnabled
+                } else {
+                    NodePeerSharing::PeerSharingDisabled
+                };
+                if let Some(shared_inbound_peers) = inbound_peers.as_ref() {
+                    if let Ok(mut peers) = shared_inbound_peers.write() {
+                        peers.insert(addr, peer_sharing_mode);
+                    }
+                }
+
                 let bp = block_provider.clone();
                 let cp = chain_provider.clone();
                 let tx_consumer = tx_submission_consumer.clone();
                 let ps_provider = peer_sharing_provider.clone();
+                let shared_inbound_peers = inbound_peers.clone();
+                let remote_addr = session.remote_addr;
 
                 tokio::spawn(async move {
                     let ka = tokio::spawn(run_keepalive_server(session.keep_alive));
@@ -768,6 +784,12 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     if let Some(h) = tx { h.abort(); }
                     if let Some(h) = ps { h.abort(); }
                     session.mux.abort();
+
+                    if let Some(shared_peers) = shared_inbound_peers {
+                        if let Ok(mut peers) = shared_peers.write() {
+                            peers.remove(&remote_addr);
+                        }
+                    }
                 });
             }
         }
@@ -974,6 +996,7 @@ mod tests {
                     None,
                     None,
                     Some(consumer),
+                    None,
                     None,
                     async move {
                         let _ = shutdown_rx.await;
