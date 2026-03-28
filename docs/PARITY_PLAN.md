@@ -281,7 +281,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Schnorr/secp256k1 | PlutusV2 builtin | ✅ | ✅ | Complete | k256 crate with schnorr feature
 | ECDSA/secp256k1 | PlutusV2 builtin | ✅ | ✅ | Complete | k256 crate with ecdsa feature
 | **VRF** |
-| Praos VRF proof gen | Slot leader selection | ✅ | ❌ | Not Expected | Validator only (no block production)
+| Praos VRF proof gen | Slot leader selection | ✅ | ❌ | Uncomplete | Missing block production
 | Praos VRF proof verify | Slot leader validation | ✅ | ✅ | Complete | verify_vrf_output with Ed25519
 | **Elliptic Curves** |
 | Curve25519 | Ed25519 + KES ops | ✅ | ✅ | Complete | curve25519-dalek
@@ -290,7 +290,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **KES (Key Evolving Signatures)** |
 | KES signature scheme | Operational cert | ✅ | ✅ | Complete | KES OpCert validation
 | KES period validation | Block slot alignment | ✅ | ✅ | Complete | Check slot ∈ [kes_period*x, (kes_period+1)*x)
-| KES key evolution | Per-period key rotation | ✅ | ⏸️ | Not Expected | Validator only (no signing)
+| KES key evolution | Per-period key rotation | ✅ | ⏸️ | Uncomplete | Missing signing for block production
 | **CBOR Codec** |
 | Major types | 0-7 encoding | ✅ | ✅ | Complete | CborEncode/CborDecode traits
 | Compact constructor tags | 121-127 for PlutusData | ✅ | ✅ | Complete | Constr compact encoding

@@ -393,19 +393,27 @@ pub enum ChurnPhase {
 /// ```
 ///
 /// *"Replace 20% or at least 1 peer every churn interval."*
+///
+/// Churn intervals are mode-dependent:
+/// * **Deadline mode** (node is near tip): `deadline_churn_interval`
+///   (upstream `defaultDeadlineChurnInterval` = 3300 s).
+/// * **Bulk-sync mode** (node is syncing): `bulk_churn_interval`
+///   (upstream `defaultBulkChurnInterval` = 900 s).
+///
+/// Reference: `Ouroboros.Network.PeerSelection.Churn` and
+/// `Ouroboros.Network.Diffusion.Configuration`.
 #[derive(Clone, Debug)]
 pub struct ChurnConfig {
-    /// Minimum interval between complete churn cycles.
+    /// Interval between churn cycles when the node is syncing
+    /// (bulk-sync / catching up).
     ///
-    /// Upstream: `pcaBulkInterval` = 300 s (fuzzy-delayed in upstream;
-    /// used as a fixed floor here).
+    /// Upstream: `defaultBulkChurnInterval` = 900 s.
     pub bulk_churn_interval: Duration,
-    /// Retained for configuration compatibility.  The two-phase churn
-    /// cycle handles both hot and warm peers sequentially, so only
-    /// `bulk_churn_interval` drives cycle timing.
+    /// Interval between churn cycles when the node is near the tip
+    /// (deadline / caught-up mode).
     ///
-    /// Upstream: `pcaDeadlineInterval` = 200 s.
-    pub active_churn_interval: Duration,
+    /// Upstream: `defaultDeadlineChurnInterval` = 3300 s.
+    pub deadline_churn_interval: Duration,
     /// How long each decrease phase lasts before the state machine
     /// advances to the next phase.
     ///
@@ -415,11 +423,25 @@ pub struct ChurnConfig {
     pub phase_timeout: Duration,
 }
 
+impl ChurnConfig {
+    /// Return the churn cycle interval for the given fetch mode.
+    ///
+    /// Upstream: `peerChurnGovernor` uses `pcaBulkInterval` when
+    /// `FetchModeBulkSync` and `pcaDeadlineInterval` when
+    /// `FetchModeDeadline`.
+    pub fn interval_for_mode(&self, mode: FetchMode) -> Duration {
+        match mode {
+            FetchMode::FetchModeBulkSync => self.bulk_churn_interval,
+            FetchMode::FetchModeDeadline => self.deadline_churn_interval,
+        }
+    }
+}
+
 impl Default for ChurnConfig {
     fn default() -> Self {
         Self {
-            bulk_churn_interval: Duration::from_secs(300),
-            active_churn_interval: Duration::from_secs(200),
+            bulk_churn_interval: Duration::from_secs(900),
+            deadline_churn_interval: Duration::from_secs(3300),
             phase_timeout: Duration::from_secs(60),
         }
     }
@@ -464,6 +486,10 @@ pub struct PeerFailureRecord {
 /// demotion actions, and restored targets cause promotion of fresh
 /// peers — achieving peer rotation without special-case churn logic.
 ///
+/// The [`ChurnRegime`] controls how aggressively targets are decreased
+/// during churn phases — syncing nodes use a more aggressive regime
+/// (see [`churn_decrease_active()`] and [`churn_decrease_established()`]).
+///
 /// In-flight sets track peers with pending asynchronous actions so
 /// that the governor does not emit duplicate actions on subsequent
 /// ticks.  Upstream: `inProgressPromoteCold`, `inProgressPromoteWarm`,
@@ -501,8 +527,25 @@ pub struct GovernorState {
     /// See [`ChurnPhase`] for the state machine description.
     pub churn_phase: ChurnPhase,
     /// When the last churn cycle completed (returned to [`ChurnPhase::Idle`]).
-    /// Used to pace churn cycles at `churn.bulk_churn_interval`.
+    /// Used to pace churn cycles at the mode-dependent interval.
     pub last_churn_cycle: Option<Instant>,
+    /// Current churn regime controlling target-decrease aggressiveness.
+    ///
+    /// Updated at each tick from `(ChurnMode, UseBootstrapPeers,
+    /// ConsensusMode)` via [`pick_churn_regime()`].  Defaults to
+    /// [`ChurnRegime::ChurnDefault`].
+    pub churn_regime: ChurnRegime,
+    /// Current fetch mode, used to select the churn cycle interval.
+    ///
+    /// Updated externally from ledger state judgement via
+    /// [`fetch_mode_from_judgement()`].  Defaults to
+    /// [`FetchMode::FetchModeBulkSync`] (syncing).
+    pub fetch_mode: FetchMode,
+    /// Maximum hot valency across all local-root groups.
+    ///
+    /// Used by regime-aware churn to floor the active target decrease.
+    /// Updated at each tick.
+    pub local_root_hot_target: usize,
     /// Peers that currently have an in-flight cold→warm promotion.
     /// Governor filters out duplicate promotions for these peers.
     ///
@@ -543,6 +586,9 @@ impl Default for GovernorState {
             churn: ChurnConfig::default(),
             churn_phase: ChurnPhase::Idle,
             last_churn_cycle: None,
+            churn_regime: ChurnRegime::ChurnDefault,
+            fetch_mode: FetchMode::FetchModeBulkSync,
+            local_root_hot_target: 0,
             in_flight_warm: BTreeSet::new(),
             in_flight_hot: BTreeSet::new(),
             in_flight_demote_warm: BTreeSet::new(),
@@ -718,12 +764,17 @@ impl GovernorState {
             self.in_progress_peer_share_reqs.saturating_sub(count);
     }
 
-    /// Return targets modified by the current churn phase.
+    /// Return targets modified by the current churn phase and regime.
     ///
     /// During [`ChurnPhase::DecreasedActive`], active targets are lowered
-    /// using [`churn_decrease()`].  During [`ChurnPhase::DecreasedEstablished`],
-    /// established targets are lowered.  During [`ChurnPhase::Idle`],
+    /// using the regime-aware [`churn_decrease_active()`].  During
+    /// [`ChurnPhase::DecreasedEstablished`], established targets are lowered
+    /// using [`churn_decrease_established()`].  During [`ChurnPhase::Idle`],
     /// targets are returned unchanged.
+    ///
+    /// The [`ChurnRegime`] stored in `self.churn_regime` controls how
+    /// aggressively targets are decreased — syncing nodes reduce more
+    /// aggressively to cycle through peers faster.
     ///
     /// This is the core mechanism by which the two-phase churn rotates
     /// peers: lowered targets cause the governor to emit demotion actions,
@@ -734,15 +785,30 @@ impl GovernorState {
             ChurnPhase::Idle => targets.clone(),
             ChurnPhase::DecreasedActive { .. } => {
                 let mut t = targets.clone();
-                t.target_active = churn_decrease(targets.target_active);
-                t.target_active_big_ledger = churn_decrease(targets.target_active_big_ledger);
+                t.target_active = churn_decrease_active(
+                    self.churn_regime,
+                    targets.target_active,
+                    self.local_root_hot_target,
+                );
+                t.target_active_big_ledger = churn_decrease_active(
+                    self.churn_regime,
+                    targets.target_active_big_ledger,
+                    0, // big-ledger has no local-root concept
+                );
                 t
             }
             ChurnPhase::DecreasedEstablished { .. } => {
                 let mut t = targets.clone();
-                t.target_established = churn_decrease(targets.target_established);
-                t.target_established_big_ledger =
-                    churn_decrease(targets.target_established_big_ledger);
+                t.target_established = churn_decrease_established(
+                    self.churn_regime,
+                    targets.target_established,
+                    targets.target_active,
+                );
+                t.target_established_big_ledger = churn_decrease_established(
+                    self.churn_regime,
+                    targets.target_established_big_ledger,
+                    targets.target_active_big_ledger,
+                );
                 t
             }
         }
@@ -756,13 +822,18 @@ impl GovernorState {
     /// phase has exceeded `phase_timeout`, advances to the next phase or
     /// completes the cycle.
     ///
+    /// The cycle interval depends on the current [`FetchMode`]:
+    /// `deadline_churn_interval` when near the tip,
+    /// `bulk_churn_interval` when syncing.
+    ///
     /// Reference: `peerChurnGovernor` loop in
     /// `Ouroboros.Network.PeerSelection.Churn`.
     fn advance_churn(&mut self, now: Instant) {
+        let interval = self.churn.interval_for_mode(self.fetch_mode);
         match self.churn_phase {
             ChurnPhase::Idle => {
                 let due = match self.last_churn_cycle {
-                    Some(last) => now.duration_since(last) >= self.churn.bulk_churn_interval,
+                    Some(last) => now.duration_since(last) >= interval,
                     None => true, // First cycle fires immediately.
                 };
                 if due {
@@ -786,14 +857,16 @@ impl GovernorState {
     /// Run a full governance pass with two-phase churn and failure
     /// filtering.
     ///
-    /// 1. Prunes fully-decayed failure records.
-    /// 2. Advances the churn state machine.
-    /// 3. Applies churn-phase target modifications (lowered targets
-    ///    during decrease phases cause demotion actions; restored
-    ///    targets cause promotions of fresh peers).
-    /// 4. Evaluates the full governor pass against effective targets,
+    /// 1. Updates `local_root_hot_target` from configured groups.
+    /// 2. Prunes fully-decayed failure records.
+    /// 3. Advances the churn state machine (using mode-dependent intervals).
+    /// 4. Applies churn-phase target modifications using the current
+    ///    [`ChurnRegime`] (lowered targets during decrease phases cause
+    ///    demotion actions; restored targets cause promotions of fresh
+    ///    peers).
+    /// 5. Evaluates the full governor pass against effective targets,
     ///    respecting the bootstrap-sensitive [`PeerSelectionMode`].
-    /// 5. Filters out promotions for backed-off or in-flight peers.
+    /// 6. Filters out promotions for backed-off or in-flight peers.
     pub fn tick(
         &mut self,
         registry: &PeerRegistry,
@@ -803,6 +876,12 @@ impl GovernorState {
         association: AssociationMode,
         now: Instant,
     ) -> Vec<GovernorAction> {
+        // Update local root hot target for regime-aware churn decreases.
+        self.local_root_hot_target = local_root_groups
+            .iter()
+            .map(|g| g.hot_valency as usize)
+            .max()
+            .unwrap_or(0);
         self.prune_decayed_failures(now);
         self.advance_churn(now);
         let effective_targets = self.apply_churn_to_targets(targets);
@@ -2033,6 +2112,372 @@ pub fn fetch_mode_from_judgement(judgement: LedgerStateJudgement) -> FetchMode {
 }
 
 // ---------------------------------------------------------------------------
+// Churn mode and regime
+// ---------------------------------------------------------------------------
+
+/// Churn scoring mode derived from the current fetch mode.
+///
+/// Upstream: `ChurnMode` in `Cardano.Network.Diffusion.Policies`.
+///
+/// This determines how hot-peer demotion scoring works during churn
+/// cycles:
+///
+/// * `Normal` — score by upstream header/block metrics (deadline mode:
+///   the node is near the tip, so latency matters).
+/// * `BulkSync` — score by bytes fetched (syncing mode: throughput
+///   matters more than latency).
+///
+/// Reference: `simpleChurnModePeerSelectionPolicy` in
+/// `Cardano.Network.Diffusion.Policies`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChurnMode {
+    /// Normal mode — score hot peers by header/block metrics.
+    ///
+    /// Active when `FetchMode::FetchModeDeadline`.
+    Normal,
+    /// Bulk-sync mode — score hot peers by bytes transferred.
+    ///
+    /// Active when `FetchMode::FetchModeBulkSync`.
+    BulkSync,
+}
+
+/// Derive the churn mode from the current fetch mode.
+///
+/// Upstream: `updateChurnMode` in `Cardano.Network.Diffusion.Policies`:
+///
+/// ```text
+/// PraosFetchMode FetchModeDeadline → ChurnModeNormal
+/// PraosFetchMode FetchModeBulkSync → ChurnModeBulkSync
+/// FetchModeGenesis                 → ChurnModeBulkSync
+/// ```
+pub fn churn_mode_from_fetch_mode(fetch: FetchMode) -> ChurnMode {
+    match fetch {
+        FetchMode::FetchModeDeadline => ChurnMode::Normal,
+        FetchMode::FetchModeBulkSync => ChurnMode::BulkSync,
+    }
+}
+
+/// Consensus mode for the node.
+///
+/// Upstream: `ConsensusMode` from `Ouroboros.Consensus.Genesis.Governor` —
+/// determines whether the node uses Genesis-mode extensions or plain Praos.
+///
+/// This affects churn regime selection: under `GenesisMode`, bulk-sync
+/// churn is always treated as `ChurnDefault` rather than a reduced
+/// regime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConsensusMode {
+    /// Plain Praos consensus (default for mainnet).
+    PraosMode,
+    /// Genesis consensus mode — uses additional peer selection rules for
+    /// initial chain synchronization.
+    GenesisMode,
+}
+
+/// Churn regime that controls the aggressiveness of target decreases
+/// during churn cycles.
+///
+/// Upstream: `ChurnRegime` in `Cardano.Network.Diffusion.Policies.Churn`:
+///
+/// | Regime                     | Effect on active peers | Effect on established peers |
+/// |----------------------------|------------------------|----------------------------|
+/// | `ChurnDefault`             | `churn_decrease(base)` — standard 20% | Standard decrease |
+/// | `ChurnPraosSync`           | `min(max(1, local_hot), base - 1)` | Capped decrease |
+/// | `ChurnBootstrapPraosSync`  | Same as PraosSync | Aggressive: `min(active, established - 1)` |
+///
+/// `ChurnBootstrapPraosSync` is the most aggressive — it tears down
+/// nearly all established connections to force a full re-evaluation,
+/// which is needed when bootstrap-peers mode is active during sync.
+///
+/// Reference: `pickChurnRegime` and `decreaseEstablished` in
+/// `Cardano.Network.Diffusion.Policies.Churn`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChurnRegime {
+    /// Default churn — standard 20% decrease for both active and
+    /// established targets.
+    ChurnDefault,
+    /// Praos sync churn — caps active decrease to preserve local root
+    /// hot target, established decrease capped similarly.
+    ChurnPraosSync,
+    /// Bootstrap Praos sync churn — aggressive established decrease to
+    /// force full re-evaluation during bootstrap peer syncing.
+    ChurnBootstrapPraosSync,
+}
+
+/// Derive the churn regime from the current modes and bootstrap configuration.
+///
+/// Upstream: `pickChurnRegime` in `Cardano.Network.Diffusion.Policies.Churn`:
+///
+/// ```text
+/// (ChurnModeNormal, _, _)                           → ChurnDefault
+/// (_, _, GenesisMode)                               → ChurnDefault
+/// (ChurnModeBulkSync, UseBootstrapPeers _, PraosMode) → ChurnBootstrapPraosSync
+/// (ChurnModeBulkSync, _, PraosMode)                 → ChurnPraosSync
+/// ```
+pub fn pick_churn_regime(
+    churn: ChurnMode,
+    use_bootstrap: &UseBootstrapPeers,
+    consensus: ConsensusMode,
+) -> ChurnRegime {
+    match (churn, consensus) {
+        (ChurnMode::Normal, _) => ChurnRegime::ChurnDefault,
+        (_, ConsensusMode::GenesisMode) => ChurnRegime::ChurnDefault,
+        (ChurnMode::BulkSync, ConsensusMode::PraosMode) => {
+            if use_bootstrap.is_enabled() {
+                ChurnRegime::ChurnBootstrapPraosSync
+            } else {
+                ChurnRegime::ChurnPraosSync
+            }
+        }
+    }
+}
+
+/// Compute the decreased active (hot) target under a churn regime.
+///
+/// Upstream: `decreaseActive` in `Cardano.Network.Diffusion.Policies.Churn`:
+///
+/// ```text
+/// ChurnDefault             → decrease base
+/// ChurnPraosSync           → min (max 1 localRootHotTarget) (base - 1)
+/// ChurnBootstrapPraosSync  → min (max 1 localRootHotTarget) (base - 1)
+/// ```
+///
+/// `local_root_hot_target` is the maximum hot valency across all local-root
+/// groups (upstream `localRootPeersHotTarget`).
+pub fn churn_decrease_active(
+    regime: ChurnRegime,
+    base: usize,
+    local_root_hot_target: usize,
+) -> usize {
+    match regime {
+        ChurnRegime::ChurnDefault => churn_decrease(base),
+        ChurnRegime::ChurnPraosSync | ChurnRegime::ChurnBootstrapPraosSync => {
+            if base == 0 {
+                return 0;
+            }
+            let floor = std::cmp::max(1, local_root_hot_target);
+            std::cmp::min(floor, base - 1)
+        }
+    }
+}
+
+/// Compute the decreased established (warm) target under a churn regime.
+///
+/// Upstream: `decreaseEstablished` in
+/// `Cardano.Network.Diffusion.Policies.Churn`:
+///
+/// ```text
+/// ChurnDefault             → decreaseWithMin n (base_est - base_active) + base_active
+///   where decreaseWithMin n v = max n (decrease v)
+/// ChurnPraosSync           → same as ChurnDefault, but n is capped
+/// ChurnBootstrapPraosSync  → min active (established - 1)
+/// ```
+///
+/// For simplicity we use the upstream formula: standard decrease is
+/// `decrease(established - active) + active` — the "warm only" portion
+/// shrinks, then active is re-added.  Bootstrap mode aggressively sets
+/// established to just above the current active count.
+pub fn churn_decrease_established(
+    regime: ChurnRegime,
+    established: usize,
+    active: usize,
+) -> usize {
+    match regime {
+        ChurnRegime::ChurnDefault | ChurnRegime::ChurnPraosSync => {
+            let warm_only = established.saturating_sub(active);
+            churn_decrease(warm_only) + active
+        }
+        ChurnRegime::ChurnBootstrapPraosSync => {
+            if established == 0 {
+                return 0;
+            }
+            std::cmp::min(active, established - 1)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Peer selection policy time constants
+// ---------------------------------------------------------------------------
+
+/// Configurable policy time constants for peer selection operations.
+///
+/// This groups the non-pick-function time constants from the upstream
+/// `PeerSelectionPolicy` record in
+/// `Ouroboros.Network.PeerSelection.Governor.Types`.  Default values
+/// follow `simplePeerSelectionPolicy` in
+/// `Ouroboros.Network.Diffusion.Policies`.
+///
+/// The seven `policyPick*` callback fields from upstream are not
+/// modeled here — they require a randomized `PickPolicy` abstraction
+/// that is orthogonal to these configurable time constants.
+#[derive(Clone, Debug)]
+pub struct PeerSelectionTimeouts {
+    /// Timeout for DNS resolution of public root peers.
+    ///
+    /// Upstream: `policyFindPublicRootTimeout` = 5 s.
+    pub find_public_root_timeout: Duration,
+    /// Maximum number of concurrent in-flight peer-sharing requests.
+    ///
+    /// Upstream: `policyMaxInProgressPeerShareReqs` = 2.
+    pub max_in_progress_peer_share_reqs: u32,
+    /// Minimum interval before re-requesting peer sharing from the same
+    /// peer.
+    ///
+    /// Upstream: `policyPeerShareRetryTime` = 900 s.
+    pub peer_share_retry_time: Duration,
+    /// How long to wait between peer-sharing requests to different peers
+    /// within a single batch.
+    ///
+    /// Upstream: `policyPeerShareBatchWaitTime` = 3 s.
+    pub peer_share_batch_wait_time: Duration,
+    /// Overall timeout for a single peer-sharing request round.
+    ///
+    /// Upstream: `policyPeerShareOverallTimeout` = 10 s.
+    pub peer_share_overall_timeout: Duration,
+    /// Delay after adding a shared peer before it becomes eligible for
+    /// promotion.
+    ///
+    /// Upstream: `policyPeerShareActivationDelay` = 300 s.
+    pub peer_share_activation_delay: Duration,
+    /// Maximum cold→warm connection retries before a non-protected peer
+    /// is forgotten.
+    ///
+    /// Upstream: `policyMaxConnectionRetries` = 5.
+    pub max_connection_retries: u32,
+    /// Time a peer must remain hot before its failure counter is cleared.
+    ///
+    /// Upstream: `policyClearFailCountDelay` = 120 s.
+    pub clear_fail_count_delay: Duration,
+}
+
+impl Default for PeerSelectionTimeouts {
+    /// Default values from upstream `simplePeerSelectionPolicy`.
+    fn default() -> Self {
+        Self {
+            find_public_root_timeout: Duration::from_secs(5),
+            max_in_progress_peer_share_reqs: 2,
+            peer_share_retry_time: Duration::from_secs(900),
+            peer_share_batch_wait_time: Duration::from_secs(3),
+            peer_share_overall_timeout: Duration::from_secs(10),
+            peer_share_activation_delay: Duration::from_secs(300),
+            max_connection_retries: 5,
+            clear_fail_count_delay: Duration::from_secs(120),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Connection manager counters
+// ---------------------------------------------------------------------------
+
+/// Counters tracking connection manager state across all peers.
+///
+/// This mirrors the upstream `ConnectionManagerCounters` from
+/// `Ouroboros.Network.ConnectionManager.Types`:
+///
+/// ```text
+/// data ConnectionManagerCounters = ConnectionManagerCounters {
+///     fullDuplexConns     :: !Int,
+///     duplexConns         :: !Int,
+///     unidirectionalConns :: !Int,
+///     inboundConns        :: !Int,
+///     outboundConns       :: !Int,
+///     terminatingConns    :: !Int
+///   }
+/// ```
+///
+/// In upstream Haskell, these are derived from a `ConnMap` of
+/// connection states via `connectionManagerStateToCounters`, which folds
+/// `connectionStateToCounters` over the map.  Since the Rust node does
+/// not yet model the full connection manager state machine (Reserved,
+/// Unnegotiated, Duplex, Inbound, Outbound, etc.), we derive an
+/// approximation from the [`PeerRegistry`]:
+///
+/// * `outbound_conns` = count of Warm + Hot peers (we initiate outbound).
+/// * `inbound_conns` = 0 (no inbound tracking yet).
+/// * `duplex_conns` = 0 (no duplex negotiation tracking yet).
+/// * `full_duplex_conns` = 0.
+/// * `unidirectional_conns` = `outbound_conns` (all outbound assumed uni).
+/// * `terminating_conns` = count of `PeerCooling` peers.
+///
+/// As the connection manager matures, these counters will be populated
+/// from actual connection states rather than the peer registry.
+///
+/// Reference: `Ouroboros.Network.ConnectionManager.Types`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ConnectionManagerCounters {
+    /// Connections in full-duplex state (both inbound and outbound active).
+    ///
+    /// Upstream: `fullDuplexConns`.
+    pub full_duplex_conns: usize,
+    /// Connections negotiated as duplex-capable (includes full-duplex).
+    ///
+    /// Upstream: `duplexConns`.
+    pub duplex_conns: usize,
+    /// Connections negotiated as unidirectional.
+    ///
+    /// Upstream: `unidirectionalConns`.
+    pub unidirectional_conns: usize,
+    /// Total inbound connections.
+    ///
+    /// Upstream: `inboundConns`.
+    pub inbound_conns: usize,
+    /// Total outbound connections.
+    ///
+    /// Upstream: `outboundConns`.
+    pub outbound_conns: usize,
+    /// Connections in the process of shutting down.
+    ///
+    /// Upstream: `terminatingConns`.
+    pub terminating_conns: usize,
+}
+
+impl ConnectionManagerCounters {
+    /// Derive approximate counters from the current peer registry.
+    ///
+    /// Since the Rust node does not yet model the full upstream connection
+    /// state machine, this provides a best-effort approximation:
+    ///
+    /// * Warm and Hot peers are counted as outbound + unidirectional.
+    /// * Cooling peers are counted as terminating.
+    /// * Inbound and duplex tracking require connection-manager support
+    ///   and will be zero until that is implemented.
+    pub fn from_registry(registry: &PeerRegistry) -> Self {
+        let mut counters = Self::default();
+        for (_addr, entry) in registry.iter() {
+            match entry.status {
+                PeerStatus::PeerWarm | PeerStatus::PeerHot => {
+                    counters.outbound_conns += 1;
+                    counters.unidirectional_conns += 1;
+                }
+                PeerStatus::PeerCooling => {
+                    counters.terminating_conns += 1;
+                }
+                PeerStatus::PeerCold => {}
+            }
+        }
+        counters
+    }
+}
+
+impl std::ops::Add for ConnectionManagerCounters {
+    type Output = Self;
+
+    /// Field-wise addition, matching the upstream `Semigroup` instance.
+    fn add(self, rhs: Self) -> Self {
+        Self {
+            full_duplex_conns: self.full_duplex_conns + rhs.full_duplex_conns,
+            duplex_conns: self.duplex_conns + rhs.duplex_conns,
+            unidirectional_conns: self.unidirectional_conns + rhs.unidirectional_conns,
+            inbound_conns: self.inbound_conns + rhs.inbound_conns,
+            outbound_conns: self.outbound_conns + rhs.outbound_conns,
+            terminating_conns: self.terminating_conns + rhs.terminating_conns,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2270,8 +2715,11 @@ mod tests {
         let eff = state.apply_churn_to_targets(&targets);
         // Active unchanged in this phase.
         assert_eq!(eff.target_active, 5);
-        assert_eq!(eff.target_established, churn_decrease(10));
-        assert_eq!(eff.target_established_big_ledger, churn_decrease(20));
+        // Established decrease uses upstream formula: decrease(warm_only) + active.
+        // warm_only = 10 - 5 = 5 → decrease(5) = 4 → 4 + 5 = 9.
+        assert_eq!(eff.target_established, 9);
+        // Big-ledger: warm_only = 20 - 0 = 20 → decrease(20) = 16 → 16 + 0 = 16.
+        assert_eq!(eff.target_established_big_ledger, 16);
     }
 
     #[test]
@@ -4224,5 +4672,371 @@ mod tests {
             fetch_mode_from_judgement(LedgerStateJudgement::Unavailable),
             FetchMode::FetchModeBulkSync,
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // ChurnMode / ChurnRegime tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn churn_mode_from_deadline_is_normal() {
+        assert_eq!(
+            churn_mode_from_fetch_mode(FetchMode::FetchModeDeadline),
+            ChurnMode::Normal,
+        );
+    }
+
+    #[test]
+    fn churn_mode_from_bulk_sync_is_bulk() {
+        assert_eq!(
+            churn_mode_from_fetch_mode(FetchMode::FetchModeBulkSync),
+            ChurnMode::BulkSync,
+        );
+    }
+
+    #[test]
+    fn churn_regime_normal_always_default() {
+        // ChurnModeNormal → ChurnDefault regardless of bootstrap/consensus.
+        assert_eq!(
+            pick_churn_regime(ChurnMode::Normal, &UseBootstrapPeers::DontUseBootstrapPeers, ConsensusMode::PraosMode),
+            ChurnRegime::ChurnDefault,
+        );
+        assert_eq!(
+            pick_churn_regime(ChurnMode::Normal, &UseBootstrapPeers::UseBootstrapPeers(vec![]), ConsensusMode::PraosMode),
+            ChurnRegime::ChurnDefault,
+        );
+        assert_eq!(
+            pick_churn_regime(ChurnMode::Normal, &UseBootstrapPeers::DontUseBootstrapPeers, ConsensusMode::GenesisMode),
+            ChurnRegime::ChurnDefault,
+        );
+    }
+
+    #[test]
+    fn churn_regime_genesis_mode_always_default() {
+        // GenesisMode → ChurnDefault even with BulkSync + bootstrap.
+        assert_eq!(
+            pick_churn_regime(ChurnMode::BulkSync, &UseBootstrapPeers::UseBootstrapPeers(vec![]), ConsensusMode::GenesisMode),
+            ChurnRegime::ChurnDefault,
+        );
+    }
+
+    #[test]
+    fn churn_regime_bulk_sync_no_bootstrap_is_praos_sync() {
+        assert_eq!(
+            pick_churn_regime(ChurnMode::BulkSync, &UseBootstrapPeers::DontUseBootstrapPeers, ConsensusMode::PraosMode),
+            ChurnRegime::ChurnPraosSync,
+        );
+    }
+
+    #[test]
+    fn churn_regime_bulk_sync_with_bootstrap_is_bootstrap_praos_sync() {
+        assert_eq!(
+            pick_churn_regime(ChurnMode::BulkSync, &UseBootstrapPeers::UseBootstrapPeers(vec![]), ConsensusMode::PraosMode),
+            ChurnRegime::ChurnBootstrapPraosSync,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Regime-aware churn decrease tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn churn_decrease_active_default_uses_standard() {
+        // ChurnDefault → churn_decrease(10) = 10 - max(1, 10/5) = 10 - 2 = 8.
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnDefault, 10, 0), 8);
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnDefault, 10, 5), 8);
+    }
+
+    #[test]
+    fn churn_decrease_active_praos_sync_caps_to_local_hot() {
+        // PraosSync → min(max(1, local_hot), base - 1).
+        // local_hot=3, base=10 → min(3, 9) = 3.
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnPraosSync, 10, 3), 3);
+        // local_hot=0, base=10 → min(max(1,0)=1, 9) = 1.
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnPraosSync, 10, 0), 1);
+    }
+
+    #[test]
+    fn churn_decrease_active_bootstrap_praos_same_as_praos() {
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 10, 3), 3);
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 10, 0), 1);
+    }
+
+    #[test]
+    fn churn_decrease_active_zero_stays_zero() {
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnDefault, 0, 0), 0);
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnPraosSync, 0, 0), 0);
+        assert_eq!(churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 0, 0), 0);
+    }
+
+    #[test]
+    fn churn_decrease_established_default_shrinks_warm_portion() {
+        // est=10, active=5 → warm_only=5, decrease(5)=4, result=4+5=9.
+        assert_eq!(churn_decrease_established(ChurnRegime::ChurnDefault, 10, 5), 9);
+        // est=10, active=8 → warm_only=2, decrease(2)=1, result=1+8=9.
+        assert_eq!(churn_decrease_established(ChurnRegime::ChurnDefault, 10, 8), 9);
+    }
+
+    #[test]
+    fn churn_decrease_established_praos_sync_same_as_default() {
+        assert_eq!(churn_decrease_established(ChurnRegime::ChurnPraosSync, 10, 5), 9);
+    }
+
+    #[test]
+    fn churn_decrease_established_bootstrap_aggressive() {
+        // BootstrapPraosSync → min(active, established - 1).
+        // est=10, active=5 → min(5, 9) = 5.
+        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 10, 5), 5);
+        // est=10, active=9 → min(9, 9) = 9.
+        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 10, 9), 9);
+        // est=3, active=1 → min(1, 2) = 1.
+        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 3, 1), 1);
+    }
+
+    #[test]
+    fn churn_decrease_established_zero_stays_zero() {
+        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 0, 0), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Regime-aware apply_churn_to_targets tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn churn_targets_praos_sync_caps_active_decrease() {
+        let state = GovernorState {
+            churn_phase: ChurnPhase::DecreasedActive { started: Instant::now() },
+            churn_regime: ChurnRegime::ChurnPraosSync,
+            local_root_hot_target: 3,
+            ..Default::default()
+        };
+        let targets = GovernorTargets {
+            target_active: 10,
+            target_established: 20,
+            ..Default::default()
+        };
+        let eff = state.apply_churn_to_targets(&targets);
+        // PraosSync: min(max(1, 3), 10-1) = min(3, 9) = 3.
+        assert_eq!(eff.target_active, 3);
+        // Established unchanged (only active phase).
+        assert_eq!(eff.target_established, 20);
+    }
+
+    #[test]
+    fn churn_targets_bootstrap_aggressive_established() {
+        let state = GovernorState {
+            churn_phase: ChurnPhase::DecreasedEstablished { started: Instant::now() },
+            churn_regime: ChurnRegime::ChurnBootstrapPraosSync,
+            ..Default::default()
+        };
+        let targets = GovernorTargets {
+            target_active: 5,
+            target_established: 10,
+            target_active_big_ledger: 2,
+            target_established_big_ledger: 6,
+            ..Default::default()
+        };
+        let eff = state.apply_churn_to_targets(&targets);
+        // BootstrapPraosSync: min(active, established - 1).
+        // Regular: min(5, 9) = 5.
+        assert_eq!(eff.target_established, 5);
+        // Big-ledger: min(2, 5) = 2.
+        assert_eq!(eff.target_established_big_ledger, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // FetchMode-dependent churn interval tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn churn_config_interval_for_bulk_sync() {
+        let config = ChurnConfig::default();
+        assert_eq!(
+            config.interval_for_mode(FetchMode::FetchModeBulkSync),
+            Duration::from_secs(900),
+        );
+    }
+
+    #[test]
+    fn churn_config_interval_for_deadline() {
+        let config = ChurnConfig::default();
+        assert_eq!(
+            config.interval_for_mode(FetchMode::FetchModeDeadline),
+            Duration::from_secs(3300),
+        );
+    }
+
+    #[test]
+    fn deadline_mode_uses_longer_churn_interval() {
+        let reg = PeerRegistry::default();
+        let targets = GovernorTargets::default();
+        let mut state = GovernorState {
+            churn: ChurnConfig {
+                bulk_churn_interval: Duration::from_secs(100),
+                deadline_churn_interval: Duration::from_secs(500),
+                phase_timeout: Duration::from_secs(10),
+            },
+            fetch_mode: FetchMode::FetchModeDeadline,
+            ..Default::default()
+        };
+        let t0 = Instant::now();
+
+        // Complete a cycle fast.
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0);
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(11));
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(22));
+        assert_eq!(state.churn_phase, ChurnPhase::Idle);
+
+        // At 200s after cycle end (< 500s deadline interval): stays Idle.
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(222));
+        assert_eq!(state.churn_phase, ChurnPhase::Idle);
+
+        // At 501s after cycle end: new cycle starts.
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(523));
+        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+    }
+
+    #[test]
+    fn bulk_sync_mode_uses_shorter_churn_interval() {
+        let reg = PeerRegistry::default();
+        let targets = GovernorTargets::default();
+        let mut state = GovernorState {
+            churn: ChurnConfig {
+                bulk_churn_interval: Duration::from_secs(100),
+                deadline_churn_interval: Duration::from_secs(500),
+                phase_timeout: Duration::from_secs(10),
+            },
+            fetch_mode: FetchMode::FetchModeBulkSync,
+            ..Default::default()
+        };
+        let t0 = Instant::now();
+
+        // Complete a cycle.
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0);
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(11));
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(22));
+        assert_eq!(state.churn_phase, ChurnPhase::Idle);
+
+        // At 101s after cycle end (> 100s bulk interval): new cycle starts.
+        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(123));
+        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // PeerSelectionTimeouts tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn peer_selection_timeouts_defaults() {
+        let t = PeerSelectionTimeouts::default();
+        assert_eq!(t.find_public_root_timeout, Duration::from_secs(5));
+        assert_eq!(t.max_in_progress_peer_share_reqs, 2);
+        assert_eq!(t.peer_share_retry_time, Duration::from_secs(900));
+        assert_eq!(t.peer_share_batch_wait_time, Duration::from_secs(3));
+        assert_eq!(t.peer_share_overall_timeout, Duration::from_secs(10));
+        assert_eq!(t.peer_share_activation_delay, Duration::from_secs(300));
+        assert_eq!(t.max_connection_retries, 5);
+        assert_eq!(t.clear_fail_count_delay, Duration::from_secs(120));
+    }
+
+    // -----------------------------------------------------------------------
+    // ConnectionManagerCounters tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn connection_counters_empty_registry() {
+        let reg = PeerRegistry::default();
+        let counters = ConnectionManagerCounters::from_registry(&reg);
+        assert_eq!(counters, ConnectionManagerCounters::default());
+    }
+
+    #[test]
+    fn connection_counters_outbound_warm_and_hot() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
+            (3, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerCold),
+        ]);
+        let counters = ConnectionManagerCounters::from_registry(&reg);
+        assert_eq!(counters.outbound_conns, 2);
+        assert_eq!(counters.unidirectional_conns, 2);
+        assert_eq!(counters.terminating_conns, 0);
+        assert_eq!(counters.inbound_conns, 0);
+    }
+
+    #[test]
+    fn connection_counters_terminating_cooling() {
+        let mut reg = PeerRegistry::default();
+        reg.insert_source(addr(1), PeerSource::PeerSourcePublicRoot);
+        reg.set_status(addr(1), PeerStatus::PeerCooling);
+
+        let counters = ConnectionManagerCounters::from_registry(&reg);
+        assert_eq!(counters.terminating_conns, 1);
+        assert_eq!(counters.outbound_conns, 0);
+    }
+
+    #[test]
+    fn connection_counters_add_is_fieldwise() {
+        let a = ConnectionManagerCounters {
+            full_duplex_conns: 1,
+            duplex_conns: 2,
+            unidirectional_conns: 3,
+            inbound_conns: 4,
+            outbound_conns: 5,
+            terminating_conns: 6,
+        };
+        let b = ConnectionManagerCounters {
+            full_duplex_conns: 10,
+            duplex_conns: 20,
+            unidirectional_conns: 30,
+            inbound_conns: 40,
+            outbound_conns: 50,
+            terminating_conns: 60,
+        };
+        let sum = a + b;
+        assert_eq!(sum.full_duplex_conns, 11);
+        assert_eq!(sum.duplex_conns, 22);
+        assert_eq!(sum.unidirectional_conns, 33);
+        assert_eq!(sum.inbound_conns, 44);
+        assert_eq!(sum.outbound_conns, 55);
+        assert_eq!(sum.terminating_conns, 66);
+    }
+
+    // -----------------------------------------------------------------------
+    // ConsensusMode tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn consensus_mode_eq() {
+        assert_eq!(ConsensusMode::PraosMode, ConsensusMode::PraosMode);
+        assert_eq!(ConsensusMode::GenesisMode, ConsensusMode::GenesisMode);
+        assert_ne!(ConsensusMode::PraosMode, ConsensusMode::GenesisMode);
+    }
+
+    // -----------------------------------------------------------------------
+    // tick() updates local_root_hot_target
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tick_updates_local_root_hot_target() {
+        let reg = PeerRegistry::default();
+        let targets = GovernorTargets::default();
+        let groups = vec![
+            LocalRootTargets {
+                peers: vec![addr(1)],
+                hot_valency: 3,
+                warm_valency: 5,
+                trustable: true,
+            },
+            LocalRootTargets {
+                peers: vec![addr(2)],
+                hot_valency: 7,
+                warm_valency: 10,
+                trustable: false,
+            },
+        ];
+        let mut state = GovernorState::default();
+        let _ = state.tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
+        assert_eq!(state.local_root_hot_target, 7);
     }
 }

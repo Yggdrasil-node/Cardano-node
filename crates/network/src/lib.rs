@@ -9,6 +9,8 @@
 pub mod bearer;
 /// BlockFetch client driver — typed, state-machine-correct protocol loop.
 pub mod blockfetch_client;
+/// Connection manager types and state machine.
+pub mod connection;
 /// ChainSync client driver — typed, state-machine-correct protocol loop.
 pub mod chainsync_client;
 /// Handshake negotiation types and state machine.
@@ -193,11 +195,14 @@ pub use txsubmission_server::{
 
 // -- Governor re-exports ------------------------------------------------------
 pub use governor::{
-    AssociationMode, ChurnConfig, ChurnPhase, FetchMode, GovernorAction, GovernorState,
-    GovernorTargets, LocalRootTargets, NodePeerSharing, OutboundConnectionsState,
-    PeerFailureRecord, PeerSelectionCounters, PeerSelectionMode, churn_decrease,
-    compute_association_mode, compute_outbound_connections_state,
-    enforce_local_root_valency,
+    AssociationMode, ChurnConfig, ChurnMode, ChurnPhase, ChurnRegime,
+    ConnectionManagerCounters, ConsensusMode, FetchMode, GovernorAction,
+    GovernorState, GovernorTargets, LocalRootTargets, NodePeerSharing,
+    OutboundConnectionsState, PeerFailureRecord, PeerSelectionCounters,
+    PeerSelectionMode, PeerSelectionTimeouts,
+    churn_decrease, churn_decrease_active, churn_decrease_established,
+    churn_mode_from_fetch_mode, compute_association_mode,
+    compute_outbound_connections_state, enforce_local_root_valency,
     evaluate_cold_to_warm_big_ledger_promotions, evaluate_cold_to_warm_promotions,
     evaluate_forget_cold_peers, evaluate_forget_failed_peers,
     evaluate_hot_to_warm_big_ledger_demotions,
@@ -207,8 +212,8 @@ pub use governor::{
     evaluate_warm_to_cold_demotions, evaluate_warm_to_hot_big_ledger_promotions,
     evaluate_warm_to_hot_promotions, fetch_mode_from_judgement,
     filter_sensitive_promotions, governor_tick,
-    has_only_trustable_established_peers, is_node_able_to_make_progress, peer_selection_mode,
-    requires_bootstrap_peers,
+    has_only_trustable_established_peers, is_node_able_to_make_progress,
+    peer_selection_mode, pick_churn_regime, requires_bootstrap_peers,
 };
 
 // -- PeerSharing client re-exports --------------------------------------------
@@ -217,4 +222,14 @@ pub use peersharing_client::{PeerSharingClient, PeerSharingClientError};
 // -- PeerSharing server re-exports --------------------------------------------
 pub use peersharing_server::{
     PeerSharingServer, PeerSharingServerError, PeerSharingServerRequest,
+};
+
+// -- Connection manager re-exports --------------------------------------------
+pub use connection::{
+    AbstractState, AcceptedConnectionsLimit, ConnStateId, ConnectionId,
+    ConnectionManagerError, ConnectionState, ConnectionType, DataFlow,
+    DemotedToColdRemoteTr, InboundGovernorCounters, InboundGovernorEvent,
+    MaybeUnknown, OperationResult, Provenance, RemoteSt, ResponderCounters,
+    Transition, TimeoutExpired, connection_state_to_counters,
+    verify_abstract_transition,
 };
