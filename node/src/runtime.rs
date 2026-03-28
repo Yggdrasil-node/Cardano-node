@@ -30,10 +30,11 @@ use yggdrasil_network::{
     LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
     NodePeerSharing, PeerConnection, PeerError, PeerRegistry, PeerSelectionMode,
     PeerSelectionTimeouts, PeerSharingClient, PeerSource, PeerStatus,
-    AssociationMode,
+    AssociationMode, PeerStateAction,
     PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
     RootPeerProviderState, TopologyConfig, TxSubmissionClient,
     TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
+    governor_action_to_peer_state_action,
     peer_attempt_state, reconcile_ledger_peer_registry_with_policy,
     refresh_root_peer_state_and_registry, resolve_peer_access_points,
 };
@@ -987,118 +988,140 @@ pub async fn run_governor_loop<I, V, L, F>(
 
                 for action in actions {
                     let peer = governor_action_peer(&action);
-                    let changed = match action {
-                        GovernorAction::PromoteToWarm(peer) => {
-                            governor_state.mark_in_flight_warm(peer);
-                            if peer_manager
-                                .promote_to_warm(&node_config, peer, &mut governor_state, &tracer)
-                                .await
-                            {
+                    let changed = if let Some(peer_state_action) =
+                        governor_action_to_peer_state_action(&action)
+                    {
+                        match peer_state_action {
+                            PeerStateAction::EstablishConnection(peer) => {
+                                governor_state.mark_in_flight_warm(peer);
+                                if peer_manager
+                                    .promote_to_warm(
+                                        &node_config,
+                                        peer,
+                                        &mut governor_state,
+                                        &tracer,
+                                    )
+                                    .await
+                                {
+                                    let mut registry = peer_registry
+                                        .write()
+                                        .expect("peer registry lock poisoned");
+                                    let changed =
+                                        registry.set_status(peer, PeerStatus::PeerWarm);
+                                    governor_state.clear_in_flight_warm(&peer);
+                                    changed
+                                } else {
+                                    governor_state.clear_in_flight_warm(&peer);
+                                    false
+                                }
+                            }
+                            PeerStateAction::ActivateConnection(peer) => {
+                                governor_state.mark_in_flight_hot(peer);
+                                if peer_manager.promote_to_hot(peer) {
+                                    let mut registry = peer_registry
+                                        .write()
+                                        .expect("peer registry lock poisoned");
+                                    let changed =
+                                        registry.set_status(peer, PeerStatus::PeerHot);
+                                    governor_state.clear_in_flight_hot(&peer);
+                                    changed
+                                } else {
+                                    governor_state.clear_in_flight_hot(&peer);
+                                    false
+                                }
+                            }
+                            PeerStateAction::DeactivateConnection(peer) => {
+                                governor_state.mark_in_flight_demote_hot(peer);
+                                peer_manager.demote_to_warm(peer);
+                                governor_state.clear_in_flight_demote_hot(&peer);
+                                governor_state.clear_in_flight_hot(&peer);
                                 let mut registry = peer_registry
                                     .write()
                                     .expect("peer registry lock poisoned");
-                                let changed = registry.set_status(peer, PeerStatus::PeerWarm);
+                                registry.set_status(peer, PeerStatus::PeerWarm)
+                            }
+                            PeerStateAction::CloseConnection(peer) => {
+                                governor_state.mark_in_flight_demote_warm(peer);
+                                let connection_changed = peer_manager.demote_to_cold(peer);
+                                governor_state.clear_in_flight_demote_warm(&peer);
                                 governor_state.clear_in_flight_warm(&peer);
-                                changed
-                            } else {
-                                governor_state.clear_in_flight_warm(&peer);
-                                false
+                                governor_state.clear_in_flight_hot(&peer);
+                                let mut registry = peer_registry
+                                    .write()
+                                    .expect("peer registry lock poisoned");
+                                registry.set_status(peer, PeerStatus::PeerCold)
+                                    || connection_changed
                             }
                         }
-                        GovernorAction::PromoteToHot(peer) => {
-                            governor_state.mark_in_flight_hot(peer);
-                            if peer_manager.promote_to_hot(peer) {
+                    } else {
+                        match action {
+                            GovernorAction::ForgetPeer(peer) => {
+                                governor_state.clear_in_flight_warm(&peer);
+                                governor_state.clear_in_flight_hot(&peer);
                                 let mut registry = peer_registry
                                     .write()
                                     .expect("peer registry lock poisoned");
-                                let changed = registry.set_status(peer, PeerStatus::PeerHot);
-                                governor_state.clear_in_flight_hot(&peer);
-                                changed
-                            } else {
-                                governor_state.clear_in_flight_hot(&peer);
+                                registry.remove(&peer)
+                            }
+                            GovernorAction::ShareRequest(_peer) => {
+                                // Peer sharing request — increment the in-progress
+                                // counter.  Actual PeerSharing mini-protocol dispatch
+                                // will be wired in a future slice.
+                                governor_state.mark_peer_share_sent();
                                 false
                             }
-                        }
-                        GovernorAction::DemoteToWarm(peer) => {
-                            governor_state.mark_in_flight_demote_hot(peer);
-                            peer_manager.demote_to_warm(peer);
-                            governor_state.clear_in_flight_demote_hot(&peer);
-                            governor_state.clear_in_flight_hot(&peer);
-                            let mut registry = peer_registry
-                                .write()
-                                .expect("peer registry lock poisoned");
-                            registry.set_status(peer, PeerStatus::PeerWarm)
-                        }
-                        GovernorAction::DemoteToCold(peer) => {
-                            governor_state.mark_in_flight_demote_warm(peer);
-                            let connection_changed = peer_manager.demote_to_cold(peer);
-                            governor_state.clear_in_flight_demote_warm(&peer);
-                            governor_state.clear_in_flight_warm(&peer);
-                            governor_state.clear_in_flight_hot(&peer);
-                            let mut registry = peer_registry
-                                .write()
-                                .expect("peer registry lock poisoned");
-                            registry.set_status(peer, PeerStatus::PeerCold) || connection_changed
-                        }
-                        GovernorAction::ForgetPeer(peer) => {
-                            governor_state.clear_in_flight_warm(&peer);
-                            governor_state.clear_in_flight_hot(&peer);
-                            let mut registry = peer_registry
-                                .write()
-                                .expect("peer registry lock poisoned");
-                            registry.remove(&peer)
-                        }
-                        GovernorAction::ShareRequest(_peer) => {
-                            // Peer sharing request — increment the in-progress
-                            // counter.  Actual PeerSharing mini-protocol dispatch
-                            // will be wired in a future slice.
-                            governor_state.mark_peer_share_sent();
-                            false
-                        }
-                        GovernorAction::RequestPublicRoots => {
-                            governor_state.mark_public_root_request_started();
-                            let refresh_now = Instant::now();
-                            let changed = {
+                            GovernorAction::RequestPublicRoots => {
+                                governor_state.mark_public_root_request_started();
+                                let refresh_now = Instant::now();
+                                let changed = {
+                                    let mut registry = peer_registry
+                                        .write()
+                                        .expect("peer registry lock poisoned");
+                                    root_sources.refresh(&mut registry, &tracer)
+                                };
+                                governor_state.complete_public_root_request(
+                                    refresh_now,
+                                    changed,
+                                    Duration::from_secs(60),
+                                );
+                                changed
+                            }
+                            GovernorAction::RequestBigLedgerPeers => {
+                                governor_state.mark_big_ledger_request_started();
+                                let refresh_now = Instant::now();
+                                let changed = {
+                                    let mut registry = peer_registry
+                                        .write()
+                                        .expect("peer registry lock poisoned");
+                                    refresh_ledger_peer_sources_from_chain_db(
+                                        &mut registry,
+                                        &chain_db,
+                                        &base_ledger_state,
+                                        &topology,
+                                        &tracer,
+                                    )
+                                };
+                                governor_state.complete_big_ledger_request(
+                                    refresh_now,
+                                    changed,
+                                    Duration::from_secs(60),
+                                );
+                                changed
+                            }
+                            GovernorAction::AdoptInboundPeer(peer) => {
+                                governor_state.mark_inbound_peer_pick(Instant::now());
                                 let mut registry = peer_registry
                                     .write()
                                     .expect("peer registry lock poisoned");
-                                root_sources.refresh(&mut registry, &tracer)
-                            };
-                            governor_state.complete_public_root_request(
-                                refresh_now,
-                                changed,
-                                Duration::from_secs(60),
-                            );
-                            changed
-                        }
-                        GovernorAction::RequestBigLedgerPeers => {
-                            governor_state.mark_big_ledger_request_started();
-                            let refresh_now = Instant::now();
-                            let changed = {
-                                let mut registry = peer_registry
-                                    .write()
-                                    .expect("peer registry lock poisoned");
-                                refresh_ledger_peer_sources_from_chain_db(
-                                    &mut registry,
-                                    &chain_db,
-                                    &base_ledger_state,
-                                    &topology,
-                                    &tracer,
+                                registry.insert_source(
+                                    peer,
+                                    PeerSource::PeerSourcePeerShare,
                                 )
-                            };
-                            governor_state.complete_big_ledger_request(
-                                refresh_now,
-                                changed,
-                                Duration::from_secs(60),
-                            );
-                            changed
-                        }
-                        GovernorAction::AdoptInboundPeer(peer) => {
-                            governor_state.mark_inbound_peer_pick(Instant::now());
-                            let mut registry = peer_registry
-                                .write()
-                                .expect("peer registry lock poisoned");
-                            registry.insert_source(peer, PeerSource::PeerSourcePeerShare)
+                            }
+                            GovernorAction::PromoteToWarm(_)
+                            | GovernorAction::PromoteToHot(_)
+                            | GovernorAction::DemoteToWarm(_)
+                            | GovernorAction::DemoteToCold(_) => false,
                         }
                     };
                     tracer.trace_runtime(

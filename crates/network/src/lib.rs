@@ -75,6 +75,9 @@ pub mod peersharing_server;
 /// control messages, rate limiting, error policy, and peer connection handles.
 pub mod diffusion;
 
+/// Governor-to-runtime peer state action bridge helpers.
+pub mod peer_state_actions;
+
 // -- Node-to-Client (NtC) server drivers ----------------------------------
 
 /// LocalTxSubmission server driver — NtC transaction intake from local clients.
@@ -266,4 +269,10 @@ pub use diffusion::{
     PeerConnectionHandle, PeerStateAction, ProtocolTemperature, RateLimitDecision,
     RepromoteDelay, RethrowPolicy, TemperatureBundle,
     ntn_ouroboros_bundle, ntc_ouroboros_bundle, rate_limit_decision,
+};
+
+// -- Peer state actions bridge re-exports ------------------------------------
+pub use peer_state_actions::{
+    PeerStateActions, governor_action_to_peer_state_action,
+    governor_actions_to_peer_state_actions,
 };
