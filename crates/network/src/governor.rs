@@ -468,6 +468,196 @@ pub struct PeerFailureRecord {
     pub last_failure: Instant,
 }
 
+// ---------------------------------------------------------------------------
+// Pick policy — randomized peer selection (upstream `PickPolicy`)
+// ---------------------------------------------------------------------------
+
+/// Minimal xorshift64 PRNG for deterministic peer shuffling.
+///
+/// Upstream uses `StdGen` from `System.Random` in Haskell; we use a
+/// lightweight embedded PRNG to avoid adding a `rand` crate dependency.
+/// The only requirement is uniform-enough output for peer selection —
+/// cryptographic quality is not needed here.
+#[derive(Clone, Debug)]
+pub struct Xorshift64 {
+    state: u64,
+}
+
+impl Xorshift64 {
+    /// Create a new PRNG from a seed.  A zero seed is silently replaced
+    /// with 1 to avoid the degenerate all-zeros state.
+    pub fn new(seed: u64) -> Self {
+        Self {
+            state: if seed == 0 { 1 } else { seed },
+        }
+    }
+
+    /// Generate the next pseudo-random u64.
+    pub fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        x
+    }
+
+    /// Generate a pseudo-random u32 in `[0, bound)`.
+    fn next_bounded(&mut self, bound: u32) -> u32 {
+        (self.next_u64() % u64::from(bound)) as u32
+    }
+
+    /// Fisher-Yates partial shuffle: randomly permute the first `count`
+    /// elements of `slice` and truncate to those elements.
+    ///
+    /// This is equivalent to upstream's `addRand` + sort-by-weight + take N:
+    /// selecting `count` uniformly random elements without replacement.
+    pub fn partial_shuffle<T>(&mut self, slice: &mut Vec<T>, count: usize) {
+        let n = slice.len();
+        let k = count.min(n);
+        for i in 0..k {
+            let j = i + self.next_bounded((n - i) as u32) as usize;
+            slice.swap(i, j);
+        }
+        slice.truncate(k);
+    }
+}
+
+/// Randomized peer selection policy.
+///
+/// Wraps an [`Xorshift64`] PRNG and provides the `pick` operation that
+/// the upstream Haskell governor uses in all seven `PickPolicy` callbacks.
+///
+/// Upstream reference: `Ouroboros.Network.PeerSelection.Simple` —
+/// `simplePeerSelectionPolicy` creates seven `PickPolicy` callbacks
+/// that all call `addRand :: StdGen → Set peer → Map peer Word32`
+/// to assign random weights, sort by weight, and take the first N
+/// peers.  `hotDemotionPolicy` additionally adds `upstreamyness +
+/// fetchyness` score atop the random weight.
+///
+/// Construct with [`PickPolicy::new`] for production or
+/// [`PickPolicy::deterministic`] for reproducible tests.
+#[derive(Clone, Debug)]
+pub struct PickPolicy {
+    rng: Xorshift64,
+}
+
+impl PickPolicy {
+    /// Create a new randomized pick policy from a seed.
+    pub fn new(seed: u64) -> Self {
+        Self {
+            rng: Xorshift64::new(seed),
+        }
+    }
+
+    /// Create a deterministic pick policy suitable for tests.
+    ///
+    /// Identical to `new` but named for intent clarity; the seed `42`
+    /// produces a fixed, reproducible selection sequence.
+    pub fn deterministic(seed: u64) -> Self {
+        Self::new(seed)
+    }
+
+    /// Select up to `count` peers randomly from `candidates`.
+    ///
+    /// Mirrors upstream `pickPeers :: StdGen → Int → Set peeraddr →
+    /// (StdGen, Set peeraddr)`.  The candidates Vec is consumed; the
+    /// returned Vec contains the randomly selected subset.
+    pub fn pick(&mut self, count: usize, mut candidates: Vec<SocketAddr>) -> Vec<SocketAddr> {
+        self.rng.partial_shuffle(&mut candidates, count);
+        candidates
+    }
+
+    /// Select up to `count` peers from `candidates`, scoring each peer
+    /// with an optional metric weight before random tiebreaking.
+    ///
+    /// Higher-scored peers are preferred (placed earlier).  Peers with
+    /// equal scores are randomized among themselves.  This implements
+    /// the upstream `hotDemotionPolicy` where `upstreamyness + fetchyness`
+    /// is added to the random weight.
+    pub fn pick_scored(
+        &mut self,
+        count: usize,
+        candidates: Vec<SocketAddr>,
+        scores: &PeerMetrics,
+    ) -> Vec<SocketAddr> {
+        // Assign (score, random_weight) per candidate, sort descending by
+        // score then by random_weight (higher = preferred).
+        let mut weighted: Vec<(SocketAddr, u64, u64)> = candidates
+            .into_iter()
+            .map(|addr| {
+                let score = scores.combined_score(&addr);
+                let rand_weight = self.rng.next_u64();
+                (addr, score, rand_weight)
+            })
+            .collect();
+        weighted.sort_by(|a, b| {
+            b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2))
+        });
+        weighted.truncate(count);
+        weighted.into_iter().map(|(addr, _, _)| addr).collect()
+    }
+}
+
+/// Peer performance metrics for scoring hot peers during demotion.
+///
+/// Tracks two independent metrics per peer:
+///
+/// * **Upstreamyness** — how often a peer was the first to present a
+///   new header via ChainSync (header tip timeliness).
+/// * **Fetchyness** — how often a peer was the first to deliver a
+///   requested block via BlockFetch (data delivery timeliness).
+///
+/// Both are maintained as bounded-window counters: each slot where the
+/// peer "won" increments the score, and scores are periodically decayed
+/// by the runtime (not by the governor itself).
+///
+/// Upstream reference: `Ouroboros.Network.PeerSelection.PeerMetric` —
+/// `SlotMetric` with `PeerMetricsConfiguration.maxEntriesToTrack`
+/// representing a bounded-size priority queue keyed by `SlotNo`.
+///
+/// The governor only reads these metrics via [`PeerMetrics::combined_score`]
+/// when scoring hot peers for demotion (`hotDemotionPolicy`).  Runtime
+/// code updates the metrics when ChainSync/BlockFetch observations arrive.
+#[derive(Clone, Debug, Default)]
+pub struct PeerMetrics {
+    /// Per-peer upstreamyness score (header tip timeliness).
+    pub upstreamyness: BTreeMap<SocketAddr, u64>,
+    /// Per-peer fetchyness score (block delivery timeliness).
+    pub fetchyness: BTreeMap<SocketAddr, u64>,
+}
+
+impl PeerMetrics {
+    /// Return the combined score for a peer (`upstreamyness + fetchyness`).
+    ///
+    /// This matches the upstream `hotDemotionPolicy` which adds
+    /// `upstreamyness + fetchyness` to the random weight when scoring
+    /// hot peers for demotion.  Higher score means the peer is more
+    /// productive and should be kept hot longer.
+    pub fn combined_score(&self, addr: &SocketAddr) -> u64 {
+        self.upstreamyness.get(addr).copied().unwrap_or(0)
+            + self.fetchyness.get(addr).copied().unwrap_or(0)
+    }
+
+    /// Record an upstreamyness observation: the peer was first to
+    /// present a header at the given slot.
+    pub fn record_upstreamyness(&mut self, addr: SocketAddr, _slot: u64) {
+        *self.upstreamyness.entry(addr).or_insert(0) += 1;
+    }
+
+    /// Record a fetchyness observation: the peer was first to deliver
+    /// a block at the given slot.
+    pub fn record_fetchyness(&mut self, addr: SocketAddr, _slot: u64) {
+        *self.fetchyness.entry(addr).or_insert(0) += 1;
+    }
+
+    /// Remove metrics for a peer that has been forgotten.
+    pub fn remove_peer(&mut self, addr: &SocketAddr) {
+        self.upstreamyness.remove(addr);
+        self.fetchyness.remove(addr);
+    }
+}
+
 /// Mutable governor state carried across ticks.
 ///
 /// Tracks connection failures with time-based backoff and a two-phase
@@ -573,6 +763,23 @@ pub struct GovernorState {
     /// Upstream: `policyMaxInProgressPeerShareReqs` in
     /// `PeerSelectionPolicy`.
     pub max_in_progress_peer_share_reqs: u32,
+    /// Randomized peer selection policy used by all evaluation functions
+    /// to select subsets of candidate peers.
+    ///
+    /// Upstream: the seven `PickPolicy` callbacks in
+    /// `simplePeerSelectionPolicy` all use `StdGen` from `System.Random`.
+    /// Here, each evaluation function calls `pick.pick()` or
+    /// `pick.pick_scored()` instead of deterministic `.take(N)`.
+    pub pick: PickPolicy,
+    /// Performance metrics used for scoring hot peers during demotion.
+    ///
+    /// Updated by runtime when ChainSync/BlockFetch observations
+    /// arrive; consumed by `evaluate_hot_to_warm_demotions()` via
+    /// `pick_scored()`.
+    ///
+    /// Upstream: `PeerMetric` in
+    /// `Ouroboros.Network.PeerSelection.PeerMetric`.
+    pub metrics: PeerMetrics,
 }
 
 impl Default for GovernorState {
@@ -595,6 +802,8 @@ impl Default for GovernorState {
             in_flight_demote_hot: BTreeSet::new(),
             in_progress_peer_share_reqs: 0,
             max_in_progress_peer_share_reqs: 2,
+            pick: PickPolicy::new(0xCAFE_BABE_DEAD_BEEF),
+            metrics: PeerMetrics::default(),
         }
     }
 }
@@ -885,7 +1094,23 @@ impl GovernorState {
         self.prune_decayed_failures(now);
         self.advance_churn(now);
         let effective_targets = self.apply_churn_to_targets(targets);
-        let actions = governor_tick(registry, &effective_targets, local_root_groups, mode, association, Some(self), now);
+        // Clone metrics snapshot to avoid a borrow conflict: we need
+        // `&GovernorState` (immutable) for failure/in-flight checks and
+        // `&mut PickPolicy` (mutable) for randomized selection.
+        let metrics_snapshot = self.metrics.clone();
+        let mut pick = self.pick.clone();
+        let actions = governor_tick(
+            registry,
+            &effective_targets,
+            local_root_groups,
+            mode,
+            association,
+            Some(self),
+            &mut pick,
+            &metrics_snapshot,
+            now,
+        );
+        self.pick = pick;
         self.filter_backed_off(actions, now)
     }
 }
@@ -972,6 +1197,7 @@ fn regular_peer_counts(registry: &PeerRegistry) -> RegularPeerCounts {
 pub fn evaluate_cold_to_warm_promotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let counts = regular_peer_counts(registry);
     if counts.established >= targets.target_established {
@@ -981,7 +1207,8 @@ pub fn evaluate_cold_to_warm_promotions(
 
     // Collect cold peers in four buckets (local-root non-tepid, local-root
     // tepid, other non-tepid, other tepid) so non-tepid peers are promoted
-    // first within each source tier.
+    // first within each source tier.  Each bucket is individually
+    // randomized via `pick` to avoid deterministic SocketAddr ordering.
     let mut local_fresh = Vec::new();
     let mut local_tepid = Vec::new();
     let mut other_fresh = Vec::new();
@@ -998,19 +1225,20 @@ pub fn evaluate_cold_to_warm_promotions(
         }
     }
 
-    let mut actions = Vec::new();
-    for addr in local_fresh
+    // Randomize within each priority tier, then chain.
+    let local_fresh = pick.pick(local_fresh.len(), local_fresh);
+    let local_tepid = pick.pick(local_tepid.len(), local_tepid);
+    let other_fresh = pick.pick(other_fresh.len(), other_fresh);
+    let other_tepid = pick.pick(other_tepid.len(), other_tepid);
+
+    local_fresh
         .into_iter()
         .chain(local_tepid)
         .chain(other_fresh)
         .chain(other_tepid)
-    {
-        if actions.len() >= needed {
-            break;
-        }
-        actions.push(GovernorAction::PromoteToWarm(addr));
-    }
-    actions
+        .take(needed)
+        .map(GovernorAction::PromoteToWarm)
+        .collect()
 }
 
 /// Evaluate which warm peers should be promoted to hot to meet the
@@ -1025,6 +1253,7 @@ pub fn evaluate_cold_to_warm_promotions(
 pub fn evaluate_warm_to_hot_promotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let counts = regular_peer_counts(registry);
     if counts.active >= targets.target_active {
@@ -1048,28 +1277,34 @@ pub fn evaluate_warm_to_hot_promotions(
         }
     }
 
-    let mut actions = Vec::new();
-    for addr in local_fresh
+    let local_fresh = pick.pick(local_fresh.len(), local_fresh);
+    let local_tepid = pick.pick(local_tepid.len(), local_tepid);
+    let other_fresh = pick.pick(other_fresh.len(), other_fresh);
+    let other_tepid = pick.pick(other_tepid.len(), other_tepid);
+
+    local_fresh
         .into_iter()
         .chain(local_tepid)
         .chain(other_fresh)
         .chain(other_tepid)
-    {
-        if actions.len() >= needed {
-            break;
-        }
-        actions.push(GovernorAction::PromoteToHot(addr));
-    }
-    actions
+        .take(needed)
+        .map(GovernorAction::PromoteToHot)
+        .collect()
 }
 
 /// Evaluate which hot peers should be demoted to warm because we have
 /// more active peers than the target.
 ///
-/// Prefers demoting non-local-root peers first.
+/// Prefers demoting non-local-root peers first.  Within the non-local
+/// tier, peers are scored by `PeerMetrics` (upstreamyness + fetchyness)
+/// so that more productive peers are kept hot.  This matches the
+/// upstream `hotDemotionPolicy` which adds metric scores to random
+/// weights.
 pub fn evaluate_hot_to_warm_demotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
+    metrics: &PeerMetrics,
 ) -> Vec<GovernorAction> {
     let counts = regular_peer_counts(registry);
     if counts.active <= targets.target_active {
@@ -1078,6 +1313,7 @@ pub fn evaluate_hot_to_warm_demotions(
     let excess = counts.active - targets.target_active;
 
     // Collect hot peers, preferring to demote non-local-root first.
+    // Non-local peers are scored so productive peers survive.
     let mut non_local_hot = Vec::new();
     let mut local_hot = Vec::new();
     for (addr, entry) in registry.iter() {
@@ -1090,14 +1326,24 @@ pub fn evaluate_hot_to_warm_demotions(
         }
     }
 
-    let mut actions = Vec::new();
-    for addr in non_local_hot.into_iter().chain(local_hot) {
-        if actions.len() >= excess {
-            break;
-        }
-        actions.push(GovernorAction::DemoteToWarm(addr));
-    }
-    actions
+    // Score-aware selection: lower-scored non-local peers are
+    // demoted first.  `pick_scored` puts highest-scored first,
+    // so we take from the end (lowest-scored) by asking for all
+    // then reversing.
+    let mut non_local_scored = pick.pick_scored(
+        non_local_hot.len(),
+        non_local_hot,
+        metrics,
+    );
+    non_local_scored.reverse(); // lowest-scored first → demote first
+    let local_hot = pick.pick(local_hot.len(), local_hot);
+
+    non_local_scored
+        .into_iter()
+        .chain(local_hot)
+        .take(excess)
+        .map(GovernorAction::DemoteToWarm)
+        .collect()
 }
 
 /// Evaluate which warm peers should be demoted to cold because we have
@@ -1107,6 +1353,7 @@ pub fn evaluate_hot_to_warm_demotions(
 pub fn evaluate_warm_to_cold_demotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let counts = regular_peer_counts(registry);
     if counts.established <= targets.target_established {
@@ -1126,14 +1373,15 @@ pub fn evaluate_warm_to_cold_demotions(
         }
     }
 
-    let mut actions = Vec::new();
-    for addr in non_local_warm.into_iter().chain(local_warm) {
-        if actions.len() >= excess {
-            break;
-        }
-        actions.push(GovernorAction::DemoteToCold(addr));
-    }
-    actions
+    let non_local_warm = pick.pick(non_local_warm.len(), non_local_warm);
+    let local_warm = pick.pick(local_warm.len(), local_warm);
+
+    non_local_warm
+        .into_iter()
+        .chain(local_warm)
+        .take(excess)
+        .map(GovernorAction::DemoteToCold)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1148,6 +1396,7 @@ pub fn evaluate_warm_to_cold_demotions(
 pub fn enforce_local_root_valency(
     registry: &PeerRegistry,
     groups: &[LocalRootTargets],
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let mut actions = Vec::new();
 
@@ -1179,16 +1428,18 @@ pub fn enforce_local_root_valency(
         // Promote cold→warm until we meet warm_valency.
         if warm_count < group.warm_valency {
             let needed = (group.warm_valency - warm_count) as usize;
-            for addr in cold_peers.iter().take(needed) {
-                actions.push(GovernorAction::PromoteToWarm(*addr));
+            let chosen = pick.pick(needed, cold_peers);
+            for addr in chosen {
+                actions.push(GovernorAction::PromoteToWarm(addr));
             }
         }
 
         // Promote warm→hot until we meet hot_valency.
         if hot_count < group.hot_valency {
             let needed = (group.hot_valency - hot_count) as usize;
-            for addr in warm_peers.iter().take(needed) {
-                actions.push(GovernorAction::PromoteToHot(*addr));
+            let chosen = pick.pick(needed, warm_peers);
+            for addr in chosen {
+                actions.push(GovernorAction::PromoteToHot(addr));
             }
         }
     }
@@ -1214,6 +1465,7 @@ fn is_big_ledger(entry: &PeerRegistryEntry) -> bool {
 pub fn evaluate_cold_to_warm_big_ledger_promotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let warm_or_hot = registry
         .iter()
@@ -1226,11 +1478,14 @@ pub fn evaluate_cold_to_warm_big_ledger_promotions(
     }
     let needed = target - warm_or_hot;
 
-    registry
+    let candidates: Vec<SocketAddr> = registry
         .iter()
         .filter(|(_, e)| is_big_ledger(e) && e.status == PeerStatus::PeerCold)
-        .take(needed)
-        .map(|(addr, _)| GovernorAction::PromoteToWarm(*addr))
+        .map(|(addr, _)| *addr)
+        .collect();
+    pick.pick(needed, candidates)
+        .into_iter()
+        .map(GovernorAction::PromoteToWarm)
         .collect()
 }
 
@@ -1239,6 +1494,7 @@ pub fn evaluate_cold_to_warm_big_ledger_promotions(
 pub fn evaluate_warm_to_hot_big_ledger_promotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let hot_count = registry
         .iter()
@@ -1251,11 +1507,14 @@ pub fn evaluate_warm_to_hot_big_ledger_promotions(
     }
     let needed = target - hot_count;
 
-    registry
+    let candidates: Vec<SocketAddr> = registry
         .iter()
         .filter(|(_, e)| is_big_ledger(e) && e.status == PeerStatus::PeerWarm)
-        .take(needed)
-        .map(|(addr, _)| GovernorAction::PromoteToHot(*addr))
+        .map(|(addr, _)| *addr)
+        .collect();
+    pick.pick(needed, candidates)
+        .into_iter()
+        .map(GovernorAction::PromoteToHot)
         .collect()
 }
 
@@ -1264,6 +1523,7 @@ pub fn evaluate_warm_to_hot_big_ledger_promotions(
 pub fn evaluate_hot_to_warm_big_ledger_demotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let hot_count = registry
         .iter()
@@ -1276,15 +1536,18 @@ pub fn evaluate_hot_to_warm_big_ledger_demotions(
     }
     let excess = hot_count - target;
 
-    registry
+    let candidates: Vec<SocketAddr> = registry
         .iter()
         .filter(|(_, e)| {
             is_big_ledger(e)
                 && e.status == PeerStatus::PeerHot
                 && !e.sources.contains(&PeerSource::PeerSourceLocalRoot)
         })
-        .take(excess)
-        .map(|(addr, _)| GovernorAction::DemoteToWarm(*addr))
+        .map(|(addr, _)| *addr)
+        .collect();
+    pick.pick(excess, candidates)
+        .into_iter()
+        .map(GovernorAction::DemoteToWarm)
         .collect()
 }
 
@@ -1293,6 +1556,7 @@ pub fn evaluate_hot_to_warm_big_ledger_demotions(
 pub fn evaluate_warm_to_cold_big_ledger_demotions(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let warm_count = registry
         .iter()
@@ -1311,11 +1575,14 @@ pub fn evaluate_warm_to_cold_big_ledger_demotions(
     }
     let excess = total_established - target;
 
-    registry
+    let candidates: Vec<SocketAddr> = registry
         .iter()
         .filter(|(_, e)| is_big_ledger(e) && e.status == PeerStatus::PeerWarm)
-        .take(excess)
-        .map(|(addr, _)| GovernorAction::DemoteToCold(*addr))
+        .map(|(addr, _)| *addr)
+        .collect();
+    pick.pick(excess, candidates)
+        .into_iter()
+        .map(GovernorAction::DemoteToCold)
         .collect()
 }
 
@@ -1327,12 +1594,17 @@ pub fn evaluate_warm_to_cold_big_ledger_demotions(
 /// forgotten (removed from the known set) when the known count exceeds
 /// `target_known`.
 ///
+/// This policy also enforces the one-sided root-peer floor from
+/// `target_root`: root peers are only forgotten when the current regular
+/// root count is above that floor.
+///
 /// Upstream equivalent:
 /// `Ouroboros.Network.PeerSelection.Governor.KnownPeers.belowTarget` —
 /// the governor forgets cold peers it no longer needs sources for.
 pub fn evaluate_forget_cold_peers(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     let counts = regular_peer_counts(registry);
     let target = targets.target_known;
@@ -1340,6 +1612,10 @@ pub fn evaluate_forget_cold_peers(
         return Vec::new();
     }
     let excess = counts.known - target;
+    let regular_root_count = registry
+        .iter()
+        .filter(|(_, e)| !is_big_ledger(e) && e.is_root_peer())
+        .count();
 
     // Only forget cold, ephemeral peers (peer-share or public-root that
     // are no longer essential). Local-root, Bootstrap, Ledger, and
@@ -1349,15 +1625,39 @@ pub fn evaluate_forget_cold_peers(
         PeerSource::PeerSourcePublicRoot,
     ];
 
-    registry
-        .iter()
-        .filter(|(_, e)| {
-            !is_big_ledger(e)
-                && e.status == PeerStatus::PeerCold
-                && e.sources.iter().all(|s| forgettable_sources.contains(s))
-        })
-        .take(excess)
-        .map(|(addr, _)| GovernorAction::ForgetPeer(*addr))
+    let mut non_root_candidates = Vec::new();
+    let mut root_candidates = Vec::new();
+
+    for (addr, entry) in registry.iter() {
+        if is_big_ledger(entry)
+            || entry.status != PeerStatus::PeerCold
+            || !entry.sources.iter().all(|s| forgettable_sources.contains(s))
+        {
+            continue;
+        }
+
+        if entry.is_root_peer() {
+            root_candidates.push(*addr);
+        } else {
+            non_root_candidates.push(*addr);
+        }
+    }
+
+    // Prefer forgetting non-root ephemeral peers first.
+    let mut selected = pick.pick(excess, non_root_candidates);
+    let remaining = excess.saturating_sub(selected.len());
+
+    if remaining > 0 {
+        // Enforce the one-sided root floor (`target_root`): never forget
+        // root peers below this threshold.
+        let root_forget_budget = regular_root_count.saturating_sub(targets.target_root);
+        let root_take = remaining.min(root_forget_budget);
+        selected.extend(pick.pick(root_take, root_candidates));
+    }
+
+    selected
+        .into_iter()
+        .map(GovernorAction::ForgetPeer)
         .collect()
 }
 
@@ -1426,6 +1726,7 @@ pub fn evaluate_peer_share_requests(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
     state: &GovernorState,
+    pick: &mut PickPolicy,
 ) -> Vec<GovernorAction> {
     // Check budget.
     if state.in_progress_peer_share_reqs >= state.max_in_progress_peer_share_reqs {
@@ -1443,7 +1744,7 @@ pub fn evaluate_peer_share_requests(
     // Exclude local-root and bootstrap sources — they are configured
     // rather than discovered and are not expected to participate in
     // gossip-based peer sharing.
-    registry
+    let candidates: Vec<SocketAddr> = registry
         .iter()
         .filter(|(_, entry)| {
             matches!(entry.status, PeerStatus::PeerWarm | PeerStatus::PeerHot)
@@ -1451,8 +1752,11 @@ pub fn evaluate_peer_share_requests(
                 && !entry.sources.contains(&PeerSource::PeerSourceBootstrap)
                 && !is_big_ledger(entry)
         })
-        .take(budget)
-        .map(|(addr, _)| GovernorAction::ShareRequest(*addr))
+        .map(|(addr, _)| *addr)
+        .collect();
+    pick.pick(budget, candidates)
+        .into_iter()
+        .map(GovernorAction::ShareRequest)
         .collect()
 }
 
@@ -1587,6 +1891,7 @@ pub fn filter_sensitive_promotions(
 /// promotions to trustable peers (bootstrap + trustable local roots) and
 /// demotes any non-trustable warm/hot peers.  In
 /// [`PeerSelectionMode::Normal`] the full peer selection policy applies.
+#[allow(clippy::too_many_arguments)]
 pub fn governor_tick(
     registry: &PeerRegistry,
     targets: &GovernorTargets,
@@ -1594,6 +1899,8 @@ pub fn governor_tick(
     mode: PeerSelectionMode,
     association: AssociationMode,
     state: Option<&GovernorState>,
+    pick: &mut PickPolicy,
+    metrics: &PeerMetrics,
     now: Instant,
 ) -> Vec<GovernorAction> {
     let mut actions = Vec::new();
@@ -1606,11 +1913,11 @@ pub fn governor_tick(
             // 2. Demote all non-trustable warm peers to cold.
             actions.extend(evaluate_sensitive_warm_demotions(registry, local_root_groups));
             // 3. Enforce local root valency (trustable groups only).
-            actions.extend(enforce_local_root_valency(registry, local_root_groups));
+            actions.extend(enforce_local_root_valency(registry, local_root_groups, pick));
             // 4. Normal promotion targets, filtered to trustable peers only.
             let mut promotions = Vec::new();
-            promotions.extend(evaluate_cold_to_warm_promotions(registry, targets));
-            promotions.extend(evaluate_warm_to_hot_promotions(registry, targets));
+            promotions.extend(evaluate_cold_to_warm_promotions(registry, targets, pick));
+            promotions.extend(evaluate_warm_to_hot_promotions(registry, targets, pick));
             actions.extend(filter_sensitive_promotions(
                 promotions,
                 registry,
@@ -1619,7 +1926,7 @@ pub fn governor_tick(
             // 5. Big-ledger promotions are suppressed in sensitive mode —
             //    big-ledger peers are not trustable by definition.
             // 6. Forget excess cold peers.
-            actions.extend(evaluate_forget_cold_peers(registry, targets));
+            actions.extend(evaluate_forget_cold_peers(registry, targets, pick));
             // 7. Forget cold peers that have exceeded max connection retries.
             if let Some(gs) = state {
                 actions.extend(evaluate_forget_failed_peers(registry, gs, now));
@@ -1627,23 +1934,23 @@ pub fn governor_tick(
         }
         PeerSelectionMode::Normal => {
             // 1. Local root valency takes priority.
-            actions.extend(enforce_local_root_valency(registry, local_root_groups));
+            actions.extend(enforce_local_root_valency(registry, local_root_groups, pick));
             // 2. Global promotion targets.
-            actions.extend(evaluate_cold_to_warm_promotions(registry, targets));
-            actions.extend(evaluate_warm_to_hot_promotions(registry, targets));
+            actions.extend(evaluate_cold_to_warm_promotions(registry, targets, pick));
+            actions.extend(evaluate_warm_to_hot_promotions(registry, targets, pick));
             // 3. Big-ledger peer promotions (suppressed in LocalRootsOnly).
             if association == AssociationMode::Unrestricted {
-                actions.extend(evaluate_cold_to_warm_big_ledger_promotions(registry, targets));
-                actions.extend(evaluate_warm_to_hot_big_ledger_promotions(registry, targets));
+                actions.extend(evaluate_cold_to_warm_big_ledger_promotions(registry, targets, pick));
+                actions.extend(evaluate_warm_to_hot_big_ledger_promotions(registry, targets, pick));
             }
             // 4. Global demotion targets.
-            actions.extend(evaluate_hot_to_warm_demotions(registry, targets));
-            actions.extend(evaluate_warm_to_cold_demotions(registry, targets));
+            actions.extend(evaluate_hot_to_warm_demotions(registry, targets, pick, metrics));
+            actions.extend(evaluate_warm_to_cold_demotions(registry, targets, pick));
             // 5. Big-ledger peer demotions.
-            actions.extend(evaluate_hot_to_warm_big_ledger_demotions(registry, targets));
-            actions.extend(evaluate_warm_to_cold_big_ledger_demotions(registry, targets));
+            actions.extend(evaluate_hot_to_warm_big_ledger_demotions(registry, targets, pick));
+            actions.extend(evaluate_warm_to_cold_big_ledger_demotions(registry, targets, pick));
             // 6. Forget excess cold peers.
-            actions.extend(evaluate_forget_cold_peers(registry, targets));
+            actions.extend(evaluate_forget_cold_peers(registry, targets, pick));
             // 7. Forget cold peers that have exceeded max connection retries.
             if let Some(gs) = state {
                 actions.extend(evaluate_forget_failed_peers(registry, gs, now));
@@ -1653,7 +1960,7 @@ pub fn governor_tick(
             //    sharing discovery.
             if association == AssociationMode::Unrestricted {
                 if let Some(gs) = state {
-                    actions.extend(evaluate_peer_share_requests(registry, targets, gs));
+                    actions.extend(evaluate_peer_share_requests(registry, targets, gs, pick));
                 }
             }
         }
@@ -2490,6 +2797,11 @@ mod tests {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
     }
 
+    /// Deterministic pick policy for reproducible test results.
+    fn test_pick() -> PickPolicy {
+        PickPolicy::deterministic(42)
+    }
+
     fn make_registry(peers: &[(u16, PeerSource, PeerStatus)]) -> PeerRegistry {
         let mut reg = PeerRegistry::default();
         for &(port, source, status) in peers {
@@ -2513,7 +2825,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
+        let actions = evaluate_cold_to_warm_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 2);
         // Local root should be promoted first.
         assert_eq!(actions[0], GovernorAction::PromoteToWarm(addr(1)));
@@ -2532,10 +2844,10 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
+        let actions = evaluate_cold_to_warm_promotions(&reg, &targets, &mut test_pick());
         assert!(actions.is_empty());
 
-        let actions = evaluate_warm_to_hot_promotions(&reg, &targets);
+        let actions = evaluate_warm_to_hot_promotions(&reg, &targets, &mut test_pick());
         assert!(actions.is_empty());
     }
 
@@ -2553,7 +2865,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_hot_to_warm_demotions(&reg, &targets);
+        let actions = evaluate_hot_to_warm_demotions(&reg, &targets, &mut test_pick(), &PeerMetrics::default());
         assert_eq!(actions.len(), 2);
         // Non-local-root peers should be demoted first.
         for action in &actions {
@@ -2577,7 +2889,7 @@ mod tests {
             trustable: false,
         };
 
-        let actions = enforce_local_root_valency(&reg, &[group]);
+        let actions = enforce_local_root_valency(&reg, &[group], &mut test_pick());
         // Need 1 more warm (have 1, target 2) → promote 1 cold to warm.
         // Need 1 hot (have 0, target 1) → promote 1 warm to hot.
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
@@ -2604,7 +2916,7 @@ mod tests {
             trustable: false,
         }];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, Instant::now());
+        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
         // Should have at least the local root promotion.
         assert!(!actions.is_empty());
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
@@ -2614,7 +2926,7 @@ mod tests {
     fn empty_registry_produces_no_actions() {
         let reg = PeerRegistry::default();
         let targets = GovernorTargets::default();
-        let actions = governor_tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, Instant::now());
+        let actions = governor_tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
         assert!(actions.is_empty());
     }
 
@@ -3144,7 +3456,7 @@ mod tests {
             ..Default::default()
         };
         // Currently 1 warm big-ledger peer, target is 2 → promote 1.
-        let actions = evaluate_cold_to_warm_big_ledger_promotions(&reg, &targets);
+        let actions = evaluate_cold_to_warm_big_ledger_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], GovernorAction::PromoteToWarm(_)));
     }
@@ -3159,7 +3471,7 @@ mod tests {
             target_active_big_ledger: 1,
             ..Default::default()
         };
-        let actions = evaluate_warm_to_hot_big_ledger_promotions(&reg, &targets);
+        let actions = evaluate_warm_to_hot_big_ledger_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], GovernorAction::PromoteToHot(_)));
     }
@@ -3175,7 +3487,7 @@ mod tests {
             target_active_big_ledger: 1,
             ..Default::default()
         };
-        let actions = evaluate_hot_to_warm_big_ledger_demotions(&reg, &targets);
+        let actions = evaluate_hot_to_warm_big_ledger_demotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 2);
         for a in &actions {
             assert!(matches!(a, GovernorAction::DemoteToWarm(_)));
@@ -3193,10 +3505,10 @@ mod tests {
             target_active_big_ledger: 1,
             ..Default::default()
         };
-        assert!(evaluate_cold_to_warm_big_ledger_promotions(&reg, &targets).is_empty());
-        assert!(evaluate_warm_to_hot_big_ledger_promotions(&reg, &targets).is_empty());
-        assert!(evaluate_hot_to_warm_big_ledger_demotions(&reg, &targets).is_empty());
-        assert!(evaluate_warm_to_cold_big_ledger_demotions(&reg, &targets).is_empty());
+        assert!(evaluate_cold_to_warm_big_ledger_promotions(&reg, &targets, &mut test_pick()).is_empty());
+        assert!(evaluate_warm_to_hot_big_ledger_promotions(&reg, &targets, &mut test_pick()).is_empty());
+        assert!(evaluate_hot_to_warm_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty());
+        assert!(evaluate_warm_to_cold_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty());
     }
 
     // -----------------------------------------------------------------------
@@ -3215,14 +3527,51 @@ mod tests {
             target_known: 2,
             ..Default::default()
         };
-        let actions = evaluate_forget_cold_peers(&reg, &targets);
-        // 4 known > target 2, excess 2. But only peer-share and
-        // public-root cold peers are forgettable (2 and 3).
-        // Ledger peers (4) and local-root warm (1) are not.
+        let actions = evaluate_forget_cold_peers(&reg, &targets, &mut test_pick());
+        // 4 known > target 2, excess 2. Peer-share (2) and public-root (3)
+        // are forgettable by source, but root floor blocks forgetting (3)
+        // because roots are exactly at target_root (=3 by default).
+        assert_eq!(actions, vec![GovernorAction::ForgetPeer(addr(2))]);
+    }
+
+    #[test]
+    fn forget_cold_peers_can_forget_public_root_when_above_root_floor() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerCold),
+            (3, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerCold),
+            (4, PeerSource::PeerSourcePeerShare, PeerStatus::PeerCold),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 2,
+            target_root: 1,
+            ..Default::default()
+        };
+
+        let actions = evaluate_forget_cold_peers(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 2);
-        for a in &actions {
-            assert!(matches!(a, GovernorAction::ForgetPeer(_)));
-        }
+        assert!(actions.contains(&GovernorAction::ForgetPeer(addr(4))));
+        assert!(actions.contains(&GovernorAction::ForgetPeer(addr(2)))
+            || actions.contains(&GovernorAction::ForgetPeer(addr(3))));
+    }
+
+    #[test]
+    fn forget_cold_peers_preserves_root_floor() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerCold),
+            (3, PeerSource::PeerSourceLedger, PeerStatus::PeerCold),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 1,
+            target_root: 3,
+            ..Default::default()
+        };
+
+        // Only public-root peer 2 is forgettable by source, but root floor
+        // is already reached so no root peer can be forgotten.
+        let actions = evaluate_forget_cold_peers(&reg, &targets, &mut test_pick());
+        assert!(actions.is_empty());
     }
 
     #[test]
@@ -3235,7 +3584,7 @@ mod tests {
             target_known: 10,
             ..Default::default()
         };
-        let actions = evaluate_forget_cold_peers(&reg, &targets);
+        let actions = evaluate_forget_cold_peers(&reg, &targets, &mut test_pick());
         assert!(actions.is_empty());
     }
 
@@ -3251,7 +3600,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
+        let actions = evaluate_cold_to_warm_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions, vec![GovernorAction::PromoteToWarm(addr(2))]);
     }
 
@@ -3267,7 +3616,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_warm_to_hot_promotions(&reg, &targets);
+        let actions = evaluate_warm_to_hot_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions, vec![GovernorAction::PromoteToHot(addr(2))]);
     }
 
@@ -3285,14 +3634,14 @@ mod tests {
             target_established_big_ledger: 2,
             ..Default::default()
         };
-        assert!(evaluate_warm_to_cold_demotions(&reg, &established_targets).is_empty());
+        assert!(evaluate_warm_to_cold_demotions(&reg, &established_targets, &mut test_pick()).is_empty());
 
         let active_targets = GovernorTargets {
             target_active: 1,
             target_active_big_ledger: 1,
             ..Default::default()
         };
-        assert!(evaluate_hot_to_warm_demotions(&reg, &active_targets).is_empty());
+        assert!(evaluate_hot_to_warm_demotions(&reg, &active_targets, &mut test_pick(), &PeerMetrics::default()).is_empty());
     }
 
     #[test]
@@ -3308,7 +3657,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_forget_cold_peers(&reg, &targets);
+        let actions = evaluate_forget_cold_peers(&reg, &targets, &mut test_pick());
         assert!(actions.is_empty());
     }
 
@@ -3560,7 +3909,7 @@ mod tests {
         };
         let groups: Vec<LocalRootTargets> = vec![];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Sensitive, AssociationMode::Unrestricted, None, Instant::now());
+        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Sensitive, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
         // Even though targets say 2 active, peer 2 is not trustable → demote.
         assert!(actions.contains(&GovernorAction::DemoteToWarm(addr(2))));
         // Peer 1 (bootstrap) is NOT demoted.
@@ -3584,7 +3933,7 @@ mod tests {
         };
         let groups: Vec<LocalRootTargets> = vec![];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Sensitive, AssociationMode::Unrestricted, None, Instant::now());
+        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Sensitive, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
         // Bootstrap peer may be promoted.
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(2))));
         // Big-ledger peer is suppressed in sensitive mode.
@@ -3609,7 +3958,7 @@ mod tests {
         };
         let groups: Vec<LocalRootTargets> = vec![];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, Instant::now());
+        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
         // All peers should be promoted in normal mode.
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(2))));
@@ -3678,7 +4027,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
+        let actions = evaluate_cold_to_warm_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 1);
         // Non-tepid peer 2 should be promoted first.
         assert_eq!(actions[0], GovernorAction::PromoteToWarm(addr(2)));
@@ -3706,7 +4055,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_warm_to_hot_promotions(&reg, &targets);
+        let actions = evaluate_warm_to_hot_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 1);
         // Non-tepid peer 2 should be promoted first.
         assert_eq!(actions[0], GovernorAction::PromoteToHot(addr(2)));
@@ -3733,7 +4082,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_cold_to_warm_promotions(&reg, &targets);
+        let actions = evaluate_cold_to_warm_promotions(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0], GovernorAction::PromoteToWarm(addr(1)));
     }
@@ -3869,6 +4218,8 @@ mod tests {
             PeerSelectionMode::Normal,
             AssociationMode::Unrestricted,
             Some(&state),
+            &mut test_pick(),
+            &PeerMetrics::default(),
             now,
         );
         assert!(actions.contains(&GovernorAction::ForgetPeer(addr(1))));
@@ -3999,7 +4350,7 @@ mod tests {
         };
         let state = GovernorState::default(); // known=2, target=10 → below target
 
-        let actions = evaluate_peer_share_requests(&reg, &targets, &state);
+        let actions = evaluate_peer_share_requests(&reg, &targets, &state, &mut test_pick());
         assert!(!actions.is_empty());
         // Should contain share requests for eligible warm/hot peers.
         for a in &actions {
@@ -4021,7 +4372,7 @@ mod tests {
         };
         let state = GovernorState::default();
 
-        let actions = evaluate_peer_share_requests(&reg, &targets, &state);
+        let actions = evaluate_peer_share_requests(&reg, &targets, &state, &mut test_pick());
         assert!(actions.is_empty());
     }
 
@@ -4038,7 +4389,7 @@ mod tests {
         // Exhaust the budget.
         state.in_progress_peer_share_reqs = state.max_in_progress_peer_share_reqs;
 
-        let actions = evaluate_peer_share_requests(&reg, &targets, &state);
+        let actions = evaluate_peer_share_requests(&reg, &targets, &state, &mut test_pick());
         assert!(actions.is_empty());
     }
 
@@ -4062,7 +4413,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_peer_share_requests(&reg, &targets, &state);
+        let actions = evaluate_peer_share_requests(&reg, &targets, &state, &mut test_pick());
         assert_eq!(actions.len(), 2);
     }
 
@@ -4081,7 +4432,7 @@ mod tests {
         };
         let state = GovernorState::default();
 
-        let actions = evaluate_peer_share_requests(&reg, &targets, &state);
+        let actions = evaluate_peer_share_requests(&reg, &targets, &state, &mut test_pick());
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0], GovernorAction::ShareRequest(addr(3)));
     }
@@ -4099,7 +4450,7 @@ mod tests {
         };
         let state = GovernorState::default();
 
-        let actions = evaluate_peer_share_requests(&reg, &targets, &state);
+        let actions = evaluate_peer_share_requests(&reg, &targets, &state, &mut test_pick());
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0], GovernorAction::ShareRequest(addr(2)));
     }
@@ -4117,7 +4468,7 @@ mod tests {
         };
         let state = GovernorState::default();
 
-        let actions = evaluate_peer_share_requests(&reg, &targets, &state);
+        let actions = evaluate_peer_share_requests(&reg, &targets, &state, &mut test_pick());
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0], GovernorAction::ShareRequest(addr(2)));
     }
@@ -4161,6 +4512,8 @@ mod tests {
             PeerSelectionMode::Sensitive,
             AssociationMode::Unrestricted,
             Some(&state),
+            &mut test_pick(),
+            &PeerMetrics::default(),
             now,
         );
         // No ShareRequest should appear in sensitive mode since peer
@@ -4190,6 +4543,8 @@ mod tests {
             PeerSelectionMode::Normal,
             AssociationMode::Unrestricted,
             Some(&state),
+            &mut test_pick(),
+            &PeerMetrics::default(),
             now,
         );
         assert!(actions.iter().any(|a| matches!(a, GovernorAction::ShareRequest(_))));
@@ -4332,6 +4687,8 @@ mod tests {
             PeerSelectionMode::Normal,
             AssociationMode::LocalRootsOnly,
             Some(&state),
+            &mut test_pick(),
+            &PeerMetrics::default(),
             now,
         );
         assert!(!actions.iter().any(|a| matches!(a, GovernorAction::ShareRequest(_))));
@@ -4359,6 +4716,8 @@ mod tests {
             PeerSelectionMode::Normal,
             AssociationMode::LocalRootsOnly,
             None,
+            &mut test_pick(),
+            &PeerMetrics::default(),
             Instant::now(),
         );
         // Big-ledger peer should NOT be promoted in LocalRootsOnly.
@@ -4385,6 +4744,8 @@ mod tests {
             PeerSelectionMode::Normal,
             AssociationMode::Unrestricted,
             None,
+            &mut test_pick(),
+            &PeerMetrics::default(),
             Instant::now(),
         );
         // Big-ledger peer SHOULD be promoted in Unrestricted.
@@ -5038,5 +5399,216 @@ mod tests {
         let mut state = GovernorState::default();
         let _ = state.tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
         assert_eq!(state.local_root_hot_target, 7);
+    }
+
+    // -----------------------------------------------------------------------
+    // Xorshift64 PRNG tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn xorshift64_deterministic() {
+        let mut a = Xorshift64::new(12345);
+        let mut b = Xorshift64::new(12345);
+        for _ in 0..100 {
+            assert_eq!(a.next_u64(), b.next_u64());
+        }
+    }
+
+    #[test]
+    fn xorshift64_zero_seed_avoids_degenerate_state() {
+        let mut rng = Xorshift64::new(0);
+        // Zero seed is silently replaced with 1; must produce non-zero output.
+        assert_ne!(rng.next_u64(), 0);
+    }
+
+    #[test]
+    fn xorshift64_different_seeds_diverge() {
+        let mut a = Xorshift64::new(1);
+        let mut b = Xorshift64::new(2);
+        // Different seeds must produce different sequences.
+        let sa: Vec<u64> = (0..10).map(|_| a.next_u64()).collect();
+        let sb: Vec<u64> = (0..10).map(|_| b.next_u64()).collect();
+        assert_ne!(sa, sb);
+    }
+
+    #[test]
+    fn xorshift64_partial_shuffle_subset() {
+        let mut rng = Xorshift64::new(99);
+        let mut v: Vec<u32> = (0..20).collect();
+        rng.partial_shuffle(&mut v, 5);
+        assert_eq!(v.len(), 5);
+        // All selected values must be from the original range.
+        for &x in &v {
+            assert!(x < 20);
+        }
+        // No duplicates in the selection.
+        let mut sorted = v.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 5);
+    }
+
+    #[test]
+    fn xorshift64_partial_shuffle_count_exceeds_len() {
+        let mut rng = Xorshift64::new(77);
+        let mut v: Vec<u32> = vec![10, 20, 30];
+        rng.partial_shuffle(&mut v, 100);
+        // When count > len, return all elements (shuffled).
+        assert_eq!(v.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // PickPolicy tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pick_policy_deterministic_reproducible() {
+        let candidates: Vec<SocketAddr> = (1..=10).map(addr).collect();
+        let mut p1 = PickPolicy::deterministic(42);
+        let mut p2 = PickPolicy::deterministic(42);
+        let r1 = p1.pick(3, candidates.clone());
+        let r2 = p2.pick(3, candidates);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn pick_policy_selects_correct_count() {
+        let candidates: Vec<SocketAddr> = (1..=20).map(addr).collect();
+        let mut pick = PickPolicy::new(0xDEAD);
+        let selected = pick.pick(5, candidates);
+        assert_eq!(selected.len(), 5);
+    }
+
+    #[test]
+    fn pick_policy_no_duplicates() {
+        let candidates: Vec<SocketAddr> = (1..=50).map(addr).collect();
+        let mut pick = PickPolicy::new(0xBEEF);
+        let selected = pick.pick(20, candidates);
+        let mut sorted = selected.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 20);
+    }
+
+    #[test]
+    fn pick_policy_empty_candidates() {
+        let mut pick = PickPolicy::new(1);
+        let selected = pick.pick(5, vec![]);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn pick_policy_count_exceeds_candidates() {
+        let candidates: Vec<SocketAddr> = (1..=3).map(addr).collect();
+        let mut pick = PickPolicy::new(1);
+        let selected = pick.pick(100, candidates);
+        assert_eq!(selected.len(), 3);
+    }
+
+    #[test]
+    fn pick_policy_different_seeds_different_selections() {
+        let candidates: Vec<SocketAddr> = (1..=20).map(addr).collect();
+        let mut p1 = PickPolicy::new(111);
+        let mut p2 = PickPolicy::new(222);
+        let r1 = p1.pick(5, candidates.clone());
+        let r2 = p2.pick(5, candidates);
+        // With 20 candidates and only 5 selected, two different seeds
+        // should almost certainly produce different subsets.
+        assert_ne!(r1, r2);
+    }
+
+    // -----------------------------------------------------------------------
+    // PickPolicy scored selection tests (hot demotion scoring)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pick_scored_prefers_higher_scored_peers() {
+        let candidates: Vec<SocketAddr> = (1..=5).map(addr).collect();
+        let mut metrics = PeerMetrics::default();
+        // addr(1) gets high score, addr(5) gets medium, rest get 0.
+        for _ in 0..100 {
+            metrics.record_upstreamyness(addr(1), 0);
+            metrics.record_fetchyness(addr(1), 0);
+        }
+        for _ in 0..50 {
+            metrics.record_upstreamyness(addr(5), 0);
+        }
+
+        let mut pick = PickPolicy::deterministic(42);
+        let selected = pick.pick_scored(2, candidates, &metrics);
+        assert_eq!(selected.len(), 2);
+        // The highest-scored peers should be selected.
+        assert!(selected.contains(&addr(1)));
+        assert!(selected.contains(&addr(5)));
+    }
+
+    #[test]
+    fn pick_scored_empty_metrics_still_selects() {
+        let candidates: Vec<SocketAddr> = (1..=10).map(addr).collect();
+        let metrics = PeerMetrics::default();
+        let mut pick = PickPolicy::deterministic(42);
+        let selected = pick.pick_scored(3, candidates, &metrics);
+        assert_eq!(selected.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // PeerMetrics tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn peer_metrics_combined_score() {
+        let mut m = PeerMetrics::default();
+        m.record_upstreamyness(addr(1), 100);
+        m.record_upstreamyness(addr(1), 101);
+        m.record_fetchyness(addr(1), 100);
+        assert_eq!(m.combined_score(&addr(1)), 3); // 2 upstream + 1 fetch
+        assert_eq!(m.combined_score(&addr(2)), 0); // unknown peer
+    }
+
+    #[test]
+    fn peer_metrics_remove_peer() {
+        let mut m = PeerMetrics::default();
+        m.record_upstreamyness(addr(1), 0);
+        m.record_fetchyness(addr(1), 0);
+        assert_eq!(m.combined_score(&addr(1)), 2);
+        m.remove_peer(&addr(1));
+        assert_eq!(m.combined_score(&addr(1)), 0);
+    }
+
+    #[test]
+    fn peer_metrics_independent_per_peer() {
+        let mut m = PeerMetrics::default();
+        m.record_upstreamyness(addr(1), 0);
+        m.record_fetchyness(addr(2), 0);
+        assert_eq!(m.combined_score(&addr(1)), 1);
+        assert_eq!(m.combined_score(&addr(2)), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Randomized governor evaluation integration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn randomized_promotions_select_different_subsets_with_different_seeds() {
+        // With many cold peers but limited target, different seeds should
+        // produce different promotion sets (demonstrating randomization works).
+        let reg = make_registry(
+            &(1..=20)
+                .map(|p| (p, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerCold))
+                .collect::<Vec<_>>(),
+        );
+        let targets = GovernorTargets {
+            target_known: 30,
+            target_established: 3,
+            ..Default::default()
+        };
+        let mut p1 = PickPolicy::new(111);
+        let mut p2 = PickPolicy::new(222);
+        let r1 = evaluate_cold_to_warm_promotions(&reg, &targets, &mut p1);
+        let r2 = evaluate_cold_to_warm_promotions(&reg, &targets, &mut p2);
+        assert_eq!(r1.len(), 3);
+        assert_eq!(r2.len(), 3);
+        // Different seeds should give different subsets with high probability.
+        assert_ne!(r1, r2);
     }
 }

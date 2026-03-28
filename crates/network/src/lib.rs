@@ -61,11 +61,19 @@ pub mod governor;
 /// maturation.
 pub mod inbound_governor;
 
+/// Connection manager decision engine — pure state machine for outbound
+/// acquire/release, inbound include/release, and remote promote/demote.
+pub mod connection_manager;
+
 /// PeerSharing client driver — typed, state-machine-correct protocol loop.
 pub mod peersharing_client;
 
 /// PeerSharing server driver — typed, state-machine-correct responder loop.
 pub mod peersharing_server;
+
+/// Diffusion-layer types — temperature bundles, mini-protocol descriptors,
+/// control messages, rate limiting, error policy, and peer connection handles.
+pub mod diffusion;
 
 // -- Node-to-Client (NtC) server drivers ----------------------------------
 
@@ -243,4 +251,19 @@ pub use connection::{
 pub use inbound_governor::{
     InboundConnectionEntry, InboundGovernorAction, InboundGovernorState,
     verify_remote_transition,
+};
+
+// -- Connection manager decision engine re-exports ----------------------------
+pub use connection_manager::{
+    AcquireOutboundResult, CmAction, ConnectionEntry, ConnectionManagerState,
+    ReleaseOutboundResult,
+};
+
+// -- Diffusion layer re-exports -----------------------------------------------
+pub use diffusion::{
+    ControlMessage, ErrorCommand, ErrorPolicyResult, MiniProtocolDescriptor,
+    MiniProtocolLimits, MiniProtocolStart, MuxMode, OuroborosBundle,
+    PeerConnectionHandle, PeerStateAction, ProtocolTemperature, RateLimitDecision,
+    RepromoteDelay, RethrowPolicy, TemperatureBundle,
+    ntn_ouroboros_bundle, ntc_ouroboros_bundle, rate_limit_decision,
 };
