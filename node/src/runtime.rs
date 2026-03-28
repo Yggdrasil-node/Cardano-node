@@ -1039,16 +1039,86 @@ pub async fn run_governor_loop<I, V, L, F>(
             biased;
 
             () = &mut shutdown => {
+                let outbound_peers: Vec<SocketAddr> =
+                    peer_manager.warm_peers.keys().copied().collect();
+                let mut drained = 0usize;
+                for peer in outbound_peers {
+                    let (release_result, cm_actions) = {
+                        let mut cm = connection_manager
+                            .write()
+                            .expect("connection manager lock poisoned");
+                        cm.release_outbound_connection(peer)
+                    };
+                    let changed = apply_cm_actions(
+                        &mut peer_manager,
+                        &peer_registry,
+                        cm_actions,
+                        &tracer,
+                    );
+
+                    match release_result {
+                        ReleaseOutboundResult::DemotedToColdLocal(_)
+                        | ReleaseOutboundResult::Noop(_) => {
+                            let _ = update_registry_status_from_cm(
+                                &connection_manager,
+                                &peer_registry,
+                                peer,
+                            );
+                            if changed {
+                                drained += 1;
+                            }
+                        }
+                        ReleaseOutboundResult::Error(err) => {
+                            tracer.trace_runtime(
+                                "Net.Governor",
+                                "Warning",
+                                "connection-manager shutdown drain release failed",
+                                trace_fields([
+                                    ("peer", json!(peer.to_string())),
+                                    ("error", json!(err.to_string())),
+                                ]),
+                            );
+                        }
+                    }
+                }
+
                 tracer.trace_runtime(
                     "Net.Governor",
                     "Notice",
                     "peer governor stopped",
-                    BTreeMap::new(),
+                    trace_fields([("drainedPeers", json!(drained))]),
                 );
                 return;
             }
 
             _ = interval.tick() => {
+                {
+                    let timeout_actions = {
+                        let mut cm = connection_manager
+                            .write()
+                            .expect("connection manager lock poisoned");
+                        cm.timeout_tick(Instant::now())
+                    };
+                    if !timeout_actions.is_empty() {
+                        let action_count = timeout_actions.len();
+                        let changed = apply_cm_actions(
+                            &mut peer_manager,
+                            &peer_registry,
+                            timeout_actions,
+                            &tracer,
+                        );
+                        tracer.trace_runtime(
+                            "Net.Governor",
+                            "Debug",
+                            "connection-manager timeout tick applied",
+                            trace_fields([
+                                ("actions", json!(action_count)),
+                                ("changed", json!(changed)),
+                            ]),
+                        );
+                    }
+                }
+
                 {
                     let mut registry = peer_registry.write().expect("peer registry lock poisoned");
                     root_sources.refresh(&mut registry, &tracer);

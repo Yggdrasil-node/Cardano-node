@@ -149,7 +149,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Protocol switching | Per-protocol state machines | ✅ | ✅ | Complete | Mux dispatch via protocol ID
 | Backpressure | SDU queue limits | ✅ | ⚠️ | Partial | SDU queue framework present; timeout recovery incomplete
 | Fair scheduling | Round-robin + priority | ✅ | ⏸️ | In Design | Mux orchestrator skeleton
-| Timeout handling | Protocol-specific timeouts | ✅ | ⏸️ | In Design | Timeout framework incomplete
+| Timeout handling | Protocol-specific timeouts | ✅ | ⚠️ | Partial | CM responder/time-wait timeout tick wired; broader mux/backpressure timeout recovery still incomplete
 | **Peer Management** |
 | Peer sources | LocalRoot/PublicRoot/PeerShare | ✅ | ✅ | Complete | PeerSource enum + provider layer
 | DNS resolution | Dynamic root-set updates | ✅ | ✅ | Complete | DnsRootPeerProvider with TTL clamping
@@ -170,7 +170,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Inbound accept | Role negotiation | ✅ | ✅ | Complete | Inbound handshake in acceptor role
 | Outbound connect | Peer candidates | ✅ | ✅ | Complete | Outbound connection flow
 | Connection pooling | Max connection limits | ✅ | ⏸️ | Not Started | Connection pool management incomplete
-| Graceful shutdown | In-flight message draining | ✅ | ⏸️ | Not Started | Shutdown orchestration incomplete
+| Graceful shutdown | In-flight message draining | ✅ | ⚠️ | Partial | Governor now drains outbound CM-managed peers on shutdown; full inbound/mux-wide drain orchestration remains
 
 **Network Summary**: ~85% feature complete. Core protocols fully wired; governor decision engine has full parity with upstream PeerSelectionState tracking. Remaining work on connection pooling, graceful shutdown, backpressure timeouts, and fair scheduling.
 
@@ -303,7 +303,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Base58 Byron addresses | Byron-family | ✅ | ✅ | Complete | Byron address envelope
 | CRC32 validation | Byron address checksum | ✅ | ✅ | Complete | Address::validate_bytes
 
-**Cryptography Summary**: ~98% feature complete, only missing KES key generation (not needed for validator node).
+**Cryptography Summary**: ~98% feature complete, only missing KES key generation (needed for block producer node).
 
 ---
 

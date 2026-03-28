@@ -16,8 +16,10 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::time::Instant;
 
 use crate::connection::{
+    timeouts::{PROTOCOL_IDLE_TIMEOUT, TIME_WAIT_TIMEOUT},
     AbstractState, AcceptedConnectionsLimit, ConnStateId, ConnectionId, ConnectionManagerError,
     ConnectionState, DataFlow, DemotedToColdRemoteTr, OperationResult, Provenance,
     TimeoutExpired, Transition,
@@ -37,6 +39,10 @@ pub struct ConnectionEntry {
     pub conn_state_id: ConnStateId,
     /// Current connection state.
     pub state: ConnectionState,
+    /// Deadline for the responder timeout while in `OutboundDupState(Ticking)`.
+    pub responder_timeout_deadline: Option<Instant>,
+    /// Deadline for transitioning `TerminatingState` -> `TerminatedState`.
+    pub time_wait_deadline: Option<Instant>,
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +220,8 @@ impl ConnectionManagerState {
                     ConnectionEntry {
                         conn_state_id: id,
                         state: ConnectionState::ReservedOutboundState,
+                        responder_timeout_deadline: None,
+                        time_wait_deadline: None,
                     },
                 );
                 Ok((
@@ -266,6 +274,8 @@ impl ConnectionManagerState {
                 let from = self.abstract_state_of(&peer);
                 if let Some(entry) = self.connections.get_mut(&peer) {
                     entry.state = new_state;
+                    entry.responder_timeout_deadline = Some(Instant::now() + PROTOCOL_IDLE_TIMEOUT);
+                    entry.time_wait_deadline = None;
                 }
                 let to = self.abstract_state_of(&peer);
                 let _ = Transition {
@@ -293,6 +303,8 @@ impl ConnectionManagerState {
                 let from = self.abstract_state_of(&peer);
                 if let Some(entry) = self.connections.get_mut(&peer) {
                     entry.state = new_state;
+                    entry.responder_timeout_deadline = None;
+                    entry.time_wait_deadline = None;
                 }
                 let to = self.abstract_state_of(&peer);
                 let _ = Transition {
@@ -331,6 +343,8 @@ impl ConnectionManagerState {
                 };
                 if let Some(entry) = self.connections.get_mut(&peer) {
                     entry.state = new_state;
+                    entry.responder_timeout_deadline = None;
+                    entry.time_wait_deadline = None;
                 }
                 Ok((
                     AcquireOutboundResult::Fresh,
@@ -394,6 +408,12 @@ impl ConnectionManagerState {
                     },
                 };
                 entry.state = new_state;
+                entry.responder_timeout_deadline = if matches!(data_flow, DataFlow::Duplex) {
+                    Some(Instant::now() + PROTOCOL_IDLE_TIMEOUT)
+                } else {
+                    None
+                };
+                entry.time_wait_deadline = None;
                 Ok(entry.state.abstract_state())
             }
             other => Err(ConnectionManagerError::ForbiddenOperation {
@@ -422,6 +442,8 @@ impl ConnectionManagerState {
                 ..
             } => {
                 entry.state = ConnectionState::TerminatedState { error: None };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 Ok(())
             }
             other => Err(ConnectionManagerError::ForbiddenOperation {
@@ -471,6 +493,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: DataFlow::Unidirectional,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 (
                     ReleaseOutboundResult::DemotedToColdLocal(to),
@@ -488,6 +512,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: DataFlow::Duplex,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 (
                     ReleaseOutboundResult::DemotedToColdLocal(to),
@@ -507,6 +533,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: DataFlow::Duplex,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 // May need pruning due to new inbound connection.
                 let prune_actions = self.maybe_prune();
                 (ReleaseOutboundResult::Noop(AbstractState::InboundIdleSt(DataFlow::Duplex)), prune_actions)
@@ -552,6 +580,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: DataFlow::Duplex,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 (ReleaseOutboundResult::Noop(to), Vec::new())
             }
@@ -595,6 +625,8 @@ impl ConnectionManagerState {
                 provenance: Provenance::Inbound,
                 conn_id,
             },
+            responder_timeout_deadline: None,
+            time_wait_deadline: None,
         };
 
         match self.connections.get(&peer).map(|e| &e.state) {
@@ -658,6 +690,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 Ok(entry.state.abstract_state())
             }
             // Outbound won the race for this slot (self-connect): no-op.
@@ -706,6 +740,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     error: None,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = Some(Instant::now() + TIME_WAIT_TIMEOUT);
                 (
                     OperationResult::OperationSuccess(DemotedToColdRemoteTr::CommitTr),
                     vec![CmAction::TerminateConnection(cid)],
@@ -722,6 +758,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     timeout_expired: TimeoutExpired::Expired,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 (
                     OperationResult::OperationSuccess(DemotedToColdRemoteTr::KeepTr),
                     Vec::new(),
@@ -745,6 +783,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     timeout_expired: TimeoutExpired::Ticking,
                 };
+                entry.responder_timeout_deadline = Some(Instant::now() + PROTOCOL_IDLE_TIMEOUT);
+                entry.time_wait_deadline = None;
                 (
                     OperationResult::OperationSuccess(DemotedToColdRemoteTr::KeepTr),
                     Vec::new(),
@@ -758,6 +798,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     error: None,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = Some(Instant::now() + TIME_WAIT_TIMEOUT);
                 (
                     OperationResult::OperationSuccess(DemotedToColdRemoteTr::CommitTr),
                     vec![CmAction::TerminateConnection(cid)],
@@ -825,6 +867,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: DataFlow::Unidirectional,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 (OperationResult::OperationSuccess(to), Vec::new())
             }
@@ -839,6 +883,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: DataFlow::Duplex,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 let prune = self.maybe_prune();
                 (OperationResult::OperationSuccess(to), prune)
@@ -848,6 +894,8 @@ impl ConnectionManagerState {
             ConnectionState::OutboundDupState { conn_id, .. } => {
                 let cid = *conn_id;
                 entry.state = ConnectionState::DuplexState { conn_id: cid };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 let prune = self.maybe_prune();
                 (OperationResult::OperationSuccess(to), prune)
@@ -863,6 +911,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: DataFlow::Duplex,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 let prune = self.maybe_prune();
                 (OperationResult::OperationSuccess(to), prune)
@@ -922,6 +972,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     data_flow: df,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 (OperationResult::OperationSuccess(to), Vec::new())
             }
@@ -933,6 +985,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     timeout_expired: TimeoutExpired::Ticking,
                 };
+                entry.responder_timeout_deadline = Some(Instant::now() + PROTOCOL_IDLE_TIMEOUT);
+                entry.time_wait_deadline = None;
                 let to = entry.state.abstract_state();
                 (OperationResult::OperationSuccess(to), Vec::new())
             }
@@ -987,6 +1041,8 @@ impl ConnectionManagerState {
                     conn_id: cid,
                     timeout_expired: TimeoutExpired::Expired,
                 };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 Ok(entry.state.abstract_state())
             }
             other => Err(ConnectionManagerError::ForbiddenOperation {
@@ -1010,6 +1066,8 @@ impl ConnectionManagerState {
             ConnectionState::TerminatingState { error, .. } => {
                 let err = error.clone();
                 entry.state = ConnectionState::TerminatedState { error: err };
+                entry.responder_timeout_deadline = None;
+                entry.time_wait_deadline = None;
                 Ok(())
             }
             other => Err(ConnectionManagerError::ForbiddenOperation {
@@ -1054,12 +1112,57 @@ impl ConnectionManagerState {
                         conn_id: cid,
                         error: reason,
                     };
+                    entry.responder_timeout_deadline = None;
+                    entry.time_wait_deadline = Some(Instant::now() + TIME_WAIT_TIMEOUT);
                 } else {
                     entry.state = ConnectionState::TerminatedState { error: reason };
+                    entry.responder_timeout_deadline = None;
+                    entry.time_wait_deadline = None;
                 }
                 Some(entry.state.abstract_state())
             }
         }
+    }
+
+    /// Advance timeout-driven transitions and return any resulting actions.
+    ///
+    /// This mirrors the upstream CM timeout maintenance where expiry events
+    /// are fed back into the state machine over time.
+    pub fn timeout_tick(&mut self, now: Instant) -> Vec<CmAction> {
+        let mut actions = Vec::new();
+
+        let peers: Vec<SocketAddr> = self.connections.keys().copied().collect();
+        for peer in peers {
+            let entry_snapshot = self.connections.get(&peer).cloned();
+            let Some(entry) = entry_snapshot else {
+                continue;
+            };
+
+            if matches!(
+                entry.state,
+                ConnectionState::OutboundDupState {
+                    timeout_expired: TimeoutExpired::Ticking,
+                    ..
+                }
+            ) && entry
+                .responder_timeout_deadline
+                .is_some_and(|deadline| now >= deadline)
+            {
+                let _ = self.responder_timeout_expired(peer);
+            }
+
+            if matches!(entry.state, ConnectionState::TerminatingState { .. })
+                && entry
+                    .time_wait_deadline
+                    .is_some_and(|deadline| now >= deadline)
+            {
+                let _ = self.time_wait_expired(peer);
+                let _removed = self.remove_terminated(&peer);
+            }
+        }
+
+        actions.append(&mut self.maybe_prune());
+        actions
     }
 
     // -----------------------------------------------------------------------
@@ -1159,6 +1262,48 @@ mod tests {
             delay: std::time::Duration::from_secs(1),
         });
         assert_eq!(cm.limits.hard_limit, 10);
+    }
+
+    #[test]
+    fn timeout_tick_expires_outbound_dup_responder_timeout() {
+        let mut cm = ConnectionManagerState::new();
+        let p = peer(2001);
+
+        let _ = cm.acquire_outbound_connection(local(), p).expect("acquire outbound");
+        cm.outbound_handshake_done(local(), p, DataFlow::Duplex)
+            .expect("handshake done");
+
+        let deadline = cm
+            .connections
+            .get(&p)
+            .and_then(|entry| entry.responder_timeout_deadline)
+            .expect("responder deadline set");
+        let _ = cm.timeout_tick(deadline + std::time::Duration::from_secs(1));
+
+        assert_eq!(
+            cm.abstract_state_of(&p),
+            AbstractState::OutboundDupSt(TimeoutExpired::Expired)
+        );
+    }
+
+    #[test]
+    fn timeout_tick_removes_terminated_after_time_wait() {
+        let mut cm = ConnectionManagerState::new();
+        let p = peer(2002);
+
+        let _ = cm.acquire_outbound_connection(local(), p).expect("acquire outbound");
+        cm.outbound_handshake_done(local(), p, DataFlow::Unidirectional)
+            .expect("handshake done");
+        let _ = cm.mark_terminating(p, Some("test".to_owned()));
+
+        let deadline = cm
+            .connections
+            .get(&p)
+            .and_then(|entry| entry.time_wait_deadline)
+            .expect("time wait deadline set");
+        let _ = cm.timeout_tick(deadline + std::time::Duration::from_secs(1));
+
+        assert_eq!(cm.abstract_state_of(&p), AbstractState::UnknownConnectionSt);
     }
 
     // -- Acquire outbound --
