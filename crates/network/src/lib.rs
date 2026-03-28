@@ -104,9 +104,16 @@ pub use multiplexer::{
 };
 
 // -- Mux re-exports -----------------------------------------------------------
-pub use mux::{MessageChannel, MuxError, MuxHandle, ProtocolHandle, start as start_mux, MAX_SEGMENT_SIZE};
+pub use mux::{
+    MessageChannel, MuxError, MuxHandle, ProtocolConfig, ProtocolHandle, WeightHandle,
+    start as start_mux, MAX_SEGMENT_SIZE,
+    DEFAULT_INGRESS_LIMIT, DEFAULT_PROTOCOL_WEIGHT, EGRESS_SOFT_LIMIT,
+    start_configured as start_mux_configured,
+};
 #[cfg(unix)]
 pub use mux::start_unix as start_mux_unix;
+#[cfg(unix)]
+pub use mux::start_unix_configured as start_mux_unix_configured;
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};

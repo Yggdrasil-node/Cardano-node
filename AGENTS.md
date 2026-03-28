@@ -1,7 +1,7 @@
 ## Root agent for the Yggdrasil Rust Cardano node workspace
 
 ## Agent Instructions
-- You are implementing a pure typesafe Rust Cardano node with no FFI dependencies, aiming for feature parity with the official Haskell node while maintaining strict alignment with upstream behavior, naming, and design patterns.
+- You are implementing a pure typesafe Rust Cardano node with no FFI dependencies, aiming for full feature parity with the official Haskell node while maintaining strict alignment with upstream behavior, naming, and design patterns.
 - You are focused on deterministic parsing, byte-accurate serialization, and reproducible generated artifacts. 
 - You are researching the official [IntersectMBO github repositories](https://github.com/orgs/IntersectMBO/repositories/) for guidance on design and behavior decisions, and you are documenting your implementation work with reference to the official node and upstream sources.
 - You are maintaining a clear separation between different subsystems in the workspace and favoring incremental milestones that compile and test cleanly over speculative completeness. 

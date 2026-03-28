@@ -1674,6 +1674,185 @@ fn cbor_item_length_unit_tests() {
 }
 
 // ===========================================================================
+// Mux — ingress queue overrun detection
+// ===========================================================================
+
+/// Verify that the demuxer terminates the connection when a protocol's
+/// ingress bytes exceed the configured limit.
+#[tokio::test]
+async fn mux_ingress_queue_overrun() {
+    use yggdrasil_network::mux::{ProtocolConfig, start_configured};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    // Server limits ChainSync ingress to 32 bytes.
+    let server_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let configs = vec![ProtocolConfig {
+            num: MiniProtocolNum::CHAIN_SYNC,
+            ingress_limit: 32,
+            weight: 1,
+        }];
+        let (mut handles, mux) =
+            start_configured(stream, MiniProtocolDir::Responder, &configs, 8);
+        let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+        // First small recv should succeed.
+        let _first = ch.recv().await;
+        // The second large payload should trigger IngressQueueOverRun in
+        // the demuxer, which closes the connection. The recv may return
+        // None or the reader task will fail.
+        let _second = ch.recv().await;
+        // The demuxer should have errored.
+        let reader_result = mux.reader.await.expect("join reader");
+        assert!(
+            matches!(
+                reader_result,
+                Err(yggdrasil_network::MuxError::IngressQueueOverRun { .. })
+            ),
+            "expected IngressQueueOverRun, got {:?}",
+            reader_result
+        );
+        mux.writer.abort();
+    });
+
+    let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let protos = [MiniProtocolNum::CHAIN_SYNC];
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
+    let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+    // Send a small payload (within limit).
+    ch.send(vec![0x01; 16]).await.expect("send small");
+    // Send a large payload that will push over the 32-byte limit.
+    let _ = ch.send(vec![0x02; 64]).await;
+    // Allow server to process.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    mux.abort();
+
+    server_handle.await.expect("server task");
+}
+
+// ===========================================================================
+// Mux — egress buffer overflow detection
+// ===========================================================================
+
+/// Verify that send() returns EgressBufferOverflow when the pending
+/// egress bytes would exceed the soft limit.
+#[tokio::test]
+async fn mux_egress_buffer_overflow() {
+    use yggdrasil_network::mux::{ProtocolConfig, start_configured};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    // Spawn a server that never reads — egress will back up.
+    let server_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (_handles, _mux) = start_mux(stream, MiniProtocolDir::Responder, &[MiniProtocolNum::CHAIN_SYNC], 2);
+        // Hold the stream open but don't read.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    });
+
+    let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    // Use a very small egress limit by configuring with default then
+    // relying on the per-protocol egress_limit field (EGRESS_SOFT_LIMIT).
+    // We'll craft a payload larger than EGRESS_SOFT_LIMIT.
+    let configs = vec![ProtocolConfig {
+        num: MiniProtocolNum::CHAIN_SYNC,
+        ingress_limit: 2_000_000,
+        weight: 1,
+    }];
+    let (mut handles, mux) =
+        start_configured(stream, MiniProtocolDir::Initiator, &configs, 2);
+    let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+
+    // Send a payload larger than EGRESS_SOFT_LIMIT (262143).
+    // First send something to accumulate bytes.
+    let large = vec![0xAA; yggdrasil_network::EGRESS_SOFT_LIMIT + 1];
+    let result = ch.send(large).await;
+    assert!(
+        matches!(result, Err(yggdrasil_network::MuxError::EgressBufferOverflow { .. })),
+        "expected EgressBufferOverflow, got {:?}",
+        result
+    );
+
+    mux.abort();
+    server_handle.abort();
+}
+
+// ===========================================================================
+// Mux — weighted round-robin fairness
+// ===========================================================================
+
+/// Verify that the mux writer interleaves SDUs from multiple protocols
+/// rather than letting one protocol starve others.
+#[tokio::test]
+async fn mux_fair_scheduling_interleaves_protocols() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let protos = [MiniProtocolNum::CHAIN_SYNC, MiniProtocolNum::BLOCK_FETCH];
+
+    let client_handle = tokio::spawn(async move {
+        let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 16);
+
+        let cs = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("cs");
+        let bf = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("bf");
+
+        // Send multiple messages on both protocols rapidly.
+        for i in 0u8..5 {
+            cs.send(vec![0x10 + i]).await.expect("send cs");
+            bf.send(vec![0x20 + i]).await.expect("send bf");
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        mux.abort();
+    });
+
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 16);
+    let mut cs = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("cs");
+    let mut bf = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("bf");
+
+    // Collect messages from both protocols.
+    let mut cs_msgs = Vec::new();
+    let mut bf_msgs = Vec::new();
+
+    for _ in 0..10 {
+        tokio::select! {
+            msg = cs.recv() => {
+                if let Some(m) = msg { cs_msgs.push(m); }
+            }
+            msg = bf.recv() => {
+                if let Some(m) = msg { bf_msgs.push(m); }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                break;
+            }
+        }
+    }
+
+    // Both protocols should have received messages (not starved).
+    assert!(
+        !cs_msgs.is_empty(),
+        "ChainSync should have received messages"
+    );
+    assert!(
+        !bf_msgs.is_empty(),
+        "BlockFetch should have received messages"
+    );
+
+    mux.abort();
+    client_handle.await.expect("client task");
+}
+
+// ===========================================================================
 // Peer connection — successful handshake
 // ===========================================================================
 

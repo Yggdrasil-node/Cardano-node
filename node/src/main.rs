@@ -1058,6 +1058,7 @@ async fn run_node(
                 Some(inbound_peers),
                 Some(inbound_connection_manager),
                 Some(inbound_governor),
+                Some(yggdrasil_network::AcceptedConnectionsLimit::default()),
                 shutdown,
             )
             .await

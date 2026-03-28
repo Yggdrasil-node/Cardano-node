@@ -604,18 +604,29 @@ impl ConnectionManagerState {
     ///
     /// Returns `Ok(ConnStateId)` on success. The runtime must then run the
     /// handshake and call `inbound_handshake_done`.
+    ///
+    /// When the inbound count is at or above `hard_limit`, the method
+    /// first attempts to prune idle inbound connections via
+    /// [`prune_for_inbound`](Self::prune_for_inbound).  If pruning
+    /// frees enough capacity the accept proceeds; otherwise the call
+    /// returns an error.
     pub fn include_inbound_connection(
         &mut self,
         conn_id: ConnectionId,
     ) -> Result<(ConnStateId, Vec<CmAction>), ConnectionManagerError> {
         let peer = conn_id.remote;
 
-        // Hard-limit check.
+        // Pre-prune: attempt to make room if at capacity.
+        let mut prune_actions = Vec::new();
         if self.inbound_connection_count() >= self.limits.hard_limit {
-            return Err(ConnectionManagerError::ForbiddenOperation {
-                peer,
-                state: AbstractState::UnknownConnectionSt,
-            });
+            prune_actions = self.prune_for_inbound(1);
+            // After pruning, re-check.
+            if self.inbound_connection_count() >= self.limits.hard_limit {
+                return Err(ConnectionManagerError::ForbiddenOperation {
+                    peer,
+                    state: AbstractState::UnknownConnectionSt,
+                });
+            }
         }
 
         let id = self.next_conn_state_id();
@@ -633,31 +644,31 @@ impl ConnectionManagerState {
             // Unknown: fresh accept.
             None => {
                 self.connections.insert(peer, new_entry);
-                Ok((id, Vec::new()))
+                Ok((id, prune_actions))
             }
 
             // ReservedOutbound: overwrite (inbound wins race).
             Some(ConnectionState::ReservedOutboundState) => {
                 self.connections.insert(peer, new_entry);
-                Ok((id, Vec::new()))
+                Ok((id, prune_actions))
             }
 
             // Unnegotiated: self-connect scenario.
             Some(ConnectionState::UnnegotiatedState { .. }) => {
                 self.connections.insert(peer, new_entry);
-                Ok((id, Vec::new()))
+                Ok((id, prune_actions))
             }
 
             // Terminating: reuse during TIME_WAIT.
             Some(ConnectionState::TerminatingState { .. }) => {
                 self.connections.insert(peer, new_entry);
-                Ok((id, Vec::new()))
+                Ok((id, prune_actions))
             }
 
             // Terminated: reuse slot.
             Some(ConnectionState::TerminatedState { .. }) => {
                 self.connections.insert(peer, new_entry);
-                Ok((id, Vec::new()))
+                Ok((id, prune_actions))
             }
 
             // Any other active state: connection already exists.
@@ -1169,6 +1180,81 @@ impl ConnectionManagerState {
     // Pruning
     // -----------------------------------------------------------------------
 
+    /// Proactively prune up to `needed` idle inbound connections to make
+    /// room for a new inbound accept.
+    ///
+    /// Upstream: `includeInboundConnectionImpl` calls the prune policy
+    /// before the hard-limit check so that an incoming connection can
+    /// succeed even when the inbound count is at the limit, as long as
+    /// idle connections are available for eviction.
+    ///
+    /// Selection priority (matching upstream `simplePrunePolicy`):
+    /// 1. `InboundIdleState` — idle inbound connections.
+    /// 2. `TerminatedState` — already-terminated entries (free slots).
+    ///
+    /// Within each group, the most recently added entry (highest
+    /// `ConnStateId`) is pruned first.
+    ///
+    /// Selected entries are moved to `TerminatingState` (or removed if
+    /// already terminated) and the corresponding `CmAction::PruneConnections`
+    /// is emitted for the runtime to close the sockets.
+    pub fn prune_for_inbound(&mut self, needed: usize) -> Vec<CmAction> {
+        if needed == 0 {
+            return Vec::new();
+        }
+
+        // Collect prunable connections: prefer idle, then terminated.
+        let mut prunable: Vec<(SocketAddr, ConnStateId, bool)> = self
+            .connections
+            .iter()
+            .filter_map(|(addr, e)| {
+                match &e.state {
+                    ConnectionState::InboundIdleState { .. } => {
+                        Some((*addr, e.conn_state_id, false))
+                    }
+                    ConnectionState::TerminatedState { .. } => {
+                        Some((*addr, e.conn_state_id, true))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+
+        // Sort: terminated first (free slots), then idle by descending
+        // ConnStateId (most recently added first).
+        prunable.sort_by(|a, b| {
+            b.2.cmp(&a.2).then_with(|| b.1 .0.cmp(&a.1 .0))
+        });
+
+        let mut to_prune_addrs = Vec::new();
+        for (addr, _id, is_terminated) in prunable.into_iter().take(needed) {
+            if is_terminated {
+                // Remove terminated entries outright — they're already done.
+                self.connections.remove(&addr);
+            } else {
+                // Transition InboundIdle → Terminating.
+                if let Some(entry) = self.connections.get_mut(&addr) {
+                    if let Some(cid) = entry.state.conn_id() {
+                        entry.state = ConnectionState::TerminatingState {
+                            conn_id: cid,
+                            error: Some("pruned for inbound capacity".to_owned()),
+                        };
+                        entry.responder_timeout_deadline = None;
+                        entry.time_wait_deadline =
+                            Some(std::time::Instant::now() + crate::connection::timeouts::TIME_WAIT_TIMEOUT);
+                    }
+                }
+                to_prune_addrs.push(addr);
+            }
+        }
+
+        if to_prune_addrs.is_empty() {
+            Vec::new()
+        } else {
+            vec![CmAction::PruneConnections(to_prune_addrs)]
+        }
+    }
+
     /// Check if the inbound connection count exceeds the hard limit and
     /// select connections for pruning if so.
     ///
@@ -1610,15 +1696,17 @@ mod tests {
             delay: std::time::Duration::from_secs(1),
         });
 
-        // Fill up to hard limit. InboundIdle counts as inbound.
+        // Fill up to hard limit with *active* (non-idle) inbound connections
+        // so prune_for_inbound cannot evict them.
         for i in 0..2 {
             let p = peer(2000 + i);
             let cid = ConnectionId { local: local(), remote: p };
             cm.include_inbound_connection(cid).unwrap();
             cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
+            cm.promoted_to_warm_remote(p); // InboundState (active)
         }
 
-        // Third should fail.
+        // Third should fail — no idle connections to prune.
         let cid = ConnectionId {
             local: local(),
             remote: peer(3000),
@@ -2292,5 +2380,144 @@ mod tests {
             err,
             ConnectionManagerError::ForbiddenOperation { .. }
         ));
+    }
+
+    // -- Prune for inbound --
+
+    #[test]
+    fn prune_for_inbound_empty_cm_returns_empty() {
+        let mut cm = ConnectionManagerState::new();
+        let actions = cm.prune_for_inbound(1);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn prune_for_inbound_evicts_idle_inbound() {
+        let mut cm = ConnectionManagerState::with_limits(AcceptedConnectionsLimit {
+            hard_limit: 2,
+            soft_limit: 1,
+            delay: std::time::Duration::from_secs(1),
+        });
+
+        // Insert two idle inbound connections.
+        for i in 0..2 {
+            let p = peer(3000 + i);
+            let cid = ConnectionId { local: local(), remote: p };
+            cm.include_inbound_connection(cid).unwrap();
+            cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
+        }
+
+        let actions = cm.prune_for_inbound(1);
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            CmAction::PruneConnections(addrs) => {
+                assert_eq!(addrs.len(), 1);
+                // The most recently added (highest ConnStateId) should be
+                // selected for pruning.
+            }
+            other => panic!("expected PruneConnections, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn prune_for_inbound_removes_terminated_first() {
+        let mut cm = ConnectionManagerState::with_limits(AcceptedConnectionsLimit {
+            hard_limit: 2,
+            soft_limit: 1,
+            delay: std::time::Duration::from_secs(1),
+        });
+
+        // Insert one idle and one terminated.
+        let p1 = peer(3010);
+        let cid1 = ConnectionId { local: local(), remote: p1 };
+        cm.include_inbound_connection(cid1).unwrap();
+        cm.inbound_handshake_done(p1, DataFlow::Duplex).unwrap();
+
+        let p2 = peer(3011);
+        let cid2 = ConnectionId { local: local(), remote: p2 };
+        cm.include_inbound_connection(cid2).unwrap();
+        cm.inbound_handshake_done(p2, DataFlow::Duplex).unwrap();
+        cm.mark_terminating(p2, None);
+        cm.time_wait_expired(p2).unwrap();
+        assert_eq!(cm.abstract_state_of(&p2), AbstractState::TerminatedSt);
+
+        // Prune 1: should pick terminated first (free slot, no close needed).
+        let actions = cm.prune_for_inbound(1);
+        // Terminated entry is removed outright — no PruneConnections needed.
+        assert!(actions.is_empty(), "terminated removal needs no runtime action");
+        // p2 should be gone.
+        assert_eq!(cm.abstract_state_of(&p2), AbstractState::UnknownConnectionSt);
+    }
+
+    #[test]
+    fn prune_for_inbound_does_not_evict_active_connections() {
+        let mut cm = ConnectionManagerState::with_limits(AcceptedConnectionsLimit {
+            hard_limit: 2,
+            soft_limit: 1,
+            delay: std::time::Duration::from_secs(1),
+        });
+
+        // Insert two *active* inbound connections (InboundState, not idle).
+        for i in 0..2 {
+            let p = peer(3020 + i);
+            let cid = ConnectionId { local: local(), remote: p };
+            cm.include_inbound_connection(cid).unwrap();
+            cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
+            cm.promoted_to_warm_remote(p); // → InboundState (active)
+        }
+
+        // No idle connections to prune.
+        let actions = cm.prune_for_inbound(1);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn include_inbound_prunes_to_make_room() {
+        let mut cm = ConnectionManagerState::with_limits(AcceptedConnectionsLimit {
+            hard_limit: 2,
+            soft_limit: 1,
+            delay: std::time::Duration::from_secs(1),
+        });
+
+        // Fill to hard limit with idle inbound.
+        for i in 0..2 {
+            let p = peer(3030 + i);
+            let cid = ConnectionId { local: local(), remote: p };
+            cm.include_inbound_connection(cid).unwrap();
+            cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
+        }
+        assert_eq!(cm.inbound_connection_count(), 2);
+
+        // New inbound should succeed by pruning one idle connection.
+        let new_peer = peer(3040);
+        let new_cid = ConnectionId { local: local(), remote: new_peer };
+        let (id, actions) = cm.include_inbound_connection(new_cid).unwrap();
+        assert!(id.0 > 0);
+        // Should have emitted PruneConnections for the evicted idle peer.
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(actions[0], CmAction::PruneConnections(_)));
+    }
+
+    #[test]
+    fn include_inbound_fails_when_all_active() {
+        let mut cm = ConnectionManagerState::with_limits(AcceptedConnectionsLimit {
+            hard_limit: 2,
+            soft_limit: 1,
+            delay: std::time::Duration::from_secs(1),
+        });
+
+        // Fill to hard limit with active (non-idle) inbound.
+        for i in 0..2 {
+            let p = peer(3050 + i);
+            let cid = ConnectionId { local: local(), remote: p };
+            cm.include_inbound_connection(cid).unwrap();
+            cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
+            cm.promoted_to_warm_remote(p); // active
+        }
+
+        // New inbound should fail — nothing to prune.
+        let new_cid = ConnectionId { local: local(), remote: peer(3060) };
+        let err = cm.include_inbound_connection(new_cid).unwrap_err();
+        assert!(matches!(err, ConnectionManagerError::ForbiddenOperation { .. }));
     }
 }

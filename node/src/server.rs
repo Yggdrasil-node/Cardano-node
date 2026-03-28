@@ -25,6 +25,7 @@ use yggdrasil_ledger::{
 };
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
+    AcceptedConnectionsLimit,
     BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
     ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest,
     CmAction, ConnectionId, ConnectionManagerState, DataFlow,
@@ -32,10 +33,11 @@ use yggdrasil_network::{
     KeepAliveServer, KeepAliveServerError,
     MuxHandle, PeerConnection, PeerListener, PeerListenerError,
     NodePeerSharing,
-    OperationResult, ResponderCounters,
+    OperationResult, RateLimitDecision, ResponderCounters,
     PeerRegistry, PeerSharingServer, PeerSharingServerError,
     PeerStatus, SharedPeerAddress,
     TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
+    rate_limit_decision,
 };
 use yggdrasil_network::multiplexer::MiniProtocolNum;
 use yggdrasil_storage::{ChainDb, ImmutableStore, VolatileStore, LedgerStore};
@@ -867,6 +869,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     inbound_peers: Option<Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>>>,
     connection_manager: Option<Arc<RwLock<ConnectionManagerState>>>,
     inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
+    accepted_connections_limit: Option<AcceptedConnectionsLimit>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
     let listener_local_addr = listener
@@ -874,12 +877,15 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
         .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0)));
     let start = Instant::now();
     let mut inactivity_tick = tokio::time::interval(Duration::from_millis(31_400));
+    let mut session_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
             biased;
-            _ = &mut shutdown => return Ok(()),
+            _ = &mut shutdown => break,
+            // Reap completed session tasks to free memory.
+            Some(_) = session_tasks.join_next(), if !session_tasks.is_empty() => {}
             _ = inactivity_tick.tick() => {
                 if let (Some(shared_ig), Some(shared_cm)) =
                     (inbound_governor.as_ref(), connection_manager.as_ref())
@@ -894,6 +900,28 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
             }
             result = listener.accept_peer() => {
                 let (conn, addr) = result?;
+
+                // -- Rate-limit check (upstream `runConnectionRateLimits`) --
+                if let (Some(shared_cm), Some(limits)) =
+                    (connection_manager.as_ref(), accepted_connections_limit.as_ref())
+                {
+                    let inbound_count = {
+                        let cm = shared_cm.read().expect("connection manager lock poisoned");
+                        cm.inbound_connection_count()
+                    };
+                    match rate_limit_decision(inbound_count, limits) {
+                        RateLimitDecision::NoDelay => {}
+                        RateLimitDecision::SoftDelay(d) => {
+                            tokio::time::sleep(d).await;
+                        }
+                        RateLimitDecision::HardLimit => {
+                            // At hard limit — close immediately without registering.
+                            conn.mux.abort();
+                            continue;
+                        }
+                    }
+                }
+
                 let data_flow = if conn.version_data.initiator_only_diffusion_mode {
                     DataFlow::Unidirectional
                 } else {
@@ -987,7 +1015,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     ResponderCounters::default(),
                 ));
 
-                tokio::spawn(async move {
+                session_tasks.spawn(async move {
                     let ka = {
                         let shared_ig = shared_ig.clone();
                         let shared_cm = shared_cm.clone();
@@ -1261,6 +1289,51 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
             }
         }
     }
+
+    // -- Graceful shutdown: drain active inbound sessions --
+    // Upstream `Ouroboros.Network.Server2` shutdown sequence:
+    // 1. Stop accepting new connections (loop already exited)
+    // 2. Signal CommitRemote for all tracked inbound peers so IG/CM
+    //    can begin their teardown transitions.
+    // 3. Wait up to INBOUND_DRAIN_TIMEOUT for session tasks to finish.
+    // 4. Abort any remaining tasks that haven't exited.
+    const INBOUND_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+    if let (Some(shared_ig), Some(shared_cm)) =
+        (inbound_governor.as_ref(), connection_manager.as_ref())
+    {
+        let tracked_peers: Vec<(SocketAddr, ConnectionId)> = {
+            let ig = shared_ig.read().expect("inbound governor lock poisoned");
+            ig.connections
+                .iter()
+                .map(|(&peer, entry)| (peer, entry.conn_id))
+                .collect()
+        };
+
+        for (_peer, conn_id) in &tracked_peers {
+            process_inbound_governor_events(
+                shared_ig,
+                shared_cm,
+                now_ms(&start),
+                vec![InboundGovernorEvent::CommitRemote(*conn_id)],
+            );
+        }
+    }
+
+    // Wait for active session tasks with a bounded timeout.
+    let drain_deadline = tokio::time::Instant::now() + INBOUND_DRAIN_TIMEOUT;
+    while !session_tasks.is_empty() {
+        match tokio::time::timeout_at(drain_deadline, session_tasks.join_next()).await {
+            Ok(Some(_)) => {} // task completed
+            Ok(None) => break, // JoinSet empty
+            Err(_) => break,   // timeout expired
+        }
+    }
+
+    // Force-abort anything still running.
+    session_tasks.shutdown().await;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1463,6 +1536,7 @@ mod tests {
                     None,
                     None,
                     Some(consumer),
+                    None,
                     None,
                     None,
                     None,

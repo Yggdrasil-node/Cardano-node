@@ -6,12 +6,27 @@
 //!
 //! - **Demuxer (reader)**: reads SDU frames from the transport, dispatches
 //!   each payload to the ingress channel of the corresponding mini-protocol.
-//! - **Muxer (writer)**: collects outgoing payloads from all protocol
-//!   channels and frames them as SDUs on the wire.
+//!   Per-protocol ingress byte limits are enforced; exceeding the limit
+//!   raises [`MuxError::IngressQueueOverRun`] and kills the connection.
+//! - **Muxer (writer)**: collects outgoing payloads from per-protocol
+//!   egress channels using weighted round-robin scheduling, and frames
+//!   them as SDUs on the wire.  Each protocol gets `weight` segments
+//!   per round before the scheduler advances, preventing head-of-line
+//!   blocking across mini-protocols.
+//!
+//! Backpressure:
+//! - Ingress: upstream `maximumIngressQueue` — byte counter per protocol,
+//!   incremented by the demuxer, decremented by [`ProtocolHandle::recv`].
+//! - Egress: upstream `egressSoftBufferLimit` — byte counter per protocol,
+//!   incremented by [`ProtocolHandle::send`], decremented by the muxer
+//!   after writing.  Exceeding the limit returns
+//!   [`MuxError::EgressBufferOverflow`].
 //!
 //! Reference: `network-mux/src/Network/Mux.hs`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -25,6 +40,58 @@ use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SduHeader, SDU_HEADER
 /// The mux writer splits outgoing messages larger than this into multiple SDU
 /// frames; the [`MessageChannel`] wrapper reassembles them on the receive side.
 pub const MAX_SEGMENT_SIZE: usize = 12288;
+
+/// Default per-protocol ingress queue byte limit.
+///
+/// Matches upstream `maximumIngressQueue` default of 2 MB.
+///
+/// Reference: `Network.Mux.Types` — `MiniProtocolLimits`.
+pub const DEFAULT_INGRESS_LIMIT: usize = 2_000_000;
+
+/// Per-protocol egress soft buffer limit.
+///
+/// Upstream: `egressSoftBufferLimit = 0x3ffff` (~262 KB) from
+/// `network-mux`.  If a protocol's pending egress bytes exceed this,
+/// [`ProtocolHandle::send`] returns [`MuxError::EgressBufferOverflow`]
+/// and the runtime should tear down the connection.
+pub const EGRESS_SOFT_LIMIT: usize = 0x3ffff; // 262_143 bytes
+
+/// Default protocol scheduling weight for the egress round-robin.
+///
+/// All protocols start with weight 1 (uniform scheduling).  Hot-tier
+/// protocols (ChainSync, BlockFetch) can be assigned higher weights
+/// via [`ProtocolConfig`] to get proportionally more write slots per
+/// round, matching upstream hot-protocol priority.
+pub const DEFAULT_PROTOCOL_WEIGHT: u8 = 1;
+
+// ---------------------------------------------------------------------------
+// WeightHandle — shared dynamic scheduling weight
+// ---------------------------------------------------------------------------
+
+/// Shared handle for dynamically adjusting a protocol's egress scheduling
+/// weight at runtime.
+///
+/// The [`start_configured`] entry point returns one `WeightHandle` per
+/// protocol (embedded in each [`ProtocolHandle`]).  The mux writer reads
+/// the current weight atomically each scheduling round, so updates take
+/// effect immediately without restarting the multiplexer.
+///
+/// Typical use: bump ChainSync and BlockFetch weights when a peer is
+/// promoted to hot-tier, and reset them to 1 on demotion to warm.
+#[derive(Clone, Debug)]
+pub struct WeightHandle(Arc<AtomicU8>);
+
+impl WeightHandle {
+    /// Update the scheduling weight (floor-clamped to 1).
+    pub fn set(&self, w: u8) {
+        self.0.store(w.max(1), Ordering::Relaxed);
+    }
+
+    /// Read the current scheduling weight.
+    pub fn get(&self) -> u8 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -56,6 +123,66 @@ pub enum MuxError {
     /// A payload exceeds the maximum SDU payload size.
     #[error("payload too large: {0} bytes")]
     PayloadTooLarge(usize),
+
+    /// Per-protocol ingress queue byte limit exceeded.
+    ///
+    /// Upstream: `MuxIngressQueueOverRun` from `Network.Mux.Trace`.
+    /// The demuxer terminates the connection when the accumulated
+    /// ingress bytes for a protocol exceed `maximumIngressQueue`.
+    #[error("ingress queue overrun for protocol {protocol}: {bytes} bytes exceeds limit {limit}")]
+    IngressQueueOverRun {
+        /// Mini-protocol number.
+        protocol: u16,
+        /// Byte count that triggered the overrun.
+        bytes: usize,
+        /// Configured limit.
+        limit: usize,
+    },
+
+    /// Per-protocol egress soft buffer limit exceeded.
+    ///
+    /// Upstream: Wanton buffer check against `egressSoftBufferLimit`.
+    /// The connection should be torn down when a protocol tries to
+    /// buffer more egress data than the limit allows.
+    #[error("egress buffer overflow for protocol {protocol}: {bytes} bytes exceeds limit {limit}")]
+    EgressBufferOverflow {
+        /// Mini-protocol number.
+        protocol: u16,
+        /// Byte count that triggered the overflow.
+        bytes: usize,
+        /// Configured limit.
+        limit: usize,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// ProtocolConfig — per-protocol mux configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for a single mini-protocol channel in the multiplexer.
+///
+/// Used by [`start_configured`] to specify per-protocol ingress limits
+/// and egress scheduling weights.  [`start`] uses
+/// [`ProtocolConfig::default_for`] for every protocol.
+#[derive(Clone, Debug)]
+pub struct ProtocolConfig {
+    /// Protocol number.
+    pub num: MiniProtocolNum,
+    /// Maximum ingress queue bytes (default: [`DEFAULT_INGRESS_LIMIT`]).
+    pub ingress_limit: usize,
+    /// Scheduling weight for egress round-robin (default: [`DEFAULT_PROTOCOL_WEIGHT`]).
+    pub weight: u8,
+}
+
+impl ProtocolConfig {
+    /// Create a config with default limits and weight.
+    pub fn default_for(num: MiniProtocolNum) -> Self {
+        Self {
+            num,
+            ingress_limit: DEFAULT_INGRESS_LIMIT,
+            weight: DEFAULT_PROTOCOL_WEIGHT,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -69,37 +196,83 @@ pub enum MuxError {
 /// is independent from the mux tasks — dropping it signals the muxer that
 /// this protocol has no more outgoing data, and the demuxer will return
 /// [`MuxError::IngressClosed`] if a payload arrives for a dropped handle.
+///
+/// Backpressure:
+/// - Egress: [`send`](Self::send) checks `pending_egress_bytes` against
+///   the per-protocol soft limit before queueing.
+/// - Ingress: the demuxer increments `ingress_bytes` when dispatching an
+///   SDU; [`recv`](Self::recv) decrements after delivery.
 pub struct ProtocolHandle {
-    /// Tagged egress sender (shared across all protocols).
-    egress: mpsc::Sender<(MiniProtocolNum, Vec<u8>)>,
+    /// Per-protocol egress sender.
+    egress: mpsc::Sender<Vec<u8>>,
     /// Per-protocol ingress receiver.
     ingress: mpsc::Receiver<Vec<u8>>,
     /// Protocol number, used to tag outgoing payloads.
     protocol_num: MiniProtocolNum,
+    /// Shared ingress byte counter (incremented by demuxer, decremented
+    /// by [`recv`](Self::recv)).
+    ingress_bytes: Arc<AtomicUsize>,
+    /// Shared egress byte counter (incremented by [`send`](Self::send),
+    /// decremented by the mux writer after writing).
+    egress_bytes: Arc<AtomicUsize>,
+    /// Per-protocol egress soft limit.
+    egress_limit: usize,
+    /// Notification handle — wakes the mux writer when new egress data
+    /// is available (replaces the old single shared channel).
+    notify: Arc<tokio::sync::Notify>,
+    /// Shared scheduling weight (also held by the mux writer's `EgressSlot`).
+    weight: WeightHandle,
 }
 
 impl ProtocolHandle {
     /// Send a complete protocol message payload to the remote peer.
     ///
+    /// Returns [`MuxError::EgressBufferOverflow`] if the pending egress
+    /// bytes for this protocol would exceed the soft limit.
+    ///
     /// The multiplexer will frame the payload as an SDU with the correct
     /// protocol number and direction.
     pub async fn send(&self, payload: Vec<u8>) -> Result<(), MuxError> {
+        let len = payload.len();
+        let current = self.egress_bytes.load(Ordering::Relaxed);
+        if current + len > self.egress_limit {
+            return Err(MuxError::EgressBufferOverflow {
+                protocol: self.protocol_num.0,
+                bytes: current + len,
+                limit: self.egress_limit,
+            });
+        }
         self.egress
-            .send((self.protocol_num, payload))
+            .send(payload)
             .await
-            .map_err(|_| MuxError::EgressClosed)
+            .map_err(|_| MuxError::EgressClosed)?;
+        self.egress_bytes.fetch_add(len, Ordering::Relaxed);
+        self.notify.notify_one();
+        Ok(())
     }
 
     /// Receive the next protocol message payload from the remote peer.
     ///
     /// Returns `None` when the demuxer shuts down or the connection closes.
+    /// Decrements the ingress byte counter for this protocol.
     pub async fn recv(&mut self) -> Option<Vec<u8>> {
-        self.ingress.recv().await
+        let data = self.ingress.recv().await;
+        if let Some(ref d) = data {
+            self.ingress_bytes.fetch_sub(d.len(), Ordering::Relaxed);
+        }
+        data
     }
 
     /// The mini-protocol number this handle is bound to.
     pub fn protocol_num(&self) -> MiniProtocolNum {
         self.protocol_num
+    }
+
+    /// Clone the shared weight handle so the caller can adjust this
+    /// protocol's egress scheduling weight after the [`ProtocolHandle`]
+    /// has been consumed.
+    pub fn weight_handle(&self) -> WeightHandle {
+        self.weight.clone()
     }
 }
 
@@ -145,6 +318,11 @@ impl MuxHandle {
 ///   [`MuxError::UnknownProtocol`].
 /// * `buffer_size` — Capacity of each per-protocol channel.
 ///
+/// All protocols get default ingress limits ([`DEFAULT_INGRESS_LIMIT`]),
+/// egress limits ([`EGRESS_SOFT_LIMIT`]), and weight
+/// ([`DEFAULT_PROTOCOL_WEIGHT`]).  Use [`start_configured`] for custom
+/// per-protocol settings.
+///
 /// # Returns
 ///
 /// A map from protocol number to [`ProtocolHandle`], and a [`MuxHandle`]
@@ -155,6 +333,22 @@ pub fn start(
     stream: tokio::net::TcpStream,
     role: MiniProtocolDir,
     protocols: &[MiniProtocolNum],
+    buffer_size: usize,
+) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle) {
+    let configs: Vec<ProtocolConfig> = protocols
+        .iter()
+        .map(|&p| ProtocolConfig::default_for(p))
+        .collect();
+    let (read_half, write_half) = stream.into_split();
+    start_from_halves(read_half, write_half, role, &configs, buffer_size)
+}
+
+/// Start the multiplexer over a TCP connection with custom per-protocol
+/// configuration (ingress limits, egress limits, scheduling weights).
+pub fn start_configured(
+    stream: tokio::net::TcpStream,
+    role: MiniProtocolDir,
+    protocols: &[ProtocolConfig],
     buffer_size: usize,
 ) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle) {
     let (read_half, write_half) = stream.into_split();
@@ -172,8 +366,38 @@ pub fn start_unix(
     protocols: &[MiniProtocolNum],
     buffer_size: usize,
 ) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle) {
+    let configs: Vec<ProtocolConfig> = protocols
+        .iter()
+        .map(|&p| ProtocolConfig::default_for(p))
+        .collect();
+    let (read_half, write_half) = stream.into_split();
+    start_from_halves(read_half, write_half, role, &configs, buffer_size)
+}
+
+/// Start the multiplexer over a Unix-domain socket with custom per-protocol
+/// configuration.
+#[cfg(unix)]
+pub fn start_unix_configured(
+    stream: tokio::net::UnixStream,
+    role: MiniProtocolDir,
+    protocols: &[ProtocolConfig],
+    buffer_size: usize,
+) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle) {
     let (read_half, write_half) = stream.into_split();
     start_from_halves(read_half, write_half, role, protocols, buffer_size)
+}
+
+// ---------------------------------------------------------------------------
+// EgressSlot — internal per-protocol egress source for the mux writer
+// ---------------------------------------------------------------------------
+
+/// Per-protocol egress receiver slot used by the round-robin mux writer.
+struct EgressSlot {
+    protocol_num: MiniProtocolNum,
+    receiver: mpsc::Receiver<Vec<u8>>,
+    weight: WeightHandle,
+    pending_bytes: Arc<AtomicUsize>,
+    closed: bool,
 }
 
 /// Internal generic entry-point: split read/write halves into mux/demux loops.
@@ -181,40 +405,63 @@ fn start_from_halves<R, W>(
     read_half: R,
     write_half: W,
     role: MiniProtocolDir,
-    protocols: &[MiniProtocolNum],
+    protocols: &[ProtocolConfig],
     buffer_size: usize,
 ) -> (HashMap<MiniProtocolNum, ProtocolHandle>, MuxHandle)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    let notify = Arc::new(tokio::sync::Notify::new());
 
-    // Shared egress channel: all protocol handles send tagged payloads here.
-    let (egress_tx, egress_rx) = mpsc::channel::<(MiniProtocolNum, Vec<u8>)>(buffer_size);
-
-    // Per-protocol ingress channels + handles.
     let mut handles = HashMap::new();
     let mut ingress_senders: HashMap<MiniProtocolNum, mpsc::Sender<Vec<u8>>> = HashMap::new();
+    let mut ingress_bytes_map: HashMap<MiniProtocolNum, Arc<AtomicUsize>> = HashMap::new();
+    let mut ingress_limits: HashMap<MiniProtocolNum, usize> = HashMap::new();
+    let mut egress_slots = Vec::new();
 
-    for &proto in protocols {
+    for cfg in protocols {
         let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(buffer_size);
-        ingress_senders.insert(proto, in_tx);
+        let (eg_tx, eg_rx) = mpsc::channel::<Vec<u8>>(buffer_size);
+
+        let ingress_bytes = Arc::new(AtomicUsize::new(0));
+        let egress_bytes = Arc::new(AtomicUsize::new(0));
+        let weight = WeightHandle(Arc::new(AtomicU8::new(cfg.weight.max(1))));
+
+        ingress_senders.insert(cfg.num, in_tx);
+        ingress_bytes_map.insert(cfg.num, Arc::clone(&ingress_bytes));
+        ingress_limits.insert(cfg.num, cfg.ingress_limit);
+
+        egress_slots.push(EgressSlot {
+            protocol_num: cfg.num,
+            receiver: eg_rx,
+            weight: weight.clone(),
+            pending_bytes: Arc::clone(&egress_bytes),
+            closed: false,
+        });
+
         handles.insert(
-            proto,
+            cfg.num,
             ProtocolHandle {
-                egress: egress_tx.clone(),
+                egress: eg_tx,
                 ingress: in_rx,
-                protocol_num: proto,
+                protocol_num: cfg.num,
+                ingress_bytes,
+                egress_bytes,
+                egress_limit: EGRESS_SOFT_LIMIT,
+                notify: Arc::clone(&notify),
+                weight,
             },
         );
     }
 
-    // Drop the builder's clone — only ProtocolHandle clones remain.
-    // When every handle is dropped, the writer task's receiver will close.
-    drop(egress_tx);
-
-    let reader = tokio::spawn(demux_loop(read_half, ingress_senders));
-    let writer = tokio::spawn(mux_loop(write_half, egress_rx, role));
+    let reader = tokio::spawn(demux_loop(
+        read_half,
+        ingress_senders,
+        ingress_bytes_map,
+        ingress_limits,
+    ));
+    let writer = tokio::spawn(mux_loop(write_half, egress_slots, role, notify));
 
     (handles, MuxHandle { reader, writer })
 }
@@ -225,9 +472,15 @@ where
 
 /// Read SDU frames from the transport and dispatch payloads to the
 /// per-protocol ingress channels.
+///
+/// Enforces per-protocol ingress byte limits: if the accumulated ingress
+/// bytes for a protocol exceed the configured limit, returns
+/// [`MuxError::IngressQueueOverRun`] and terminates the connection.
 async fn demux_loop<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
     ingress: HashMap<MiniProtocolNum, mpsc::Sender<Vec<u8>>>,
+    ingress_bytes: HashMap<MiniProtocolNum, Arc<AtomicUsize>>,
+    ingress_limits: HashMap<MiniProtocolNum, usize>,
 ) -> Result<(), MuxError> {
     loop {
         // Read the 8-byte SDU header.
@@ -258,15 +511,43 @@ async fn demux_loop<R: tokio::io::AsyncRead + Unpin>(
             }
         }
 
-        // Dispatch by mini-protocol number.
         let proto = header.protocol_num;
+
+        // Ingress byte-limit check (upstream maximumIngressQueue).
+        if let Some(counter) = ingress_bytes.get(&proto) {
+            let limit = ingress_limits
+                .get(&proto)
+                .copied()
+                .unwrap_or(DEFAULT_INGRESS_LIMIT);
+            let current = counter.load(Ordering::Relaxed);
+            if current + len > limit {
+                return Err(MuxError::IngressQueueOverRun {
+                    protocol: proto.0,
+                    bytes: current + len,
+                    limit,
+                });
+            }
+            counter.fetch_add(len, Ordering::Relaxed);
+        }
+
+        // Dispatch by mini-protocol number.
         match ingress.get(&proto) {
             Some(tx) => {
                 if tx.send(payload).await.is_err() {
+                    // Undo byte increment — payload was not delivered.
+                    if let Some(counter) = ingress_bytes.get(&proto) {
+                        counter.fetch_sub(len, Ordering::Relaxed);
+                    }
                     return Err(MuxError::IngressClosed(proto.0));
                 }
             }
-            None => return Err(MuxError::UnknownProtocol(proto.0)),
+            None => {
+                // Undo byte increment for unknown protocol.
+                if let Some(counter) = ingress_bytes.get(&proto) {
+                    counter.fetch_sub(len, Ordering::Relaxed);
+                }
+                return Err(MuxError::UnknownProtocol(proto.0));
+            }
         }
     }
 }
@@ -275,43 +556,93 @@ async fn demux_loop<R: tokio::io::AsyncRead + Unpin>(
 // Muxer (writer) loop
 // ---------------------------------------------------------------------------
 
-/// Collect tagged payloads from protocol handles and write them as SDU
-/// frames on the transport.
+/// Weighted round-robin egress writer.
+///
+/// Each protocol has its own egress channel and a scheduling weight.
+/// Per round, each protocol gets up to `weight` segments written before
+/// the scheduler advances to the next protocol, preventing head-of-line
+/// blocking.  When all channels are empty the writer blocks on a shared
+/// [`tokio::sync::Notify`] until a [`ProtocolHandle::send`] wakes it.
+///
+/// Upstream reference: `network-mux` per-Wanton round-robin writer.
 async fn mux_loop<W: tokio::io::AsyncWrite + Unpin>(
     mut writer: W,
-    mut egress: mpsc::Receiver<(MiniProtocolNum, Vec<u8>)>,
+    mut slots: Vec<EgressSlot>,
     role: MiniProtocolDir,
+    notify: Arc<tokio::sync::Notify>,
 ) -> Result<(), MuxError> {
-    while let Some((proto, payload)) = egress.recv().await {
-        if payload.len() <= MAX_SEGMENT_SIZE {
-            // Common fast path: single SDU.
+    loop {
+        // Remove fully-disconnected slots.
+        slots.retain(|s| !s.closed);
+        if slots.is_empty() {
+            return Ok(());
+        }
+
+        let mut any_written = false;
+
+        for slot in slots.iter_mut() {
+            let mut written = 0u8;
+            while written < slot.weight.get() {
+                match slot.receiver.try_recv() {
+                    Ok(payload) => {
+                        let len = payload.len();
+                        write_sdu(&mut writer, slot.protocol_num, role, &payload).await?;
+                        slot.pending_bytes.fetch_sub(len, Ordering::Relaxed);
+                        any_written = true;
+                        written += 1;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        slot.closed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !any_written {
+            // Check again after marking closed slots.
+            if slots.iter().all(|s| s.closed) {
+                slots.retain(|s| !s.closed);
+                return Ok(());
+            }
+            // All channels empty — wait for notification from a sender.
+            notify.notified().await;
+        }
+    }
+}
+
+/// Write one payload as one or more SDU frames on the transport.
+async fn write_sdu<W: tokio::io::AsyncWrite + Unpin>(
+    writer: &mut W,
+    proto: MiniProtocolNum,
+    role: MiniProtocolDir,
+    payload: &[u8],
+) -> Result<(), MuxError> {
+    if payload.len() <= MAX_SEGMENT_SIZE {
+        // Common fast path: single SDU.
+        let header = SduHeader {
+            timestamp: 0,
+            protocol_num: proto,
+            direction: role,
+            payload_length: payload.len() as u16,
+        };
+        writer.write_all(&header.encode()).await?;
+        writer.write_all(payload).await?;
+    } else {
+        // Large payload: segment into MAX_SEGMENT_SIZE chunks.
+        for chunk in payload.chunks(MAX_SEGMENT_SIZE) {
             let header = SduHeader {
                 timestamp: 0,
                 protocol_num: proto,
                 direction: role,
-                payload_length: payload.len() as u16,
+                payload_length: chunk.len() as u16,
             };
-            let hdr_bytes = header.encode();
-            writer.write_all(&hdr_bytes).await?;
-            writer.write_all(&payload).await?;
-        } else {
-            // Large payload: segment into MAX_SEGMENT_SIZE chunks.
-            for chunk in payload.chunks(MAX_SEGMENT_SIZE) {
-                let header = SduHeader {
-                    timestamp: 0,
-                    protocol_num: proto,
-                    direction: role,
-                    payload_length: chunk.len() as u16,
-                };
-                let hdr_bytes = header.encode();
-                writer.write_all(&hdr_bytes).await?;
-                writer.write_all(chunk).await?;
-            }
+            writer.write_all(&header.encode()).await?;
+            writer.write_all(chunk).await?;
         }
-        writer.flush().await?;
     }
-
-    // All egress senders dropped — clean shutdown.
+    writer.flush().await?;
     Ok(())
 }
 

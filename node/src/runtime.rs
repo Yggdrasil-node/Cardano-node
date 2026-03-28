@@ -120,6 +120,31 @@ fn apply_control_close(bundle: &mut TemperatureBundle<ControlMessage>) {
     bundle.established = ControlMessage::Terminate;
 }
 
+/// Hot-tier egress weights: ChainSync 3, BlockFetch 2, others 1.
+///
+/// Upstream: `hotProtocol` scheduling allocates proportionally more egress
+/// bandwidth to data-intensive mini-protocols when a peer is hot, reducing
+/// fetch latency and improving chain sync throughput.
+const HOT_WEIGHT_CHAIN_SYNC: u8 = 3;
+const HOT_WEIGHT_BLOCK_FETCH: u8 = 2;
+
+fn apply_hot_weights(weights: &[(MiniProtocolNum, yggdrasil_network::WeightHandle)]) {
+    for (proto, handle) in weights {
+        let w = match *proto {
+            MiniProtocolNum::CHAIN_SYNC => HOT_WEIGHT_CHAIN_SYNC,
+            MiniProtocolNum::BLOCK_FETCH => HOT_WEIGHT_BLOCK_FETCH,
+            _ => yggdrasil_network::DEFAULT_PROTOCOL_WEIGHT,
+        };
+        handle.set(w);
+    }
+}
+
+fn apply_warm_weights(weights: &[(MiniProtocolNum, yggdrasil_network::WeightHandle)]) {
+    for (_proto, handle) in weights {
+        handle.set(yggdrasil_network::DEFAULT_PROTOCOL_WEIGHT);
+    }
+}
+
 impl ManagedWarmPeer {
     fn new(session: PeerSession, now: Instant) -> Self {
         Self {
@@ -256,6 +281,9 @@ impl OutboundPeerManager {
             Some(managed) if !managed.is_hot => {
                 managed.is_hot = true;
                 apply_control_activate(&mut managed.control);
+                // Boost hot-tier protocol weights so ChainSync and BlockFetch
+                // get proportionally more egress bandwidth.
+                apply_hot_weights(&managed.session.protocol_weights);
                 true
             }
             _ => false,
@@ -270,6 +298,8 @@ impl OutboundPeerManager {
             Some(managed) if managed.is_hot => {
                 managed.is_hot = false;
                 apply_control_deactivate(&mut managed.control);
+                // Reset all protocol weights to uniform when demoted.
+                apply_warm_weights(&managed.session.protocol_weights);
                 true
             }
             _ => false,
@@ -1039,8 +1069,25 @@ pub async fn run_governor_loop<I, V, L, F>(
             biased;
 
             () = &mut shutdown => {
+                // -- Graceful outbound drain (upstream governor shutdown) --
+                // Phase 1: Signal all outbound peers to terminate their
+                // mini-protocol bundles via ControlMessage::Terminate.
                 let outbound_peers: Vec<SocketAddr> =
                     peer_manager.warm_peers.keys().copied().collect();
+                for peer in &outbound_peers {
+                    if let Some(managed) = peer_manager.warm_peers.get_mut(peer) {
+                        apply_control_close(&mut managed.control);
+                    }
+                }
+
+                tracer.trace_runtime(
+                    "Net.Governor",
+                    "Info",
+                    "outbound shutdown: signalled terminate to all peers",
+                    trace_fields([("peerCount", json!(outbound_peers.len()))]),
+                );
+
+                // Phase 2: Release connections through CM and clean up.
                 let mut drained = 0usize;
                 for peer in outbound_peers {
                     let (release_result, cm_actions) = {
@@ -1950,6 +1997,9 @@ pub struct PeerSession {
     pub version: HandshakeVersion,
     /// Agreed-upon version data.
     pub version_data: NodeToNodeVersionData,
+    /// Per-protocol egress weight handles for dynamic scheduling adjustment.
+    /// Stored as `(MiniProtocolNum, WeightHandle)` tuples.
+    pub protocol_weights: Vec<(MiniProtocolNum, yggdrasil_network::WeightHandle)>,
 }
 
 /// Outcome returned when the reconnecting verified sync runner stops.
@@ -3405,8 +3455,20 @@ async fn bootstrap_with_attempt_state(
         .ok_or_else(|| PeerError::HandshakeProtocol {
             detail: "missing TxSubmission protocol handle".into(),
         })?;
+
+    // Extract weight handles before consuming the ProtocolHandles.
+    let mut protocol_weights = vec![
+        (MiniProtocolNum::CHAIN_SYNC, cs.weight_handle()),
+        (MiniProtocolNum::BLOCK_FETCH, bf.weight_handle()),
+        (MiniProtocolNum::KEEP_ALIVE, ka.weight_handle()),
+        (MiniProtocolNum::TX_SUBMISSION, tx.weight_handle()),
+    ];
+
     let peer_sharing = conn.protocols.remove(&MiniProtocolNum::PEER_SHARING);
     let peer_sharing = if conn.version_data.peer_sharing > 0 {
+        if let Some(ref ps) = peer_sharing {
+            protocol_weights.push((MiniProtocolNum::PEER_SHARING, ps.weight_handle()));
+        }
         peer_sharing.map(PeerSharingClient::new)
     } else {
         None
@@ -3422,6 +3484,7 @@ async fn bootstrap_with_attempt_state(
         mux: conn.mux,
         version: conn.version,
         version_data: conn.version_data,
+        protocol_weights,
     })
 }
 
@@ -4835,6 +4898,13 @@ mod tests {
             // cleaned up when tests drop the manager.
             std::mem::forget(server_mux);
 
+            // Extract weight handles before consuming protocol handles.
+            let protocol_weights: Vec<(MiniProtocolNum, yggdrasil_network::WeightHandle)> =
+                protocols
+                    .iter()
+                    .map(|p| (*p, handles.get(p).unwrap().weight_handle()))
+                    .collect();
+
             super::PeerSession {
                 connected_peer_addr: addr,
                 chain_sync: yggdrasil_network::ChainSyncClient::new(
@@ -4858,6 +4928,7 @@ mod tests {
                     peer_sharing: 0,
                     query: false,
                 },
+                protocol_weights,
             }
         })
     }
