@@ -156,11 +156,15 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Ledger peers | Registered pool relays | ✅ | ✅ | Complete | LedgerPeerProvider + snapshot normalization
 | Peer registry | Source + status tracking | ✅ | ✅ | Complete | PeerRegistry with Cold/Warm/Hot states
 | **Governor** |
-| Outbound targets | HotValency/WarmValency | ✅ | ✅ | Complete | GovernorTargets with per-source limits
-| Promotion logic | Cold → Warm → Hot | ✅ | ⚠️ | Partial | GovernorAction enum; promotion scoring incomplete
-| Demotion logic | Hot → Warm → Cold | ✅ | ⚠️ | Partial | Demotion triggers incomplete
-| Churn | Peer replacement rate | ✅ | ⏸️ | Not Started | Churn mitigation logic needed
-| Anti-churn | Stable peer retention | ✅ | ⏸️ | Not Started | Connection-state tracking needed
+| Outbound targets | HotValency/WarmValency | ✅ | ✅ | Complete | GovernorTargets + sanePeerSelectionTargets validation
+| Promotion logic | Cold → Warm → Hot | ✅ | ✅ | Complete | Tepid deprioritization, local-root-first, big-ledger disjoint
+| Demotion logic | Hot → Warm → Cold | ✅ | ✅ | Complete | Non-local-root first, big-ledger disjoint, in-flight tracking
+| Churn | Peer replacement rate | ✅ | ✅ | Complete | Two-phase churn cycle (DecreasedActive → DecreasedEstablished → Idle)
+| Anti-churn | Stable peer retention | ✅ | ✅ | Complete | Tepid flag + failure backoff + churn_decrease(v) = max(0, v - max(1, v/5))
+| Bootstrap-sensitive | Trustable-only mode | ✅ | ✅ | Complete | PeerSelectionMode::Sensitive with trustable filtering
+| In-flight tracking | Duplicate action prevention | ✅ | ✅ | Complete | Promotions + demotions tracked; filter_backed_off filters both
+| Peer sharing requests | Gossip-based discovery | ✅ | ✅ | Complete | ShareRequest action + budget tracking (inProgressPeerShareReqs)
+| Failure backoff | Exponential retry delay | ✅ | ✅ | Complete | Time-based decay + max_connection_retries forget
 | Local-root handling | Static hotValency targets | ✅ | ✅ | Complete | LocalRootTargets enum + governor integration
 | **Connection Management** |
 | Inbound accept | Role negotiation | ✅ | ✅ | Complete | Inbound handshake in acceptor role
@@ -168,7 +172,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Connection pooling | Max connection limits | ✅ | ⏸️ | Not Started | Connection pool management incomplete
 | Graceful shutdown | In-flight message draining | ✅ | ⏸️ | Not Started | Shutdown orchestration incomplete
 
-**Network Summary**: ~75% feature complete. Core protocols fully wired; remaining work on governors, churn, pool management, and graceful shutdown.
+**Network Summary**: ~85% feature complete. Core protocols fully wired; governor decision engine has full parity with upstream PeerSelectionState tracking. Remaining work on connection pooling, graceful shutdown, backpressure timeouts, and fair scheduling.
 
 ---
 

@@ -167,6 +167,15 @@ pub struct NodeConfigFile {
     /// Target number of active (hot) peers the governor maintains.
     #[serde(default = "default_governor_target_active")]
     pub governor_target_active: usize,
+    /// Target number of known big-ledger peers the governor maintains.
+    #[serde(default = "default_governor_target_known_big_ledger")]
+    pub governor_target_known_big_ledger: usize,
+    /// Target number of established big-ledger peers the governor maintains.
+    #[serde(default = "default_governor_target_established_big_ledger")]
+    pub governor_target_established_big_ledger: usize,
+    /// Target number of active big-ledger peers the governor maintains.
+    #[serde(default = "default_governor_target_active_big_ledger")]
+    pub governor_target_active_big_ledger: usize,
     /// Whether local logging output is enabled.
     #[serde(rename = "TurnOnLogging", default = "default_turn_on_logging")]
     pub turn_on_logging: bool,
@@ -625,6 +634,18 @@ fn default_governor_target_active() -> usize {
     5
 }
 
+fn default_governor_target_known_big_ledger() -> usize {
+    0
+}
+
+fn default_governor_target_established_big_ledger() -> usize {
+    0
+}
+
+fn default_governor_target_active_big_ledger() -> usize {
+    0
+}
+
 fn default_turn_on_logging() -> bool {
     true
 }
@@ -854,6 +875,10 @@ pub fn mainnet_config() -> NodeConfigFile {
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
+        governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
+        governor_target_established_big_ledger:
+            default_governor_target_established_big_ledger(),
+        governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -902,6 +927,10 @@ pub fn preprod_config() -> NodeConfigFile {
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
+        governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
+        governor_target_established_big_ledger:
+            default_governor_target_established_big_ledger(),
+        governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -950,6 +979,10 @@ pub fn preview_config() -> NodeConfigFile {
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
+        governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
+        governor_target_established_big_ledger:
+            default_governor_target_established_big_ledger(),
+        governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
         turn_on_log_metrics: default_turn_on_log_metrics(),
@@ -993,6 +1026,18 @@ mod tests {
             cfg.governor_target_established
         );
         assert_eq!(parsed.governor_target_active, cfg.governor_target_active);
+        assert_eq!(
+            parsed.governor_target_known_big_ledger,
+            cfg.governor_target_known_big_ledger
+        );
+        assert_eq!(
+            parsed.governor_target_established_big_ledger,
+            cfg.governor_target_established_big_ledger
+        );
+        assert_eq!(
+            parsed.governor_target_active_big_ledger,
+            cfg.governor_target_active_big_ledger
+        );
         assert_eq!(parsed.turn_on_logging, cfg.turn_on_logging);
         assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
         assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);
@@ -1024,6 +1069,13 @@ mod tests {
         assert_eq!(cfg.security_param_k, 2160);
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
         assert!(cfg.keepalive_interval_secs.is_none());
+        assert_eq!(cfg.governor_tick_interval_secs, 5);
+        assert_eq!(cfg.governor_target_known, 20);
+        assert_eq!(cfg.governor_target_established, 10);
+        assert_eq!(cfg.governor_target_active, 5);
+        assert_eq!(cfg.governor_target_known_big_ledger, 0);
+        assert_eq!(cfg.governor_target_established_big_ledger, 0);
+        assert_eq!(cfg.governor_target_active_big_ledger, 0);
         assert!(cfg.turn_on_logging);
         assert!(cfg.use_trace_dispatcher);
         assert!(cfg.turn_on_log_metrics);
@@ -1040,6 +1092,23 @@ mod tests {
                 .max_frequency,
             Some(1.0)
         );
+    }
+
+    #[test]
+    fn config_parses_big_ledger_governor_targets() {
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "governor_target_known_big_ledger": 8,
+            "governor_target_established_big_ledger": 3,
+            "governor_target_active_big_ledger": 1
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+
+        assert_eq!(cfg.governor_target_known_big_ledger, 8);
+        assert_eq!(cfg.governor_target_established_big_ledger, 3);
+        assert_eq!(cfg.governor_target_active_big_ledger, 1);
     }
 
     #[test]

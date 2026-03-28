@@ -15,11 +15,11 @@
 | **Ledger Rules** | Core validation + epoch boundary + network address validation complete; Plutus execution edge cases pending | ⚠️ 92% |
 | **Consensus** | Praos validation + chain state + rollback enforcement complete; density tiebreaker optional | ✅ 95% |
 | **Network Protocols** | All 5 mini-protocols + mux + handshake fully functional with typed clients/servers | ✅ 100% |
-| **Peer Management** | Governor framework + peer registry complete; promotion/demotion scoring needs refinement | ⚠️ 75% |
+| **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers | ⚠️ 85% |
 | **Mempool** | Fee-ordered queue + TTL + eviction fully working; script budget pre-checks pending | ✅ 85% |
-| **Storage** | Immutable/volatile/checkpoint stores functional; GC + recovery + optimization pending | ⚠️ 70% |
+| **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience | ✅ 85% |
 | **CLI & Config** | JSON config + genesis loading complete; YAML-only migration + query/submit wrappers pending | ✅ 85% |
-| **Monitoring** | Trace infrastructure skeleton; JSON/Prometheus/socket transport not started | ⏸️ 25% |
+| **Monitoring** | NodeMetrics + Prometheus endpoint + JSON trace log + health endpoint functional | ✅ 75% |
 
 **Overall Node Readiness**: ~80% (can sync testnet, validates blocks correctly, missing monitoring & robustness)
 

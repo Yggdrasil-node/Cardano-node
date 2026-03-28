@@ -193,10 +193,22 @@ pub use txsubmission_server::{
 
 // -- Governor re-exports ------------------------------------------------------
 pub use governor::{
-    ChurnConfig, GovernorAction, GovernorState, GovernorTargets, LocalRootTargets,
-    enforce_local_root_valency, evaluate_cold_to_warm_promotions,
-    evaluate_hot_to_warm_demotions, evaluate_warm_to_cold_demotions,
-    evaluate_warm_to_hot_promotions, governor_tick,
+    AssociationMode, ChurnConfig, ChurnPhase, FetchMode, GovernorAction, GovernorState,
+    GovernorTargets, LocalRootTargets, NodePeerSharing, OutboundConnectionsState,
+    PeerFailureRecord, PeerSelectionCounters, PeerSelectionMode, churn_decrease,
+    compute_association_mode, compute_outbound_connections_state,
+    enforce_local_root_valency,
+    evaluate_cold_to_warm_big_ledger_promotions, evaluate_cold_to_warm_promotions,
+    evaluate_forget_cold_peers, evaluate_forget_failed_peers,
+    evaluate_hot_to_warm_big_ledger_demotions,
+    evaluate_hot_to_warm_demotions, evaluate_peer_share_requests,
+    evaluate_sensitive_hot_demotions,
+    evaluate_sensitive_warm_demotions, evaluate_warm_to_cold_big_ledger_demotions,
+    evaluate_warm_to_cold_demotions, evaluate_warm_to_hot_big_ledger_promotions,
+    evaluate_warm_to_hot_promotions, fetch_mode_from_judgement,
+    filter_sensitive_promotions, governor_tick,
+    has_only_trustable_established_peers, is_node_able_to_make_progress, peer_selection_mode,
+    requires_bootstrap_peers,
 };
 
 // -- PeerSharing client re-exports --------------------------------------------

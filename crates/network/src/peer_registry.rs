@@ -52,6 +52,12 @@ pub struct PeerRegistryEntry {
     pub status: PeerStatus,
     /// Last known tip slot for hot-peer selection.
     pub hot_tip_slot: Option<u64>,
+    /// Indicates if the peer was hot but then got demoted.
+    ///
+    /// Upstream: `knownPeerTepid` in `KnownPeerInfo`.
+    /// Set on hot→warm transition, cleared on cold→warm transition.
+    /// Used by promotion policies to deprioritize recently-demoted peers.
+    pub tepid: bool,
 }
 
 impl PeerRegistryEntry {
@@ -60,6 +66,7 @@ impl PeerRegistryEntry {
             sources: BTreeSet::from([source]),
             status: PeerStatus::PeerCold,
             hot_tip_slot: None,
+            tepid: false,
         }
     }
 
@@ -133,10 +140,30 @@ impl PeerRegistry {
         changed
     }
 
+    /// Remove a peer entirely from the registry.
+    ///
+    /// Returns `true` if the peer was present and removed.
+    pub fn remove(&mut self, peer: &SocketAddr) -> bool {
+        self.peers.remove(peer).is_some()
+    }
+
     /// Set the status of an existing peer.
+    ///
+    /// Tracks the upstream `knownPeerTepid` flag: set on hot→warm
+    /// demotion, cleared on cold→warm promotion.
     pub fn set_status(&mut self, peer: SocketAddr, status: PeerStatus) -> bool {
         match self.peers.get_mut(&peer) {
             Some(entry) if entry.status != status => {
+                // Upstream: tepid is set on Hot→Warm, cleared on Cold→Warm.
+                match (entry.status, status) {
+                    (PeerStatus::PeerHot, PeerStatus::PeerWarm) => {
+                        entry.tepid = true;
+                    }
+                    (PeerStatus::PeerCold | PeerStatus::PeerCooling, PeerStatus::PeerWarm) => {
+                        entry.tepid = false;
+                    }
+                    _ => {}
+                }
                 entry.status = status;
                 if status != PeerStatus::PeerHot {
                     entry.hot_tip_slot = None;

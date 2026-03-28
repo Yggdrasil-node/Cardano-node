@@ -3759,6 +3759,7 @@ fn peer_registry_entry_is_root_peer_local() {
         sources: std::collections::BTreeSet::from([PeerSource::PeerSourceLocalRoot]),
         status: PeerStatus::PeerCold,
         hot_tip_slot: None,
+        tepid: false,
     };
     assert!(entry.is_root_peer());
 }
@@ -3769,6 +3770,7 @@ fn peer_registry_entry_is_root_peer_public() {
         sources: std::collections::BTreeSet::from([PeerSource::PeerSourcePublicRoot]),
         status: PeerStatus::PeerCold,
         hot_tip_slot: None,
+        tepid: false,
     };
     assert!(entry.is_root_peer());
 }
@@ -3781,6 +3783,7 @@ fn peer_registry_entry_is_root_peer_ledger() {
         sources: std::collections::BTreeSet::from([PeerSource::PeerSourceLedger]),
         status: PeerStatus::PeerCold,
         hot_tip_slot: None,
+        tepid: false,
     };
     assert!(entry.is_root_peer());
 
@@ -3789,6 +3792,7 @@ fn peer_registry_entry_is_root_peer_ledger() {
         sources: std::collections::BTreeSet::from([PeerSource::PeerSourcePeerShare]),
         status: PeerStatus::PeerCold,
         hot_tip_slot: None,
+        tepid: false,
     };
     assert!(!peer_share_only.is_root_peer());
 }
@@ -3803,6 +3807,7 @@ fn peer_registry_entry_is_root_peer_mixed_sources() {
         ]),
         status: PeerStatus::PeerWarm,
         hot_tip_slot: None,
+        tepid: false,
     };
     assert!(entry.is_root_peer());
 
@@ -3814,6 +3819,7 @@ fn peer_registry_entry_is_root_peer_mixed_sources() {
         ]),
         status: PeerStatus::PeerCold,
         hot_tip_slot: None,
+        tepid: false,
     };
     assert!(mixed.is_root_peer());
 }

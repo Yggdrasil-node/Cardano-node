@@ -136,6 +136,13 @@ impl UseBootstrapPeers {
             Self::UseBootstrapPeers(peers) => peers,
         }
     }
+
+    /// Returns `true` when bootstrap peers are enabled.
+    ///
+    /// Upstream: `isBootstrapPeersEnabled`.
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, Self::UseBootstrapPeers(_))
+    }
 }
 
 impl Serialize for UseBootstrapPeers {
