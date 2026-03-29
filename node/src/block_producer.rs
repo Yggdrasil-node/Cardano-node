@@ -1339,6 +1339,7 @@ pub fn forged_block_to_storage_block(forged: &ForgedBlock) -> yggdrasil_ledger::
         },
         transactions: txs,
         raw_cbor: Some(raw_cbor),
+        header_cbor_size: None,
     }
 }
 

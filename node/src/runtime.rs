@@ -3439,6 +3439,29 @@ where
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
 
+                            // Epoch revalidation: when a new epoch begins, protocol parameters
+                            // may have changed.  Re-validate all mempool entries and evict any
+                            // that no longer satisfy the new fee / size / ExUnits constraints.
+                            // Reference: Ouroboros.Consensus.Mempool.Impl.Update — syncWithLedger.
+                            if !applied.epoch_boundary_events.is_empty() {
+                                if let Some(ref mempool) = mempool {
+                                    if let Some(ref tracking) = checkpoint_tracking {
+                                        if let Some(params) = tracking.ledger_state.protocol_params() {
+                                            let tip_slot = progress.current_point.slot().unwrap_or(SlotNo(0));
+                                            let evicted = mempool.purge_invalid_for_params(tip_slot, params);
+                                            if evicted > 0 {
+                                                tracer.trace_runtime(
+                                                    "Mempool.EpochRevalidation",
+                                                    "Info",
+                                                    "purged mempool entries invalid under new epoch params",
+                                                    trace_fields([("evicted", json!(evicted))]),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if !applied.rolled_back_tx_ids.is_empty() {
                                 tracer.trace_runtime(
                                     "ChainDB.Rollback",
@@ -3743,6 +3766,29 @@ where
                             };
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
+
+                            // Epoch revalidation: when a new epoch begins, protocol parameters
+                            // may have changed.  Re-validate all mempool entries and evict any
+                            // that no longer satisfy the new fee / size / ExUnits constraints.
+                            // Reference: Ouroboros.Consensus.Mempool.Impl.Update — syncWithLedger.
+                            if !applied.epoch_boundary_events.is_empty() {
+                                if let Some(ref mempool) = mempool {
+                                    if let Some(ref tracking) = checkpoint_tracking {
+                                        if let Some(params) = tracking.ledger_state.protocol_params() {
+                                            let tip_slot = progress.current_point.slot().unwrap_or(SlotNo(0));
+                                            let evicted = mempool.purge_invalid_for_params(tip_slot, params);
+                                            if evicted > 0 {
+                                                tracer.trace_runtime(
+                                                    "Mempool.EpochRevalidation",
+                                                    "Info",
+                                                    "purged mempool entries invalid under new epoch params",
+                                                    trace_fields([("evicted", json!(evicted))]),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             if !applied.rolled_back_tx_ids.is_empty() {
                                 tracer.trace_runtime(
@@ -4748,6 +4794,7 @@ mod tests {
             },
             transactions: Vec::new(),
             raw_cbor: None,
+            header_cbor_size: None,
         };
         chain_db
             .add_volatile_block(block)

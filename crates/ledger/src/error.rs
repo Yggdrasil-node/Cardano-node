@@ -409,6 +409,13 @@ pub enum LedgerError {
     #[error("block body too large: {actual} bytes exceeds max {max}")]
     BlockTooLarge { actual: usize, max: usize },
 
+    /// Serialized block header exceeds `max_block_header_size` protocol
+    /// parameter.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Bbody` — `HeaderLeqBBodySize`.
+    #[error("block header too large: {actual} bytes exceeds max {max}")]
+    HeaderTooLarge { actual: usize, max: usize },
+
     #[error(
         "era regression: ledger is in {ledger_era:?} (ordinal {ledger_ordinal}), \
          but received block in earlier era {block_era:?} (ordinal {block_ordinal})"

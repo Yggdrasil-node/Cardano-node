@@ -122,6 +122,7 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);
@@ -212,6 +213,7 @@ fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);
@@ -322,6 +324,7 @@ fn babbage_block_accepts_supplemental_datum_from_reference_input() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);

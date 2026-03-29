@@ -76,6 +76,7 @@ fn make_shelley_block_raw(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<Tx>)
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -91,6 +92,7 @@ fn make_allegra_block_raw(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<Tx>)
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -106,6 +108,7 @@ fn make_mary_block_raw(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<Tx>) ->
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 

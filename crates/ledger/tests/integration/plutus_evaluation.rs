@@ -81,6 +81,7 @@ fn make_block(era: Era, slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdra
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 

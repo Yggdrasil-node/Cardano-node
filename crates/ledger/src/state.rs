@@ -2954,6 +2954,20 @@ impl LedgerState {
                     max: params.max_block_body_size as usize,
                 });
             }
+
+            // BBODY header-size check: the serialized block header must
+            // not exceed `max_block_header_size`.
+            //
+            // Reference: `Cardano.Ledger.Shelley.Rules.Bbody` —
+            // `bHeaderSize bh ≤ maxBHSize pp`.
+            if let Some(header_size) = block.header_cbor_size {
+                if header_size > params.max_block_header_size as usize {
+                    return Err(LedgerError::HeaderTooLarge {
+                        actual: header_size,
+                        max: params.max_block_header_size as usize,
+                    });
+                }
+            }
         }
 
         match block.era {

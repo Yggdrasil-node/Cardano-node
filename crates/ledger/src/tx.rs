@@ -479,6 +479,14 @@ pub struct Block {
     /// or recovered from legacy storage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_cbor: Option<Vec<u8>>,
+    /// Serialized size of the block header in bytes (CBOR wire format).
+    ///
+    /// When present, `apply_block()` checks this against the
+    /// `max_block_header_size` protocol parameter.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Bbody` — `bHeaderSize`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_cbor_size: Option<usize>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -843,6 +851,7 @@ mod tests {
             },
             transactions: vec![],
             raw_cbor: None,
+            header_cbor_size: None,
         };
         assert_eq!(block.era, Era::Shelley);
         assert!(block.transactions.is_empty());

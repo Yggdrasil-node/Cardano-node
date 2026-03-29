@@ -17,6 +17,7 @@ fn applies_block_for_matching_era() {
         },
         transactions: Vec::new(),
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     state
@@ -40,6 +41,7 @@ fn byron_block_advances_tip_without_state_transition() {
         },
         transactions: Vec::new(),
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     state

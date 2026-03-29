@@ -32,6 +32,7 @@ pub(super) fn make_shelley_block_with_txs(
         },
         transactions: tx_list,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -260,6 +261,7 @@ fn ledger_state_empty_block_advances_tip() {
         },
         transactions: vec![],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     state.apply_block(&block).expect("empty block");

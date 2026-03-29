@@ -560,6 +560,71 @@ impl Mempool {
         }
         removed_count
     }
+
+    /// Re-validate all mempool entries against updated protocol parameters.
+    ///
+    /// Called at epoch boundaries when the protocol parameters may have
+    /// changed (e.g. fee coefficients, max-tx-size, max-tx-ex-units).
+    /// Any entry that no longer satisfies the new parameters is removed.
+    ///
+    /// Checks performed per entry (in order):
+    /// 1. TTL expiry (same as `purge_expired`).
+    /// 2. Transaction body size against `max_tx_size`.
+    /// 3. Declared ExUnits against `max_tx_ex_units` (script txs only).
+    /// 4. Minimum fee against the new `min_fee_a` / `min_fee_b`.
+    ///
+    /// Returns the number of entries removed.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Update` —
+    /// `syncWithLedger` / `revalidateTx` epoch reconciliation pass.
+    pub fn purge_invalid_for_params(
+        &mut self,
+        current_slot: SlotNo,
+        params: &ProtocolParameters,
+    ) -> usize {
+        let mut removed_count = 0;
+        let mut i = 0;
+        while i < self.entries.len() {
+            let entry = &self.entries[i].entry;
+
+            // TTL check.
+            if current_slot > entry.ttl {
+                let removed = self.entries.remove(i);
+                self.current_bytes -= removed.entry.size_bytes;
+                for input in &removed.entry.inputs {
+                    self.claimed_inputs.remove(input);
+                }
+                removed_count += 1;
+                continue;
+            }
+
+            // Decode ExUnits once — best-effort (synthetic entries may not
+            // carry a full relay payload).
+            let total_ex_units = entry
+                .to_multi_era_submitted_tx()
+                .ok()
+                .and_then(|tx| tx.total_ex_units());
+
+            // Size check.
+            let invalid = validate_tx_size(params, entry.body.len()).is_err()
+                // ExUnits check (script txs only).
+                || total_ex_units.as_ref().map_or(false, |eu| validate_tx_ex_units(params, eu).is_err())
+                // Minimum fee check.
+                || validate_fee(params, entry.body.len(), total_ex_units.as_ref(), entry.fee).is_err();
+
+            if invalid {
+                let removed = self.entries.remove(i);
+                self.current_bytes -= removed.entry.size_bytes;
+                for input in &removed.entry.inputs {
+                    self.claimed_inputs.remove(input);
+                }
+                removed_count += 1;
+            } else {
+                i += 1;
+            }
+        }
+        removed_count
+    }
 }
 
 /// Shared wrapper for concurrent mempool access.
@@ -645,6 +710,25 @@ impl SharedMempool {
             .write()
             .expect("shared mempool poisoned")
             .revalidate(current_slot, available_inputs)
+    }
+
+    /// Re-validate all mempool entries against updated protocol parameters.
+    ///
+    /// Called at epoch boundaries when protocol parameters may have changed.
+    /// Removes any entry that no longer satisfies the new fee, size, or
+    /// ExUnits constraints.  Returns the number of entries removed.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Update` —
+    /// `syncWithLedger` / `revalidateTx` epoch reconciliation pass.
+    pub fn purge_invalid_for_params(
+        &self,
+        current_slot: SlotNo,
+        params: &ProtocolParameters,
+    ) -> usize {
+        self.inner
+            .write()
+            .expect("shared mempool poisoned")
+            .purge_invalid_for_params(current_slot, params)
     }
 
     /// Check whether a transaction with the given id exists in the mempool.

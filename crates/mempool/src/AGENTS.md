@@ -1,3 +1,5 @@
+- Epoch revalidation implemented: `Mempool::purge_invalid_for_params(current_slot, params)` sweeps all entries at epoch boundaries, evicting those that fail TTL, `max_tx_size`, `max_tx_ex_units`, or min-fee checks under the new protocol parameters. `SharedMempool::purge_invalid_for_params()` is the concurrent wrapper. Runtime wiring in `node/src/runtime.rs` calls this after `trace_epoch_boundary_events()` whenever `!applied.epoch_boundary_events.is_empty()`. Reference: `Ouroboros.Consensus.Mempool.Impl.Update` — `syncWithLedger` / `revalidateTx`.
+- Cross-peer TxId deduplication is implemented in `tx_state.rs`
 # Guidance for mempool queue, snapshot, and admission implementation modules.
 
 This directory owns queue policy and typed mempool views, not ledger validation semantics.

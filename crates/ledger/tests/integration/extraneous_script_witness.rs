@@ -214,6 +214,7 @@ fn allegra_block_rejects_extraneous_native_script() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);

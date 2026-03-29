@@ -280,6 +280,7 @@ fn make_conway_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 

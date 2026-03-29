@@ -1636,6 +1636,7 @@ mod tests {
                 },
                 transactions: Vec::new(),
                 raw_cbor: Some(raw_cbor),
+                header_cbor_size: None,
             },
             header,
         )

@@ -121,6 +121,7 @@ fn alonzo_block_rejects_plutus_script_locked_input_without_datum_hash() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);
@@ -198,6 +199,7 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);
@@ -280,6 +282,7 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);

@@ -54,6 +54,7 @@ fn test_store_block(hash_byte: u8, slot: u64) -> Block {
         },
         transactions: Vec::new(),
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -2776,6 +2777,7 @@ fn cross_subsystem_block_to_chain_state_to_storage() {
             },
             transactions: vec![],
             raw_cbor: None,
+            header_cbor_size: None,
         };
 
         volatile.add_block(block.clone()).expect("volatile add");
@@ -2839,6 +2841,7 @@ fn cross_subsystem_rollback_flow() {
             },
             transactions: vec![],
             raw_cbor: None,
+            header_cbor_size: None,
         };
         volatile.add_block(block).expect("add");
         chain_state

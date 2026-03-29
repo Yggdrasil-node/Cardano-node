@@ -286,6 +286,7 @@ fn conway_block_rejects_duplicate_inputs() {
             is_valid: None,
         }],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);

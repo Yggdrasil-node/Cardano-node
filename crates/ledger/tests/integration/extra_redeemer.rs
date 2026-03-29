@@ -138,6 +138,7 @@ fn alonzo_block_rejects_extra_redeemer_for_native_script_input() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);
@@ -217,6 +218,7 @@ fn alonzo_block_accepts_native_script_tx_without_redeemers() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);
@@ -323,6 +325,7 @@ fn alonzo_block_rejects_extra_minting_redeemer_for_native_policy() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);

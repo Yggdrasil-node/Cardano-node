@@ -260,6 +260,7 @@ fn alonzo_block_is_valid_false_applies_collateral_only() {
             is_valid: Some(false),
         }],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     state

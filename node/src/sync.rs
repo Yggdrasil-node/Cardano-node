@@ -293,6 +293,7 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
         },
         transactions,
         raw_cbor: None,
+        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
     }
 }
 
@@ -1868,6 +1869,7 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                 },
                 transactions,
                 raw_cbor: None,
+                header_cbor_size: None, // Byron headers not checked
             }
         }
     }
@@ -1914,6 +1916,7 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
         },
         transactions,
         raw_cbor: None,
+        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
     }
 }
 
@@ -1958,6 +1961,7 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
         },
         transactions,
         raw_cbor: None,
+        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
     }
 }
 
@@ -2002,6 +2006,7 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
         },
         transactions,
         raw_cbor: None,
+        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
     }
 }
 

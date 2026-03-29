@@ -94,6 +94,7 @@ fn shelley_block_rejects_aux_data_without_hash() {
         },
         transactions: vec![tx],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let result = state.apply_block_validated(&block, None);

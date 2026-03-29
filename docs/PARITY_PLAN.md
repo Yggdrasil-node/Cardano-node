@@ -143,6 +143,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Body hash verify | Blake2b-256 of body | ✅ | ✅ | Complete | verify_block_body_hash
 | Body size verify | Declared vs actual body size | ✅ | ✅ | Complete | validate_block_body_size (upstream WrongBlockBodySizeBBODY)
 | Protocol version check | Era/version consistency | ✅ | ✅ | Complete | validate_block_protocol_version (hard-fork combinator era transitions)
+| Header size check | Header CBOR ≤ maxBlockHeaderSize | ✅ | ✅ | Complete | `LedgerError::HeaderTooLarge`; `Block::header_cbor_size` set from wire bytes in sync.rs for all Shelley-family eras; checked in `apply_block_validated` (upstream `Cardano.Ledger.Shelley.Rules.Bbody` `bHeaderSize`)
 | UTxO rules | UTXO + CERTS + REWARDS | ✅ | ✅ | Complete | Full era-specific UTxO rules with cert/reward processing
 | **Density Tiebreaker** |
 | Leadership density | Blocks per X slots | ✅ | ✅ | Complete | select_preferred implements full comparePraos VRF tiebreaker; Genesis density is peer-management (network crate)
@@ -217,12 +218,14 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Block Application** |
 | TX confirmation | Remove on block | ✅ | ✅ | Complete | evict_confirmed_from_mempool
 | Snapshot creation | TXs for block producer | ✅ | ✅ | Complete | Mempool iterator support
+| Epoch revalidation | Re-check params on epoch | ✅ | ✅ | Complete | purge_invalid_for_params; fee/size/ExUnits re-validated at every epoch boundary; wired into node/src/runtime.rs at both verified sync paths; reference: `Ouroboros.Consensus.Mempool.Impl.Update` — `syncWithLedger`
 | **Relay Semantics** |
 | TxId advertising | Before full TX | ✅ | ✅ | Complete | TxSubmissionClient announces IDs first
 | TX request flow | Solicit after ID seen | ✅ | ✅ | Complete | TxSubmissionServer responds to requests
 | Duplicate filtering | Peer + global | ✅ | ✅ | Complete | SharedTxState cross-peer dedup: filter_advertised/mark_in_flight/mark_received per-peer + global known ring (16 384)
 
 **Mempool Summary**: ~98% feature complete. Collateral, ExUnits, conflict detection, and cross-peer TxId dedup all wired. SharedTxState integrated into run_txsubmission_server and run_inbound_accept_loop.
+**Mempool Summary**: ~99% feature complete. Collateral, ExUnits, conflict detection, cross-peer TxId dedup, and epoch revalidation all wired. SharedTxState integrated into run_txsubmission_server and run_inbound_accept_loop. Epoch reconciliation (`purge_invalid_for_params`) sweeps all mempool entries against new protocol parameters at every epoch boundary.
 
 ---
 

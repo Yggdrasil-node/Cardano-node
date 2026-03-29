@@ -1186,6 +1186,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
             },
             transactions: Vec::new(),
             raw_cbor: None,
+            header_cbor_size: None,
         })
         .expect("seed coordinated tip");
     chain_db
@@ -1288,6 +1289,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
             },
             transactions: Vec::new(),
             raw_cbor: None,
+            header_cbor_size: None,
         })
         .expect("seed coordinated tip");
     chain_db
@@ -1401,6 +1403,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
             },
             transactions: Vec::new(),
             raw_cbor: None,
+            header_cbor_size: None,
         })
         .expect("seed coordinated tip");
     chain_db

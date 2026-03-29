@@ -97,6 +97,7 @@ fn make_alonzo_block_helper(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yg
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -163,6 +164,7 @@ fn make_babbage_block_helper(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<y
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -232,6 +234,7 @@ fn make_conway_block_helper(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yg
         },
         transactions: txs,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 

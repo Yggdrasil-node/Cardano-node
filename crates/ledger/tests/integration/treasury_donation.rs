@@ -61,6 +61,7 @@ fn make_conway_block(
         },
         transactions,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 

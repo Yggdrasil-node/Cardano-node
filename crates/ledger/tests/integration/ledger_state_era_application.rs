@@ -27,6 +27,7 @@ fn make_allegra_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<AllegraT
         },
         transactions: tx_list,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -57,6 +58,7 @@ fn make_mary_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<MaryTxBody>
         },
         transactions: tx_list,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -167,6 +169,7 @@ fn ledger_state_empty_allegra_block_advances_tip() {
         },
         transactions: vec![],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     state.apply_block(&block).expect("empty allegra block");
@@ -199,6 +202,7 @@ fn ledger_state_accepts_byron_block_as_tip_only_transition() {
         },
         transactions: vec![],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     state
@@ -226,6 +230,7 @@ fn pending_shelley_genesis_stake_activates_on_first_shelley_block() {
         },
         transactions: vec![],
         raw_cbor: None,
+        header_cbor_size: None,
     };
     state.apply_block(&byron_block).expect("byron block");
     assert!(state.stake_credential_state(&credential).is_none());
@@ -241,6 +246,7 @@ fn pending_shelley_genesis_stake_activates_on_first_shelley_block() {
         },
         transactions: vec![],
         raw_cbor: None,
+        header_cbor_size: None,
     };
     state.apply_block(&shelley_block).expect("shelley block");
 
@@ -281,6 +287,7 @@ fn make_byron_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<ByronTx>) 
         },
         transactions: tx_list,
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -483,6 +490,7 @@ fn make_empty_block(era: Era, slot: u64, block_no: u64, hash_seed: u8) -> Block 
         },
         transactions: vec![],
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 

@@ -861,3 +861,145 @@ fn shared_mempool_capacity_returns_configured_max() {
     let shared_wrapped = SharedMempool::new(inner);
     assert_eq!(shared_wrapped.capacity(), 8192);
 }
+
+// ===========================================================================
+// Phase: Mempool epoch revalidation — purge_invalid_for_params
+// Reference: Ouroboros.Consensus.Mempool.Impl.Update — syncWithLedger /
+//            revalidateTx epoch reconciliation pass.
+// ===========================================================================
+
+/// Returns a `ProtocolParameters` instance with a very high `min_fee_a` so
+/// that entries with a low declared fee will fail the fee check.
+fn params_with_high_min_fee() -> ProtocolParameters {
+    let mut p = ProtocolParameters::default();
+    // min_fee_a is the coefficient; set it very high so even 500-byte txs
+    // require a huge fee.
+    p.min_fee_a = 1_000_000; // lovelace per byte
+    p
+}
+
+/// Returns a `ProtocolParameters` instance with a very small `max_tx_size`
+/// so that all but the tiniest entries will fail the size check.
+fn params_with_small_max_tx_size() -> ProtocolParameters {
+    let mut p = ProtocolParameters::default();
+    p.max_tx_size = 50; // bytes
+    p
+}
+
+#[test]
+fn purge_invalid_for_params_evicts_underfunded_txs() {
+    let mut mempool = Mempool::default();
+    // Two entries with low fees.
+    mempool
+        .insert(make_entry_with_ttl(0x01, 1, 100, 9_999_999))
+        .expect("insert low fee 1");
+    mempool
+        .insert(make_entry_with_ttl(0x02, 2, 100, 9_999_999))
+        .expect("insert low fee 2");
+    // One entry with a laughably high fee that will survive any fee floor.
+    mempool
+        .insert(make_entry_with_ttl(0x03, u64::MAX / 2, 50, 9_999_999))
+        .expect("insert very high fee");
+    assert_eq!(mempool.len(), 3);
+
+    let params = params_with_high_min_fee();
+    // Use slot 0 — no TTL expiry; only fee / size checks trigger.
+    let removed = mempool.purge_invalid_for_params(SlotNo(0), &params);
+
+    // Both low-fee entries should be evicted; the high-fee one survives.
+    assert_eq!(removed, 2, "both low-fee entries should be purged");
+    assert_eq!(mempool.len(), 1);
+    assert!(mempool.contains(&TxId([0x03; 32])));
+    assert_eq!(mempool.size_bytes(), 50);
+}
+
+#[test]
+fn purge_invalid_for_params_evicts_oversized_txs() {
+    let mut mempool = Mempool::default();
+    // Large entries that will violate a 50-byte max_tx_size.
+    mempool
+        .insert(make_entry_with_ttl(0x01, 9_999_999, 200, 9_999_999))
+        .expect("insert large 1");
+    mempool
+        .insert(make_entry_with_ttl(0x02, 9_999_999, 300, 9_999_999))
+        .expect("insert large 2");
+    // Small entry that will pass the size check.
+    mempool
+        .insert(make_entry_with_ttl(0x03, 9_999_999, 10, 9_999_999))
+        .expect("insert small");
+    assert_eq!(mempool.len(), 3);
+
+    let params = params_with_small_max_tx_size();
+    let removed = mempool.purge_invalid_for_params(SlotNo(0), &params);
+
+    assert_eq!(removed, 2, "the two oversized entries should be purged");
+    assert_eq!(mempool.len(), 1);
+    assert!(mempool.contains(&TxId([0x03; 32])));
+}
+
+#[test]
+fn purge_invalid_for_params_keeps_valid_txs() {
+    let params = ProtocolParameters::default();
+    // Compute a fee that will satisfy the default fee formula for a 100-byte tx.
+    use yggdrasil_ledger::min_fee_linear;
+    let min_fee = min_fee_linear(&params, 100) + 1_000;
+
+    let mut mempool = Mempool::default();
+    mempool
+        .insert(make_entry_with_ttl(0x01, min_fee, 100, 9_999_999))
+        .expect("insert");
+    mempool
+        .insert(make_entry_with_ttl(0x02, min_fee, 100, 9_999_999))
+        .expect("insert");
+    assert_eq!(mempool.len(), 2);
+
+    let removed = mempool.purge_invalid_for_params(SlotNo(0), &params);
+
+    assert_eq!(removed, 0, "valid entries should not be evicted");
+    assert_eq!(mempool.len(), 2);
+}
+
+#[test]
+fn purge_invalid_for_params_also_evicts_expired_ttl() {
+    let params = ProtocolParameters::default();
+    use yggdrasil_ledger::min_fee_linear;
+    let min_fee = min_fee_linear(&params, 100) + 1_000;
+
+    let mut mempool = Mempool::default();
+    // Expired TTL — should be removed even though the fee would otherwise be fine.
+    mempool
+        .insert(make_entry_with_ttl(0x01, min_fee, 100, 50))
+        .expect("insert expired");
+    // Valid TTL — should survive.
+    mempool
+        .insert(make_entry_with_ttl(0x02, min_fee, 100, 9_999_999))
+        .expect("insert valid");
+    assert_eq!(mempool.len(), 2);
+
+    let removed = mempool.purge_invalid_for_params(SlotNo(100), &params);
+
+    assert_eq!(removed, 1, "expired-TTL entry should be evicted");
+    assert_eq!(mempool.len(), 1);
+    assert!(mempool.contains(&TxId([0x02; 32])));
+}
+
+#[test]
+fn shared_mempool_purge_invalid_for_params() {
+    let shared = SharedMempool::with_capacity(0);
+    // Low fee — will fail the min-fee check under high-fee params.
+    shared
+        .insert(make_entry_with_ttl(0x01, 1, 100, 9_999_999))
+        .expect("insert low fee");
+    // Very high fee — will survive.
+    shared
+        .insert(make_entry_with_ttl(0x02, u64::MAX / 2, 50, 9_999_999))
+        .expect("insert high fee");
+    assert_eq!(shared.len(), 2);
+
+    let params = params_with_high_min_fee();
+    let removed = shared.purge_invalid_for_params(SlotNo(0), &params);
+
+    assert_eq!(removed, 1);
+    assert_eq!(shared.len(), 1);
+    assert!(shared.contains(&TxId([0x02; 32])));
+}

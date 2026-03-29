@@ -21,6 +21,7 @@ fn test_block(hash_byte: u8, slot: u64) -> Block {
         },
         transactions: Vec::new(),
         raw_cbor: None,
+        header_cbor_size: None,
     }
 }
 
@@ -304,6 +305,7 @@ fn cross_store_block_flow() {
             is_valid: None,
         }],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let mut volatile = InMemoryVolatile::default();
@@ -768,6 +770,7 @@ fn file_cross_store_block_flow() {
             is_valid: None,
         }],
         raw_cbor: None,
+        header_cbor_size: None,
     };
 
     let mut volatile = FileVolatile::open(dir.path().join("vol")).expect("open vol");
