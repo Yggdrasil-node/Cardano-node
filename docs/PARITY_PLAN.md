@@ -84,6 +84,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Pool retirement | Age-based expiry | ✅ | ✅ | Complete | process_retirements with pool_deposit refund
 | DRep inactivity | drep_activity threshold | ✅ | ✅ | Complete | touch_drep_activity, inactive_dreps
 | Governance expiry | Proposal age limit | ✅ | ✅ | Complete | remove_expired_governance_actions
+| Treasury donation | Conway utxosDonation accumulation + epoch flush | ✅ | ✅ | Complete | Per-tx accumulate_donation (UTXOS rule), epoch-boundary flush_donations_to_treasury (EPOCH rule), value preservation includes donation
 | **Governance** |
 | Proposal storage | Action ID + metadata | ✅ | ✅ | Complete | GovActionState with vote maps
 | Vote accumulation | Committee/DRep/SPO votes | ✅ | ✅ | Complete | apply_conway_votes with per-voter class

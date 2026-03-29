@@ -1865,6 +1865,14 @@ pub struct LedgerState {
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Ppup` — PPUP rule.
     pending_pparam_updates: BTreeMap<EpochNo, BTreeMap<GenesisHash, crate::protocol_params::ProtocolParameterUpdate>>,
+    /// Accumulated per-transaction treasury donations (Conway `treasuryDonation`).
+    ///
+    /// Each valid Conway transaction's `treasury_donation` field is added
+    /// here during block application.  At the epoch boundary the total is
+    /// credited to the treasury and this field is reset to zero.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `utxosDonation`.
+    utxos_donation: u64,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -1880,7 +1888,7 @@ pub struct LedgerStateCheckpoint {
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(18);
+        enc.array(19);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
         match self.expected_network_id {
@@ -1930,16 +1938,18 @@ impl CborEncode for LedgerState {
                 update.encode_cbor(enc);
             }
         }
+        // utxos_donation: accumulated treasury donations (Conway).
+        enc.unsigned(self.utxos_donation);
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept legacy 9/10-element arrays and current 12-18-element arrays.
-        if len != 9 && len != 10 && !(12..=18).contains(&len) {
+        // Accept legacy 9/10-element arrays and current 12-19-element arrays.
+        if len != 9 && len != 10 && !(12..=19).contains(&len) {
             return Err(LedgerError::CborInvalidLength {
-                expected: 18,
+                expected: 19,
                 actual: len as usize,
             });
         }
@@ -2071,6 +2081,12 @@ impl CborDecode for LedgerState {
             BTreeMap::new()
         };
 
+        let utxos_donation = if len >= 19 {
+            dec.unsigned()?
+        } else {
+            0
+        };
+
         Ok(Self {
             current_era,
             tip,
@@ -2090,6 +2106,7 @@ impl CborDecode for LedgerState {
             enact_state,
             gen_delegs,
             pending_pparam_updates,
+            utxos_donation,
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
@@ -2163,6 +2180,7 @@ impl LedgerState {
             pending_shelley_genesis_delegs: None,
             gen_delegs: BTreeMap::new(),
             pending_pparam_updates: BTreeMap::new(),
+            utxos_donation: 0,
         }
     }
 
@@ -2501,6 +2519,42 @@ impl LedgerState {
         &mut self.accounting
     }
 
+    /// Returns the accumulated treasury donation total (Conway `utxosDonation`).
+    ///
+    /// This value accumulates per-transaction `treasury_donation` amounts
+    /// during block application and is transferred to the treasury at
+    /// each epoch boundary.
+    pub fn utxos_donation(&self) -> u64 {
+        self.utxos_donation
+    }
+
+    /// Adds `amount` to the accumulated treasury donation total.
+    ///
+    /// Called once per valid Conway transaction that carries a non-zero
+    /// `treasury_donation` field.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Utxos` — UTXOS valid-tx
+    /// branch: `utxos & utxosDonationL <>~ txBody ^. treasuryDonationTxBodyL`.
+    pub fn accumulate_donation(&mut self, amount: u64) {
+        self.utxos_donation = self.utxos_donation.saturating_add(amount);
+    }
+
+    /// Transfers accumulated donations to the treasury and resets the
+    /// donation accumulator to zero.
+    ///
+    /// Returns the total transferred.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Epoch` — epoch boundary:
+    /// `casTreasuryL <>~ utxosDonationL`, then `utxosDonationL .~ zero`.
+    pub fn flush_donations_to_treasury(&mut self) -> u64 {
+        let donated = self.utxos_donation;
+        if donated > 0 {
+            self.accounting.treasury = self.accounting.treasury.saturating_add(donated);
+            self.utxos_donation = 0;
+        }
+        donated
+    }
+
     /// Returns a reference to the Conway enactment state.
     pub fn enact_state(&self) -> &EnactState {
         &self.enact_state
@@ -2727,7 +2781,7 @@ impl LedgerState {
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let withdrawal_total = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -2743,7 +2797,9 @@ impl LedgerState {
                     crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0,
                     &tx.body,
                     current_slot.0,
-                    withdrawal_total,
+                    cert_adj.withdrawal_total,
+                    cert_adj.total_deposits,
+                    cert_adj.total_refunds,
                 )?;
                 self.shelley_utxo = staged;
                 self.multi_era_utxo = MultiEraUtxo::from_shelley_utxo(&self.shelley_utxo);
@@ -2841,7 +2897,7 @@ impl LedgerState {
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let withdrawal_total = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -2853,7 +2909,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
-                staged.apply_allegra_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
+                staged.apply_allegra_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -2952,7 +3008,7 @@ impl LedgerState {
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let withdrawal_total = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -2964,7 +3020,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
-                staged.apply_mary_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
+                staged.apply_mary_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -3159,7 +3215,7 @@ impl LedgerState {
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let withdrawal_total = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -3171,7 +3227,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
-                staged.apply_alonzo_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
+                staged.apply_alonzo_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -3376,7 +3432,7 @@ impl LedgerState {
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let withdrawal_total = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -3388,7 +3444,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                 )?;
-                staged.apply_babbage_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
+                staged.apply_babbage_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -3729,7 +3785,7 @@ impl LedgerState {
                     );
                 }
 
-                let withdrawal_total = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -3747,7 +3803,7 @@ impl LedgerState {
                     &mut staged_drep_state,
                     self.current_epoch,
                 );
-                staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, withdrawal_total)?;
+                staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -3918,7 +3974,7 @@ impl LedgerState {
                 crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
-            let withdrawal_total = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -3930,7 +3986,7 @@ impl LedgerState {
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
-            staged.apply_tx_with_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            staged.apply_tx_with_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
         self.shelley_utxo = staged;
         self.multi_era_utxo = MultiEraUtxo::from_shelley_utxo(&self.shelley_utxo);
@@ -4040,7 +4096,7 @@ impl LedgerState {
                 witness_bytes.as_deref(),
                 &required_scripts,
             )?;
-            let withdrawal_total = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -4052,7 +4108,7 @@ impl LedgerState {
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
-            staged.apply_allegra_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            staged.apply_allegra_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
@@ -4161,7 +4217,7 @@ impl LedgerState {
                 witness_bytes.as_deref(),
                 &required_scripts,
             )?;
-            let withdrawal_total = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -4173,7 +4229,7 @@ impl LedgerState {
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
-            staged.apply_mary_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            staged.apply_mary_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
@@ -4376,7 +4432,7 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
-            let withdrawal_total = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -4388,7 +4444,7 @@ impl LedgerState {
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
-            staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
             } else {
                 if evaluator.is_some() {
                     match run_phase2() {
@@ -4622,7 +4678,7 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
-            let withdrawal_total = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -4634,7 +4690,7 @@ impl LedgerState {
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
             )?;
-            staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
             } else {
                 if evaluator.is_some() {
                     match run_phase2() {
@@ -4710,6 +4766,7 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let mut staged_governance_actions = self.governance_actions.clone();
+        let mut staged_utxos_donation: u64 = 0;
         let current_treasury = self.accounting.treasury;
         let cert_ctx = self.certificate_validation_context();
         for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
@@ -4989,7 +5046,7 @@ impl LedgerState {
                     &mut staged_governance_actions,
                 );
             }
-            let withdrawal_total = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -5007,7 +5064,13 @@ impl LedgerState {
                 &mut staged_drep_state,
                 self.current_epoch,
             );
-            staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, withdrawal_total)?;
+            staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+            // Accumulate treasury donation (Conway UTXOS rule).
+            if let Some(donation) = body.treasury_donation {
+                if donation > 0 {
+                    staged_utxos_donation = staged_utxos_donation.saturating_add(donation);
+                }
+            }
             } else {
                 if evaluator.is_some() {
                     match run_phase2() {
@@ -5039,6 +5102,7 @@ impl LedgerState {
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
         self.governance_actions = staged_governance_actions;
+        self.utxos_donation = self.utxos_donation.saturating_add(staged_utxos_donation);
         Ok(())
     }
 }
@@ -5062,7 +5126,7 @@ fn conway_governance_state_after_certificates(
     let mut simulated_deposit_pot = deposit_pot.clone();
     let mut simulated_gen_delegs = gen_delegs.clone();
 
-    apply_certificates_and_withdrawals(
+    let _cert_adj = apply_certificates_and_withdrawals(
         &mut simulated_pool_state,
         &mut simulated_stake_credentials,
         &mut simulated_committee_state,
@@ -5919,6 +5983,24 @@ struct CertificateValidationContext {
     expected_network_id: Option<u8>,
 }
 
+/// Results of certificate and withdrawal processing for the value preservation
+/// equation.
+///
+/// Upstream reference: `Cardano.Ledger.Shelley.Rules.Utxo`
+/// ```text
+/// consumed = balance(txins ◁ utxo) + refunds + withdrawals
+/// produced = balance(outs) + fee + deposits [+ donation]
+/// ```
+#[derive(Debug)]
+struct CertBalanceAdjustment {
+    /// Sum of all withdrawal amounts from the transaction.
+    withdrawal_total: u64,
+    /// Total new deposits from registration certificates (key, pool, DRep).
+    total_deposits: u64,
+    /// Total deposit refunds from deregistration certificates.
+    total_refunds: u64,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_certificates_and_withdrawals(
     pool_state: &mut PoolState,
@@ -5931,27 +6013,33 @@ fn apply_certificates_and_withdrawals(
     ctx: &CertificateValidationContext,
     certificates: Option<&[DCert]>,
     withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
-) -> Result<u64, LedgerError> {
+) -> Result<CertBalanceAdjustment, LedgerError> {
     let key_deposit = ctx.key_deposit;
     let pool_deposit = ctx.pool_deposit;
+    let mut total_deposits: u64 = 0;
+    let mut total_refunds: u64 = 0;
     if let Some(certs) = certificates {
         for cert in certs {
             match cert {
                 DCert::AccountRegistration(credential) => {
                     register_stake_credential(stake_credentials, *credential)?;
                     deposit_pot.add_key_deposit(key_deposit);
+                    total_deposits = total_deposits.saturating_add(key_deposit);
                 }
                 DCert::AccountRegistrationDeposit(credential, deposit) => {
                     register_stake_credential(stake_credentials, *credential)?;
                     deposit_pot.add_key_deposit(*deposit);
+                    total_deposits = total_deposits.saturating_add(*deposit);
                 }
                 DCert::AccountUnregistration(credential) => {
                     unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
                     deposit_pot.return_key_deposit(key_deposit);
+                    total_refunds = total_refunds.saturating_add(key_deposit);
                 }
                 DCert::AccountUnregistrationDeposit(credential, refund) => {
                     unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
                     deposit_pot.return_key_deposit(*refund);
+                    total_refunds = total_refunds.saturating_add(*refund);
                 }
                 DCert::DelegationToStakePool(credential, pool) => {
                     delegate_stake_credential(
@@ -5965,6 +6053,7 @@ fn apply_certificates_and_withdrawals(
                 DCert::AccountRegistrationDelegationToStakePool(credential, pool, deposit) => {
                     register_stake_credential(stake_credentials, *credential)?;
                     deposit_pot.add_key_deposit(*deposit);
+                    total_deposits = total_deposits.saturating_add(*deposit);
                     delegate_stake_credential(
                         pool_state,
                         stake_credentials,
@@ -5989,11 +6078,13 @@ fn apply_certificates_and_withdrawals(
                 DCert::AccountRegistrationDelegationToDrep(credential, drep, deposit) => {
                     register_stake_credential(stake_credentials, *credential)?;
                     deposit_pot.add_key_deposit(*deposit);
+                    total_deposits = total_deposits.saturating_add(*deposit);
                     delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
                 }
                 DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, deposit) => {
                     register_stake_credential(stake_credentials, *credential)?;
                     deposit_pot.add_key_deposit(*deposit);
+                    total_deposits = total_deposits.saturating_add(*deposit);
                     delegate_stake_credential(
                         pool_state,
                         stake_credentials,
@@ -6055,6 +6146,7 @@ fn apply_certificates_and_withdrawals(
                     pool_state.register(params.clone());
                     if is_new {
                         deposit_pot.add_pool_deposit(pool_deposit);
+                        total_deposits = total_deposits.saturating_add(pool_deposit);
                     }
                 }
                 DCert::PoolRetirement(pool, epoch) => {
@@ -6075,10 +6167,12 @@ fn apply_certificates_and_withdrawals(
                 DCert::DrepRegistration(credential, deposit, anchor) => {
                     register_drep(drep_state, *credential, *deposit, anchor.clone())?;
                     deposit_pot.add_drep_deposit(*deposit);
+                    total_deposits = total_deposits.saturating_add(*deposit);
                 }
                 DCert::DrepUnregistration(credential, refund) => {
                     unregister_drep(drep_state, *credential)?;
                     deposit_pot.return_drep_deposit(*refund);
+                    total_refunds = total_refunds.saturating_add(*refund);
                 }
                 DCert::DrepUpdate(credential, anchor) => {
                     update_drep(drep_state, *credential, anchor.clone())?;
@@ -6120,7 +6214,7 @@ fn apply_certificates_and_withdrawals(
         }
     }
 
-    Ok(withdrawal_total)
+    Ok(CertBalanceAdjustment { withdrawal_total, total_deposits, total_refunds })
 }
 
 fn register_stake_credential(
@@ -12621,11 +12715,11 @@ mod tests {
         let cred = crate::StakeCredential::AddrKeyHash([0xC1; 28]);
 
         let certs = vec![DCert::AccountRegistrationDeposit(cred, 5_000_000)];
-        let total = apply_certificates_and_withdrawals(
+        let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
         ).unwrap();
-        assert_eq!(total, 0);
+        assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(dp.key_deposits, 5_000_000);
     }
@@ -12644,11 +12738,11 @@ mod tests {
         let ctx = sample_cert_ctx();
 
         let certs = vec![DCert::AccountUnregistrationDeposit(cred, 5_000_000)];
-        let total = apply_certificates_and_withdrawals(
+        let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
         ).unwrap();
-        assert_eq!(total, 0);
+        assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(!sc.is_registered(&cred));
         assert_eq!(dp.key_deposits, 0);
     }
@@ -12683,11 +12777,11 @@ mod tests {
         let ctx = sample_cert_ctx();
 
         let certs = vec![DCert::DelegationToStakePoolAndDrep(cred, operator, drep)];
-        let total = apply_certificates_and_withdrawals(
+        let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
         ).unwrap();
-        assert_eq!(total, 0);
+        assert_eq!(cert_adj.withdrawal_total, 0);
         let sc_state = sc.get(&cred).unwrap();
         assert_eq!(sc_state.delegated_pool(), Some(operator));
         assert_eq!(sc_state.delegated_drep(), Some(drep));
@@ -12718,11 +12812,11 @@ mod tests {
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
 
         let certs = vec![DCert::AccountRegistrationDelegationToStakePool(cred, operator, 2_000_000)];
-        let total = apply_certificates_and_withdrawals(
+        let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
         ).unwrap();
-        assert_eq!(total, 0);
+        assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(operator));
         assert_eq!(dp.key_deposits, 2_000_000);
@@ -12742,11 +12836,11 @@ mod tests {
         let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
 
         let certs = vec![DCert::AccountRegistrationDelegationToDrep(cred, drep, 2_000_000)];
-        let total = apply_certificates_and_withdrawals(
+        let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
         ).unwrap();
-        assert_eq!(total, 0);
+        assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(sc.get(&cred).unwrap().delegated_drep(), Some(drep));
         assert_eq!(dp.key_deposits, 2_000_000);
@@ -12778,11 +12872,11 @@ mod tests {
         let cred = crate::StakeCredential::AddrKeyHash([0xF2; 28]);
 
         let certs = vec![DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, operator, drep, 3_000_000)];
-        let total = apply_certificates_and_withdrawals(
+        let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, Some(&certs), None,
         ).unwrap();
-        assert_eq!(total, 0);
+        assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(operator));
         assert_eq!(sc.get(&cred).unwrap().delegated_drep(), Some(drep));
@@ -13306,11 +13400,11 @@ mod tests {
         let mut withdrawals = std::collections::BTreeMap::new();
         withdrawals.insert(ra_key, 100); // withdraw entire balance
 
-        let total = apply_certificates_and_withdrawals(
+        let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &ctx, None, Some(&withdrawals),
         ).unwrap();
-        assert_eq!(total, 100);
+        assert_eq!(cert_adj.withdrawal_total, 100);
         assert_eq!(ra.balance(&ra_key), 0);
     }
 

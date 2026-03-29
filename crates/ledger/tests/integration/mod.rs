@@ -86,6 +86,7 @@ mod submitted_conway_governance;
 mod submitted_extra_redeemer;
 mod submitted_plutus_evaluation;
 mod submitted_script_witness;
+mod treasury_donation;
 mod txbody_keys;
 mod types_and_certs;
 mod witness_validation;

@@ -81,6 +81,9 @@ pub struct EpochBoundaryEvent {
     pub removed_due_to_enactment_deposit_refunds: u64,
     /// Unclaimed governance deposits (unregistered reward accounts) sent to treasury.
     pub unclaimed_governance_deposits: u64,
+    /// Accumulated treasury donations (Conway `utxosDonation`) transferred to
+    /// treasury during this epoch boundary.
+    pub donations_transferred: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +198,11 @@ pub fn apply_epoch_boundary(
     //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — accounting
     //    update step.
     // -----------------------------------------------------------------------
+    // Flush accumulated Conway treasury donations into treasury.
+    //
+    // Reference: `Cardano.Ledger.Conway.Rules.Epoch` — epoch boundary:
+    // `casTreasuryL <>~ utxosDonationL`, then `utxosDonationL .~ zero`.
+    let donations_transferred = ledger.flush_donations_to_treasury();
     {
         let acct = ledger.accounting_mut();
         acct.reserves = acct.reserves.saturating_sub(reward_dist.delta_reserves);
@@ -255,6 +263,7 @@ pub fn apply_epoch_boundary(
         removed_due_to_enactment: ratify_result.removed_due_to_enactment,
         removed_due_to_enactment_deposit_refunds: ratify_result.removed_due_to_enactment_deposit_refunds,
         unclaimed_governance_deposits: ratify_result.unclaimed_deposits,
+        donations_transferred,
     })
 }
 

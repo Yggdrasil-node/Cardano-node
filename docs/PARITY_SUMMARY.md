@@ -39,6 +39,7 @@
 - `validate_withdrawal_network_ids()` — WrongNetworkWithdrawal check (all eras)
 - `validate_tx_body_network_id()` — WrongNetworkInTxBody check (Alonzo+)
 - `compute_stake_snapshot()` — Per-pool reward slot calculation
+- `accumulate_donation()` / `flush_donations_to_treasury()` — Conway treasury donation accumulation (UTXOS rule) + epoch-boundary flush (EPOCH rule)
 - `MultiEraUtxo` — Unified UTxO model for all eras
 
 **Consensus**:

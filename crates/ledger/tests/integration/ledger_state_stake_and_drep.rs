@@ -406,7 +406,7 @@ fn ledger_state_registers_and_updates_drep() {
         },
         ShelleyTxOut {
             address: vec![0x01],
-            amount: 1_100_000,
+            amount: 3_100_000,
         },
     );
 

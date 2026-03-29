@@ -2806,6 +2806,7 @@ fn trace_epoch_boundary_events(tracer: &NodeTracer, events: &[EpochBoundaryEvent
                 ("governanceActionsEnacted", json!(ev.governance_actions_enacted)),
                 ("enactedDepositRefunds", json!(ev.enacted_deposit_refunds)),
                 ("unclaimedGovernanceDeposits", json!(ev.unclaimed_governance_deposits)),
+                ("donationsTransferred", json!(ev.donations_transferred)),
             ]),
         );
     }
