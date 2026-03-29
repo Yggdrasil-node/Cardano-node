@@ -268,6 +268,14 @@ pub struct NodeConfigFile {
     /// official Cardano node.  Required for block production.
     #[serde(rename = "ShelleyOperationalCertificate", default, skip_serializing_if = "Option::is_none")]
     pub shelley_operational_certificate: Option<String>,
+
+    /// Path to the stake-pool cold verification key file (text-envelope).
+    ///
+    /// Used as the block header `issuer_vkey` when forging blocks and to
+    /// verify that the configured operational certificate is signed by the
+    /// same cold key.
+    #[serde(rename = "ShelleyOperationalCertificateIssuerVkey", default, skip_serializing_if = "Option::is_none")]
+    pub shelley_operational_certificate_issuer_vkey: Option<String>,
 }
 
 /// Errors returned while loading a P2P topology file.
@@ -1016,6 +1024,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         shelley_kes_key: None,
         shelley_vrf_key: None,
         shelley_operational_certificate: None,
+        shelley_operational_certificate_issuer_vkey: None,
     }
 }
 
@@ -1073,6 +1082,7 @@ pub fn preprod_config() -> NodeConfigFile {
         shelley_kes_key: None,
         shelley_vrf_key: None,
         shelley_operational_certificate: None,
+        shelley_operational_certificate_issuer_vkey: None,
     }
 }
 
@@ -1130,6 +1140,7 @@ pub fn preview_config() -> NodeConfigFile {
         shelley_kes_key: None,
         shelley_vrf_key: None,
         shelley_operational_certificate: None,
+        shelley_operational_certificate_issuer_vkey: None,
     }
 }
 
@@ -1181,6 +1192,10 @@ mod tests {
         assert_eq!(parsed.shelley_genesis_file, cfg.shelley_genesis_file);
         assert_eq!(parsed.alonzo_genesis_file, cfg.alonzo_genesis_file);
         assert_eq!(parsed.conway_genesis_file, cfg.conway_genesis_file);
+        assert_eq!(
+            parsed.shelley_operational_certificate_issuer_vkey,
+            cfg.shelley_operational_certificate_issuer_vkey
+        );
     }
 
     #[test]
@@ -1219,6 +1234,7 @@ mod tests {
         assert!(cfg.shelley_genesis_file.is_none());
         assert!(cfg.alonzo_genesis_file.is_none());
         assert!(cfg.conway_genesis_file.is_none());
+        assert!(cfg.shelley_operational_certificate_issuer_vkey.is_none());
         assert!(cfg.trace_options.contains_key(""));
         assert!(cfg.trace_options.contains_key("Node.Recovery.Checkpoint"));
         assert_eq!(

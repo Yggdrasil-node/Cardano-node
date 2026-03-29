@@ -34,13 +34,13 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 **To achieve full parity**, the remaining work focuses on:
 1. **Plutus CEK builtin coverage** (remaining edge cases and cost-model parity)
-2. **Block production issuer-key/header parity** (strict external validation parity for forged headers)
-3. **Storage WAL** (write-ahead log for multi-step mutations)
-4. **Integration testing** (mainnet-like end-to-end scenarios)
+2. **Storage WAL** (write-ahead log for multi-step mutations)
+3. **Integration testing** (mainnet-like end-to-end scenarios)
 
 **Recently completed parity items**:
 - ✅ **Post-forge adoption check** — after forging, compare chain tip with forged block point and emit `TraceAdoptedBlock`/`TraceDidntAdoptBlock` (upstream `NodeKernel.forkBlockForging`)
 - ✅ **Forged block self-validation** — block producer now self-validates each forged block before persistence (protocol version, body hash, body size, header identity), preventing local malformed-forge persistence drift.
+- ✅ **Forged issuer-key parity** — block producer credentials now require an explicit issuer cold verification key, validate OpCert signature against that key at startup, and forge headers with that issuer key (instead of using the KES hot key as proxy).
 - ✅ **Invalid block punishment** — peer-attributable validation errors (Consensus, BlockBodyHashMismatch, LedgerDecode, BlockFromFuture) now trigger reconnection to a different peer instead of killing the sync service; `ChainDB.AddBlockEvent.InvalidBlock` trace emitted (upstream `InvalidBlockPunishment`)
 - ✅ **Blocks-from-the-future check** — `ClockSkew` + `FutureSlotJudgement` in consensus crate; blocks exceeding clock-skew tolerance rejected as `SyncError::BlockFromFuture` (upstream `InFutureCheck`)
 - ✅ **Diffusion pipelining tentative-chain wiring (DPvDV)** — node runtime now threads shared `TentativeState` through reconnecting verified sync and inbound ChainSync serving; verified batch sync sets tentative headers on roll-forward announcements and clears adopted/trap outcomes; inbound ChainSync now serves tentative tips and rolls followers back when a served tentative header is trapped (upstream `SupportsDiffusionPipelining` / `cdbTentativeHeader` behavior)
@@ -265,7 +265,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Database path override | `--database-path` | ✅ | ✅ | Complete | CLI flag overrides `storage_dir` on `run`, `validate-config`, `status`
 | Port / host-addr | `--port` / `--host-addr` | ✅ | ✅ | Complete | CLI flags override listen address on `run`
 | Genesis loading | ShelleyGenesis + AlonzoGenesis | ✅ | ✅ | Complete | load_genesis_protocol_params
-| BP credential paths | ShelleyKesKey/VrfKey/OpCert | ✅ | ✅ | Complete | `--shelley-kes-key`, `--shelley-vrf-key`, `--shelley-operational-certificate` CLI flags + config file keys; text envelope parsing (VRF/KES/OpCert) via `load_block_producer_credentials()`
+| BP credential paths | ShelleyKesKey/VrfKey/OpCert/IssuerVkey | ✅ | ✅ | Complete | `--shelley-kes-key`, `--shelley-vrf-key`, `--shelley-operational-certificate`, `--shelley-operational-certificate-issuer-vkey` CLI flags + config file keys; text envelope parsing (VRF/KES/OpCert/issuer key) via `load_block_producer_credentials()` with OpCert-vs-issuer signature check
 | **Subcommands** |
 | run | Sync + validate | ✅ | ✅ | Complete | Main sync loop wired
 | validate-config | Verify config file | ✅ | ✅ | Complete | Basic validation

@@ -172,6 +172,11 @@ pub fn load_vrf_signing_key(path: &Path) -> Result<VrfSecretKey, BlockProducerEr
 /// Expected text-envelope type prefix for KES signing keys.
 const KES_SIGNING_KEY_TYPE_PREFIX: &str = "KesSigningKey_ed25519_kes_2^";
 
+/// Expected text-envelope type tag for stake-pool cold verification keys.
+///
+/// This key is the block issuer key carried in Shelley-family headers.
+const STAKE_POOL_VERIFICATION_KEY_TYPE: &str = "StakePoolVerificationKey_ed25519";
+
 /// Load a SumKES signing key from a text-envelope file.
 ///
 /// The text-envelope type string encodes the depth:
@@ -205,6 +210,36 @@ pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProduc
     let mut seed = [0u8; 32];
     seed.copy_from_slice(seed_bytes);
     gen_sum_kes_signing_key(&seed, depth).map_err(|e| BlockProducerError::Crypto(e.to_string()))
+}
+
+/// Load the stake-pool cold verification key used as header `issuer_vkey`.
+///
+/// The CBOR payload is expected to be a CBOR `bytes` item containing the
+/// 32-byte Ed25519 verification key.
+pub fn load_issuer_verification_key(
+    path: &Path,
+) -> Result<VerificationKey, BlockProducerError> {
+    let (type_tag, cbor_bytes) = read_text_envelope(path)?;
+    if type_tag != STAKE_POOL_VERIFICATION_KEY_TYPE {
+        return Err(BlockProducerError::TypeMismatch {
+            path: path.display().to_string(),
+            expected: STAKE_POOL_VERIFICATION_KEY_TYPE.to_owned(),
+            actual: type_tag,
+        });
+    }
+
+    let key_bytes = unwrap_cbor_bytes(&cbor_bytes, path)?;
+    if key_bytes.len() != 32 {
+        return Err(BlockProducerError::PayloadLength {
+            path: path.display().to_string(),
+            expected: 32,
+            actual: key_bytes.len(),
+        });
+    }
+
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(key_bytes);
+    Ok(VerificationKey::from_bytes(arr))
 }
 
 // ---------------------------------------------------------------------------
@@ -458,13 +493,8 @@ pub struct BlockProducerCredentials {
     pub kes_current_period: u32,
     /// Operational certificate binding cold key to hot KES key.
     pub operational_cert: OpCert,
-    /// Cold (block issuer) verification key hash — derived from the
-    /// operational certificate's cold-key signature.
-    ///
-    /// In full production use this would be loaded from a separate cold
-    /// verification key file; for now we carry the KES hot VK as the
-    /// issuer proxy since the OpCert binds them.
-    ///
+    /// Cold verification key used as block header `issuer_vkey`.
+    pub issuer_vkey: VerificationKey,
     /// Slots per KES period (from config).
     pub slots_per_kes_period: u64,
     /// Maximum KES evolutions (from config).
@@ -474,13 +504,15 @@ pub struct BlockProducerCredentials {
 /// Load block producer credentials from text-envelope files.
 ///
 /// Validates that the KES key depth is consistent with the operational
-/// certificate and config parameters.
+/// certificate and config parameters, and verifies that the operational
+/// certificate signature matches the configured issuer cold verification key.
 ///
 /// Reference: upstream node startup in `Cardano.Node.Run.handleSimpleNode`.
 pub fn load_block_producer_credentials(
     kes_key_path: &Path,
     vrf_key_path: &Path,
     opcert_path: &Path,
+    issuer_vkey_path: &Path,
     slots_per_kes_period: u64,
     max_kes_evolutions: u64,
 ) -> Result<BlockProducerCredentials, BlockProducerError> {
@@ -488,6 +520,13 @@ pub fn load_block_producer_credentials(
     let vrf_verification_key = vrf_signing_key.verification_key();
     let kes_signing_key = load_kes_signing_key(kes_key_path)?;
     let operational_cert = load_operational_certificate(opcert_path)?;
+    let issuer_vkey = load_issuer_verification_key(issuer_vkey_path)?;
+
+    operational_cert
+        .verify(&issuer_vkey)
+        .map_err(|e| BlockProducerError::Crypto(format!(
+            "operational certificate does not verify against issuer key: {e}"
+        )))?;
 
     Ok(BlockProducerCredentials {
         vrf_signing_key,
@@ -495,6 +534,7 @@ pub fn load_block_producer_credentials(
         kes_signing_key,
         kes_current_period: 0,
         operational_cert,
+        issuer_vkey,
         slots_per_kes_period,
         max_kes_evolutions,
     })
@@ -1396,6 +1436,22 @@ mod tests {
     }
 
     #[test]
+    fn load_issuer_verification_key_from_text_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let issuer_bytes = [0xA5u8; 32];
+        let cbor = cbor_bstr(&issuer_bytes);
+        let json = make_text_envelope(
+            "StakePoolVerificationKey_ed25519",
+            "",
+            &hex::encode(&cbor),
+        );
+        let path = write_temp_file(&dir, "cold.vkey", &json);
+
+        let issuer = load_issuer_verification_key(&path).expect("load issuer vkey");
+        assert_eq!(issuer.to_bytes(), issuer_bytes);
+    }
+
+    #[test]
     fn load_kes_key_depth_6() {
         let dir = tempfile::tempdir().unwrap();
         let seed = [0x42u8; 32];
@@ -1441,6 +1497,82 @@ mod tests {
     }
 
     #[test]
+    fn load_block_producer_credentials_rejects_mismatched_issuer_key() {
+        use yggdrasil_crypto::ed25519::SigningKey;
+
+        let dir = tempfile::tempdir().unwrap();
+
+        // VRF signing key file.
+        let vrf_key_bytes = [0xABu8; 64];
+        let vrf_json = make_text_envelope(
+            "VrfSigningKey_PraosVRF",
+            "",
+            &hex::encode(cbor_bstr(&vrf_key_bytes)),
+        );
+        let vrf_path = write_temp_file(&dir, "vrf.skey", &vrf_json);
+
+        // KES signing key file (depth 0, 32-byte seed).
+        let kes_seed = [0xCDu8; 32];
+        let kes_json = make_text_envelope(
+            "KesSigningKey_ed25519_kes_2^0",
+            "",
+            &hex::encode(cbor_bstr(&kes_seed)),
+        );
+        let kes_path = write_temp_file(&dir, "kes.skey", &kes_json);
+
+        // Build an opcert signed by cold key A.
+        let cold_sk_a = SigningKey::from_bytes([0x11u8; 32]);
+        let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("kes sk");
+        let kes_vk = derive_sum_kes_vk(&kes_sk).expect("kes vk");
+
+        let mut signable = [0u8; 48];
+        signable[..32].copy_from_slice(&kes_vk.to_bytes());
+        signable[32..40].copy_from_slice(&0u64.to_be_bytes());
+        signable[40..48].copy_from_slice(&0u64.to_be_bytes());
+        let sigma = cold_sk_a.sign(&signable).expect("opcert signature");
+
+        let mut opcert_cbor = Vec::new();
+        opcert_cbor.push(0x84); // array(4)
+        opcert_cbor.extend_from_slice(&cbor_bstr(&kes_vk.to_bytes()));
+        opcert_cbor.push(0x00); // sequence_number = 0
+        opcert_cbor.push(0x00); // kes_period = 0
+        opcert_cbor.extend_from_slice(&cbor_bstr(&sigma.0));
+        let opcert_json = make_text_envelope(
+            "NodeOperationalCertificate",
+            "",
+            &hex::encode(opcert_cbor),
+        );
+        let opcert_path = write_temp_file(&dir, "node.cert", &opcert_json);
+
+        // Issuer key file uses different cold key B.
+        let cold_vk_b = SigningKey::from_bytes([0x22u8; 32])
+            .verification_key()
+            .expect("derive verification key");
+        let issuer_json = make_text_envelope(
+            "StakePoolVerificationKey_ed25519",
+            "",
+            &hex::encode(cbor_bstr(&cold_vk_b.to_bytes())),
+        );
+        let issuer_path = write_temp_file(&dir, "cold.vkey", &issuer_json);
+
+        let err = load_block_producer_credentials(
+            &kes_path,
+            &vrf_path,
+            &opcert_path,
+            &issuer_path,
+            129_600,
+            62,
+        )
+        .expect_err("mismatched issuer key must fail credential loading");
+
+        assert!(
+            err.to_string()
+                .contains("operational certificate does not verify against issuer key"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn leader_election_with_synthetic_credentials() {
         // Build minimal credentials: depth-0 KES, arbitrary VRF key.
         let vrf_sk = VrfSecretKey::from_seed([0x99u8; 32]);
@@ -1459,6 +1591,7 @@ mod tests {
             kes_signing_key: kes_sk,
             kes_current_period: 0,
             operational_cert: opcert,
+            issuer_vkey: VerificationKey::from_bytes([0x10; 32]),
             slots_per_kes_period: 129600,
             max_kes_evolutions: 62,
         };
@@ -1495,6 +1628,7 @@ mod tests {
             kes_signing_key: kes_sk,
             kes_current_period: 0,
             operational_cert: opcert,
+            issuer_vkey: VerificationKey::from_bytes([0x20; 32]),
             slots_per_kes_period: 10,
             max_kes_evolutions: 1, // only 1 evolution allowed
         };
@@ -1510,7 +1644,9 @@ mod tests {
         use yggdrasil_crypto::ed25519::SigningKey;
 
         let cold_sk = SigningKey::from_bytes([0xEEu8; 32]);
-        let cold_vk = cold_sk.verification_key();
+        let cold_vk = cold_sk
+            .verification_key()
+            .expect("derive cold verification key");
 
         let kes_seed = [0xFFu8; 32];
         let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).unwrap();
@@ -1541,6 +1677,7 @@ mod tests {
             kes_signing_key: kes_sk,
             kes_current_period: 0,
             operational_cert: opcert,
+            issuer_vkey: cold_vk.clone(),
             slots_per_kes_period: 129600,
             max_kes_evolutions: 62,
         };
@@ -1568,7 +1705,7 @@ mod tests {
             None,
             [0xAA; 32], // body hash
             100,         // body size
-            cold_vk.unwrap(),
+            cold_vk,
             &ForgeBlockConfig {
                 protocol_version: (9, 0),
             },
@@ -1604,6 +1741,7 @@ mod tests {
             kes_signing_key: kes_sk,
             kes_current_period: 0,
             operational_cert: opcert,
+            issuer_vkey: VerificationKey::from_bytes([0x30; 32]),
             slots_per_kes_period: 100,
             max_kes_evolutions: 4,
         };
@@ -1635,6 +1773,7 @@ mod tests {
             kes_signing_key: kes_sk,
             kes_current_period: 0,
             operational_cert: opcert,
+            issuer_vkey: VerificationKey::from_bytes([0x40; 32]),
             slots_per_kes_period: 100,
             max_kes_evolutions: 4,
         };
@@ -1650,7 +1789,9 @@ mod tests {
         use yggdrasil_ledger::{CborDecode, ConwayBlock, Decoder};
 
         let cold_sk = SigningKey::from_bytes([0x9Au8; 32]);
-        let cold_vk = cold_sk.verification_key();
+        let cold_vk = cold_sk
+            .verification_key()
+            .expect("derive cold verification key");
 
         let kes_sk = gen_sum_kes_signing_key(&[0x8Bu8; 32], 0).unwrap();
         let kes_vk = derive_sum_kes_vk(&kes_sk).unwrap();
@@ -1674,6 +1815,7 @@ mod tests {
                 kes_period: 0,
                 sigma: opcert_sigma,
             },
+            issuer_vkey: cold_vk.clone(),
             slots_per_kes_period: 129600,
             max_kes_evolutions: 62,
         };
@@ -1700,7 +1842,7 @@ mod tests {
             SlotNo(123),
             &[],
             1024,
-            cold_vk.unwrap(),
+            cold_vk,
             (9, 0),
         )
         .expect("forge block");

@@ -119,6 +119,10 @@ enum Command {
         /// Required for block production.
         #[arg(long)]
         shelley_operational_certificate: Option<PathBuf>,
+        /// Path to the issuer cold verification key file (text-envelope format).
+        /// Required for strict external validation parity of forged headers.
+        #[arg(long)]
+        shelley_operational_certificate_issuer_vkey: Option<PathBuf>,
     },
     /// Validate config, snapshot inputs, and any existing on-disk storage state.
     ValidateConfig {
@@ -559,6 +563,7 @@ fn main() -> Result<()> {
             shelley_kes_key,
             shelley_vrf_key,
             shelley_operational_certificate,
+            shelley_operational_certificate_issuer_vkey,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
             apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
@@ -584,8 +589,10 @@ fn main() -> Result<()> {
                 file_cfg.socket_path = Some(sp.display().to_string());
             }
 
-            // CLI --shelley-kes-key / --shelley-vrf-key / --shelley-operational-certificate
-            // override config file block producer credential paths.
+            // CLI --shelley-kes-key / --shelley-vrf-key /
+            // --shelley-operational-certificate /
+            // --shelley-operational-certificate-issuer-vkey override config
+            // file block producer credential paths.
             if let Some(ref p) = shelley_kes_key {
                 file_cfg.shelley_kes_key = Some(p.display().to_string());
             }
@@ -594,6 +601,10 @@ fn main() -> Result<()> {
             }
             if let Some(ref p) = shelley_operational_certificate {
                 file_cfg.shelley_operational_certificate = Some(p.display().to_string());
+            }
+            if let Some(ref p) = shelley_operational_certificate_issuer_vkey {
+                file_cfg.shelley_operational_certificate_issuer_vkey =
+                    Some(p.display().to_string());
             }
 
             if let Some(max_frequency) = checkpoint_trace_max_frequency {
@@ -783,11 +794,27 @@ fn main() -> Result<()> {
                 topology_config.peer_snapshot_file = Some(peer_snapshot_path.display().to_string());
             }
 
-            // Load block producer credentials when all three paths are present.
-            let block_producer_credentials = if file_cfg.shelley_kes_key.is_some()
+            // Load block producer credentials when all required paths are present.
+            let has_any_block_producer_path = file_cfg.shelley_kes_key.is_some()
+                || file_cfg.shelley_vrf_key.is_some()
+                || file_cfg.shelley_operational_certificate.is_some()
+                || file_cfg.shelley_operational_certificate_issuer_vkey.is_some();
+
+            let has_all_block_producer_paths = file_cfg.shelley_kes_key.is_some()
                 && file_cfg.shelley_vrf_key.is_some()
                 && file_cfg.shelley_operational_certificate.is_some()
-            {
+                && file_cfg.shelley_operational_certificate_issuer_vkey.is_some();
+
+            if has_any_block_producer_path && !has_all_block_producer_paths {
+                bail!(
+                    "block producer credentials are partially configured; \
+                     required: ShelleyKesKey, ShelleyVrfKey, \
+                     ShelleyOperationalCertificate, \
+                     ShelleyOperationalCertificateIssuerVkey"
+                );
+            }
+
+            let block_producer_credentials = if has_all_block_producer_paths {
                 let creds = yggdrasil_node::block_producer::load_block_producer_credentials(
                     &resolve_config_path(
                         std::path::Path::new(
@@ -813,6 +840,15 @@ fn main() -> Result<()> {
                                 .shelley_operational_certificate
                                 .as_ref()
                                 .expect("shelley_operational_certificate is checked as present above"),
+                        ),
+                        config_base_dir.as_deref(),
+                    ),
+                    &resolve_config_path(
+                        std::path::Path::new(
+                            file_cfg
+                                .shelley_operational_certificate_issuer_vkey
+                                .as_ref()
+                                .expect("shelley_operational_certificate_issuer_vkey is checked as present above"),
                         ),
                         config_base_dir.as_deref(),
                     ),

@@ -32,7 +32,6 @@ use serde_json::json;
 use serde_json::Value;
 use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState, TentativeState};
 use yggdrasil_consensus::praos::ActiveSlotCoeff;
-use yggdrasil_crypto::ed25519::VerificationKey;
 use yggdrasil_network::{
     AbstractState, AcquireOutboundResult,
     AfterSlot, BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
@@ -1242,8 +1241,7 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                     assemble_block_body(entries.iter(), config.max_block_body_size);
                 let selected_count = selected_preview.len();
 
-                let issuer_vkey =
-                    VerificationKey::from_bytes(credentials.operational_cert.hot_vkey.to_bytes());
+                let issuer_vkey = credentials.issuer_vkey.clone();
 
                 let forged = match forge_block(
                     &credentials,
