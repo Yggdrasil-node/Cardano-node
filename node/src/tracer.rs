@@ -387,6 +387,20 @@ pub struct NodeMetrics {
     known_local_root_peers: AtomicU64,
     established_local_root_peers: AtomicU64,
     active_local_root_peers: AtomicU64,
+    // Mempool gauges (upstream `cardano.node.metrics.txsInMempool` etc.)
+    mempool_tx_count: AtomicU64,
+    mempool_bytes: AtomicU64,
+    mempool_tx_added: AtomicU64,
+    mempool_tx_rejected: AtomicU64,
+    // Connection manager counters (upstream `ConnectionManagerCounters`)
+    cm_full_duplex_conns: AtomicU64,
+    cm_duplex_conns: AtomicU64,
+    cm_unidirectional_conns: AtomicU64,
+    cm_inbound_conns: AtomicU64,
+    cm_outbound_conns: AtomicU64,
+    // Inbound server counters
+    inbound_connections_accepted: AtomicU64,
+    inbound_connections_rejected: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -443,6 +457,28 @@ pub struct MetricsSnapshot {
     pub warm_local_root_peers: u64,
     /// Alias of `active_local_root_peers` for backward compatibility.
     pub hot_local_root_peers: u64,
+    /// Current number of transactions in the mempool.
+    pub mempool_tx_count: u64,
+    /// Approximate total bytes of transactions in the mempool.
+    pub mempool_bytes: u64,
+    /// Cumulative count of transactions accepted into the mempool.
+    pub mempool_tx_added: u64,
+    /// Cumulative count of transactions rejected from the mempool.
+    pub mempool_tx_rejected: u64,
+    /// Connection manager: full-duplex connections.
+    pub cm_full_duplex_conns: u64,
+    /// Connection manager: duplex connections.
+    pub cm_duplex_conns: u64,
+    /// Connection manager: unidirectional connections.
+    pub cm_unidirectional_conns: u64,
+    /// Connection manager: inbound connections.
+    pub cm_inbound_conns: u64,
+    /// Connection manager: outbound connections.
+    pub cm_outbound_conns: u64,
+    /// Total inbound connections accepted.
+    pub inbound_connections_accepted: u64,
+    /// Total inbound connections rejected (rate-limited or CM-refused).
+    pub inbound_connections_rejected: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -474,6 +510,17 @@ impl NodeMetrics {
             known_local_root_peers: AtomicU64::new(0),
             established_local_root_peers: AtomicU64::new(0),
             active_local_root_peers: AtomicU64::new(0),
+            mempool_tx_count: AtomicU64::new(0),
+            mempool_bytes: AtomicU64::new(0),
+            mempool_tx_added: AtomicU64::new(0),
+            mempool_tx_rejected: AtomicU64::new(0),
+            cm_full_duplex_conns: AtomicU64::new(0),
+            cm_duplex_conns: AtomicU64::new(0),
+            cm_unidirectional_conns: AtomicU64::new(0),
+            cm_inbound_conns: AtomicU64::new(0),
+            cm_outbound_conns: AtomicU64::new(0),
+            inbound_connections_accepted: AtomicU64::new(0),
+            inbound_connections_rejected: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
     }
@@ -568,6 +615,48 @@ impl NodeMetrics {
             .store(active_local_root_peers, Ordering::Relaxed);
     }
 
+    /// Update mempool gauges: current count and byte size.
+    pub fn set_mempool_gauges(&self, tx_count: u64, bytes: u64) {
+        self.mempool_tx_count.store(tx_count, Ordering::Relaxed);
+        self.mempool_bytes.store(bytes, Ordering::Relaxed);
+    }
+
+    /// Increment the mempool-transactions-added counter.
+    pub fn inc_mempool_tx_added(&self) {
+        self.mempool_tx_added.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment the mempool-transactions-rejected counter.
+    pub fn inc_mempool_tx_rejected(&self) {
+        self.mempool_tx_rejected.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Update connection manager counters.
+    pub fn set_connection_manager_counters(
+        &self,
+        full_duplex: u64,
+        duplex: u64,
+        unidirectional: u64,
+        inbound: u64,
+        outbound: u64,
+    ) {
+        self.cm_full_duplex_conns.store(full_duplex, Ordering::Relaxed);
+        self.cm_duplex_conns.store(duplex, Ordering::Relaxed);
+        self.cm_unidirectional_conns.store(unidirectional, Ordering::Relaxed);
+        self.cm_inbound_conns.store(inbound, Ordering::Relaxed);
+        self.cm_outbound_conns.store(outbound, Ordering::Relaxed);
+    }
+
+    /// Increment the inbound-connections-accepted counter.
+    pub fn inc_inbound_accepted(&self) {
+        self.inbound_connections_accepted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment the inbound-connections-rejected counter.
+    pub fn inc_inbound_rejected(&self) {
+        self.inbound_connections_rejected.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Read a consistent snapshot of all current metric values.
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
@@ -606,6 +695,17 @@ impl NodeMetrics {
             active_local_root_peers: self.active_local_root_peers.load(Ordering::Relaxed),
             warm_local_root_peers: self.established_local_root_peers.load(Ordering::Relaxed),
             hot_local_root_peers: self.active_local_root_peers.load(Ordering::Relaxed),
+            mempool_tx_count: self.mempool_tx_count.load(Ordering::Relaxed),
+            mempool_bytes: self.mempool_bytes.load(Ordering::Relaxed),
+            mempool_tx_added: self.mempool_tx_added.load(Ordering::Relaxed),
+            mempool_tx_rejected: self.mempool_tx_rejected.load(Ordering::Relaxed),
+            cm_full_duplex_conns: self.cm_full_duplex_conns.load(Ordering::Relaxed),
+            cm_duplex_conns: self.cm_duplex_conns.load(Ordering::Relaxed),
+            cm_unidirectional_conns: self.cm_unidirectional_conns.load(Ordering::Relaxed),
+            cm_inbound_conns: self.cm_inbound_conns.load(Ordering::Relaxed),
+            cm_outbound_conns: self.cm_outbound_conns.load(Ordering::Relaxed),
+            inbound_connections_accepted: self.inbound_connections_accepted.load(Ordering::Relaxed),
+            inbound_connections_rejected: self.inbound_connections_rejected.load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -699,7 +799,40 @@ yggdrasil_warm_local_root_peers {}\n\
 yggdrasil_hot_local_root_peers {}\n\
 # HELP yggdrasil_uptime_seconds Seconds since node start.\n\
 # TYPE yggdrasil_uptime_seconds gauge\n\
-yggdrasil_uptime_seconds {}\n",
+yggdrasil_uptime_seconds {}\n\
+# HELP yggdrasil_mempool_tx_count Transactions currently in the mempool.\n\
+# TYPE yggdrasil_mempool_tx_count gauge\n\
+yggdrasil_mempool_tx_count {}\n\
+# HELP yggdrasil_mempool_bytes Approximate total bytes of transactions in the mempool.\n\
+# TYPE yggdrasil_mempool_bytes gauge\n\
+yggdrasil_mempool_bytes {}\n\
+# HELP yggdrasil_mempool_tx_added Total transactions accepted into the mempool.\n\
+# TYPE yggdrasil_mempool_tx_added counter\n\
+yggdrasil_mempool_tx_added {}\n\
+# HELP yggdrasil_mempool_tx_rejected Total transactions rejected from the mempool.\n\
+# TYPE yggdrasil_mempool_tx_rejected counter\n\
+yggdrasil_mempool_tx_rejected {}\n\
+# HELP yggdrasil_cm_full_duplex_conns Connection manager full-duplex connections.\n\
+# TYPE yggdrasil_cm_full_duplex_conns gauge\n\
+yggdrasil_cm_full_duplex_conns {}\n\
+# HELP yggdrasil_cm_duplex_conns Connection manager duplex connections.\n\
+# TYPE yggdrasil_cm_duplex_conns gauge\n\
+yggdrasil_cm_duplex_conns {}\n\
+# HELP yggdrasil_cm_unidirectional_conns Connection manager unidirectional connections.\n\
+# TYPE yggdrasil_cm_unidirectional_conns gauge\n\
+yggdrasil_cm_unidirectional_conns {}\n\
+# HELP yggdrasil_cm_inbound_conns Connection manager inbound connections.\n\
+# TYPE yggdrasil_cm_inbound_conns gauge\n\
+yggdrasil_cm_inbound_conns {}\n\
+# HELP yggdrasil_cm_outbound_conns Connection manager outbound connections.\n\
+# TYPE yggdrasil_cm_outbound_conns gauge\n\
+yggdrasil_cm_outbound_conns {}\n\
+# HELP yggdrasil_inbound_connections_accepted Total inbound connections accepted.\n\
+# TYPE yggdrasil_inbound_connections_accepted counter\n\
+yggdrasil_inbound_connections_accepted {}\n\
+# HELP yggdrasil_inbound_connections_rejected Total inbound connections rejected.\n\
+# TYPE yggdrasil_inbound_connections_rejected counter\n\
+yggdrasil_inbound_connections_rejected {}\n",
             self.blocks_synced,
             self.rollbacks,
             self.batches_completed,
@@ -726,6 +859,17 @@ yggdrasil_uptime_seconds {}\n",
             self.warm_local_root_peers,
             self.hot_local_root_peers,
             self.uptime_ms / 1000,
+            self.mempool_tx_count,
+            self.mempool_bytes,
+            self.mempool_tx_added,
+            self.mempool_tx_rejected,
+            self.cm_full_duplex_conns,
+            self.cm_duplex_conns,
+            self.cm_unidirectional_conns,
+            self.cm_inbound_conns,
+            self.cm_outbound_conns,
+            self.inbound_connections_accepted,
+            self.inbound_connections_rejected,
         )
     }
 }

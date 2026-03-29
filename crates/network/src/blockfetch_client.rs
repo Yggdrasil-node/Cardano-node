@@ -5,9 +5,16 @@
 //! client-agency level: it sends `MsgRequestRange` and `MsgClientDone`,
 //! and receives streaming blocks from the server.
 //!
+//! Per-state time limits from `protocol_limits::blockfetch` are enforced on
+//! every server response.  Upstream reference:
+//! `Ouroboros.Network.Protocol.BlockFetch.Codec.timeLimitsBlockFetch`.
+//!
 //! Reference: `Ouroboros.Network.Protocol.BlockFetch.Client`.
 
+use std::time::Duration;
+
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
+use crate::protocol_limits::blockfetch as bf_limits;
 use crate::protocols::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
 use yggdrasil_ledger::{CborDecode, CborEncode, LedgerError, Point};
 
@@ -39,6 +46,12 @@ pub enum BlockFetchClientError {
     /// Connection closed by the remote peer.
     #[error("connection closed")]
     ConnectionClosed,
+
+    /// The server did not respond within the per-state time limit.
+    ///
+    /// Upstream: `ExceededTimeLimit` from `ProtocolTimeLimits`.
+    #[error("protocol timeout ({0:?})")]
+    Timeout(Duration),
 
     /// State machine violation.
     #[error("protocol error: {0}")]
@@ -99,12 +112,22 @@ impl BlockFetchClient {
             .map_err(BlockFetchClientError::Mux)
     }
 
-    async fn recv_msg(&mut self) -> Result<BlockFetchMessage, BlockFetchClientError> {
-        let raw = self
-            .channel
-            .recv()
-            .await
-            .ok_or(BlockFetchClientError::ConnectionClosed)?;
+    /// Receive with an optional per-state time limit.
+    async fn recv_msg_timeout(
+        &mut self,
+        limit: Option<Duration>,
+    ) -> Result<BlockFetchMessage, BlockFetchClientError> {
+        let raw = match limit {
+            Some(d) => tokio::time::timeout(d, self.channel.recv())
+                .await
+                .map_err(|_| BlockFetchClientError::Timeout(d))?
+                .ok_or(BlockFetchClientError::ConnectionClosed)?,
+            None => self
+                .channel
+                .recv()
+                .await
+                .ok_or(BlockFetchClientError::ConnectionClosed)?,
+        };
         let msg = BlockFetchMessage::from_cbor(&raw)
             .map_err(|e| BlockFetchClientError::Decode(e.to_string()))?;
         self.state = self.state.transition(&msg)?;
@@ -115,6 +138,9 @@ impl BlockFetchClient {
 
     /// Send `MsgRequestRange` and wait for `MsgStartBatch` or `MsgNoBlocks`.
     ///
+    /// Enforces `blockfetch::BF_BUSY` time limit (60 s) on the server's
+    /// batch-start response.
+    ///
     /// The client must be in `StIdle`.  If `BatchResponse::StartedBatch` is
     /// returned the client enters `StStreaming` and the caller should call
     /// [`recv_block`] to consume the stream.
@@ -124,7 +150,7 @@ impl BlockFetchClient {
     ) -> Result<BatchResponse, BlockFetchClientError> {
         self.send_msg(&BlockFetchMessage::MsgRequestRange(range))
             .await?;
-        let msg = self.recv_msg().await?;
+        let msg = self.recv_msg_timeout(bf_limits::BF_BUSY).await?;
         match msg {
             BlockFetchMessage::MsgStartBatch => Ok(BatchResponse::StartedBatch),
             BlockFetchMessage::MsgNoBlocks => Ok(BatchResponse::NoBlocks),
@@ -183,12 +209,15 @@ impl BlockFetchClient {
 
     /// Receive the next block in the current batch.
     ///
+    /// Enforces `blockfetch::BF_STREAMING` time limit (60 s) between
+    /// successive blocks.
+    ///
     /// Returns `Some(block_bytes)` for each `MsgBlock`, or `None` when the
     /// server sends `MsgBatchDone` (returning to `StIdle`).
     ///
     /// The client must be in `StStreaming`.
     pub async fn recv_block(&mut self) -> Result<Option<Vec<u8>>, BlockFetchClientError> {
-        let msg = self.recv_msg().await?;
+        let msg = self.recv_msg_timeout(bf_limits::BF_STREAMING).await?;
         match msg {
             BlockFetchMessage::MsgBlock { block } => Ok(Some(block)),
             BlockFetchMessage::MsgBatchDone => Ok(None),

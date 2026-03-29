@@ -6,9 +6,20 @@
 //! methods to initialise the protocol, receive server requests, and send
 //! replies.
 //!
+//! The client-side waiting states (`StIdle`) are all `waitForever` upstream
+//! since the server drives the conversation.  The per-state time limits from
+//! `protocol_limits::txsubmission` are therefore all `None` on the client
+//! side.  The infrastructure is present for forward-compatibility.
+//!
+//! Upstream reference:
+//! `Ouroboros.Network.Protocol.TxSubmission2.Codec.timeLimitsTxSubmission2`.
+//!
 //! Reference: `Ouroboros.Network.Protocol.TxSubmission2.Client`.
 
+use std::time::Duration;
+
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
+use crate::protocol_limits::txsubmission as tx_limits;
 use crate::protocols::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
@@ -52,6 +63,14 @@ pub enum TxSubmissionClientError {
     /// Connection closed by the remote peer.
     #[error("connection closed")]
     ConnectionClosed,
+
+    /// The server did not respond within the per-state time limit.
+    ///
+    /// Upstream: `ExceededTimeLimit` from `ProtocolTimeLimits`.
+    /// Note: all client-side waiting states in TxSubmission2 are currently
+    /// `waitForever` because the server drives the conversation.
+    #[error("protocol timeout ({0:?})")]
+    Timeout(Duration),
 
     /// State machine violation.
     #[error("protocol error: {0}")]
@@ -164,12 +183,22 @@ impl TxSubmissionClient {
             .map_err(TxSubmissionClientError::Mux)
     }
 
-    async fn recv_msg(&mut self) -> Result<TxSubmissionMessage, TxSubmissionClientError> {
-        let raw = self
-            .channel
-            .recv()
-            .await
-            .ok_or(TxSubmissionClientError::ConnectionClosed)?;
+    /// Receive with an optional per-state time limit.
+    async fn recv_msg_timeout(
+        &mut self,
+        limit: Option<Duration>,
+    ) -> Result<TxSubmissionMessage, TxSubmissionClientError> {
+        let raw = match limit {
+            Some(d) => tokio::time::timeout(d, self.channel.recv())
+                .await
+                .map_err(|_| TxSubmissionClientError::Timeout(d))?
+                .ok_or(TxSubmissionClientError::ConnectionClosed)?,
+            None => self
+                .channel
+                .recv()
+                .await
+                .ok_or(TxSubmissionClientError::ConnectionClosed)?,
+        };
         let msg = TxSubmissionMessage::from_cbor(&raw)
             .map_err(|e| TxSubmissionClientError::Decode(e.to_string()))?;
         self.state = self.state.transition(&msg)?;
@@ -187,10 +216,12 @@ impl TxSubmissionClient {
 
     /// Wait for the next server request.
     ///
-    /// The client must be in `StIdle` (server agency). Returns either
-    /// `TxServerRequest::RequestTxIds` or `TxServerRequest::RequestTxs`.
+    /// The client must be in `StIdle` (server agency).  Uses
+    /// `txsubmission::ST_IDLE` time limit (currently `waitForever`).
+    /// Returns either `TxServerRequest::RequestTxIds` or
+    /// `TxServerRequest::RequestTxs`.
     pub async fn recv_request(&mut self) -> Result<TxServerRequest, TxSubmissionClientError> {
-        let msg = self.recv_msg().await?;
+        let msg = self.recv_msg_timeout(tx_limits::ST_IDLE).await?;
         match msg {
             TxSubmissionMessage::MsgRequestTxIds { blocking, ack, req } => {
                 self.apply_acknowledgements(ack)?;

@@ -943,6 +943,8 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
     accepted_connections_limit: Option<AcceptedConnectionsLimit>,
     shared_tx_state: Option<SharedTxState>,
+    tracer: Option<&crate::tracer::NodeTracer>,
+    metrics: Option<&Arc<crate::tracer::NodeMetrics>>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
     let listener_local_addr = listener
@@ -985,9 +987,35 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     match rate_limit_decision(inbound_count, limits) {
                         RateLimitDecision::NoDelay => {}
                         RateLimitDecision::SoftDelay(d) => {
+                            if let Some(t) = tracer {
+                                t.trace_runtime(
+                                    "Net.Inbound",
+                                    "Debug",
+                                    "soft delay before accepting inbound connection",
+                                    crate::tracer::trace_fields([
+                                        ("peer", serde_json::json!(addr.to_string())),
+                                        ("delayMs", serde_json::json!(d.as_millis())),
+                                        ("inboundCount", serde_json::json!(inbound_count)),
+                                    ]),
+                                );
+                            }
                             tokio::time::sleep(d).await;
                         }
                         RateLimitDecision::HardLimit => {
+                            if let Some(t) = tracer {
+                                t.trace_runtime(
+                                    "Net.Inbound",
+                                    "Warning",
+                                    "inbound connection rejected at hard limit",
+                                    crate::tracer::trace_fields([
+                                        ("peer", serde_json::json!(addr.to_string())),
+                                        ("inboundCount", serde_json::json!(inbound_count)),
+                                    ]),
+                                );
+                            }
+                            if let Some(m) = metrics {
+                                m.inc_inbound_rejected();
+                            }
                             // At hard limit — close immediately without registering.
                             conn.mux.abort();
                             continue;
@@ -1062,6 +1090,22 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
 
                 let session = InboundPeerSession::from_connection(conn, addr)
                     .ok_or(InboundServiceError::MissingProtocol { addr })?;
+
+                if let Some(t) = tracer {
+                    t.trace_runtime(
+                        "Net.Inbound",
+                        "Info",
+                        "inbound peer session started",
+                        crate::tracer::trace_fields([
+                            ("peer", serde_json::json!(addr.to_string())),
+                            ("dataFlow", serde_json::json!(format!("{:?}", data_flow))),
+                            ("peerSharing", serde_json::json!(session.peer_sharing.is_some())),
+                        ]),
+                    );
+                }
+                if let Some(m) = metrics {
+                    m.inc_inbound_accepted();
+                }
 
                 let peer_sharing_mode = if session.peer_sharing.is_some() {
                     NodePeerSharing::PeerSharingEnabled
@@ -1612,6 +1656,8 @@ mod tests {
                     None,
                     None,
                     Some(consumer),
+                    None,
+                    None,
                     None,
                     None,
                     None,

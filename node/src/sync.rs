@@ -1041,12 +1041,14 @@ pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
     progress: &MultiEraSyncProgress,
     policy: &LedgerCheckpointPolicy,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
-) -> Result<LedgerCheckpointUpdateOutcome, SyncError>
+) -> Result<(LedgerCheckpointUpdateOutcome, Vec<EpochBoundaryEvent>), SyncError>
 where
     I: ImmutableStore,
     V: VolatileStore,
     L: LedgerStore,
 {
+    let mut epoch_events = Vec::new();
+
     if progress.rollback_count > 0 {
         chain_db.truncate_ledger_checkpoints_after_point(&progress.current_point)?;
 
@@ -1065,7 +1067,7 @@ where
     } else if let (Some(snapshots), Some(epoch_size)) =
         (tracking.stake_snapshots.as_mut(), tracking.epoch_size)
     {
-        let _events = advance_ledger_with_epoch_boundary(
+        epoch_events = advance_ledger_with_epoch_boundary(
             &mut tracking.ledger_state,
             snapshots,
             epoch_size,
@@ -1085,7 +1087,7 @@ where
     if policy.max_snapshots == 0 {
         chain_db.clear_ledger_checkpoints()?;
         tracking.last_persisted_point = Point::Origin;
-        return Ok(LedgerCheckpointUpdateOutcome::ClearedDisabled);
+        return Ok((LedgerCheckpointUpdateOutcome::ClearedDisabled, epoch_events));
     }
 
     let current_point = tracking.ledger_state.tip;
@@ -1093,7 +1095,7 @@ where
         Point::Origin => {
             chain_db.clear_ledger_checkpoints()?;
             tracking.last_persisted_point = Point::Origin;
-            Ok(LedgerCheckpointUpdateOutcome::ClearedOrigin)
+            Ok((LedgerCheckpointUpdateOutcome::ClearedOrigin, epoch_events))
         }
         Point::BlockPoint(slot, _) => {
             if policy.should_persist(
@@ -1107,12 +1109,12 @@ where
                     policy.max_snapshots,
                 )?;
                 tracking.last_persisted_point = current_point;
-                Ok(LedgerCheckpointUpdateOutcome::Persisted {
+                Ok((LedgerCheckpointUpdateOutcome::Persisted {
                     slot,
                     retained_snapshots: retention.retained_snapshots,
                     pruned_snapshots: retention.pruned_snapshots,
                     rollback_count: progress.rollback_count,
-                })
+                }, epoch_events))
             } else {
                 let since_last_slot_delta = match tracking.last_persisted_point {
                     Point::BlockPoint(previous_slot, _) => {
@@ -1120,11 +1122,11 @@ where
                     }
                     Point::Origin => slot.0,
                 };
-                Ok(LedgerCheckpointUpdateOutcome::Skipped {
+                Ok((LedgerCheckpointUpdateOutcome::Skipped {
                     slot,
                     rollback_count: progress.rollback_count,
                     since_last_slot_delta,
-                })
+                }, epoch_events))
             }
         }
     }
@@ -2362,6 +2364,8 @@ pub(crate) struct AppliedVerifiedProgress {
     pub checkpoint_outcome: Option<LedgerCheckpointUpdateOutcome>,
     /// Transaction ids collected from blocks discarded during rollback steps.
     pub rolled_back_tx_ids: Vec<TxId>,
+    /// Epoch boundary events emitted during ledger advancement.
+    pub epoch_boundary_events: Vec<EpochBoundaryEvent>,
 }
 
 pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
@@ -2397,7 +2401,7 @@ where
         }
     }
 
-    let checkpoint_outcome = checkpoint_tracking
+    let (checkpoint_outcome, epoch_boundary_events) = checkpoint_tracking
         .map(|tracking| {
             update_ledger_checkpoint_after_progress(
                 chain_db,
@@ -2407,12 +2411,15 @@ where
                 vrf_ctx,
             )
         })
-        .transpose()?;
+        .transpose()?
+        .map(|(outcome, events)| (Some(outcome), events))
+        .unwrap_or((None, Vec::new()));
 
     Ok(AppliedVerifiedProgress {
         stable_block_count: total_stable,
         checkpoint_outcome,
         rolled_back_tx_ids,
+        epoch_boundary_events,
     })
 }
 

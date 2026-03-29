@@ -4,9 +4,16 @@
 //! the KeepAlive state machine invariants.  The client periodically sends
 //! `MsgKeepAlive` with a cookie and expects the server to echo it back.
 //!
+//! Per-state time limits from `protocol_limits::keepalive` are enforced on
+//! the server's response.  Upstream reference:
+//! `Ouroboros.Network.Protocol.KeepAlive.Codec.timeLimitsKeepAlive`.
+//!
 //! Reference: `Ouroboros.Network.Protocol.KeepAlive.Client`.
 
+use std::time::Duration;
+
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
+use crate::protocol_limits::keepalive as ka_limits;
 use crate::protocols::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
 
 // ---------------------------------------------------------------------------
@@ -23,6 +30,12 @@ pub enum KeepAliveClientError {
     /// Connection closed by the remote peer.
     #[error("connection closed")]
     ConnectionClosed,
+
+    /// The server did not respond within the per-state time limit.
+    ///
+    /// Upstream: `ExceededTimeLimit` from `ProtocolTimeLimits`.
+    #[error("protocol timeout ({0:?})")]
+    Timeout(Duration),
 
     /// State machine violation.
     #[error("protocol error: {0}")]
@@ -83,12 +96,22 @@ impl KeepAliveClient {
             .map_err(KeepAliveClientError::Mux)
     }
 
-    async fn recv_msg(&mut self) -> Result<KeepAliveMessage, KeepAliveClientError> {
-        let raw = self
-            .channel
-            .recv()
-            .await
-            .ok_or(KeepAliveClientError::ConnectionClosed)?;
+    /// Receive with an optional per-state time limit.
+    async fn recv_msg_timeout(
+        &mut self,
+        limit: Option<Duration>,
+    ) -> Result<KeepAliveMessage, KeepAliveClientError> {
+        let raw = match limit {
+            Some(d) => tokio::time::timeout(d, self.channel.recv())
+                .await
+                .map_err(|_| KeepAliveClientError::Timeout(d))?
+                .ok_or(KeepAliveClientError::ConnectionClosed)?,
+            None => self
+                .channel
+                .recv()
+                .await
+                .ok_or(KeepAliveClientError::ConnectionClosed)?,
+        };
         let msg = KeepAliveMessage::from_cbor(&raw)
             .map_err(|e| KeepAliveClientError::Decode(e.to_string()))?;
         self.state = self.state.transition(&msg)?;
@@ -101,11 +124,14 @@ impl KeepAliveClient {
     /// `MsgKeepAliveResponse`.  Returns an error if the echoed cookie
     /// does not match.
     ///
+    /// Enforces `keepalive::CLIENT` time limit (97 s) on the server's
+    /// response.
+    ///
     /// The client must be in `StClient`.
     pub async fn keep_alive(&mut self, cookie: u16) -> Result<(), KeepAliveClientError> {
         self.send_msg(&KeepAliveMessage::MsgKeepAlive { cookie })
             .await?;
-        let msg = self.recv_msg().await?;
+        let msg = self.recv_msg_timeout(ka_limits::CLIENT).await?;
         match msg {
             KeepAliveMessage::MsgKeepAliveResponse {
                 cookie: echoed_cookie,

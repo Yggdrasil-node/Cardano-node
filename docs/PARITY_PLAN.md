@@ -150,7 +150,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Backpressure | SDU queue limits + egress soft limit | ✅ | ✅ | Complete | Per-protocol ingress byte limit (2 MB) + egress soft limit (262 KB) + 30 s bearer read timeout (SDU_READ_TIMEOUT)
 | Fair scheduling | Weighted round-robin + priority | ✅ | ✅ | Complete | Per-protocol egress channels with dynamic WeightHandle; hot peers get ChainSync=3/BlockFetch=2
 | CBOR reassembly | Multi-SDU message handling | ✅ | ✅ | Complete | MessageChannel with cbor_item_length detection, transparent segmentation/reassembly
-| Timeout handling | Protocol-specific timeouts | ✅ | ✅ | Complete | CM responder/time-wait + SDU bearer read timeout + per-protocol recv deadline: N2N server drivers wrap recv_msg() with PROTOCOL_RECV_TIMEOUT (60 s, upstream shortWait); TxSubmission blocking requests use waitForever
+| Timeout handling | Protocol-specific timeouts | ✅ | ✅ | Complete | CM responder/time-wait + SDU bearer read timeout + per-protocol recv deadline on both server and client sides: N2N server drivers enforce PROTOCOL_RECV_TIMEOUT (60 s, upstream shortWait); client drivers enforce per-state limits from protocol_limits.rs matching upstream ProtocolTimeLimits (ChainSync ST_INTERSECT 10 s / ST_NEXT_CAN_AWAIT 10 s, BlockFetch BF_BUSY/BF_STREAMING 60 s, KeepAlive CLIENT 97 s, PeerSharing ST_BUSY 60 s, TxSubmission ST_IDLE waitForever)
 | **Peer Management** |
 | Peer sources | LocalRoot/PublicRoot/PeerShare | ✅ | ✅ | Complete | PeerSource enum + provider layer
 | DNS resolution | Dynamic root-set updates | ✅ | ✅ | Complete | DnsRootPeerProvider with TTL clamping
@@ -173,7 +173,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Connection pooling | Max connection limits | ✅ | ✅ | Complete | AcceptedConnectionsLimit (512 hard/384 soft/5s delay), prune_for_inbound eviction, inbound duplex reuse for outbound
 | Graceful shutdown | In-flight message draining | ✅ | ✅ | Complete | Outbound CM-drain with ControlMessage::Terminate + bounded timeout; inbound JoinSet drain
 
-**Network Summary**: ~95% feature complete. All mini-protocols, mux with weighted fair scheduling, peer governor, connection manager with rate limiting and pruning, graceful shutdown, and per-protocol recv deadlines (PROTOCOL_RECV_TIMEOUT 60 s on all N2N server drivers) all implemented. Remaining: Genesis density (network-layer, future milestone).
+**Network Summary**: ~97% feature complete. All mini-protocols, mux with weighted fair scheduling, peer governor, connection manager with rate limiting and pruning, graceful shutdown, and per-protocol recv deadlines (server-side PROTOCOL_RECV_TIMEOUT 60 s + client-side per-state ProtocolTimeLimits from protocol_limits.rs) all implemented. Remaining: Genesis density (network-layer, future milestone).
 
 ---
 
@@ -317,22 +317,27 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Trace Events** |
 | Structured events | Typed trace messages | ✅ | ✅ | Complete | NodeTracer with namespace/severity dispatch and upstream-style trace objects
 | Namespace hierarchy | net., chain., ledger., etc | ✅ | ✅ | Complete | Longest-prefix namespace routing for `TraceOptions` (severity/backends/maxFrequency)
+| Epoch boundary events | NEWEPOCH/SNAP/RUPD lifecycle | ✅ | ✅ | Complete | `trace_epoch_boundary_events()` emits 14-field structured events (rewards, pools retired, governance, DReps, treasury)
+| Inbound tracing | Inbound accept/reject events | ✅ | ✅ | Complete | `run_inbound_accept_loop` traces session start, rate-limit soft delay, hard-limit rejection with peer/DataFlow context
 | Filtering & routing | Selector expressions | ✅ | ⚠️ | Partial | Severity hierarchy threshold filtering + `maxFrequency` + prefix matching work; selector expressions not implemented
 | **Transports** |
 | Stdout | Console output | ✅ | ✅ | Complete | NodeTracer stdout dispatch with human/machine formats
 | JSON | Structured output | ✅ | ✅ | Complete | GET /metrics/json endpoint + JSON MetricsSnapshot serialization
 | Socket | Remote tracer | ✅ | ⏸️ | Not Started | Socket transport not implemented
 | **Metrics** |
-| EKG integration | Live metrics endpoint | ✅ | ✅ | Complete | 25+ atomic counters/gauges in NodeMetrics
+| EKG integration | Live metrics endpoint | ✅ | ✅ | Complete | 35+ atomic counters/gauges in NodeMetrics
 | Prometheus export | /metrics endpoint | ✅ | ✅ | Complete | MetricsSnapshot::to_prometheus_text() with Prometheus text exposition
-| Key metrics | Block height, peers, mempool size | ✅ | ✅ | Complete | blocks_synced, current_slot, block_no, peers (6 variants), checkpoint, rollbacks, uptime_ms
+| Key metrics | Block height, peers, mempool size | ✅ | ✅ | Complete | blocks_synced, current_slot, block_no, peers (6 variants), checkpoint, rollbacks, uptime_ms, mempool tx/bytes, CM counters, inbound accept/reject
 | Health endpoint | Orchestrator liveness | ✅ | ✅ | Complete | GET /health with status, uptime, blocks_synced, current_slot
+| Mempool metrics | Mempool tx count & bytes | ✅ | ✅ | Complete | mempool_tx_count, mempool_bytes gauges updated each governor tick; mempool_tx_added, mempool_tx_rejected counters
+| Connection manager counters | Full/duplex/uni/in/out | ✅ | ✅ | Complete | ConnectionManagerCounters::from_registry() exported to Prometheus each governor tick
+| Inbound counters | Accept/reject totals | ✅ | ✅ | Complete | inbound_connections_accepted, inbound_connections_rejected counters
 | **Profiling** |
 | CPU profiling | Bottleneck identification | ✅ | ⏸️ | Not Started | Profiling integration
 | Memory profiling | Heap analysis | ✅ | ⏸️ | Not Started | Allocation tracking
 | Latency tracing | Operation timing | ✅ | ⏸️ | Not Started | Latency measurement
 
-**Monitoring Summary**: ~75% feature complete. NodeMetrics (25+ counters/gauges), Prometheus/JSON/health endpoints, and NodeTracer with severity-threshold + namespace-prefix filtering all implemented. Remaining: socket transport, selector expressions, profiling.
+**Monitoring Summary**: ~90% feature complete. NodeMetrics (35+ counters/gauges), Prometheus/JSON/health endpoints, mempool + CM + inbound counters, epoch boundary + inbound session tracing, and NodeTracer with severity-threshold + namespace-prefix filtering all implemented. Remaining: socket transport, selector expressions, profiling.
 
 ---
 
@@ -425,6 +430,8 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Bearer timeout**: 30 s SDU read timeout (`SDU_READ_TIMEOUT`) in demux_loop
 - **Handshake** with role negotiation
 - **Typed client/server drivers** for all protocols
+- **Per-protocol timeouts (server)**: PROTOCOL_RECV_TIMEOUT (60 s) on all 5 N2N server drivers
+- **Per-protocol timeouts (client)**: per-state ProtocolTimeLimits from protocol_limits.rs − ChainSync (ST_INTERSECT 10 s, ST_NEXT_CAN_AWAIT 10 s, ST_NEXT_MUST_REPLY_TRUSTABLE waitForever), BlockFetch (BF_BUSY 60 s, BF_STREAMING 60 s), KeepAlive (CLIENT 97 s), PeerSharing (ST_BUSY 60 s), TxSubmission (ST_IDLE waitForever)
 - **Root providers**: local, bootstrap, public, DNS-backed with TTL clamping
 - **Peer registry**: Cold/Warm/Hot states + 6 peer sources
 - **Governor framework**: targets, promotions/demotions, churn, bootstrap-sensitive, tepid, backoff
@@ -437,10 +444,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Hot-peer scheduling**: ChainSync weight 3, BlockFetch weight 2 on promote; reset on demote
 
 **What's Missing**:
-- ⚠️ **Per-protocol idle timeouts** (ChainSync/BlockFetch-specific idle detection)
 - ⏸️ **Genesis density tracking** (network-layer ChainSync density; future milestone)
 
-**Parity Status**: **~92% complete** — All protocols, mux, governor, connection lifecycle, and peer management fully implemented and tested (300+ tests). Remaining: protocol-level idle timeouts and Genesis mode.
+**Parity Status**: **~97% complete** — All protocols, mux, governor, connection lifecycle, per-protocol server + client timeouts, and peer management fully implemented and tested (300+ tests). Remaining: Genesis mode.
 
 ---
 
@@ -516,23 +522,28 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 ### 8. MONITORING & TRACING (`node/`)
 
-**Current State**: ✅ Functional with comprehensive metrics and structured tracing
+**Current State**: ✅ Functional with comprehensive metrics, structured tracing, and lifecycle event coverage
 
 **What's Done**:
 - **NodeTracer** with namespace/severity dispatch and upstream-style trace objects
 - **Namespace hierarchy**: net., chain., ledger., etc with longest-prefix `TraceOptions` matching and per-namespace `maxFrequency` filtering
 - **Structured JSON output**: `GET /metrics/json` endpoint + JSON MetricsSnapshot serialization
 - **Stdout transport**: human/machine format dispatch
-- **NodeMetrics**: 25+ atomic counters/gauges (blocks_synced, current_slot, block_no, peers×6, checkpoint, rollbacks, uptime_ms)
+- **NodeMetrics**: 35+ atomic counters/gauges (blocks_synced, current_slot, block_no, peers×6, checkpoint, rollbacks, uptime_ms, mempool_tx_count, mempool_bytes, mempool_tx_added, mempool_tx_rejected, cm_full_duplex_conns, cm_duplex_conns, cm_unidirectional_conns, cm_inbound_conns, cm_outbound_conns, inbound_connections_accepted, inbound_connections_rejected)
 - **Prometheus export**: `MetricsSnapshot::to_prometheus_text()` with text exposition at `GET /metrics`
 - **Health endpoint**: `GET /health` with status, uptime, blocks_synced, current_slot
+- **Epoch boundary tracing**: `trace_epoch_boundary_events()` emits 14-field structured events for each NEWEPOCH transition (new_epoch, rewards, pools_retired, governance, DReps, treasury)
+- **Inbound server tracing**: `run_inbound_accept_loop` traces session start, rate-limit soft delay, hard-limit rejection with peer/DataFlow/PeerSharing context
+- **Mempool gauges**: mempool tx count and bytes updated from `SharedMempool` every governor tick
+- **Connection manager counters**: `ConnectionManagerCounters::from_registry()` exported to Prometheus every governor tick
+- **Inbound accept/reject counters**: tracked on hard-limit rejection and successful session start
 
 **What's Missing**:
 - ⏸️ **Socket transport** (remote tracer connection)
 - ⏸️ **Selector expressions** (advanced event filtering beyond maxFrequency)
 - ⏸️ **CPU/memory/latency profiling** (performance instrumentation)
 
-**Parity Status**: **~75% complete** — NodeMetrics, Prometheus/JSON/health endpoints, and NodeTracer with severity-threshold + namespace-prefix filtering all implemented. Remaining: socket transport, selector expressions, profiling.
+**Parity Status**: **~90% complete** — Full operational metrics, Prometheus/JSON/health endpoints, epoch boundary + inbound lifecycle tracing, mempool + CM counters all implemented. Remaining: socket transport, selector expressions, profiling.
 
 ---
 

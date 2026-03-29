@@ -44,11 +44,11 @@ use yggdrasil_network::{
     refresh_root_peer_state_and_registry, resolve_peer_access_points,
     churn_mode_from_fetch_mode, compute_association_mode,
     fetch_mode_from_judgement, peer_selection_mode, pick_churn_regime,
-    PeerSelectionCounters,
+    PeerSelectionCounters, ConnectionManagerCounters,
 };
 use yggdrasil_ledger::{
-    LedgerError, LedgerState, MultiEraSubmittedTx, Point, PoolRelayAccessPoint,
-    SlotNo, TxId,
+    EpochBoundaryEvent, LedgerError, LedgerState, MultiEraSubmittedTx, Point,
+    PoolRelayAccessPoint, SlotNo, TxId,
     plutus_validation::PlutusEvaluator,
 };
 use yggdrasil_mempool::{
@@ -1232,6 +1232,10 @@ pub async fn run_governor_loop<I, V, L, F>(
                             ]),
                         );
                     }
+                    // Update mempool gauge metrics.
+                    if let Some(ref m) = metrics {
+                        m.set_mempool_gauges(mempool.len() as u64, mempool.size_bytes() as u64);
+                    }
                 }
 
                 let local_root_groups = root_sources.local_root_targets();
@@ -1308,6 +1312,16 @@ pub async fn run_governor_loop<I, V, L, F>(
                             c.known_local_root as u64,
                             c.established_local_root as u64,
                             c.active_local_root as u64,
+                        );
+
+                        // Update connection-manager Prometheus counters.
+                        let cm_c = ConnectionManagerCounters::from_registry(&registry);
+                        m.set_connection_manager_counters(
+                            cm_c.full_duplex_conns as u64,
+                            cm_c.duplex_conns as u64,
+                            cm_c.unidirectional_conns as u64,
+                            cm_c.inbound_conns as u64,
+                            cm_c.outbound_conns as u64,
                         );
                     }
 
@@ -2771,6 +2785,32 @@ fn trace_checkpoint_outcome(
     );
 }
 
+fn trace_epoch_boundary_events(tracer: &NodeTracer, events: &[EpochBoundaryEvent]) {
+    for ev in events {
+        tracer.trace_runtime(
+            "Ledger.EpochBoundary",
+            "Notice",
+            "epoch boundary transition applied",
+            trace_fields([
+                ("newEpoch", json!(ev.new_epoch.0)),
+                ("pparamUpdatesApplied", json!(ev.pparam_updates_applied)),
+                ("poolsRetired", json!(ev.pools_retired)),
+                ("poolDepositRefunds", json!(ev.pool_deposit_refunds)),
+                ("rewardsDistributed", json!(ev.rewards_distributed)),
+                ("treasuryDelta", json!(ev.treasury_delta)),
+                ("deltaReserves", json!(ev.delta_reserves)),
+                ("accountsRewarded", json!(ev.accounts_rewarded)),
+                ("governanceActionsExpired", json!(ev.governance_actions_expired)),
+                ("governanceDepositRefunds", json!(ev.governance_deposit_refunds)),
+                ("drepsExpired", json!(ev.dreps_expired)),
+                ("governanceActionsEnacted", json!(ev.governance_actions_enacted)),
+                ("enactedDepositRefunds", json!(ev.enacted_deposit_refunds)),
+                ("unclaimedGovernanceDeposits", json!(ev.unclaimed_governance_deposits)),
+            ]),
+        );
+    }
+}
+
 async fn run_reconnecting_verified_sync_service_chaindb_inner<I, V, L, F>(
     chain_db: &mut ChainDb<I, V, L>,
     context: ReconnectingVerifiedSyncContext<'_>,
@@ -2917,6 +2957,8 @@ where
                                 &config.checkpoint_policy,
                                 vrf_ctx.as_ref(),
                             )?;
+
+                            trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
 
                             if !applied.rolled_back_tx_ids.is_empty() {
                                 tracer.trace_runtime(
@@ -3212,6 +3254,8 @@ where
                                     vrf_ctx.as_ref(),
                                 )?
                             };
+
+                            trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
 
                             if !applied.rolled_back_tx_ids.is_empty() {
                                 tracer.trace_runtime(

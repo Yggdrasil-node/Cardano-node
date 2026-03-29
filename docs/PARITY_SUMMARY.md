@@ -14,14 +14,14 @@
 | **Ledger Types** | All 7 eras (Byron→Conway) with complete CBOR codec and multi-era UTxO model | ✅ 95% |
 | **Ledger Rules** | Core validation + epoch boundary + network address validation complete; Plutus execution edge cases pending | ⚠️ 92% |
 | **Consensus** | Praos validation + chain state + rollback enforcement complete; density tiebreaker optional | ✅ 95% |
-| **Network Protocols** | All 5 mini-protocols + mux + handshake fully functional with typed clients/servers | ✅ 100% |
+| **Network Protocols** | All 5 mini-protocols + mux + handshake fully functional with typed clients/servers; per-state protocol time limits on both server and client sides | ✅ 100% |
 | **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers | ⚠️ 85% |
 | **Mempool** | Fee-ordered queue + TTL + eviction fully working; script budget pre-checks pending | ✅ 85% |
 | **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience, active crash recovery | ✅ 97% |
 | **CLI & Config** | JSON config + genesis loading + query/submit wrappers complete; YAML-only migration pending | ✅ 95% |
-| **Monitoring** | NodeMetrics + Prometheus endpoint + JSON trace log + health endpoint functional | ✅ 75% |
+| **Monitoring** | NodeMetrics (35+ counters/gauges including mempool, CM, inbound) + Prometheus + inbound tracing + epoch boundary tracing | ✅ 90% |
 
-**Overall Node Readiness**: ~80% (can sync testnet, validates blocks correctly, missing monitoring & robustness)
+**Overall Node Readiness**: ~85% (can sync testnet, validates blocks correctly, comprehensive monitoring wired)
 
 ---
 
@@ -102,11 +102,13 @@
 - TX conflict detection — Not checking input overlap across pending TXs
 
 **Network**:
-- `compute_governor_decisions()` — Targets present; scoring incomplete
-- Peer demotion triggers — No timeout/error handling yet
-- Churn policy — Connection replacement not managed
-- Backpressure handling — SDU queue overflow not recover gracefully
-- Connection pooling — No max inbound/outbound limits
+- `ChainSyncClient` — Per-state timeouts: ST_INTERSECT 10 s, ST_NEXT_CAN_AWAIT 10 s, waitForever after MsgAwaitReply
+- `BlockFetchClient` — Per-state timeouts: BF_BUSY 60 s, BF_STREAMING 60 s
+- `KeepAliveClient` — Response timeout: CLIENT 97 s
+- `PeerSharingClient` — Response timeout: ST_BUSY 60 s
+- `TxSubmissionClient` — All client-side waits are waitForever (server-driven pull protocol)
+- Connection manager — Full lifecycle with CM state shared across outbound and inbound paths
+- Genesis density — Network-layer future milestone
 
 **Storage**:
 - Garbage collection — Complete: `trim_before_slot`, `garbage_collect`, `compact`, `gc_immutable_before_slot`, `gc_volatile_before_slot`
@@ -114,9 +116,11 @@
 - Slot-based indexing — Complete: binary search in FileImmutable
 
 **Monitoring**:
-- Structured logging — Framework only; no actual trace emission
-- Metrics — No EKG or Prometheus endpoints
-- Event namespaces — Not hierarchical
+- Structured logging — Complete: NodeTracer with namespace/severity dispatch, longest-prefix routing
+- Metrics — Complete: 35+ Prometheus counters/gauges (blocks, slots, peers, mempool tx/bytes, CM counters, inbound accept/reject, checkpoint, rollbacks, uptime)
+- Epoch boundary events — Complete: traced with 14 structured fields per event (rewards, pools retired, governance, DRep expiry, treasury)
+- Inbound server tracing — Complete: session start/reject/rate-limit events with peer + DataFlow + PeerSharing context
+- Connection manager counters — Complete: per-tick full_duplex/duplex/unidirectional/inbound/outbound exported to Prometheus
 
 ---
 
@@ -127,8 +131,7 @@
 - Plutus budget shape tuning — Can use upstream cost models
 
 **Network**:
-- Public peer refresh backoff — Optional optimization
-- Peer sharing credit system — Can simplify for MVP
+- Genesis density — Network-layer ChainSync density tracking; future milestone
 
 **Storage**:
 - LMDB-compatible LSM backend — File-based JSON adequate for now
@@ -137,6 +140,7 @@
 **Monitoring**:
 - Remote tracer socket — Optional for first release
 - Hardware metrics (CPU%, memory%) — Kernel-level only
+- Selector expressions — Advanced event filtering beyond maxFrequency/severity thresholds
 
 ---
 

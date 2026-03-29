@@ -1314,6 +1314,7 @@ async fn run_node(
         let inbound_tx_state = SharedTxState::default();
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
+        let inbound_metrics = metrics.clone();
         let inbound_peers = Arc::clone(&shared_inbound_peers);
 
         Some(tokio::spawn(async move {
@@ -1339,6 +1340,8 @@ async fn run_node(
                 Some(inbound_governor),
                 Some(yggdrasil_network::AcceptedConnectionsLimit::default()),
                 Some(inbound_tx_state),
+                Some(&inbound_tracer),
+                Some(&inbound_metrics),
                 shutdown,
             )
             .await

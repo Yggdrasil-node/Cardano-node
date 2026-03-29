@@ -5,9 +5,16 @@
 //! at the client-agency level: it sends `MsgRequestNext`, `MsgFindIntersect`,
 //! and `MsgDone`, and awaits the corresponding server responses.
 //!
+//! Per-state time limits from `protocol_limits::chainsync` are enforced on
+//! every server response.  Upstream reference:
+//! `Ouroboros.Network.Protocol.ChainSync.Codec.timeLimitsChainSync`.
+//!
 //! Reference: `Ouroboros.Network.Protocol.ChainSync.Client`.
 
+use std::time::Duration;
+
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
+use crate::protocol_limits::chainsync as cs_limits;
 use crate::protocols::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
 use yggdrasil_ledger::{CborDecode, CborEncode, Point, Tip};
 
@@ -162,6 +169,12 @@ pub enum ChainSyncClientError {
     #[error("connection closed")]
     ConnectionClosed,
 
+    /// The server did not respond within the per-state time limit.
+    ///
+    /// Upstream: `ExceededTimeLimit` from `ProtocolTimeLimits`.
+    #[error("protocol timeout ({0:?})")]
+    Timeout(Duration),
+
     /// State machine violation.
     #[error("protocol error: {0}")]
     Protocol(#[from] ChainSyncTransitionError),
@@ -223,12 +236,25 @@ impl ChainSyncClient {
             .map_err(ChainSyncClientError::Mux)
     }
 
-    async fn recv_msg(&mut self) -> Result<ChainSyncMessage, ChainSyncClientError> {
-        let raw = self
-            .channel
-            .recv()
-            .await
-            .ok_or(ChainSyncClientError::ConnectionClosed)?;
+    /// Receive with an optional per-state time limit.
+    ///
+    /// When `limit` is `Some(d)`, the recv is wrapped in
+    /// `tokio::time::timeout(d, …)`. `None` means wait forever.
+    async fn recv_msg_timeout(
+        &mut self,
+        limit: Option<Duration>,
+    ) -> Result<ChainSyncMessage, ChainSyncClientError> {
+        let raw = match limit {
+            Some(d) => tokio::time::timeout(d, self.channel.recv())
+                .await
+                .map_err(|_| ChainSyncClientError::Timeout(d))?
+                .ok_or(ChainSyncClientError::ConnectionClosed)?,
+            None => self
+                .channel
+                .recv()
+                .await
+                .ok_or(ChainSyncClientError::ConnectionClosed)?,
+        };
         let msg = ChainSyncMessage::from_cbor(&raw)
             .map_err(|e| ChainSyncClientError::Decode(e.to_string()))?;
         self.state = self.state.transition(&msg)?;
@@ -256,6 +282,8 @@ impl ChainSyncClient {
     /// Send `MsgFindIntersect` with the given candidate points and wait
     /// for the server's `MsgIntersectFound` or `MsgIntersectNotFound`.
     ///
+    /// Enforces `chainsync::ST_INTERSECT` time limit (10 s).
+    ///
     /// The client must be in `StIdle`.
     pub async fn find_intersect(
         &mut self,
@@ -263,7 +291,7 @@ impl ChainSyncClient {
     ) -> Result<IntersectResponse, ChainSyncClientError> {
         self.send_msg(&ChainSyncMessage::MsgFindIntersect { points })
             .await?;
-        let msg = self.recv_msg().await?;
+        let msg = self.recv_msg_timeout(cs_limits::ST_INTERSECT).await?;
         match msg {
             ChainSyncMessage::MsgIntersectFound { point, tip } => {
                 Ok(IntersectResponse::Found { point, tip })
@@ -298,10 +326,16 @@ impl ChainSyncClient {
     /// Send `MsgRequestNext` and wait for the server's roll-forward,
     /// roll-backward, or await-then-reply sequence.
     ///
+    /// Enforces `chainsync::ST_NEXT_CAN_AWAIT` (10 s) for the initial
+    /// response. After `MsgAwaitReply`, the follow-up response uses
+    /// `chainsync::ST_NEXT_MUST_REPLY_TRUSTABLE` (wait forever for
+    /// trustable peers). Non-trustable timeout should be applied at the
+    /// runtime layer using `chainsync::MUST_REPLY_MIN_SECS`..`MAX_SECS`.
+    ///
     /// The client must be in `StIdle`.
     pub async fn request_next(&mut self) -> Result<NextResponse, ChainSyncClientError> {
         self.send_msg(&ChainSyncMessage::MsgRequestNext).await?;
-        let msg = self.recv_msg().await?;
+        let msg = self.recv_msg_timeout(cs_limits::ST_NEXT_CAN_AWAIT).await?;
         match msg {
             ChainSyncMessage::MsgRollForward { header, tip } => {
                 Ok(NextResponse::RollForward { header, tip })
@@ -310,8 +344,13 @@ impl ChainSyncClient {
                 Ok(NextResponse::RollBackward { point, tip })
             }
             ChainSyncMessage::MsgAwaitReply => {
-                // Wait for the real response after AwaitReply.
-                let follow_up = self.recv_msg().await?;
+                // After AwaitReply, wait for the real response.
+                // Trustable peers: wait forever (upstream default).
+                // Non-trustable peers: randomized 135–269 s — applied by
+                // the runtime caller wrapping this method.
+                let follow_up = self
+                    .recv_msg_timeout(cs_limits::ST_NEXT_MUST_REPLY_TRUSTABLE)
+                    .await?;
                 match follow_up {
                     ChainSyncMessage::MsgRollForward { header, tip } => {
                         Ok(NextResponse::AwaitRollForward { header, tip })
