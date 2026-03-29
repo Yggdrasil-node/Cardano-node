@@ -104,6 +104,18 @@ enum Command {
         /// Path to the NtC Unix domain socket for local client connections.
         #[arg(long)]
         socket_path: Option<PathBuf>,
+        /// Path to the KES signing key file (text-envelope format).
+        /// Required for block production.
+        #[arg(long)]
+        shelley_kes_key: Option<PathBuf>,
+        /// Path to the VRF signing key file (text-envelope format).
+        /// Required for block production.
+        #[arg(long)]
+        shelley_vrf_key: Option<PathBuf>,
+        /// Path to the operational certificate file (text-envelope format).
+        /// Required for block production.
+        #[arg(long)]
+        shelley_operational_certificate: Option<PathBuf>,
     },
     /// Validate config, snapshot inputs, and any existing on-disk storage state.
     ValidateConfig {
@@ -541,6 +553,9 @@ fn main() -> Result<()> {
             checkpoint_trace_backend,
             metrics_port,
             socket_path,
+            shelley_kes_key,
+            shelley_vrf_key,
+            shelley_operational_certificate,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
             apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
@@ -564,6 +579,18 @@ fn main() -> Result<()> {
             // CLI --socket-path overrides config file SocketPath.
             if let Some(ref sp) = socket_path {
                 file_cfg.socket_path = Some(sp.display().to_string());
+            }
+
+            // CLI --shelley-kes-key / --shelley-vrf-key / --shelley-operational-certificate
+            // override config file block producer credential paths.
+            if let Some(ref p) = shelley_kes_key {
+                file_cfg.shelley_kes_key = Some(p.display().to_string());
+            }
+            if let Some(ref p) = shelley_vrf_key {
+                file_cfg.shelley_vrf_key = Some(p.display().to_string());
+            }
+            if let Some(ref p) = shelley_operational_certificate {
+                file_cfg.shelley_operational_certificate = Some(p.display().to_string());
             }
 
             if let Some(max_frequency) = checkpoint_trace_max_frequency {
@@ -733,6 +760,32 @@ fn main() -> Result<()> {
                 topology_config.peer_snapshot_file = Some(peer_snapshot_path.display().to_string());
             }
 
+            // Load block producer credentials when all three paths are present.
+            let block_producer_credentials = if file_cfg.shelley_kes_key.is_some()
+                && file_cfg.shelley_vrf_key.is_some()
+                && file_cfg.shelley_operational_certificate.is_some()
+            {
+                let creds = yggdrasil_node::block_producer::load_block_producer_credentials(
+                    &resolve_config_path(
+                        std::path::Path::new(file_cfg.shelley_kes_key.as_ref().unwrap()),
+                        config_base_dir.as_deref(),
+                    ),
+                    &resolve_config_path(
+                        std::path::Path::new(file_cfg.shelley_vrf_key.as_ref().unwrap()),
+                        config_base_dir.as_deref(),
+                    ),
+                    &resolve_config_path(
+                        std::path::Path::new(file_cfg.shelley_operational_certificate.as_ref().unwrap()),
+                        config_base_dir.as_deref(),
+                    ),
+                    file_cfg.slots_per_kes_period,
+                    file_cfg.max_kes_evolutions,
+                ).wrap_err("failed to load block producer credentials")?;
+                Some(creds)
+            } else {
+                None
+            };
+
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(run_node(RunNodeRequest {
                 node_config,
@@ -749,6 +802,7 @@ fn main() -> Result<()> {
                 metrics_port,
                 base_ledger_state,
                 socket_path: file_cfg.socket_path.map(PathBuf::from),
+                block_producer_credentials,
             }))
         }
         #[cfg(unix)]
@@ -1348,7 +1402,23 @@ async fn run_node(
         metrics_port,
         base_ledger_state,
         socket_path,
+        block_producer_credentials,
     } = request;
+
+    // Log block producer mode availability.
+    if let Some(ref bp) = block_producer_credentials {
+        tracer.trace_runtime(
+            "Startup.BlockProducer",
+            "Notice",
+            "block producer credentials loaded",
+            trace_fields([
+                ("vrfVerificationKeyHash", json!(hex::encode(yggdrasil_crypto::blake2b::hash_bytes_256(&bp.vrf_verification_key.0).0))),
+                ("opcertSequenceNumber", json!(bp.operational_cert.sequence_number)),
+                ("kesPeriod", json!(bp.kes_current_period)),
+            ]),
+        );
+    }
+    let _block_producer_credentials = block_producer_credentials;
 
     let chain_db = Arc::new(RwLock::new(chain_db));
     let peer_registry = Arc::new(RwLock::new(seed_peer_registry(
@@ -1707,6 +1777,9 @@ struct RunNodeRequest {
     base_ledger_state: LedgerState,
     /// NtC Unix domain socket path for local client queries.
     socket_path: Option<PathBuf>,
+    /// Block producer credentials (VRF key, KES key, operational certificate).
+    /// When present the node operates in block-producing mode.
+    block_producer_credentials: Option<yggdrasil_node::block_producer::BlockProducerCredentials>,
 }
 
 // ---------------------------------------------------------------------------

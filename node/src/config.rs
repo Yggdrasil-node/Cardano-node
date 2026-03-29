@@ -245,6 +245,29 @@ pub struct NodeConfigFile {
     /// Reference: `Cardano.Node.Types.TopologyFile` in cardano-node.
     #[serde(rename = "TopologyFilePath", default, skip_serializing_if = "Option::is_none")]
     pub topology_file_path: Option<String>,
+
+    // ── Block producer credentials ──────────────────────────────────────
+
+    /// Path to the KES signing key file (text-envelope format).
+    ///
+    /// Matches the `--shelley-kes-key` CLI flag in the official Cardano node.
+    /// Required for block production.
+    #[serde(rename = "ShelleyKesKey", default, skip_serializing_if = "Option::is_none")]
+    pub shelley_kes_key: Option<String>,
+
+    /// Path to the VRF signing key file (text-envelope format).
+    ///
+    /// Matches the `--shelley-vrf-key` CLI flag in the official Cardano node.
+    /// Required for block production.
+    #[serde(rename = "ShelleyVrfKey", default, skip_serializing_if = "Option::is_none")]
+    pub shelley_vrf_key: Option<String>,
+
+    /// Path to the operational certificate file (text-envelope format).
+    ///
+    /// Matches the `--shelley-operational-certificate` CLI flag in the
+    /// official Cardano node.  Required for block production.
+    #[serde(rename = "ShelleyOperationalCertificate", default, skip_serializing_if = "Option::is_none")]
+    pub shelley_operational_certificate: Option<String>,
 }
 
 /// Errors returned while loading a P2P topology file.
@@ -990,6 +1013,9 @@ pub fn mainnet_config() -> NodeConfigFile {
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
         topology_file_path: None,
+        shelley_kes_key: None,
+        shelley_vrf_key: None,
+        shelley_operational_certificate: None,
     }
 }
 
@@ -1044,6 +1070,9 @@ pub fn preprod_config() -> NodeConfigFile {
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
         topology_file_path: None,
+        shelley_kes_key: None,
+        shelley_vrf_key: None,
+        shelley_operational_certificate: None,
     }
 }
 
@@ -1098,6 +1127,9 @@ pub fn preview_config() -> NodeConfigFile {
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
         topology_file_path: None,
+        shelley_kes_key: None,
+        shelley_vrf_key: None,
+        shelley_operational_certificate: None,
     }
 }
 

@@ -1310,6 +1310,7 @@ dependencies = [
  "serde_cbor",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "thiserror",
  "tokio",
  "yggdrasil-consensus",
