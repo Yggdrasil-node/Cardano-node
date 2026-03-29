@@ -56,6 +56,7 @@ pub use sync::{
 	sync_until_typed, typed_find_intersect, verify_block_body_hash, verify_block_vrf,
 	verify_block_vrf_with_stake, block_issuer_vkey, block_vrf_vkey,
 	block_opcert_sequence_number, validate_block_opcert_counter,
+	validate_block_body_size, validate_block_protocol_version,
 	verify_multi_era_block,
 	verify_praos_header, verify_shelley_header, SHELLEY_KES_DEPTH,
 };

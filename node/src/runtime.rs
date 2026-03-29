@@ -13,14 +13,17 @@ use std::time::{Duration, Instant};
 use crate::block_producer::{
     BlockProducerCredentials, SlotClock, ShouldForge, assemble_block_body,
     check_should_forge, forge_block, forged_block_to_storage_block,
-    make_block_context,
+    make_block_context, serialize_forged_block_cbor, ForgedBlock,
 };
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
+    decode_multi_era_block,
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
     MultiEraSyncProgress, MultiEraSyncStep, SyncError, VerifiedSyncServiceConfig,
     VrfVerificationContext, apply_verified_progress_to_chaindb,
     apply_nonce_evolution_to_progress, extract_tx_ids, recover_ledger_state_chaindb,
+    multi_era_block_to_block, validate_block_body_size,
+    validate_block_protocol_version, verify_block_body_hash,
     sync_batch_apply_verified,
     sync_batch_verified_with_tentative, track_chain_state,
 };
@@ -55,7 +58,7 @@ use yggdrasil_network::{
     PeerSelectionCounters, ConnectionManagerCounters,
 };
 use yggdrasil_ledger::{
-    BlockNo, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
+    BlockNo, Decoder, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
     MultiEraSubmittedTx, Nonce, Point, PoolRelayAccessPoint, SlotNo, TxId,
     plutus_validation::PlutusEvaluator,
 };
@@ -157,6 +160,40 @@ fn mempool_entries_for_forging(mempool: &SharedMempool) -> Vec<MempoolEntry> {
     // Keep forge-body assembly deterministic and fee-ordered.
     entries.sort_by(|left, right| right.fee.cmp(&left.fee));
     entries
+}
+
+fn extract_inner_block_bytes(raw_envelope: &[u8]) -> Result<&[u8], SyncError> {
+    let mut dec = Decoder::new(raw_envelope);
+    let _ = dec.array().map_err(SyncError::LedgerDecode)?;
+    dec.skip().map_err(SyncError::LedgerDecode)?;
+    let body_start = dec.position();
+    dec.skip().map_err(SyncError::LedgerDecode)?;
+    let body_end = dec.position();
+    dec.slice(body_start, body_end).map_err(SyncError::LedgerDecode)
+}
+
+fn self_validate_forged_block(forged: &ForgedBlock) -> Result<(), SyncError> {
+    let raw_envelope = serialize_forged_block_cbor(forged);
+    let decoded = decode_multi_era_block(&raw_envelope)?;
+
+    validate_block_protocol_version(&decoded)?;
+    verify_block_body_hash(&raw_envelope)?;
+
+    let raw_inner_block = extract_inner_block_bytes(&raw_envelope)?;
+    validate_block_body_size(&decoded, raw_inner_block)?;
+
+    let decoded_block = multi_era_block_to_block(&decoded);
+    if decoded_block.header.hash != forged.header_hash {
+        return Err(SyncError::Recovery("forged header hash mismatch".to_owned()));
+    }
+    if decoded_block.header.slot_no != forged.slot {
+        return Err(SyncError::Recovery("forged slot mismatch".to_owned()));
+    }
+    if decoded_block.header.block_no != forged.block_number {
+        return Err(SyncError::Recovery("forged block number mismatch".to_owned()));
+    }
+
+    Ok(())
 }
 
 struct ManagedWarmPeer {
@@ -1233,6 +1270,21 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                         continue;
                     }
                 };
+
+                if let Err(err) = self_validate_forged_block(&forged) {
+                    tracer.trace_runtime(
+                        "Node.BlockProduction",
+                        "Error",
+                        "forged block failed self-validation",
+                        trace_fields([
+                            ("slot", json!(forged.slot.0)),
+                            ("blockNo", json!(forged.block_number.0)),
+                            ("headerHash", json!(hex::encode(forged.header_hash.0))),
+                            ("error", json!(err.to_string())),
+                        ]),
+                    );
+                    continue;
+                }
 
                 let storage_block = forged_block_to_storage_block(&forged);
                 let add_result = {
@@ -4459,6 +4511,7 @@ mod tests {
         reconnect_preferred_peer_with_source,
         reconnect_preferred_peer,
         refresh_ledger_peer_sources_from_chain_db,
+        self_validate_forged_block,
         seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
         verified_sync_batch_trace_fields,
     };
@@ -4470,9 +4523,15 @@ mod tests {
     use std::sync::{Arc, RwLock};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
+    use yggdrasil_consensus::{HeaderBody as ConsensusHeaderBody, OpCert};
+    use yggdrasil_crypto::blake2b::hash_bytes_256;
+    use yggdrasil_crypto::ed25519::{Signature, VerificationKey};
+    use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
+    use yggdrasil_crypto::vrf::VrfVerificationKey;
     use yggdrasil_ledger::{
-        Era, HeaderHash, LedgerState, Nonce, Point, PoolParams, Relay,
-        RewardAccount, SlotNo, StakeCredential, UnitInterval,
+        BlockNo, Encoder, Era, HeaderHash, LedgerState, Nonce, Point, PoolParams,
+        PraosHeader, PraosHeaderBody, Relay, RewardAccount, ShelleyOpCert,
+        ShelleyVrfCert, SlotNo, StakeCredential, UnitInterval,
     };
     use yggdrasil_network::{
         AfterSlot, BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
@@ -4548,6 +4607,78 @@ mod tests {
         }
     }
 
+    fn sample_forged_block_for_self_validation() -> crate::block_producer::ForgedBlock {
+        let mut body_enc = Encoder::new();
+        body_enc.array(0);
+        body_enc.array(0);
+        body_enc.map(0);
+        body_enc.array(0);
+        let body_payload = body_enc.into_bytes();
+        let body_hash = hash_bytes_256(&body_payload).0;
+        let body_size = u32::try_from(body_payload.len()).expect("body size must fit in u32");
+
+        let header_body = ConsensusHeaderBody {
+            block_number: BlockNo(1),
+            slot: SlotNo(1),
+            prev_hash: None,
+            issuer_vkey: VerificationKey::from_bytes([0x11; 32]),
+            vrf_vkey: VrfVerificationKey::from_bytes([0x22; 32]),
+            leader_vrf_output: vec![0x33; 32],
+            leader_vrf_proof: [0x44; 80],
+            nonce_vrf_output: None,
+            nonce_vrf_proof: None,
+            block_body_size: body_size,
+            block_body_hash: body_hash,
+            operational_cert: OpCert {
+                hot_vkey: SumKesVerificationKey::from_bytes([0x55; 32]),
+                sequence_number: 0,
+                kes_period: 0,
+                sigma: Signature([0x66; 64]),
+            },
+            protocol_version: (9, 0),
+        };
+
+        let kes_signature =
+            SumKesSignature::from_bytes(0, &[0u8; 64]).expect("construct sum-kes signature");
+        let praos_header = PraosHeader {
+            body: PraosHeaderBody {
+                block_number: header_body.block_number.0,
+                slot: header_body.slot.0,
+                prev_hash: header_body.prev_hash.map(|h| h.0),
+                issuer_vkey: header_body.issuer_vkey.to_bytes(),
+                vrf_vkey: header_body.vrf_vkey.to_bytes(),
+                vrf_result: ShelleyVrfCert {
+                    output: header_body.leader_vrf_output.clone(),
+                    proof: header_body.leader_vrf_proof,
+                },
+                block_body_size: header_body.block_body_size,
+                block_body_hash: header_body.block_body_hash,
+                operational_cert: ShelleyOpCert {
+                    hot_vkey: header_body.operational_cert.hot_vkey.to_bytes(),
+                    sequence_number: header_body.operational_cert.sequence_number,
+                    kes_period: header_body.operational_cert.kes_period,
+                    sigma: header_body.operational_cert.sigma.0,
+                },
+                protocol_version: header_body.protocol_version,
+            },
+            signature: kes_signature.to_bytes().to_vec(),
+        };
+        let header_hash = praos_header.header_hash();
+
+        crate::block_producer::ForgedBlock {
+            header: crate::block_producer::ForgedBlockHeader {
+                header_body,
+                kes_signature,
+            },
+            transactions: Vec::new(),
+            header_hash,
+            slot: SlotNo(1),
+            block_number: BlockNo(1),
+            body_size,
+            total_fees: 0,
+        }
+    }
+
     #[test]
     fn mempool_entries_for_forging_is_fee_ordered() {
         let mempool = SharedMempool::with_capacity(1024);
@@ -4564,6 +4695,41 @@ mod tests {
         let entries = mempool_entries_for_forging(&mempool);
         let fees = entries.iter().map(|entry| entry.fee).collect::<Vec<_>>();
         assert_eq!(fees, vec![100, 50, 10]);
+    }
+
+    #[test]
+    fn self_validate_forged_block_accepts_structurally_valid_block() {
+        let forged = sample_forged_block_for_self_validation();
+        self_validate_forged_block(&forged)
+            .expect("structurally valid forged block should self-validate");
+    }
+
+    #[test]
+    fn self_validate_forged_block_rejects_body_hash_mismatch() {
+        let mut forged = sample_forged_block_for_self_validation();
+        forged.header.header_body.block_body_hash = [0xAB; 32];
+
+        let err = self_validate_forged_block(&forged)
+            .expect_err("tampered body hash must fail self-validation");
+
+        assert!(
+            err.to_string().contains("block body hash mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn self_validate_forged_block_rejects_header_hash_mismatch() {
+        let mut forged = sample_forged_block_for_self_validation();
+        forged.header_hash = HeaderHash([0xCD; 32]);
+
+        let err = self_validate_forged_block(&forged)
+            .expect_err("tampered header hash must fail self-validation");
+
+        assert!(
+            err.to_string().contains("forged header hash mismatch"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

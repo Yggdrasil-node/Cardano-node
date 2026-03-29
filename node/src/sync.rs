@@ -85,6 +85,42 @@ pub enum SyncError {
         /// How many slots ahead of the wall-clock the block is.
         excess_slots: u64,
     },
+
+    /// The declared block body size in the header does not match the actual
+    /// serialized body size.
+    ///
+    /// Reference: `WrongBlockBodySizeBBODY` in
+    /// `Cardano.Ledger.Shelley.Rules.Bbody`.
+    #[error(
+        "wrong block body size: header declares {declared} bytes, \
+         actual body is {actual} bytes"
+    )]
+    WrongBlockBodySize {
+        /// The `block_body_size` field from the block header.
+        declared: u32,
+        /// The actual serialized size of the block body.
+        actual: u32,
+    },
+
+    /// The block header's protocol version is outside the acceptable range
+    /// for the era it claims to be in.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Chain` — era/protocol
+    /// version consistency check.
+    #[error(
+        "protocol version mismatch: block in era {era:?} carries version \
+         ({major}, {minor}), expected major in {expected_range}"
+    )]
+    ProtocolVersionMismatch {
+        /// The era of the block.
+        era: Era,
+        /// Declared major version.
+        major: u64,
+        /// Declared minor version.
+        minor: u64,
+        /// Human-readable expected range string.
+        expected_range: String,
+    },
 }
 
 impl SyncError {
@@ -109,6 +145,8 @@ impl SyncError {
                 | SyncError::BlockBodyHashMismatch
                 | SyncError::LedgerDecode(_)
                 | SyncError::BlockFromFuture { .. }
+                | SyncError::WrongBlockBodySize { .. }
+                | SyncError::ProtocolVersionMismatch { .. }
         )
     }
 }
@@ -1626,6 +1664,52 @@ impl MultiEraBlock {
             Self::Conway(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
         }
     }
+
+    /// Return the `block_body_size` declared in the header.
+    ///
+    /// Byron blocks do not carry a declared body size in the same way as
+    /// Shelley-family blocks, so they return `None`.
+    pub fn declared_body_size(&self) -> Option<u32> {
+        match self {
+            Self::Byron { .. } => None,
+            Self::Shelley(b) => Some(b.header.body.block_body_size),
+            Self::Alonzo(b) => Some(b.header.body.block_body_size),
+            Self::Babbage(b) => Some(b.header.body.block_body_size),
+            Self::Conway(b) => Some(b.header.body.block_body_size),
+        }
+    }
+
+    /// Return the `protocol_version` `(major, minor)` from the header body.
+    ///
+    /// Byron blocks do not carry an in-header protocol version.
+    pub fn protocol_version(&self) -> Option<(u64, u64)> {
+        match self {
+            Self::Byron { .. } => None,
+            Self::Shelley(b) => Some(b.header.body.protocol_version),
+            Self::Alonzo(b) => Some(b.header.body.protocol_version),
+            Self::Babbage(b) => Some(b.header.body.protocol_version),
+            Self::Conway(b) => Some(b.header.body.protocol_version),
+        }
+    }
+
+    /// Return the era of this block as the ledger `Era` enum value.
+    pub fn era(&self) -> Era {
+        match self {
+            Self::Byron { .. } => Era::Byron,
+            Self::Shelley(b) => {
+                // Shelley/Allegra/Mary share the ShelleyBlock structure.
+                // Distinguish by protocol version: Shelley=(2,x), Allegra=(3,x), Mary=(4,x).
+                match b.header.body.protocol_version.0 {
+                    3 => Era::Allegra,
+                    4 => Era::Mary,
+                    _ => Era::Shelley,
+                }
+            }
+            Self::Alonzo(_) => Era::Alonzo,
+            Self::Babbage(_) => Era::Babbage,
+            Self::Conway(_) => Era::Conway,
+        }
+    }
 }
 
 /// Cardano mainnet era tags used in the multi-era block envelope.
@@ -2316,10 +2400,17 @@ fn extract_header_block_body_hash(inner_block: &[u8]) -> Result<[u8; 32], Ledger
 /// with two VRF certs).  Babbage and Conway use `verify_praos_header`
 /// (14-element header body with single `vrf_result`).  Byron blocks pass
 /// through without verification.
+///
+/// Additionally performs BBODY-level checks:
+/// - Protocol version is within the expected range for the block's era
+///   (reference: hard-fork combinator era transitions).
 pub fn verify_multi_era_block(
     block: &MultiEraBlock,
     config: &VerificationConfig,
 ) -> Result<(), SyncError> {
+    // BBODY/BHEAD-level protocol-version check (Shelley+ only).
+    validate_block_protocol_version(block)?;
+
     match block {
         MultiEraBlock::Shelley(shelley) => {
             verify_shelley_header(
@@ -2351,6 +2442,108 @@ pub fn verify_multi_era_block(
         }
         MultiEraBlock::Byron { .. } => Ok(()),
     }
+}
+
+/// Validate that the declared `block_body_size` in the header matches the
+/// actual serialized size of the block's transaction bodies.
+///
+/// Upstream reference: `validateBlockBodySize` in
+/// `Cardano.Ledger.Shelley.Rules.Bbody` — `WrongBlockBodySizeBBODY`.
+///
+/// This check is applied at the node layer because the full typed header
+/// (carrying `block_body_size`) is available here, while the simplified
+/// ledger `Block` wrapper does not carry this field.
+///
+/// `raw_inner_block` is the CBOR-encoded inner block (the body element of
+/// the `[era_tag, block_body]` envelope).
+pub fn validate_block_body_size(
+    block: &MultiEraBlock,
+    raw_inner_block: &[u8],
+) -> Result<(), SyncError> {
+    let declared = match block.declared_body_size() {
+        Some(d) => d,
+        None => return Ok(()), // Byron — no declared size in header
+    };
+
+    // Compute actual body size from the raw inner-block CBOR.
+    // The inner block is an N-element CBOR array; element 0 is the header,
+    // and the remaining elements (transaction_bodies, witness_sets, etc.)
+    // collectively form the "body" whose serialized size must match.
+    //
+    // Upstream defines body size as the serialized size of the TxSeq
+    // (all transaction-related elements after the header).
+    let actual = compute_actual_body_size(raw_inner_block)?;
+
+    if declared != actual {
+        return Err(SyncError::WrongBlockBodySize { declared, actual });
+    }
+    Ok(())
+}
+
+/// Compute the serialized body size from a raw inner-block CBOR.
+///
+/// The body is defined as everything after the header element in the
+/// block CBOR array.  This matches upstream `bBodySize` which is the
+/// serialized size of the `TxSeq` payload.
+fn compute_actual_body_size(raw_inner_block: &[u8]) -> Result<u32, SyncError> {
+    let mut dec = Decoder::new(raw_inner_block);
+    let _arr_len = dec.array().map_err(SyncError::LedgerDecode)?;
+    // Skip element 0 (header).
+    dec.skip().map_err(SyncError::LedgerDecode)?;
+    let body_start = dec.position();
+    // The remaining elements are the body.
+    let body_byte_count = raw_inner_block.len() - body_start;
+    Ok(body_byte_count as u32)
+}
+
+/// Validate that the protocol version in the block header is within the
+/// expected range for the block's era.
+///
+/// Each Cardano era corresponds to one or more protocol major versions:
+///
+/// | Era     | Major version(s) |
+/// |---------|-----------------|
+/// | Shelley | 2               |
+/// | Allegra | 3               |
+/// | Mary    | 4               |
+/// | Alonzo  | 5, 6            |
+/// | Babbage | 7, 8            |
+/// | Conway  | 9, 10           |
+///
+/// Byron blocks do not carry an in-header protocol version and are skipped.
+///
+/// Reference: hard-fork combinator era transitions in
+/// `Ouroboros.Consensus.Cardano.Block` — each era defines its protocol
+/// version range.
+pub fn validate_block_protocol_version(
+    block: &MultiEraBlock,
+) -> Result<(), SyncError> {
+    let (major, minor) = match block.protocol_version() {
+        Some(v) => v,
+        None => return Ok(()), // Byron
+    };
+
+    let era = block.era();
+
+    let (valid, expected_range) = match era {
+        Era::Byron => return Ok(()),
+        Era::Shelley => (major == 2, "2"),
+        Era::Allegra => (major == 3, "3"),
+        Era::Mary => (major == 4, "4"),
+        Era::Alonzo => (major == 5 || major == 6, "5..=6"),
+        Era::Babbage => (major == 7 || major == 8, "7..=8"),
+        Era::Conway => (major >= 9, "9+"),
+    };
+
+    if !valid {
+        return Err(SyncError::ProtocolVersionMismatch {
+            era,
+            major,
+            minor,
+            expected_range: expected_range.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// A typed sync step with multi-era block decoding.
@@ -2915,7 +3108,13 @@ pub fn extract_tx_ids(block: &MultiEraBlock) -> Vec<TxId> {
             .iter()
             .map(|body| compute_tx_id(&body.to_cbor_bytes()))
             .collect(),
-        MultiEraBlock::Byron { .. } => vec![],
+        MultiEraBlock::Byron { block, .. } => match block {
+            ByronBlock::MainBlock { transactions, .. } => transactions
+                .iter()
+                .map(|tx_aux| TxId(tx_aux.tx.tx_id()))
+                .collect(),
+            ByronBlock::EpochBoundary { .. } => vec![],
+        },
     }
 }
 

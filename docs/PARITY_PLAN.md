@@ -40,6 +40,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 **Recently completed parity items**:
 - ✅ **Post-forge adoption check** — after forging, compare chain tip with forged block point and emit `TraceAdoptedBlock`/`TraceDidntAdoptBlock` (upstream `NodeKernel.forkBlockForging`)
+- ✅ **Forged block self-validation** — block producer now self-validates each forged block before persistence (protocol version, body hash, body size, header identity), preventing local malformed-forge persistence drift.
 - ✅ **Invalid block punishment** — peer-attributable validation errors (Consensus, BlockBodyHashMismatch, LedgerDecode, BlockFromFuture) now trigger reconnection to a different peer instead of killing the sync service; `ChainDB.AddBlockEvent.InvalidBlock` trace emitted (upstream `InvalidBlockPunishment`)
 - ✅ **Blocks-from-the-future check** — `ClockSkew` + `FutureSlotJudgement` in consensus crate; blocks exceeding clock-skew tolerance rejected as `SyncError::BlockFromFuture` (upstream `InFutureCheck`)
 - ✅ **Diffusion pipelining tentative-chain wiring (DPvDV)** — node runtime now threads shared `TentativeState` through reconnecting verified sync and inbound ChainSync serving; verified batch sync sets tentative headers on roll-forward announcements and clears adopted/trap outcomes; inbound ChainSync now serves tentative tips and rolls followers back when a served tentative header is trapped (upstream `SupportsDiffusionPipelining` / `cdbTentativeHeader` behavior)
@@ -50,6 +51,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ✅ **P1 completed**: post-forge adoption check in block production loop (`Node.BlockProduction` traces for adopted vs not-adopted forged blocks), aligned with `cardano-node` `NodeKernel.forkBlockForging` post-forge checks.
 - ✅ **P2 completed**: peer-attributable invalid-block handling now maps to reconnect-and-punish disposition with `ChainDB.AddBlockEvent.InvalidBlock` trace, aligned with upstream `InvalidBlockPunishment` behavior.
 - ✅ **P3 completed**: far-future header rejection via consensus-level `judge_header_slot` (`ClockSkew`, `FutureSlotJudgement`) propagated as `SyncError::BlockFromFuture`, aligned with `InFutureCheck`.
+- ✅ **P4 completed**: forged block self-validation in runtime forge flow before persistence, plus canonical forged `block_body_hash`/`block_body_size` computation from serialized body bytes.
 - ✅ **Tests added**: targeted tests for adoption checks, invalid-block punishment routing, and future-slot judgement behavior.
 
 ---
@@ -139,6 +141,8 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | VRF check | Leader eligibility | ✅ | ✅ | Complete | verify_block_vrf
 | OpCert check | Valid + not superseded | ✅ | ✅ | Complete | OpCert validation
 | Body hash verify | Blake2b-256 of body | ✅ | ✅ | Complete | verify_block_body_hash
+| Body size verify | Declared vs actual body size | ✅ | ✅ | Complete | validate_block_body_size (upstream WrongBlockBodySizeBBODY)
+| Protocol version check | Era/version consistency | ✅ | ✅ | Complete | validate_block_protocol_version (hard-fork combinator era transitions)
 | UTxO rules | UTXO + CERTS + REWARDS | ✅ | ✅ | Complete | Full era-specific UTxO rules with cert/reward processing
 | **Density Tiebreaker** |
 | Leadership density | Blocks per X slots | ✅ | ✅ | Complete | select_preferred implements full comparePraos VRF tiebreaker; Genesis density is peer-management (network crate)

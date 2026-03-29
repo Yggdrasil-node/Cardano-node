@@ -6,7 +6,7 @@ use yggdrasil_network::{
     peer_accept,
 };
 use yggdrasil_ledger::{
-    BabbageBlock, BabbageTxBody, BabbageTxOut, Block, BlockHeader, BlockNo, ByronBlock,
+    AlonzoBlock, BabbageBlock, BabbageTxBody, BabbageTxOut, Block, BlockHeader, BlockNo, ByronBlock,
     CborEncode, ConwayBlock, ConwayTxBody, Encoder, HeaderHash, LedgerState, Nonce, Point,
     PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
@@ -29,7 +29,8 @@ use yggdrasil_node::{
     run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
     shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
     sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed,
-    typed_find_intersect, verify_block_body_hash, verify_multi_era_block, verify_shelley_header,
+    typed_find_intersect, validate_block_body_size, validate_block_protocol_version,
+    verify_block_body_hash, verify_multi_era_block, verify_shelley_header,
     SHELLEY_KES_DEPTH,
 };
 use yggdrasil_consensus::{ChainState, SecurityParam};
@@ -1941,7 +1942,7 @@ fn extract_tx_ids_from_shelley_block() {
 }
 
 #[test]
-fn extract_tx_ids_from_byron_block_is_empty() {
+fn extract_tx_ids_from_byron_ebb_is_empty() {
     let block = MultiEraBlock::Byron {
         block: ByronBlock::EpochBoundary {
             epoch: 0,
@@ -1952,6 +1953,52 @@ fn extract_tx_ids_from_byron_block_is_empty() {
         era_tag: 0,
     };
     assert!(extract_tx_ids(&block).is_empty());
+}
+
+#[test]
+fn extract_tx_ids_from_byron_main_block() {
+    use yggdrasil_ledger::{ByronTx, ByronTxAux, ByronTxIn, ByronTxOut};
+
+    let tx1 = ByronTx {
+        inputs: vec![ByronTxIn { txid: [0xAA; 32], index: 0 }],
+        outputs: vec![ByronTxOut {
+            address: vec![0x01; 20],
+            amount: 1_000_000,
+        }],
+        attributes: vec![0xa0], // empty CBOR map
+    };
+    let tx2 = ByronTx {
+        inputs: vec![ByronTxIn { txid: [0xBB; 32], index: 1 }],
+        outputs: vec![ByronTxOut {
+            address: vec![0x02; 20],
+            amount: 2_000_000,
+        }],
+        attributes: vec![0xa0],
+    };
+
+    let expected_id1 = TxId(tx1.tx_id());
+    let expected_id2 = TxId(tx2.tx_id());
+
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::MainBlock {
+            epoch: 1,
+            slot_in_epoch: 5,
+            chain_difficulty: 10,
+            prev_hash: [0; 32],
+            issuer_vkey: [0x11; 32],
+            raw_header: vec![],
+            transactions: vec![
+                ByronTxAux { tx: tx1, witnesses: vec![] },
+                ByronTxAux { tx: tx2, witnesses: vec![] },
+            ],
+        },
+        era_tag: 1,
+    };
+
+    let ids = extract_tx_ids(&block);
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], expected_id1);
+    assert_eq!(ids[1], expected_id2);
 }
 
 #[test]
@@ -3853,4 +3900,457 @@ fn block_vrf_vkey_returns_none_for_byron() {
         era_tag: 0,
     };
     assert!(block_vrf_vkey(&block).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Protocol version validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn validate_protocol_version_shelley_accepts_major_2() {
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (2, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert!(validate_block_protocol_version(&block).is_ok());
+}
+
+#[test]
+fn validate_protocol_version_allegra_accepts_major_3() {
+    // Allegra is still MultiEraBlock::Shelley but protocol_version major=3.
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (3, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert!(validate_block_protocol_version(&block).is_ok());
+}
+
+#[test]
+fn validate_protocol_version_mary_accepts_major_4() {
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (4, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert!(validate_block_protocol_version(&block).is_ok());
+}
+
+#[test]
+fn validate_protocol_version_alonzo_accepts_major_5_and_6() {
+    for major in [5u64, 6] {
+        let block = MultiEraBlock::Alonzo(Box::new(AlonzoBlock {
+            header: ShelleyHeader {
+                body: ShelleyHeaderBody {
+                    protocol_version: (major, 0),
+                    ..sample_header_body()
+                },
+                signature: vec![0xDD; 448],
+            },
+            transaction_bodies: vec![],
+            transaction_witness_sets: vec![],
+            auxiliary_data_set: std::collections::HashMap::new(),
+            invalid_transactions: vec![],
+        }));
+        assert!(
+            validate_block_protocol_version(&block).is_ok(),
+            "Alonzo should accept major={major}"
+        );
+    }
+}
+
+#[test]
+fn validate_protocol_version_babbage_accepts_major_7_and_8() {
+    for major in [7u64, 8] {
+        let block = MultiEraBlock::Babbage(Box::new(BabbageBlock {
+            header: PraosHeader {
+                body: PraosHeaderBody {
+                    protocol_version: (major, 0),
+                    ..sample_praos_header_body()
+                },
+                signature: vec![0xDD; 448],
+            },
+            transaction_bodies: vec![],
+            transaction_witness_sets: vec![],
+            auxiliary_data_set: std::collections::HashMap::new(),
+            invalid_transactions: vec![],
+        }));
+        assert!(
+            validate_block_protocol_version(&block).is_ok(),
+            "Babbage should accept major={major}"
+        );
+    }
+}
+
+#[test]
+fn validate_protocol_version_conway_accepts_major_9_and_10() {
+    for major in [9u64, 10] {
+        let block = MultiEraBlock::Conway(Box::new(ConwayBlock {
+            header: PraosHeader {
+                body: PraosHeaderBody {
+                    protocol_version: (major, 0),
+                    ..sample_praos_header_body()
+                },
+                signature: vec![0xDD; 448],
+            },
+            transaction_bodies: vec![],
+            transaction_witness_sets: vec![],
+            auxiliary_data_set: std::collections::HashMap::new(),
+            invalid_transactions: vec![],
+        }));
+        assert!(
+            validate_block_protocol_version(&block).is_ok(),
+            "Conway should accept major={major}"
+        );
+    }
+}
+
+#[test]
+fn validate_protocol_version_rejects_wrong_shelley_major() {
+    // A Shelley-era block (protocol_version major=2) carrying major=7
+    // should be rejected.
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (7, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    let err = validate_block_protocol_version(&block).unwrap_err();
+    assert!(
+        format!("{err}").contains("protocol version mismatch"),
+        "expected protocol-version mismatch error, got: {err}"
+    );
+}
+
+#[test]
+fn validate_protocol_version_rejects_babbage_with_major_2() {
+    let block = MultiEraBlock::Babbage(Box::new(BabbageBlock {
+        header: PraosHeader {
+            body: PraosHeaderBody {
+                protocol_version: (2, 0),
+                ..sample_praos_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }));
+    let err = validate_block_protocol_version(&block).unwrap_err();
+    assert!(
+        format!("{err}").contains("protocol version mismatch"),
+        "expected protocol-version mismatch error, got: {err}"
+    );
+}
+
+#[test]
+fn validate_protocol_version_skips_byron() {
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
+    };
+    assert!(validate_block_protocol_version(&block).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// Block body size validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn validate_body_size_accepts_matching_shelley_block() {
+    // Build a Shelley block, serialize it, then compute the actual body size
+    // and set the header's block_body_size to match.
+    let inner_block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_size: 0, // placeholder
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    };
+
+    // Serialize to get the raw block CBOR.
+    let raw = inner_block.to_cbor_bytes();
+    // Compute actual body size by skipping header in the CBOR array.
+    let mut dec = yggdrasil_ledger::cbor::Decoder::new(&raw);
+    let _arr_len = dec.array().unwrap();
+    dec.skip().unwrap(); // skip header
+    let body_start = dec.position();
+    let actual_body_size = (raw.len() - body_start) as u32;
+
+    // Re-build with the correct body size.
+    let block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_size: actual_body_size,
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    };
+    let raw = block.to_cbor_bytes();
+    let me = MultiEraBlock::Shelley(Box::new(block));
+
+    assert!(validate_block_body_size(&me, &raw).is_ok());
+}
+
+#[test]
+fn validate_body_size_rejects_wrong_size() {
+    // Build a block with a deliberately wrong block_body_size.
+    let block = ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                block_body_size: 99999,
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    };
+    let raw = block.to_cbor_bytes();
+    let me = MultiEraBlock::Shelley(Box::new(block));
+
+    let err = validate_block_body_size(&me, &raw).unwrap_err();
+    assert!(
+        format!("{err}").contains("wrong block body size"),
+        "expected body size mismatch error, got: {err}"
+    );
+}
+
+#[test]
+fn validate_body_size_skips_byron() {
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
+    };
+    // Any raw bytes are fine — Byron should be skipped.
+    assert!(validate_block_body_size(&block, &[]).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// MultiEraBlock::era() disambiguation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_era_block_era_shelley() {
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (2, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert_eq!(block.era(), Era::Shelley);
+}
+
+#[test]
+fn multi_era_block_era_allegra() {
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (3, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert_eq!(block.era(), Era::Allegra);
+}
+
+#[test]
+fn multi_era_block_era_mary() {
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (4, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    assert_eq!(block.era(), Era::Mary);
+}
+
+#[test]
+fn multi_era_block_era_alonzo() {
+    let block = MultiEraBlock::Alonzo(Box::new(AlonzoBlock {
+        header: ShelleyHeader {
+            body: ShelleyHeaderBody {
+                protocol_version: (6, 0),
+                ..sample_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }));
+    assert_eq!(block.era(), Era::Alonzo);
+}
+
+#[test]
+fn multi_era_block_era_babbage() {
+    let block = MultiEraBlock::Babbage(Box::new(BabbageBlock {
+        header: PraosHeader {
+            body: PraosHeaderBody {
+                protocol_version: (7, 0),
+                ..sample_praos_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }));
+    assert_eq!(block.era(), Era::Babbage);
+}
+
+#[test]
+fn multi_era_block_era_conway() {
+    let block = MultiEraBlock::Conway(Box::new(ConwayBlock {
+        header: PraosHeader {
+            body: PraosHeaderBody {
+                protocol_version: (9, 0),
+                ..sample_praos_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }));
+    assert_eq!(block.era(), Era::Conway);
+}
+
+#[test]
+fn multi_era_block_era_byron() {
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
+    };
+    assert_eq!(block.era(), Era::Byron);
+}
+
+// ---------------------------------------------------------------------------
+// is_peer_attributable for new error variants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sync_error_wrong_body_size_is_peer_attributable() {
+    use yggdrasil_node::SyncError;
+    let err = SyncError::WrongBlockBodySize { declared: 100, actual: 200 };
+    assert!(err.is_peer_attributable());
+}
+
+#[test]
+fn sync_error_protocol_version_mismatch_is_peer_attributable() {
+    use yggdrasil_node::SyncError;
+    let err = SyncError::ProtocolVersionMismatch {
+        era: Era::Shelley,
+        major: 7,
+        minor: 0,
+        expected_range: "2".to_string(),
+    };
+    assert!(err.is_peer_attributable());
+}
+
+// ---------------------------------------------------------------------------
+// verify_multi_era_block integrates protocol version check
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_multi_era_block_rejects_bad_protocol_version() {
+    // A Babbage block with protocol version 2 should fail.
+    let block = MultiEraBlock::Babbage(Box::new(BabbageBlock {
+        header: PraosHeader {
+            body: PraosHeaderBody {
+                protocol_version: (2, 0),
+                ..sample_praos_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }));
+    let config = VerificationConfig {
+        slots_per_kes_period: 129600,
+        max_kes_evolutions: 62,
+        verify_body_hash: false,
+        future_check: None,
+        ocert_counters: None,
+    };
+    let err = verify_multi_era_block(&block, &config).unwrap_err();
+    assert!(
+        format!("{err}").contains("protocol version mismatch"),
+        "verify_multi_era_block should catch protocol version error, got: {err}"
+    );
 }

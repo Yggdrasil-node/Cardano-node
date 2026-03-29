@@ -1003,23 +1003,25 @@ pub fn forge_block(
     protocol_version: (u64, u64),
 ) -> Result<ForgedBlock, BlockProducerError> {
     // Step 1: Assemble the block body from mempool entries.
-    let (body_txs, body_size) = assemble_block_body(entries.iter(), max_block_body_size);
+    let (body_txs, _selected_tx_body_size) =
+        assemble_block_body(entries.iter(), max_block_body_size);
 
-    // Step 2: Compute the block body hash.
-    // Upstream hashes the concatenation of all transaction body elements.
-    // We hash the concatenation of all raw_tx bytes as the body payload.
+    // Step 2: Canonical body payload bytes = all block elements after the
+    // header in Conway block encoding.
+    let body_payload = encode_forged_body_payload(&body_txs);
+    let body_size = u32::try_from(body_payload.len()).map_err(|_| {
+        BlockProducerError::Crypto("forged block body size overflows u32".to_owned())
+    })?;
+
+    // Step 3: Compute the canonical block body hash.
     let body_hash = {
         use yggdrasil_crypto::blake2b::hash_bytes_256;
-        let mut body_bytes = Vec::new();
-        for tx in &body_txs {
-            body_bytes.extend_from_slice(&tx.raw_tx);
-        }
-        hash_bytes_256(&body_bytes).0
+        hash_bytes_256(&body_payload).0
     };
 
     let total_fees: u64 = body_txs.iter().map(|tx| tx.fee).sum();
 
-    // Step 3: Forge the header.
+    // Step 4: Forge the header.
     let config = ForgeBlockConfig { protocol_version };
     let forged_header = forge_block_header(
         creds,
@@ -1033,11 +1035,8 @@ pub fn forge_block(
         &config,
     )?;
 
-    // Step 4: Compute the header hash (Blake2b-256 of the header body signable bytes).
-    let header_hash = {
-        use yggdrasil_crypto::blake2b::hash_bytes_256;
-        HeaderHash(hash_bytes_256(&forged_header.header_body.to_signable_bytes()).0)
-    };
+    // Step 5: Compute the header hash from the on-wire Praos header CBOR.
+    let header_hash = forged_header_to_praos_header(&forged_header).header_hash();
 
     Ok(ForgedBlock {
         header: forged_header,
@@ -1048,6 +1047,53 @@ pub fn forge_block(
         body_size,
         total_fees,
     })
+}
+
+fn encode_forged_body_payload(transactions: &[ForgeBodyTx]) -> Vec<u8> {
+    let mut raw_bodies: Vec<&[u8]> = Vec::with_capacity(transactions.len());
+    let mut raw_witnesses: Vec<&[u8]> = Vec::with_capacity(transactions.len());
+    let mut aux_entries: Vec<(u64, &[u8])> = Vec::new();
+
+    for (idx, tx) in transactions.iter().enumerate() {
+        if let Ok((body_slice, wit_slice, aux_slice)) = split_submitted_tx(&tx.raw_tx) {
+            raw_bodies.push(body_slice);
+            raw_witnesses.push(wit_slice);
+            if let Some(aux) = aux_slice {
+                aux_entries.push((idx as u64, aux));
+            }
+        } else {
+            // Fallback: preserve deterministic encoding even if submitted-tx
+            // framing is unavailable.
+            raw_bodies.push(&tx.body);
+            raw_witnesses.push(&[0xa0]);
+        }
+    }
+
+    let mut enc = Encoder::new();
+
+    // transaction_bodies
+    enc.array(raw_bodies.len() as u64);
+    for body in &raw_bodies {
+        enc.raw(body);
+    }
+
+    // transaction_witness_sets
+    enc.array(raw_witnesses.len() as u64);
+    for wit in &raw_witnesses {
+        enc.raw(wit);
+    }
+
+    // auxiliary_data_set
+    enc.map(aux_entries.len() as u64);
+    for &(idx, aux) in &aux_entries {
+        enc.unsigned(idx);
+        enc.raw(aux);
+    }
+
+    // invalid_transactions
+    enc.array(0);
+
+    enc.into_bytes()
 }
 
 /// Serialize a forged block into the multi-era CBOR envelope.
@@ -1067,31 +1113,7 @@ pub fn serialize_forged_block_cbor(forged: &ForgedBlock) -> Vec<u8> {
     // Conway era tag in the multi-era envelope.
     const CONWAY_ERA_TAG: u64 = 7;
 
-    // Convert consensus HeaderBody → ledger PraosHeader for CBOR encoding.
-    let hb = &forged.header.header_body;
-    let praos_hdr = PraosHeader {
-        body: PraosHeaderBody {
-            block_number: hb.block_number.0,
-            slot: hb.slot.0,
-            prev_hash: hb.prev_hash.map(|h| h.0),
-            issuer_vkey: hb.issuer_vkey.0,
-            vrf_vkey: hb.vrf_vkey.to_bytes(),
-            vrf_result: ShelleyVrfCert {
-                output: hb.leader_vrf_output.clone(),
-                proof: hb.leader_vrf_proof,
-            },
-            block_body_size: hb.block_body_size,
-            block_body_hash: hb.block_body_hash,
-            operational_cert: ShelleyOpCert {
-                hot_vkey: hb.operational_cert.hot_vkey.to_bytes(),
-                sequence_number: hb.operational_cert.sequence_number,
-                kes_period: hb.operational_cert.kes_period,
-                sigma: hb.operational_cert.sigma.0,
-            },
-            protocol_version: hb.protocol_version,
-        },
-        signature: forged.header.kes_signature.to_bytes().to_vec(),
-    };
+    let praos_hdr = forged_header_to_praos_header(&forged.header);
 
     // Parse each raw_tx to split tx body and witness set CBOR.
     // Submitted-tx format: [body, witnesses, is_valid, aux_data / null]
@@ -1152,6 +1174,33 @@ pub fn serialize_forged_block_cbor(forged: &ForgedBlock) -> Vec<u8> {
     enc.array(0);
 
     enc.into_bytes()
+}
+
+fn forged_header_to_praos_header(header: &ForgedBlockHeader) -> PraosHeader {
+    let hb = &header.header_body;
+    PraosHeader {
+        body: PraosHeaderBody {
+            block_number: hb.block_number.0,
+            slot: hb.slot.0,
+            prev_hash: hb.prev_hash.map(|h| h.0),
+            issuer_vkey: hb.issuer_vkey.0,
+            vrf_vkey: hb.vrf_vkey.to_bytes(),
+            vrf_result: ShelleyVrfCert {
+                output: hb.leader_vrf_output.clone(),
+                proof: hb.leader_vrf_proof,
+            },
+            block_body_size: hb.block_body_size,
+            block_body_hash: hb.block_body_hash,
+            operational_cert: ShelleyOpCert {
+                hot_vkey: hb.operational_cert.hot_vkey.to_bytes(),
+                sequence_number: hb.operational_cert.sequence_number,
+                kes_period: hb.operational_cert.kes_period,
+                sigma: hb.operational_cert.sigma.0,
+            },
+            protocol_version: hb.protocol_version,
+        },
+        signature: header.kes_signature.to_bytes().to_vec(),
+    }
 }
 
 /// Split a submitted-transaction CBOR `[body, witnesses, is_valid, aux]`
