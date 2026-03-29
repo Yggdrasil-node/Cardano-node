@@ -25,7 +25,10 @@ impl TraceForwarder {
             Ok(bytes) => bytes,
             Err(_) => return,
         };
-        let mut sock_guard = self.socket.lock().unwrap();
+        let mut sock_guard = self
+            .socket
+            .lock()
+            .expect("trace forwarder socket mutex poisoned");
         if sock_guard.is_none() {
             let sock = UnixDatagram::unbound().ok();
             if let Some(ref s) = sock {

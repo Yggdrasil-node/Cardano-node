@@ -21,12 +21,13 @@ use crate::sync::{
     MultiEraSyncProgress, MultiEraSyncStep, SyncError, VerifiedSyncServiceConfig,
     VrfVerificationContext, apply_verified_progress_to_chaindb,
     apply_nonce_evolution_to_progress, extract_tx_ids, recover_ledger_state_chaindb,
-    sync_batch_apply_verified, sync_batch_verified, track_chain_state,
+    sync_batch_apply_verified,
+    sync_batch_verified_with_tentative, track_chain_state,
 };
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use serde_json::json;
 use serde_json::Value;
-use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState};
+use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState, TentativeState};
 use yggdrasil_consensus::praos::ActiveSlotCoeff;
 use yggdrasil_crypto::ed25519::VerificationKey;
 use yggdrasil_network::{
@@ -64,6 +65,21 @@ use yggdrasil_mempool::{
     TxSubmissionMempoolReader,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
+
+/// Notification used to wake ChainSync servers when the chain tip advances.
+/// This is the Rust equivalent of the upstream ChainDB follower notification
+/// mechanism, allowing servers to block efficiently instead of busy-polling.
+pub type ChainTipNotify = Arc<tokio::sync::Notify>;
+
+/// Shared block-producer state updated by the sync pipeline so the producer
+/// loop reads live epoch nonce and stake sigma values across block forging.
+#[derive(Clone, Debug, Default)]
+pub struct SharedBlockProducerState {
+    /// Current epoch nonce available to the block producer.
+    pub epoch_nonce: Option<Nonce>,
+    /// Current delegated stake sigma (numerator / denominator) available to the block producer.
+    pub sigma: Option<(u64, u64)>,
+}
 
 /// Runtime governor configuration derived from node configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1074,6 +1090,8 @@ pub async fn run_block_producer_loop<I, V, L, F>(
     mempool: SharedMempool,
     mut credentials: BlockProducerCredentials,
     config: RuntimeBlockProducerConfig,
+    _tip_notify: Option<ChainTipNotify>,
+    _bp_state: Option<Arc<RwLock<SharedBlockProducerState>>>,
     tracer: NodeTracer,
     metrics: Option<Arc<NodeMetrics>>,
     shutdown: F,
@@ -1224,24 +1242,9 @@ pub async fn run_block_producer_loop<I, V, L, F>(
 
                 match add_result {
                     Ok(()) => {
-                        let confirmed_ids = forged
-                            .transactions
-                            .iter()
-                            .map(|tx| tx.tx_id)
-                            .collect::<Vec<_>>();
-                        let removed = if confirmed_ids.is_empty() {
-                            0
-                        } else {
-                            mempool.remove_confirmed(&confirmed_ids)
-                        };
-
-                        if let Some(ref m) = metrics {
-                            m.add_blocks_synced(1);
-                            m.set_current_slot(forged.slot.0);
-                            m.set_current_block_number(forged.block_number.0);
-                            m.set_mempool_gauges(mempool.len() as u64, mempool.size_bytes() as u64);
-                        }
-
+                        // Upstream: TraceForgedBlock — always emitted after
+                        // successful Block.forgeBlock.
+                        // Reference: NodeKernel.hs forkBlockForging ~line 735
                         tracer.trace_runtime(
                             "Node.BlockProduction",
                             "Notice",
@@ -1251,12 +1254,95 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                                 ("blockNo", json!(forged.block_number.0)),
                                 ("txCount", json!(selected_count)),
                                 ("bodySize", json!(selected_size)),
-                                ("mempoolEvicted", json!(removed)),
                                 ("headerHash", json!(hex::encode(forged.header_hash.0))),
                             ]),
                         );
+
+                        // -- Post-forge adoption check --
+                        // Upstream: NodeKernel.hs ~lines 746-785
+                        // After adding the block, check whether our block
+                        // became the new tip of the chain.
+                        //
+                        // In upstream Haskell this uses addBlockAsync +
+                        // blockProcessed (STM wait) + getIsInvalidBlock.
+                        // Our storage is synchronous so we can check
+                        // immediately after add_volatile_block().
+                        let adopted = {
+                            let db = chain_db.read().expect("chain db lock poisoned");
+                            match db.tip() {
+                                Point::BlockPoint(tip_s, tip_h) => {
+                                    tip_s == forged.slot && tip_h == forged.header_hash
+                                }
+                                Point::Origin => false,
+                            }
+                        };
+
+                        if adopted {
+                            // Upstream: TraceAdoptedBlock — block adopted
+                            // successfully, normal path.
+                            let confirmed_ids = forged
+                                .transactions
+                                .iter()
+                                .map(|tx| tx.tx_id)
+                                .collect::<Vec<_>>();
+                            let removed = if confirmed_ids.is_empty() {
+                                0
+                            } else {
+                                mempool.remove_confirmed(&confirmed_ids)
+                            };
+
+                            if let Some(ref m) = metrics {
+                                m.add_blocks_synced(1);
+                                m.set_current_slot(forged.slot.0);
+                                m.set_current_block_number(forged.block_number.0);
+                                m.set_mempool_gauges(mempool.len() as u64, mempool.size_bytes() as u64);
+                            }
+
+                            tracer.trace_runtime(
+                                "Node.BlockProduction",
+                                "Notice",
+                                "adopted forged block",
+                                trace_fields([
+                                    ("slot", json!(forged.slot.0)),
+                                    ("blockNo", json!(forged.block_number.0)),
+                                    ("txCount", json!(selected_count)),
+                                    ("mempoolEvicted", json!(removed)),
+                                    ("headerHash", json!(hex::encode(forged.header_hash.0))),
+                                ]),
+                            );
+
+                            // Wake ChainSync servers so they can push the
+                            // new header to connected peers immediately
+                            // without busy-polling.
+                            if let Some(ref notify) = _tip_notify {
+                                notify.notify_waiters();
+                            }
+                        } else {
+                            // Upstream: TraceDidntAdoptBlock — block was
+                            // valid but not adopted (another leader's block
+                            // was preferred by chain selection).
+                            //
+                            // This is a warning-level event: it means a
+                            // competing slot leader's block was adopted
+                            // instead.  If our storage had an invalid-block
+                            // set we would also check getIsInvalidBlock and
+                            // emit TraceForgedInvalidBlock (critical) for
+                            // mempool/validation inconsistencies.
+                            tracer.trace_runtime(
+                                "Node.BlockProduction",
+                                "Warning",
+                                "did not adopt forged block",
+                                trace_fields([
+                                    ("slot", json!(forged.slot.0)),
+                                    ("blockNo", json!(forged.block_number.0)),
+                                    ("headerHash", json!(hex::encode(forged.header_hash.0))),
+                                ]),
+                            );
+                        }
                     }
                     Err(err) => {
+                        // Upstream: FailedToAddBlock — the block could not
+                        // be added to ChainDB at all.
                         tracer.trace_runtime(
                             "Node.BlockProduction",
                             "Warning",
@@ -2367,6 +2453,8 @@ pub struct ReconnectingVerifiedSyncRequest<'a> {
     pub use_ledger_peers: Option<UseLedgerPeers>,
     /// Optional resolved peer snapshot file path for reconnect-time refresh.
     pub peer_snapshot_path: Option<PathBuf>,
+    /// Optional shared tentative-header state used for diffusion pipelining.
+    pub tentative_state: Option<Arc<RwLock<TentativeState>>>,
 }
 
 impl<'a> ReconnectingVerifiedSyncRequest<'a> {
@@ -2388,6 +2476,7 @@ impl<'a> ReconnectingVerifiedSyncRequest<'a> {
             nonce_state: None,
             use_ledger_peers: None,
             peer_snapshot_path: None,
+            tentative_state: None,
         }
     }
 
@@ -2406,6 +2495,15 @@ impl<'a> ReconnectingVerifiedSyncRequest<'a> {
     /// Provide an optional resolved peer snapshot file path for reconnect-time refresh.
     pub fn with_peer_snapshot_path(mut self, peer_snapshot_path: Option<PathBuf>) -> Self {
         self.peer_snapshot_path = peer_snapshot_path;
+        self
+    }
+
+    /// Provide optional shared tentative-header state for diffusion pipelining.
+    pub fn with_tentative_state(
+        mut self,
+        tentative_state: Option<Arc<RwLock<TentativeState>>>,
+    ) -> Self {
+        self.tentative_state = tentative_state;
         self
     }
 }
@@ -2435,6 +2533,13 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     /// Optional shared mempool for evicting confirmed transactions during
     /// sync roll-forward and re-admitting rolled-back transactions.
     pub mempool: Option<SharedMempool>,
+    /// Optional shared tentative-header state used for diffusion pipelining.
+    pub tentative_state: Option<Arc<RwLock<TentativeState>>>,
+    /// Optional chain-tip notification channel.  When present, the sync
+    /// pipeline fires `notify_waiters()` after each successful batch
+    /// application so inbound ChainSync servers can push updates without
+    /// busy-looping.
+    pub tip_notify: Option<ChainTipNotify>,
 }
 
 impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
@@ -2457,6 +2562,8 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
             metrics: None,
             peer_registry: None,
             mempool: None,
+            tentative_state: None,
+            tip_notify: None,
         }
     }
 
@@ -2496,6 +2603,22 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
         self.mempool = mempool;
         self
     }
+
+    /// Provide optional shared tentative-header state for diffusion pipelining.
+    pub fn with_tentative_state(
+        mut self,
+        tentative_state: Option<Arc<RwLock<TentativeState>>>,
+    ) -> Self {
+        self.tentative_state = tentative_state;
+        self
+    }
+
+    /// Attach a chain-tip notification channel so inbound ChainSync servers
+    /// are woken after each successful sync batch application.
+    pub fn with_tip_notify(mut self, tip_notify: Option<ChainTipNotify>) -> Self {
+        self.tip_notify = tip_notify;
+        self
+    }
 }
 
 type CheckpointTracking = LedgerCheckpointTracking;
@@ -2514,6 +2637,8 @@ struct ReconnectingVerifiedSyncContext<'a> {
     metrics: Option<&'a NodeMetrics>,
     peer_registry: Option<Arc<RwLock<PeerRegistry>>>,
     mempool: Option<SharedMempool>,
+    tentative_state: Option<Arc<RwLock<TentativeState>>>,
+    tip_notify: Option<ChainTipNotify>,
 }
 
 struct ReconnectingVerifiedSyncState {
@@ -2646,7 +2771,16 @@ struct BatchTraceExtras {
 }
 
 enum BatchErrorDisposition {
+    /// Reconnect to a different peer and retry.
     Reconnect,
+    /// Reconnect and additionally record that the peer sent us invalid
+    /// data.  Upstream this would trigger `InvalidBlockPunishment` /
+    /// `PeerSentAnInvalidBlockException` and the governor would demote
+    /// the peer.
+    ///
+    /// Reference: `Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment`
+    ReconnectAndPunish,
+    /// Fatal local error — stop the sync service.
     Fail,
 }
 
@@ -2830,6 +2964,26 @@ fn handle_reconnect_batch_error(
     current_point: Point,
     error: &SyncError,
 ) -> BatchErrorDisposition {
+    // Peer-attributable validation failures: the block itself (or its
+    // header) failed verification.  Upstream this enacts
+    // `InvalidBlockPunishment` which throws
+    // `PeerSentAnInvalidBlockException` to the BlockFetch client thread.
+    //
+    // We reconnect to a different peer and emit a punishment trace event
+    // so the governor can demote the offending peer.
+    //
+    // Reference: `Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface`
+    // `mkAddFetchedBlock_` (~line 188–240).
+    if error.is_peer_attributable() {
+        tracer.trace_runtime(
+            "ChainDB.AddBlockEvent.InvalidBlock",
+            "Error",
+            "peer sent an invalid block; disconnecting",
+            sync_error_trace_fields(peer_addr, error, current_point),
+        );
+        return BatchErrorDisposition::ReconnectAndPunish;
+    }
+
     match error {
         SyncError::ChainSync(err) => {
             trace_reconnectable_sync_error(
@@ -3105,6 +3259,8 @@ where
         metrics,
         peer_registry,
         mempool,
+        tentative_state,
+        tip_notify,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -3187,12 +3343,13 @@ where
         );
 
         loop {
-            let batch_fut = sync_batch_verified(
+            let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
                 &mut session.block_fetch,
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
+                tentative_state.as_ref(),
             );
 
             tokio::select! {
@@ -3309,6 +3466,10 @@ where
                                 metrics,
                             );
 
+                            if let Some(ref notify) = tip_notify {
+                                notify.notify_waiters();
+                            }
+
                             run_state.stable_block_count += applied.stable_block_count;
                             if let Some(m) = metrics {
                                 m.add_stable_blocks_promoted(applied.stable_block_count as u64);
@@ -3366,7 +3527,8 @@ where
                             );
                             session.mux.abort();
                             match disposition {
-                                BatchErrorDisposition::Reconnect => break,
+                                BatchErrorDisposition::Reconnect
+                                | BatchErrorDisposition::ReconnectAndPunish => break,
                                 BatchErrorDisposition::Fail => return Err(err),
                             }
                         }
@@ -3399,6 +3561,8 @@ where
         metrics,
         peer_registry,
         mempool,
+        tentative_state,
+        tip_notify,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -3481,12 +3645,13 @@ where
         );
 
         loop {
-            let batch_fut = sync_batch_verified(
+            let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
                 &mut session.block_fetch,
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
+                tentative_state.as_ref(),
             );
 
             tokio::select! {
@@ -3607,6 +3772,10 @@ where
                                 metrics,
                             );
 
+                            if let Some(ref notify) = tip_notify {
+                                notify.notify_waiters();
+                            }
+
                             run_state.stable_block_count += applied.stable_block_count;
                             if let Some(m) = metrics {
                                 m.add_stable_blocks_promoted(applied.stable_block_count as u64);
@@ -3664,7 +3833,8 @@ where
                             );
                             session.mux.abort();
                             match disposition {
-                                BatchErrorDisposition::Reconnect => break,
+                                BatchErrorDisposition::Reconnect
+                                | BatchErrorDisposition::ReconnectAndPunish => break,
                                 BatchErrorDisposition::Fail => return Err(err),
                             }
                         }
@@ -3918,6 +4088,7 @@ where
         mut nonce_state,
         use_ledger_peers: _,
         peer_snapshot_path: _,
+        tentative_state: _,
     } = request;
 
     tokio::pin!(shutdown);
@@ -4010,7 +4181,8 @@ where
                             );
                             session.mux.abort();
                             match disposition {
-                                BatchErrorDisposition::Reconnect => break,
+                                BatchErrorDisposition::Reconnect
+                                | BatchErrorDisposition::ReconnectAndPunish => break,
                                 BatchErrorDisposition::Fail => return Err(err),
                             }
                         }
@@ -4046,6 +4218,8 @@ where
         metrics,
         peer_registry: _,
         mempool: _,
+        tentative_state,
+        tip_notify,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -4086,6 +4260,8 @@ where
             metrics,
             peer_registry: None,
             mempool: None,
+            tentative_state,
+            tip_notify,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -4143,6 +4319,8 @@ where
         metrics,
         peer_registry,
         mempool,
+        tentative_state,
+        tip_notify,
     } = request;
 
     let recovery = {
@@ -4186,6 +4364,8 @@ where
             metrics,
             peer_registry,
             mempool,
+            tentative_state,
+            tip_notify,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -4222,6 +4402,7 @@ where
         nonce_state,
         use_ledger_peers,
         peer_snapshot_path,
+        tentative_state,
     } = request;
     let checkpoint_tracking = {
         let mut ct = crate::sync::default_checkpoint_tracking(
@@ -4248,6 +4429,8 @@ where
             metrics: None,
             peer_registry: None,
             mempool: None,
+            tentative_state,
+            tip_notify: None,
         },
         ReconnectingVerifiedSyncState {
             from_point,
@@ -4332,7 +4515,8 @@ mod tests {
             verification: VerificationConfig {
                 slots_per_kes_period: 129_600,
                 max_kes_evolutions: 62,
-                verify_body_hash: true,
+                verify_body_hash: true, future_check: None,
+                ocert_counters: None,
             },
             nonce_config: None,
             security_param: None,
@@ -4340,6 +4524,7 @@ mod tests {
             plutus_cost_model: None,
             verify_vrf: false,
             active_slot_coeff: None,
+            slot_length_secs: None,
         }
     }
 
@@ -4769,6 +4954,32 @@ mod tests {
         );
 
         assert!(matches!(disposition, BatchErrorDisposition::Fail));
+    }
+
+    #[test]
+    fn handle_reconnect_batch_error_punishes_for_peer_attributable_errors() {
+        let tracer = NodeTracer::disabled();
+
+        // Body hash mismatch → peer sent tampered data
+        let body_hash = handle_reconnect_batch_error(
+            &tracer,
+            local_addr(3006),
+            Point::Origin,
+            &SyncError::BlockBodyHashMismatch,
+        );
+        assert!(matches!(body_hash, BatchErrorDisposition::ReconnectAndPunish));
+
+        // Consensus verification failure → bad header
+        let consensus = handle_reconnect_batch_error(
+            &tracer,
+            local_addr(3006),
+            Point::Origin,
+            &SyncError::Consensus(yggdrasil_consensus::ConsensusError::InvalidKesSignature),
+        );
+        assert!(matches!(
+            consensus,
+            BatchErrorDisposition::ReconnectAndPunish
+        ));
     }
 
     #[test]

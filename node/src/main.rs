@@ -13,6 +13,7 @@ use yggdrasil_node::config::{
     NetworkPreset, NodeConfigFile, TraceNamespaceConfig, default_config,
     load_peer_snapshot_file, load_topology_file, apply_topology_to_config,
 };
+use yggdrasil_node::genesis;
 use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
     BlockProvider, ChainProvider,
@@ -27,7 +28,7 @@ use yggdrasil_node::{
     seed_peer_registry,
     run_inbound_accept_loop,
 };
-use yggdrasil_consensus::{ActiveSlotCoeff, EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
+use yggdrasil_consensus::{ActiveSlotCoeff, DiffusionPipeliningSupport, EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam, TentativeState};
 use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::{
@@ -50,6 +51,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Connect to a peer and sync the chain.
     Run {
@@ -626,7 +628,8 @@ fn main() -> Result<()> {
                 Some(VerificationConfig {
                     slots_per_kes_period: file_cfg.slots_per_kes_period,
                     max_kes_evolutions: file_cfg.max_kes_evolutions,
-                    verify_body_hash: true,
+                    verify_body_hash: true, future_check: None,
+                    ocert_counters: None,
                 })
             };
 
@@ -646,6 +649,22 @@ fn main() -> Result<()> {
 
             let active_slot_coeff = ActiveSlotCoeff::new(file_cfg.active_slot_coeff).ok();
 
+            // Load the slot length from shelley genesis for the block producer's
+            // slot clock.  Falls back to 1.0 s when the genesis file is missing.
+            let genesis_slot_length: Option<f64> = file_cfg
+                .shelley_genesis_file
+                .as_deref()
+                .and_then(|path| {
+                    let full_path = if let Some(base) = config_base_dir.as_deref() {
+                        base.join(std::path::Path::new(path))
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    genesis::load_shelley_genesis(&full_path)
+                        .ok()
+                        .map(|g| g.slot_length)
+                });
+
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
                     batch_size,
@@ -659,6 +678,7 @@ fn main() -> Result<()> {
                     plutus_cost_model: plutus_cost_model.clone(),
                     verify_vrf: active_slot_coeff.is_some(),
                     active_slot_coeff: active_slot_coeff.clone(),
+                    slot_length_secs: genesis_slot_length,
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -666,7 +686,8 @@ fn main() -> Result<()> {
                     verification: VerificationConfig {
                         slots_per_kes_period: file_cfg.slots_per_kes_period,
                         max_kes_evolutions: file_cfg.max_kes_evolutions,
-                        verify_body_hash: false,
+                        verify_body_hash: false, future_check: None,
+                        ocert_counters: None,
                     },
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),
@@ -677,6 +698,7 @@ fn main() -> Result<()> {
                     plutus_cost_model: plutus_cost_model.clone(),
                     verify_vrf: active_slot_coeff.is_some(),
                     active_slot_coeff,
+                    slot_length_secs: genesis_slot_length,
                 }
             };
 
@@ -768,15 +790,30 @@ fn main() -> Result<()> {
             {
                 let creds = yggdrasil_node::block_producer::load_block_producer_credentials(
                     &resolve_config_path(
-                        std::path::Path::new(file_cfg.shelley_kes_key.as_ref().unwrap()),
+                        std::path::Path::new(
+                            file_cfg
+                                .shelley_kes_key
+                                .as_ref()
+                                .expect("shelley_kes_key is checked as present above"),
+                        ),
                         config_base_dir.as_deref(),
                     ),
                     &resolve_config_path(
-                        std::path::Path::new(file_cfg.shelley_vrf_key.as_ref().unwrap()),
+                        std::path::Path::new(
+                            file_cfg
+                                .shelley_vrf_key
+                                .as_ref()
+                                .expect("shelley_vrf_key is checked as present above"),
+                        ),
                         config_base_dir.as_deref(),
                     ),
                     &resolve_config_path(
-                        std::path::Path::new(file_cfg.shelley_operational_certificate.as_ref().unwrap()),
+                        std::path::Path::new(
+                            file_cfg
+                                .shelley_operational_certificate
+                                .as_ref()
+                                .expect("shelley_operational_certificate is checked as present above"),
+                        ),
                         config_base_dir.as_deref(),
                     ),
                     file_cfg.slots_per_kes_period,
@@ -1438,7 +1475,9 @@ async fn run_node(
                 .unwrap_or((65_536, protocol_version_from_handshake));
 
             yggdrasil_node::RuntimeBlockProducerConfig {
-                slot_length: std::time::Duration::from_secs(1),
+                slot_length: std::time::Duration::from_secs_f64(
+                    sync_config.slot_length_secs.unwrap_or(1.0),
+                ),
                 active_slot_coeff,
                 sigma_num: 1,
                 sigma_den: 1,
@@ -1559,6 +1598,35 @@ async fn run_node(
         })
     };
 
+    // Shared chain-tip notification channel.  The block producer notifies
+    // waiters when it inserts a new block so inbound ChainSync servers can
+    // push updates without busy-looping.  The sync service also notifies
+    // after each batch so locally-connected NtN clients see progress.
+    let chain_tip_notify: yggdrasil_node::ChainTipNotify =
+        std::sync::Arc::new(tokio::sync::Notify::new());
+
+    // Whether diffusion pipelining is enabled for this node.  For now
+    // it is always on; a future config flag may control this.
+    let diffusion_pipelining = DiffusionPipeliningSupport::DiffusionPipeliningOn;
+
+    // Shared diffusion pipelining state.  When pipelining is enabled, the
+    // sync pipeline sets a tentative header after header validation but
+    // before body validation completes; the ChainSync server may serve it
+    // to downstream peers immediately.
+    let shared_tentative_state: Option<Arc<RwLock<TentativeState>>> =
+        match diffusion_pipelining {
+            DiffusionPipeliningSupport::DiffusionPipeliningOff => None,
+            DiffusionPipeliningSupport::DiffusionPipeliningOn => {
+                Some(Arc::new(RwLock::new(TentativeState::initial())))
+            }
+        };
+
+    // Shared block-producer state updated by the sync pipeline so the
+    // producer loop reads live epoch nonce and stake sigma values.
+    let shared_bp_state = std::sync::Arc::new(
+        std::sync::RwLock::new(yggdrasil_node::SharedBlockProducerState::default()),
+    );
+
     let block_producer_task =
         if let (Some(block_producer_credentials), Some(block_producer_config)) =
             (block_producer_credentials, block_producer_runtime_config)
@@ -1568,6 +1636,8 @@ async fn run_node(
             let producer_mempool = shared_mempool.clone();
             let producer_tracer = tracer.clone();
             let producer_metrics = std::sync::Arc::clone(&metrics);
+            let producer_tip_notify = chain_tip_notify.clone();
+            let producer_bp_state = std::sync::Arc::clone(&shared_bp_state);
             Some(tokio::spawn(async move {
                 let shutdown = async move {
                     if *producer_shutdown.borrow() {
@@ -1585,6 +1655,8 @@ async fn run_node(
                     producer_mempool,
                     block_producer_credentials,
                     block_producer_config,
+                    Some(producer_tip_notify),
+                    Some(producer_bp_state),
                     producer_tracer,
                     Some(producer_metrics),
                     shutdown,
@@ -1610,7 +1682,14 @@ async fn run_node(
             trace_fields([("listenAddr", json!(bound_addr.to_string()))]),
         );
 
-        let shared_provider = Arc::new(SharedChainDb::from_arc(Arc::clone(&chain_db)));
+        let shared_provider = if let Some(tentative) = shared_tentative_state.as_ref() {
+            Arc::new(SharedChainDb::from_arc_with_tentative(
+                Arc::clone(&chain_db),
+                Arc::clone(tentative),
+            ))
+        } else {
+            Arc::new(SharedChainDb::from_arc(Arc::clone(&chain_db)))
+        };
         let block_provider: Arc<dyn BlockProvider> = shared_provider.clone();
         let chain_provider: Arc<dyn ChainProvider> = shared_provider;
         let tx_submission_consumer = Arc::new(SharedTxSubmissionConsumer::new(
@@ -1628,6 +1707,7 @@ async fn run_node(
         let inbound_tracer = tracer.clone();
         let inbound_metrics = metrics.clone();
         let inbound_peers = Arc::clone(&shared_inbound_peers);
+        let inbound_tip_notify = chain_tip_notify.clone();
 
         Some(tokio::spawn(async move {
             let shutdown = async move {
@@ -1652,6 +1732,7 @@ async fn run_node(
                 Some(inbound_governor),
                 Some(yggdrasil_network::AcceptedConnectionsLimit::default()),
                 Some(inbound_tx_state),
+                Some(inbound_tip_notify),
                 Some(&inbound_tracer),
                 Some(&inbound_metrics),
                 shutdown,
@@ -1738,7 +1819,9 @@ async fn run_node(
     .with_peer_snapshot_path(peer_snapshot_path)
     .with_metrics(Some(&metrics))
     .with_peer_registry(Some(Arc::clone(&peer_registry)))
-    .with_mempool(Some(shared_mempool.clone()));
+    .with_mempool(Some(shared_mempool.clone()))
+    .with_tentative_state(shared_tentative_state.clone())
+    .with_tip_notify(Some(chain_tip_notify.clone()));
 
     let mut sync_shutdown = shutdown_rx.clone();
     let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(

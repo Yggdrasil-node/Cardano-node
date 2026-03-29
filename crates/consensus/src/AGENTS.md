@@ -22,3 +22,6 @@ This directory owns consensus implementation modules, not integration glue.
 
 ## Current Phase
 - Preserve the current separation between header verification, epoch nonce evolution, and volatile chain tracking.
+- `diffusion_pipelining.rs` now owns tentative-header criterion/state primitives (`TentativeHeaderState`, `TentativeState`, `PeerPipeliningState`) aligned with upstream `SupportsDiffusionPipelining`, so node/runtime wiring can keep DPvDV policy out of orchestration code.
+- `in_future.rs` now owns upstream-aligned future-header judgement primitives (`ClockSkew`, `FutureSlotJudgement`, `judge_header_slot`) so node runtime can enforce `InFutureCheck`-style far-future rejection without embedding consensus math in orchestration code.
+- `opcert.rs` now owns `OcertCounters` (upstream `PraosState.csCounters`), a per-pool monotonic OpCert sequence-number tracker with `validate_and_update()` implementing the upstream `currentIssueNo` check from `Ouroboros.Consensus.Protocol.Praos`. Errors: `NoCounterForKeyHash`, `OcertCounterTooOld`, `OcertCounterTooFar`.

@@ -372,7 +372,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         verification: VerificationConfig {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
-            verify_body_hash: true,
+            verify_body_hash: true, future_check: None, ocert_counters: None,
         },
         nonce_config: None,
         security_param: Some(SecurityParam(1)),
@@ -380,6 +380,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         plutus_cost_model: None,
         verify_vrf: false,
         active_slot_coeff: None,
+        slot_length_secs: None,
     };
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let mut chain_db = ChainDb::new(
@@ -1786,7 +1787,7 @@ fn verify_multi_era_block_byron_is_noop() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
-        verify_body_hash: false,
+        verify_body_hash: false, future_check: None, ocert_counters: None,
     };
     assert!(verify_multi_era_block(&me, &config).is_ok());
 }
@@ -2458,7 +2459,7 @@ fn verify_multi_era_block_babbage_passes() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
-        verify_body_hash: false,
+        verify_body_hash: false, future_check: None, ocert_counters: None,
     };
     let result = verify_multi_era_block(&me, &config);
     // Expect error since the signature is dummy bytes, confirming the
@@ -2482,7 +2483,7 @@ fn verify_multi_era_block_conway_passes() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
-        verify_body_hash: false,
+        verify_body_hash: false, future_check: None, ocert_counters: None,
     };
     let result = verify_multi_era_block(&me, &config);
     assert!(result.is_err());
@@ -3738,4 +3739,118 @@ fn total_transaction_fees_byron_always_zero() {
         era_tag: 0,
     };
     assert_eq!(block.total_transaction_fees(), 0);
+}
+
+// ===========================================================================
+// OpCert counter validation tests
+// ===========================================================================
+
+#[test]
+fn validate_block_opcert_counter_skips_byron() {
+    use yggdrasil_consensus::OcertCounters;
+    use yggdrasil_ledger::PoolStakeDistribution;
+    use yggdrasil_node::validate_block_opcert_counter;
+
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
+    };
+    let dist = PoolStakeDistribution::from_raw(Default::default(), 0);
+    let mut counters = OcertCounters::new();
+    assert!(validate_block_opcert_counter(&block, &mut counters, &dist).is_ok());
+    assert!(counters.is_empty());
+}
+
+#[test]
+fn validate_block_opcert_counter_accepts_new_pool_in_dist() {
+    use std::collections::BTreeMap;
+    use yggdrasil_consensus::OcertCounters;
+    use yggdrasil_ledger::PoolStakeDistribution;
+    use yggdrasil_node::{validate_block_opcert_counter, block_issuer_vkey};
+
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+
+    let issuer_vkey = block_issuer_vkey(&block).unwrap();
+    let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey).0;
+
+    let mut pool_stakes = BTreeMap::new();
+    pool_stakes.insert(pool_hash, 1_000_000);
+    let dist = PoolStakeDistribution::from_raw(pool_stakes, 1_000_000);
+
+    let mut counters = OcertCounters::new();
+    assert!(validate_block_opcert_counter(&block, &mut counters, &dist).is_ok());
+    assert_eq!(counters.get(&pool_hash), Some(42)); // sequence_number from sample_opcert is 42
+}
+
+#[test]
+fn validate_block_opcert_counter_rejects_unknown_pool() {
+    use yggdrasil_consensus::OcertCounters;
+    use yggdrasil_ledger::PoolStakeDistribution;
+    use yggdrasil_node::validate_block_opcert_counter;
+
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+
+    // Empty stake distribution — pool not known.
+    let dist = PoolStakeDistribution::from_raw(Default::default(), 0);
+    let mut counters = OcertCounters::new();
+    let result = validate_block_opcert_counter(&block, &mut counters, &dist);
+    assert!(result.is_err());
+}
+
+// ===========================================================================
+// VRF key cross-check tests
+// ===========================================================================
+
+#[test]
+fn block_vrf_vkey_extracts_shelley() {
+    use yggdrasil_node::block_vrf_vkey;
+
+    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+        header: ShelleyHeader {
+            body: sample_header_body(),
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        transaction_metadata_set: std::collections::HashMap::new(),
+    }));
+    let vrf_vkey = block_vrf_vkey(&block).unwrap();
+    assert_eq!(vrf_vkey, sample_header_body().vrf_vkey);
+}
+
+#[test]
+fn block_vrf_vkey_returns_none_for_byron() {
+    use yggdrasil_node::block_vrf_vkey;
+
+    let block = MultiEraBlock::Byron {
+        block: ByronBlock::EpochBoundary {
+            epoch: 0,
+            chain_difficulty: 0,
+            prev_hash: [0; 32],
+            raw_header: vec![],
+        },
+        era_tag: 0,
+    };
+    assert!(block_vrf_vkey(&block).is_none());
 }

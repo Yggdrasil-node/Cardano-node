@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::error::LedgerError;
 use crate::state::{PoolState, RewardAccounts, StakeCredentials};
-use crate::types::{Address, DRep, PoolKeyHash, PoolParams, StakeCredential};
+use crate::types::{Address, DRep, PoolKeyHash, PoolParams, StakeCredential, VrfKeyHash};
 use crate::utxo::MultiEraUtxo;
 
 // ---------------------------------------------------------------------------
@@ -287,8 +287,18 @@ impl StakeSnapshot {
             total_stake = total_stake.saturating_add(amount);
         }
 
+        // Populate VRF key hashes from pool params for all pools that
+        // have non-zero stake in this distribution.
+        let mut pool_vrf_keys: BTreeMap<PoolKeyHash, VrfKeyHash> = BTreeMap::new();
+        for pool_hash in pool_stakes.keys() {
+            if let Some(params) = self.pool_params.get(pool_hash) {
+                pool_vrf_keys.insert(*pool_hash, params.vrf_keyhash);
+            }
+        }
+
         PoolStakeDistribution {
             pool_stakes,
+            pool_vrf_keys,
             total_stake,
         }
     }
@@ -300,17 +310,25 @@ impl StakeSnapshot {
 
 /// Aggregated per-pool stake derived from a `StakeSnapshot`.
 ///
-/// Reference: `poolDistr` in `Cardano.Ledger.Shelley.LedgerState`.
+/// Each pool entry carries both the aggregated stake and the pool's
+/// registered VRF key hash, matching upstream `PoolDistr` which bundles
+/// `IndividualPoolStake` (relative stake + `poolInfoVRF`).
+///
+/// Reference: `poolDistr` in `Cardano.Ledger.Shelley.LedgerState`,
+/// `IndividualPoolStake` in `Cardano.Protocol.TPraos.API`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PoolStakeDistribution {
     pool_stakes: BTreeMap<PoolKeyHash, u64>,
+    /// Per-pool VRF key hash — indexed by `PoolKeyHash`, sourced from
+    /// `PoolParams.vrf_keyhash` at the time the snapshot is computed.
+    pool_vrf_keys: BTreeMap<PoolKeyHash, VrfKeyHash>,
     total_stake: u64,
 }
 
 impl PoolStakeDistribution {
     /// Constructs a distribution from pre-computed pool stakes and total.
     pub fn from_raw(pool_stakes: BTreeMap<PoolKeyHash, u64>, total_stake: u64) -> Self {
-        Self { pool_stakes, total_stake }
+        Self { pool_stakes, pool_vrf_keys: BTreeMap::new(), total_stake }
     }
 
     /// Returns the absolute stake for `pool`, defaulting to zero.
@@ -341,6 +359,21 @@ impl PoolStakeDistribution {
     /// Returns the number of pools with non-zero stake.
     pub fn pool_count(&self) -> usize {
         self.pool_stakes.len()
+    }
+
+    /// Returns the registered VRF key hash for `pool`, if available.
+    ///
+    /// This is sourced from `PoolParams.vrf_keyhash` at snapshot time.
+    ///
+    /// Reference: `poolInfoVRF` in `IndividualPoolStake` from
+    /// `Cardano.Protocol.TPraos.API`.
+    pub fn pool_vrf_key_hash(&self, pool: &PoolKeyHash) -> Option<&VrfKeyHash> {
+        self.pool_vrf_keys.get(pool)
+    }
+
+    /// Returns true if the pool is present in the distribution (has non-zero stake).
+    pub fn contains_pool(&self, pool: &PoolKeyHash) -> bool {
+        self.pool_stakes.contains_key(pool)
     }
 }
 

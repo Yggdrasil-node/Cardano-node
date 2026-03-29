@@ -477,7 +477,7 @@ pub struct PeerFailureRecord {
 /// - no-progress path: `counter = max(counter, 0) + 1`
 /// - delay: `2 ^ min(abs(counter), 8)` seconds
 /// - progress path: `counter = 0`, retry at supplied TTL
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RequestBackoffState {
     /// Signed backoff counter.
     ///
@@ -488,16 +488,6 @@ pub struct RequestBackoffState {
     pub next_retry: Option<Instant>,
     /// Whether a request is currently in-flight.
     pub in_progress: bool,
-}
-
-impl Default for RequestBackoffState {
-    fn default() -> Self {
-        Self {
-            counter: 0,
-            next_retry: None,
-            in_progress: false,
-        }
-    }
 }
 
 impl RequestBackoffState {

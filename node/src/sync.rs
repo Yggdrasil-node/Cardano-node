@@ -8,8 +8,9 @@
 use std::time::Duration;
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
-use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ConsensusError, EpochSize, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceEvolutionConfig, NonceEvolutionState, OpCert as ConsensusOpCert, SecurityParam, is_new_epoch, slot_to_epoch, verify_header, verify_leader_proof};
+use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
@@ -72,6 +73,44 @@ pub enum SyncError {
     /// Block body hash in the header does not match the actual block body.
     #[error("block body hash mismatch")]
     BlockBodyHashMismatch,
+
+    /// A received block's slot is beyond the tolerable clock skew.
+    ///
+    /// Reference: `InFutureHeaderExceedsClockSkew` in
+    /// `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`.
+    #[error("block from far future: slot {slot} is {excess_slots} slots ahead of wall clock")]
+    BlockFromFuture {
+        /// The block's slot number.
+        slot: u64,
+        /// How many slots ahead of the wall-clock the block is.
+        excess_slots: u64,
+    },
+}
+
+impl SyncError {
+    /// Returns `true` when the error is attributable to the remote peer
+    /// sending data that fails validation (invalid block body hash,
+    /// consensus header verification failure, or a block that breaks
+    /// ledger rules).
+    ///
+    /// These errors indicate a misbehaving or broken peer and should be
+    /// handled by reconnecting to a different peer rather than stopping
+    /// the sync service.  Local infrastructure errors (`Storage`) and
+    /// protocol framing errors (`ChainSync`, `BlockFetch`) are not
+    /// peer-attributable validation failures.
+    ///
+    /// Reference: upstream `InvalidBlockPunishment` in
+    /// `Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment`
+    /// — errors that result in `throwTo PeerSentAnInvalidBlockException`.
+    pub fn is_peer_attributable(&self) -> bool {
+        matches!(
+            self,
+            SyncError::Consensus(_)
+                | SyncError::BlockBodyHashMismatch
+                | SyncError::LedgerDecode(_)
+                | SyncError::BlockFromFuture { .. }
+        )
+    }
 }
 
 /// Result of a single sync step.
@@ -794,6 +833,9 @@ pub struct VerifiedSyncServiceConfig {
     /// Active slot coefficient `f` from genesis, required when `verify_vrf`
     /// is `true`.  Ignored when VRF verification is disabled.
     pub active_slot_coeff: Option<ActiveSlotCoeff>,
+    /// Slot duration in seconds from Shelley genesis (`slotLength`).
+    /// Defaults to 1.0 when unset.
+    pub slot_length_secs: Option<f64>,
 }
 
 /// Outcome returned when the verified sync service finishes.
@@ -1551,6 +1593,24 @@ pub enum MultiEraBlock {
 }
 
 impl MultiEraBlock {
+    /// Return the slot number of this block.
+    ///
+    /// Byron blocks compute the absolute slot from
+    /// epoch_times_slots_per_epoch_plus_slot_in_epoch using the Byron
+    /// constant (21600 slots/epoch).
+    /// Shelley through Conway blocks extract it from the typed header body.
+    pub fn slot(&self) -> SlotNo {
+        match self {
+            Self::Byron { block, .. } => {
+                SlotNo(block.absolute_slot(BYRON_SLOTS_PER_EPOCH))
+            }
+            Self::Shelley(b) => SlotNo(b.header.body.slot),
+            Self::Alonzo(b) => SlotNo(b.header.body.slot),
+            Self::Babbage(b) => SlotNo(b.header.body.slot),
+            Self::Conway(b) => SlotNo(b.header.body.slot),
+        }
+    }
+
     /// Sum the declared transaction fees across all transactions in this block.
     ///
     /// Byron blocks return 0 because their fees are implicit (input sum
@@ -1867,7 +1927,7 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
 /// `verify_multi_era_block` and the verified sync pipeline.
 ///
 /// Reference: `shelleyGenesisConfig` in `cardano-node` configuration.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct VerificationConfig {
     /// Number of slots per KES period (mainnet: 129600).
     pub slots_per_kes_period: u64,
@@ -1875,6 +1935,34 @@ pub struct VerificationConfig {
     pub max_kes_evolutions: u64,
     /// Whether to verify the block body hash against the header.
     pub verify_body_hash: bool,
+    /// Optional future-block check.  When `Some`, decoded blocks are
+    /// compared against the given current wall-clock slot and rejected
+    /// if they exceed `clock_skew` tolerance.
+    ///
+    /// Reference: `InFutureCheck.realHeaderInFutureCheck` in
+    /// `ouroboros-consensus`.
+    pub future_check: Option<FutureBlockCheckConfig>,
+    /// Optional operational-certificate counter tracker.  When `Some`,
+    /// each block's OpCert `sequence_number` is validated against the
+    /// per-pool monotonic counter state before acceptance.
+    ///
+    /// The stake distribution must be threaded alongside so that first-
+    /// seen pools can be recognized (upstream `currentIssueNo` fallthrough).
+    ///
+    /// Reference: `PraosState.csCounters` in
+    /// `Ouroboros.Consensus.Protocol.Praos`.
+    pub ocert_counters: Option<OcertCounters>,
+}
+
+/// Configuration for the blocks-from-the-future check.
+///
+/// Reference: `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`.
+#[derive(Clone, Copy, Debug)]
+pub struct FutureBlockCheckConfig {
+    /// The current wall-clock slot at the time of validation.
+    pub current_wall_slot: SlotNo,
+    /// Maximum tolerable clock skew.
+    pub clock_skew: ClockSkew,
 }
 
 /// Parameters required for VRF leader-eligibility verification.
@@ -1968,6 +2056,66 @@ pub fn block_issuer_vkey(block: &MultiEraBlock) -> Option<[u8; 32]> {
     }
 }
 
+/// Extracts the raw VRF verification key bytes from a block header.
+///
+/// Returns `None` for Byron blocks (no VRF).
+pub fn block_vrf_vkey(block: &MultiEraBlock) -> Option<[u8; 32]> {
+    match block {
+        MultiEraBlock::Shelley(s) => Some(s.header.body.vrf_vkey),
+        MultiEraBlock::Alonzo(a) => Some(a.header.body.vrf_vkey),
+        MultiEraBlock::Babbage(b) => Some(b.header.body.vrf_vkey),
+        MultiEraBlock::Conway(c) => Some(c.header.body.vrf_vkey),
+        MultiEraBlock::Byron { .. } => None,
+    }
+}
+
+/// Extracts the OpCert sequence number from a multi-era block header.
+///
+/// Returns `None` for Byron blocks (no OpCert).
+pub fn block_opcert_sequence_number(block: &MultiEraBlock) -> Option<u64> {
+    match block {
+        MultiEraBlock::Shelley(s) => Some(s.header.body.operational_cert.sequence_number),
+        MultiEraBlock::Alonzo(a) => Some(a.header.body.operational_cert.sequence_number),
+        MultiEraBlock::Babbage(b) => Some(b.header.body.operational_cert.sequence_number),
+        MultiEraBlock::Conway(c) => Some(c.header.body.operational_cert.sequence_number),
+        MultiEraBlock::Byron { .. } => None,
+    }
+}
+
+/// Validates a block's OpCert sequence number against the per-pool counter
+/// state, updating the counters on success.
+///
+/// This implements the upstream `currentIssueNo` check from
+/// `Ouroboros.Consensus.Protocol.Praos`.  Byron blocks are skipped.
+///
+/// # Arguments
+///
+/// * `block` — The multi-era block to validate.
+/// * `counters` — Mutable reference to the per-pool counter state.
+/// * `stake_dist` — The current stake distribution (used to recognize
+///   first-seen pools that are not yet in the counter map).
+pub fn validate_block_opcert_counter(
+    block: &MultiEraBlock,
+    counters: &mut OcertCounters,
+    stake_dist: &yggdrasil_ledger::PoolStakeDistribution,
+) -> Result<(), SyncError> {
+    let issuer_vkey_bytes = match block_issuer_vkey(block) {
+        Some(vk) => vk,
+        None => return Ok(()), // Byron
+    };
+    let new_seq = match block_opcert_sequence_number(block) {
+        Some(s) => s,
+        None => return Ok(()), // Byron (redundant, but defensive)
+    };
+
+    let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey_bytes).0;
+    let pool_in_dist = stake_dist.contains_pool(&pool_hash);
+
+    counters
+        .validate_and_update(pool_hash, new_seq, pool_in_dist)
+        .map_err(SyncError::Consensus)
+}
+
 /// Verify a block's VRF leader eligibility proof using the pool stake
 /// distribution from the ledger's `set` snapshot.
 ///
@@ -1999,6 +2147,39 @@ pub fn verify_block_vrf_with_stake(
 
     // Derive pool key hash = Blake2b-224(issuer_vkey).
     let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey_bytes).0;
+
+    // ── VRF key hash cross-check ─────────────────────────────────────
+    //
+    // The VRF verification key in the block header must hash to the same
+    // value that the pool registered in its `PoolParams.vrf_keyhash`.
+    //
+    // Reference: `doValidateVRFSignature` in
+    // `Ouroboros.Consensus.Protocol.Praos`:
+    //   vrfHKBlock = hashVerKeyVRF (vrfKBlock)
+    //   vrfHKStake = IndividualPoolStake.iPoolInfoVRF (from PoolDistr)
+    //   when vrfHKStake /= vrfHKBlock → VRFKeyBadNonce / VRFKeyBadLeaderValue
+    if let Some(vrf_vkey_bytes) = block_vrf_vkey(block) {
+        let vrf_hash_block =
+            yggdrasil_crypto::blake2b::hash_bytes_256(&vrf_vkey_bytes).0;
+        match stake_dist.pool_vrf_key_hash(&pool_hash) {
+            Some(registered_vrf_hash) => {
+                if vrf_hash_block != *registered_vrf_hash {
+                    return Err(SyncError::Consensus(
+                        ConsensusError::VrfKeyMismatch {
+                            expected: *registered_vrf_hash,
+                            actual: vrf_hash_block,
+                        },
+                    ));
+                }
+            }
+            None => {
+                // Pool not in stake distribution — VRF key cross-check
+                // cannot be performed.  The leader threshold check below
+                // will reject anyway (sigma = 0/1).
+            }
+        }
+    }
+
     let (sigma_num, sigma_den) = stake_dist.relative_stake(&pool_hash);
 
     let params = VrfVerificationParams {
@@ -2423,12 +2604,81 @@ where
     })
 }
 
+fn tentative_header_from_raw_header(
+    raw_header: &[u8],
+) -> Option<(ConsensusHeaderBody, SlotNo, HeaderHash)> {
+    if let Ok(header) = ShelleyHeader::from_cbor_bytes(raw_header) {
+        let hash = header.header_hash();
+        let slot = SlotNo(header.body.slot);
+        let consensus = shelley_header_to_consensus(&header).ok()?;
+        return Some((consensus.body, slot, hash));
+    }
+
+    if let Ok(header) = PraosHeader::from_cbor_bytes(raw_header) {
+        let hash = header.header_hash();
+        let slot = SlotNo(header.body.slot);
+        let consensus = praos_header_to_consensus(&header).ok()?;
+        return Some((consensus.body, slot, hash));
+    }
+
+    None
+}
+
+fn try_set_tentative_header(
+    tentative_state: &Arc<RwLock<TentativeState>>,
+    raw_header: &[u8],
+) -> bool {
+    let Some((header_body, slot, hash)) = tentative_header_from_raw_header(raw_header)
+    else {
+        return false;
+    };
+
+    let Ok(mut state) = tentative_state.write() else {
+        return false;
+    };
+
+    state
+        .try_set_tentative(&header_body, slot, hash, raw_header.to_vec())
+        .is_some()
+}
+
+fn clear_tentative_adopted(tentative_state: &Arc<RwLock<TentativeState>>) {
+    if let Ok(mut state) = tentative_state.write() {
+        let _ = state.clear_adopted();
+    }
+}
+
+fn clear_tentative_trap(tentative_state: &Arc<RwLock<TentativeState>>) {
+    if let Ok(mut state) = tentative_state.write() {
+        let _ = state.clear_trap();
+    }
+}
+
 pub(crate) async fn sync_batch_verified(
+    chain_sync: &mut ChainSyncClient,
+    block_fetch: &mut BlockFetchClient,
+    from_point: Point,
+    batch_size: usize,
+    verification: Option<&VerificationConfig>,
+) -> Result<MultiEraSyncProgress, SyncError> {
+    sync_batch_verified_with_tentative(
+        chain_sync,
+        block_fetch,
+        from_point,
+        batch_size,
+        verification,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn sync_batch_verified_with_tentative(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
     mut from_point: Point,
     batch_size: usize,
     verification: Option<&VerificationConfig>,
+    tentative_state: Option<&Arc<RwLock<TentativeState>>>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     let mut steps = Vec::new();
     let mut fetched_blocks = 0usize;
@@ -2440,13 +2690,38 @@ pub(crate) async fn sync_batch_verified(
         let me_step = match next {
             TypedNextResponse::RollForward { header, tip }
             | TypedNextResponse::AwaitRollForward { header, tip } => {
-                let raw_and_decoded =
-                    fetch_range_blocks_multi_era_raw_decoded(block_fetch, from_point, tip).await?;
+                let tentative_set = tentative_state
+                    .is_some_and(|state| try_set_tentative_header(state, &header));
+
+                let raw_and_decoded = match fetch_range_blocks_multi_era_raw_decoded(
+                    block_fetch,
+                    from_point,
+                    tip,
+                )
+                .await
+                {
+                    Ok(blocks) => blocks,
+                    Err(err) => {
+                        if tentative_set {
+                            if let Some(state) = tentative_state {
+                                clear_tentative_trap(state);
+                            }
+                        }
+                        return Err(err);
+                    }
+                };
 
                 if let Some(config) = verification {
                     if config.verify_body_hash {
                         for (raw, _) in &raw_and_decoded {
-                            verify_block_body_hash(raw)?;
+                            if let Err(err) = verify_block_body_hash(raw) {
+                                if tentative_set {
+                                    if let Some(state) = tentative_state {
+                                        clear_tentative_trap(state);
+                                    }
+                                }
+                                return Err(err);
+                            }
                         }
                     }
                 }
@@ -2456,7 +2731,59 @@ pub(crate) async fn sync_batch_verified(
 
                 if let Some(config) = verification {
                     for block in &decoded_blocks {
-                        verify_multi_era_block(block, config)?;
+                        if let Err(err) = verify_multi_era_block(block, config) {
+                            if tentative_set {
+                                if let Some(state) = tentative_state {
+                                    clear_tentative_trap(state);
+                                }
+                            }
+                            return Err(err);
+                        }
+                    }
+
+                    // Blocks-from-the-future check: reject blocks whose
+                    // slot exceeds the tolerable clock skew window.
+                    //
+                    // Near-future blocks (within skew) are tolerated:
+                    // upstream would introduce a brief delay but we process
+                    // them immediately to avoid blocking the sync batch.
+                    //
+                    // Far-future blocks trigger a peer-attributable error
+                    // (see `SyncError::is_peer_attributable`) which causes
+                    // the runtime to disconnect and reconnect to another
+                    // peer.
+                    //
+                    // Reference: `InFutureCheck.handleHeaderArrival` in
+                    // `ouroboros-consensus`.
+                    if let Some(ref fc) = config.future_check {
+                        for block in &decoded_blocks {
+                            let block_slot = block.slot();
+                            match judge_header_slot(
+                                block_slot,
+                                fc.current_wall_slot,
+                                fc.clock_skew,
+                            ) {
+                                FutureSlotJudgement::NotFuture
+                                | FutureSlotJudgement::NearFuture { .. } => {}
+                                FutureSlotJudgement::FarFuture { excess_slots } => {
+                                    if tentative_set {
+                                        if let Some(state) = tentative_state {
+                                            clear_tentative_trap(state);
+                                        }
+                                    }
+                                    return Err(SyncError::BlockFromFuture {
+                                        slot: block_slot.0,
+                                        excess_slots,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if tentative_set {
+                    if let Some(state) = tentative_state {
+                        clear_tentative_adopted(state);
                     }
                 }
 
@@ -2759,5 +3086,31 @@ mod tests {
         let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
         assert!(perf.contains_key(&pool_a));
         assert!(!perf.contains_key(&pool_c));
+    }
+
+    // -- is_peer_attributable classification tests --
+
+    #[test]
+    fn sync_error_peer_attributable_for_validation_failures() {
+        assert!(SyncError::BlockBodyHashMismatch.is_peer_attributable());
+        assert!(SyncError::Consensus(
+            yggdrasil_consensus::ConsensusError::InvalidKesSignature
+        ).is_peer_attributable());
+        assert!(SyncError::LedgerDecode(
+            LedgerError::CborTrailingBytes(1)
+        ).is_peer_attributable());
+        assert!(SyncError::BlockFromFuture {
+            slot: 999,
+            excess_slots: 100,
+        }.is_peer_attributable());
+    }
+
+    #[test]
+    fn sync_error_not_peer_attributable_for_local_errors() {
+        assert!(!SyncError::Recovery("test".to_owned()).is_peer_attributable());
+        assert!(!SyncError::Storage(StorageError::Serialization("test".to_owned())).is_peer_attributable());
+        assert!(!SyncError::KeepAlive(
+            yggdrasil_network::KeepAliveClientError::ConnectionClosed
+        ).is_peer_attributable());
     }
 }

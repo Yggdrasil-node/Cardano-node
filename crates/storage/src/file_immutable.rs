@@ -72,10 +72,10 @@ impl FileImmutable {
             if let Ok(entries) = fs::read_dir(&data_dir) {
                 for entry in entries.flatten() {
                     let p = entry.path();
-                    if p.extension().and_then(|e| e.to_str()) == Some("tmp") {
-                        if fs::remove_file(&p).is_ok() {
-                            tmp_removed += 1;
-                        }
+                    if p.extension().and_then(|e| e.to_str()) == Some("tmp")
+                        && fs::remove_file(&p).is_ok()
+                    {
+                        tmp_removed += 1;
                     }
                 }
             }

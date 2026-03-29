@@ -388,7 +388,7 @@ pub fn required_script_hashes_from_proposal_procedures(
 
 /// Returns `true` if the certificate list contains at least one MIR certificate.
 fn has_mir_cert(certs: Option<&[crate::types::DCert]>) -> bool {
-    certs.map_or(false, |cs| {
+    certs.is_some_and(|cs| {
         cs.iter().any(|c| matches!(c, crate::types::DCert::MoveInstantaneousReward(_, _)))
     })
 }

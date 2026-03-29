@@ -30,13 +30,27 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ⚠️ **Partial Plutus** (CEK machine framework, V1/V2/V3 support wired)
 - ✅ **Peer management** (governor with dual churn, big-ledger, backoff, inbound)
 - ✅ **Monitoring** (35+ metrics, Prometheus/JSON endpoints, coloured stdout, detail levels, upstream backend recognition)
-- ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting)
+- ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting, post-forge adoption check)
 
 **To achieve full parity**, the remaining work focuses on:
 1. **Plutus CEK builtin coverage** (remaining edge cases and cost-model parity)
-2. **Block production propagation parity** (network announcement and issuer-key/header parity for externally validated forged blocks)
+2. **Block production issuer-key/header parity** (strict external validation parity for forged headers)
 3. **Storage WAL** (write-ahead log for multi-step mutations)
 4. **Integration testing** (mainnet-like end-to-end scenarios)
+
+**Recently completed parity items**:
+- ✅ **Post-forge adoption check** — after forging, compare chain tip with forged block point and emit `TraceAdoptedBlock`/`TraceDidntAdoptBlock` (upstream `NodeKernel.forkBlockForging`)
+- ✅ **Invalid block punishment** — peer-attributable validation errors (Consensus, BlockBodyHashMismatch, LedgerDecode, BlockFromFuture) now trigger reconnection to a different peer instead of killing the sync service; `ChainDB.AddBlockEvent.InvalidBlock` trace emitted (upstream `InvalidBlockPunishment`)
+- ✅ **Blocks-from-the-future check** — `ClockSkew` + `FutureSlotJudgement` in consensus crate; blocks exceeding clock-skew tolerance rejected as `SyncError::BlockFromFuture` (upstream `InFutureCheck`)
+- ✅ **Diffusion pipelining tentative-chain wiring (DPvDV)** — node runtime now threads shared `TentativeState` through reconnecting verified sync and inbound ChainSync serving; verified batch sync sets tentative headers on roll-forward announcements and clears adopted/trap outcomes; inbound ChainSync now serves tentative tips and rolls followers back when a served tentative header is trapped (upstream `SupportsDiffusionPipelining` / `cdbTentativeHeader` behavior)
+- ✅ **Block propagation wiring** — locally forged blocks now persist multi-era raw CBOR for downstream relay, and reconnecting sync notifies chain-tip followers after each applied batch so inbound ChainSync responders can wake without polling (upstream ChainDB follower wakeup intent)
+
+### Runtime Parity Hardening (March 2026)
+
+- ✅ **P1 completed**: post-forge adoption check in block production loop (`Node.BlockProduction` traces for adopted vs not-adopted forged blocks), aligned with `cardano-node` `NodeKernel.forkBlockForging` post-forge checks.
+- ✅ **P2 completed**: peer-attributable invalid-block handling now maps to reconnect-and-punish disposition with `ChainDB.AddBlockEvent.InvalidBlock` trace, aligned with upstream `InvalidBlockPunishment` behavior.
+- ✅ **P3 completed**: far-future header rejection via consensus-level `judge_header_slot` (`ClockSkew`, `FutureSlotJudgement`) propagated as `SyncError::BlockFromFuture`, aligned with `InFutureCheck`.
+- ✅ **Tests added**: targeted tests for adoption checks, invalid-block punishment routing, and future-slot judgement behavior.
 
 ---
 

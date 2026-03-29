@@ -108,6 +108,12 @@ pub struct ShelleyGenesis {
     #[serde(default = "default_security_param")]
     pub security_param: u64,
 
+    /// Slot duration in seconds (mainnet: 1).
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Genesis` — `sgSlotLength`.
+    #[serde(default = "default_slot_length")]
+    pub slot_length: f64,
+
     /// Network name from Shelley genesis (`Mainnet` or `Testnet`).
     #[serde(default)]
     pub network_id: Option<String>,
@@ -1086,6 +1092,7 @@ fn default_slots_per_kes_period() -> u64 { 129_600 }
 fn default_max_kes_evolutions() -> u64 { 62 }
 fn default_security_param() -> u64 { 2_160 }
 fn default_update_quorum() -> u64 { 5 }
+fn default_slot_length() -> f64 { 1.0 }
 fn default_min_fee_a() -> u64 { 44 }
 fn default_min_fee_b() -> u64 { 155_381 }
 fn default_max_block_body_size() -> u32 { 65_536 }
@@ -1175,6 +1182,7 @@ mod tests {
         ShelleyGenesis {
             active_slots_coeff: 0.05,
             epoch_length: 432_000,
+            slot_length: 1.0,
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
             security_param: 2_160,

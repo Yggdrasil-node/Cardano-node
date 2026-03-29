@@ -67,6 +67,71 @@ pub enum ConsensusError {
     /// output does not meet the leader threshold for their relative stake.
     #[error("VRF leader eligibility check failed")]
     VrfLeaderCheckFailed,
+
+    /// The block issuer's pool key hash has no entry in the OpCert counter
+    /// map and is also absent from the stake distribution.
+    ///
+    /// Reference: `NoCounterForKeyHashOCERT` in
+    /// `Ouroboros.Consensus.Protocol.Praos`.
+    #[error("no OpCert counter for pool key hash {hash:?}")]
+    NoCounterForKeyHash {
+        /// Blake2b-224 of the issuer cold verification key.
+        hash: [u8; 28],
+    },
+
+    /// The OpCert sequence number is strictly less than the last recorded
+    /// counter for the same pool — the certificate has been superseded.
+    ///
+    /// Reference: `CounterTooSmallOCERT` in
+    /// `Ouroboros.Consensus.Protocol.Praos`.
+    #[error(
+        "OpCert counter too old: stored {stored}, received {received}"
+    )]
+    OcertCounterTooOld {
+        /// The highest previously-seen sequence number.
+        stored: u64,
+        /// The sequence number in the current block's OpCert.
+        received: u64,
+    },
+
+    /// The OpCert sequence number is more than one ahead of the stored
+    /// counter — only a single increment per certificate is allowed.
+    ///
+    /// Reference: `CounterOverIncrementedOCERT` in
+    /// `Ouroboros.Consensus.Protocol.Praos`.
+    #[error(
+        "OpCert counter too far ahead: stored {stored}, received {received}"
+    )]
+    OcertCounterTooFar {
+        /// The highest previously-seen sequence number.
+        stored: u64,
+        /// The sequence number in the current block's OpCert.
+        received: u64,
+    },
+
+    /// The VRF key hash in the block header does not match the registered
+    /// VRF key hash from the pool parameters in the stake distribution.
+    ///
+    /// Reference: `doValidateVRFSignature` — `vrfHKStake ≠ vrfHKBlock`
+    /// check in `Ouroboros.Consensus.Protocol.Praos`.
+    #[error("VRF key mismatch: expected {expected:?}, got {actual:?}")]
+    VrfKeyMismatch {
+        /// The registered VRF key hash from the pool's `PoolParams`.
+        expected: [u8; 32],
+        /// The VRF key hash derived from the block header.
+        actual: [u8; 32],
+    },
+
+    /// The block issuer's pool is not present in the stake distribution,
+    /// so no registered VRF key hash is available for cross-checking.
+    ///
+    /// Reference: `doValidateVRFSignature` — `lookupPoolDistr` failure
+    /// in `Ouroboros.Consensus.Protocol.Praos`.
+    #[error("VRF key check: pool {pool_hash:?} not in stake distribution")]
+    VrfKeyUnknownPool {
+        /// Blake2b-224 of the issuer cold verification key.
+        pool_hash: [u8; 28],
+    },
 }
 
 #[cfg(test)]
@@ -137,6 +202,22 @@ mod tests {
             ConsensusError::KesPeriodOverflow,
             ConsensusError::InvalidSlotsPerKesPeriod,
             ConsensusError::VrfLeaderCheckFailed,
+            ConsensusError::NoCounterForKeyHash { hash: [0; 28] },
+            ConsensusError::OcertCounterTooOld {
+                stored: 5,
+                received: 3,
+            },
+            ConsensusError::OcertCounterTooFar {
+                stored: 5,
+                received: 10,
+            },
+            ConsensusError::VrfKeyMismatch {
+                expected: [0xAA; 32],
+                actual: [0xBB; 32],
+            },
+            ConsensusError::VrfKeyUnknownPool {
+                pool_hash: [0xCC; 28],
+            },
         ];
         for v in &variants {
             assert!(!format!("{v}").is_empty());

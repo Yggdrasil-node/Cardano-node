@@ -57,8 +57,6 @@ pub const DEFAULT_INGRESS_LIMIT: usize = 2_000_000;
 /// and the runtime should tear down the connection.
 pub const EGRESS_SOFT_LIMIT: usize = 0x3ffff; // 262_143 bytes
 
-/// Default protocol scheduling weight for the egress round-robin.
-
 /// SDU read timeout on the bearer connection.
 ///
 /// If no SDU header bytes arrive within this window the demuxer terminates
@@ -68,6 +66,7 @@ pub const EGRESS_SOFT_LIMIT: usize = 0x3ffff; // 262_143 bytes
 /// Reference: `Network.Mux.Bearer` — `bearerAsChannel` read timeout.
 pub const SDU_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Default protocol scheduling weight for the egress round-robin.
 ///
 /// All protocols start with weight 1 (uniform scheduling).  Hot-tier
 /// protocols (ChainSync, BlockFetch) can be assigned higher weights

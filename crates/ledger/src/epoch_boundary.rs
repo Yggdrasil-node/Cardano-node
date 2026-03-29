@@ -475,10 +475,14 @@ fn apply_mir_at_epoch_boundary(ledger: &mut LedgerState) -> MirEpochResult {
 
 /// Applies a signed delta to an unsigned pot balance (saturating).
 fn apply_signed_delta(pot: &mut u64, delta: i64) {
-    if delta > 0 {
-        *pot = pot.saturating_add(delta as u64);
-    } else if delta < 0 {
-        *pot = pot.saturating_sub((-delta) as u64);
+    match delta.cmp(&0) {
+        std::cmp::Ordering::Greater => {
+            *pot = pot.saturating_add(delta as u64);
+        }
+        std::cmp::Ordering::Less => {
+            *pot = pot.saturating_sub((-delta) as u64);
+        }
+        std::cmp::Ordering::Equal => {}
     }
 }
 

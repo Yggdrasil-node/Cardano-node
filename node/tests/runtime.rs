@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use yggdrasil_network::{
     AfterSlot,
@@ -14,8 +16,10 @@ use yggdrasil_network::{
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo,
     ByronBlock, CborEncode, Era, HeaderHash, LedgerError, LedgerState, MultiEraSubmittedTx,
-    Point, Encoder, PoolParams, Relay, RewardAccount, ShelleyTx, ShelleyTxBody, ShelleyTxIn,
-    ShelleyTxOut, ShelleyWitnessSet, SlotNo, StakeCredential, Tip, TxId, UnitInterval, Value,
+    Point, Encoder, PoolParams, Relay, RewardAccount, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn,
+    ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, Tip, TxId,
+    UnitInterval, Value,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_node::{
@@ -29,7 +33,9 @@ use yggdrasil_node::{
     run_reconnecting_verified_sync_service_chaindb,
     run_reconnecting_verified_sync_service,
     run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
+    SyncError,
 };
+use yggdrasil_consensus::TentativeState;
 use yggdrasil_storage::{
     ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
     VolatileStore,
@@ -155,6 +161,124 @@ async fn spawn_verified_batch_responder(
     });
 
     addr
+}
+
+async fn spawn_verified_batch_responder_with_header(
+    magic: u32,
+    tip: Point,
+    header: Vec<u8>,
+    block_bytes: Vec<u8>,
+    linger: std::time::Duration,
+) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut conn = peer_accept(stream, magic, &[HandshakeVersion(15)])
+            .await
+            .expect("accept handshake");
+
+        let mut cs = conn
+            .protocols
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("chainsync handle");
+        let mut bf = conn
+            .protocols
+            .remove(&MiniProtocolNum::BLOCK_FETCH)
+            .expect("blockfetch handle");
+
+        let cs_req = cs.recv().await.expect("cs recv");
+        let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
+        assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
+
+        let tip_obj = Tip::Tip(tip, BlockNo(0));
+        cs.send(
+            ChainSyncMessage::MsgRollForward {
+                header,
+                tip: tip_obj.to_cbor_bytes(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send rollforward");
+
+        let bf_req = bf.recv().await.expect("bf recv");
+        let _bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
+
+        bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("start batch");
+        bf.send(
+            BlockFetchMessage::MsgBlock {
+                block: block_bytes,
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send block");
+        bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("batch done");
+
+        tokio::time::sleep(linger).await;
+        conn.mux.abort();
+    });
+
+    addr
+}
+
+fn sample_shelley_vrf_cert(seed: u8) -> ShelleyVrfCert {
+    ShelleyVrfCert {
+        output: vec![seed; 32],
+        proof: [seed.wrapping_add(1); 80],
+    }
+}
+
+fn sample_shelley_opcert(seed: u8) -> ShelleyOpCert {
+    ShelleyOpCert {
+        hot_vkey: [seed; 32],
+        sequence_number: 42,
+        kes_period: 100,
+        sigma: [seed.wrapping_add(2); 64],
+    }
+}
+
+fn build_fake_shelley_envelope(
+    slot: u64,
+    block_number: u64,
+    prev_hash: Option<[u8; 32]>,
+) -> (Vec<u8>, Vec<u8>, Point) {
+    let header = ShelleyHeader {
+        body: ShelleyHeaderBody {
+            block_number,
+            slot,
+            prev_hash,
+            issuer_vkey: [0x11; 32],
+            vrf_vkey: [0x22; 32],
+            nonce_vrf: sample_shelley_vrf_cert(0x30),
+            leader_vrf: sample_shelley_vrf_cert(0x40),
+            block_body_size: 0,
+            block_body_hash: [0x55; 32],
+            operational_cert: sample_shelley_opcert(0x60),
+            protocol_version: (2, 0),
+        },
+        signature: vec![0xDD; 448],
+    };
+
+    let block = ShelleyBlock {
+        header: header.clone(),
+        transaction_bodies: Vec::new(),
+        transaction_witness_sets: Vec::new(),
+        transaction_metadata_set: HashMap::new(),
+    };
+
+    let body_bytes = block.to_cbor_bytes();
+    let envelope = build_multi_era_envelope(2, &body_bytes);
+    let tip = Point::BlockPoint(SlotNo(slot), header.header_hash());
+    (header.to_cbor_bytes(), envelope, tip)
 }
 
 async fn spawn_verified_batch_responder_from_point(
@@ -720,7 +844,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         verification: VerificationConfig {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
-            verify_body_hash: true,
+            verify_body_hash: true, future_check: None, ocert_counters: None,
         },
         nonce_config: None,
         security_param: None,
@@ -728,6 +852,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         plutus_cost_model: None,
         verify_vrf: false,
         active_slot_coeff: None,
+        slot_length_secs: None,
     };
     let mut store = InMemoryVolatile::default();
 
@@ -798,7 +923,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         verification: VerificationConfig {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
-            verify_body_hash: true,
+            verify_body_hash: true, future_check: None, ocert_counters: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -806,6 +931,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         plutus_cost_model: None,
         verify_vrf: false,
         active_slot_coeff: None,
+        slot_length_secs: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -850,6 +976,158 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
 }
 
 #[tokio::test]
+async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure() {
+    let magic = 97;
+    let (header, block_bytes, tip) =
+        build_fake_shelley_envelope(10, 1, Some([0xAA; 32]));
+    let addr = spawn_verified_batch_responder_with_header(
+        magic,
+        tip,
+        header,
+        block_bytes,
+        std::time::Duration::from_millis(250),
+    )
+    .await;
+
+    let node_config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+    let service_config = VerifiedSyncServiceConfig {
+        batch_size: 1,
+        verification: VerificationConfig {
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            verify_body_hash: false,
+            future_check: None, ocert_counters: None,
+        },
+        nonce_config: None,
+        security_param: None,
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
+        slot_length_secs: None,
+    };
+
+    let tentative_state = Arc::new(RwLock::new(TentativeState::initial()));
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    let result: Result<ReconnectingSyncServiceOutcome, SyncError> =
+        run_reconnecting_verified_sync_service_chaindb(
+            &mut chain_db,
+            ReconnectingVerifiedSyncRequest::new(
+                &node_config,
+                &[],
+                Point::Origin,
+                LedgerState::new(Era::Byron),
+                &service_config,
+            )
+            .with_tentative_state(Some(Arc::clone(&tentative_state))),
+            std::future::pending::<()>(),
+        )
+        .await;
+
+    assert!(result.is_err(), "expected validation failure for fake Shelley header");
+
+    let state = tentative_state.read().expect("tentative state lock");
+    assert!(state.tentative().is_none(), "tentative header should be cleared on trap");
+    assert_eq!(
+        state.criterion_state.last_trap_block_no(),
+        Some(BlockNo(1)),
+        "trap block number should be recorded in criterion state"
+    );
+}
+
+#[tokio::test]
+async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
+    let magic = 79;
+    let block = build_multi_era_envelope(0, &build_byron_ebb_body(0, 1, &[0; 32]));
+    let tip = Point::BlockPoint(
+        SlotNo(0),
+        ByronBlock::decode_ebb(&block[2..])
+            .expect("decode ebb")
+            .header_hash(),
+    );
+    let addr = spawn_verified_batch_responder(
+        magic,
+        tip,
+        block,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    let node_config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+    };
+    let service_config = VerifiedSyncServiceConfig {
+        batch_size: 1,
+        verification: VerificationConfig {
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            verify_body_hash: true,
+            future_check: None, ocert_counters: None,
+        },
+        nonce_config: None,
+        security_param: None,
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
+        slot_length_secs: None,
+    };
+
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+
+    let tip_notify = Arc::new(tokio::sync::Notify::new());
+    let mut notified = Box::pin(tip_notify.notified());
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let mut sync_fut = Box::pin(resume_reconnecting_verified_sync_service_chaindb(
+        &mut chain_db,
+        ResumeReconnectingVerifiedSyncRequest::new(
+            &node_config,
+            &[],
+            LedgerState::new(Era::Byron),
+            &service_config,
+        )
+        .with_tip_notify(Some(tip_notify.clone())),
+        async {
+            let _ = shutdown_rx.await;
+        },
+    ));
+
+    tokio::select! {
+        _ = &mut notified => {}
+        result = &mut sync_fut => {
+            panic!("sync ended before tip notification: {result:?}");
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {
+            panic!("timed out waiting for tip notification");
+        }
+    }
+
+    let _ = shutdown_tx.send(());
+
+    let outcome = sync_fut
+        .await
+        .expect("resume reconnecting verified sync service via chaindb");
+    assert!(outcome.sync.total_blocks >= 1);
+    assert_eq!(chain_db.volatile().tip(), tip);
+}
+
+#[tokio::test]
 async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovered_point() {
     let magic = 78;
 
@@ -881,7 +1159,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         verification: VerificationConfig {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
-            verify_body_hash: true,
+            verify_body_hash: true, future_check: None, ocert_counters: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -889,6 +1167,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         plutus_cost_model: None,
         verify_vrf: false,
         active_slot_coeff: None,
+        slot_length_secs: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -975,7 +1254,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         verification: VerificationConfig {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
-            verify_body_hash: true,
+            verify_body_hash: true, future_check: None, ocert_counters: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -983,6 +1262,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         plutus_cost_model: None,
         verify_vrf: false,
         active_slot_coeff: None,
+        slot_length_secs: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);
@@ -1090,7 +1370,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         verification: VerificationConfig {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
-            verify_body_hash: true,
+            verify_body_hash: true, future_check: None, ocert_counters: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -1098,6 +1378,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         plutus_cost_model: None,
         verify_vrf: false,
         active_slot_coeff: None,
+        slot_length_secs: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);

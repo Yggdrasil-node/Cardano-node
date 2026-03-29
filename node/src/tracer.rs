@@ -154,7 +154,12 @@ impl Clone for NodeTracer {
             use_trace_dispatcher: self.use_trace_dispatcher,
             trace_option_node_name: self.trace_option_node_name.clone(),
             trace_options: self.trace_options.clone(),
-            last_emit_ms: Arc::new(Mutex::new(self.last_emit_ms.lock().unwrap().clone())),
+            last_emit_ms: Arc::new(Mutex::new(
+                self.last_emit_ms
+                    .lock()
+                    .expect("node tracer emit-map mutex poisoned")
+                    .clone(),
+            )),
             forwarder: None, // Do not clone the forwarder (socket)
         }
     }

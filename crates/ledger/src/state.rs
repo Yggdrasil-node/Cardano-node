@@ -7348,9 +7348,6 @@ fn relay_access_points_from_relays(relays: &[Relay]) -> Vec<PoolRelayAccessPoint
 // per-action-type thresholds in `PoolVotingThresholds` /
 // `DRepVotingThresholds`. The combined predicate `ratify_action()`
 // determines whether a governance action has been accepted.
-//
-// Epoch-boundary hookup (iterating proposals, calling `enact_gov_action`,
-// and pruning enacted proposals) is a subsequent slice.
 
 use crate::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
 use crate::stake::PoolStakeDistribution;

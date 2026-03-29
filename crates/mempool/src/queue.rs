@@ -519,6 +519,47 @@ impl Mempool {
         }
         removed_count
     }
+
+    /// Re-validate remaining transactions after a block has been applied.
+    ///
+    /// Removes any transaction whose inputs are no longer present in the
+    /// given set of available UTxO input hashes, or whose TTL has expired.
+    /// This is the Rust equivalent of the Haskell node's mempool
+    /// re-validation pass that runs after each block application.
+    ///
+    /// `available_inputs` should contain the set of `ShelleyTxIn` that are
+    /// currently unspent in the UTxO after the latest block has been applied.
+    ///
+    /// Returns the number of entries removed.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — re-validation
+    /// after `applyBlockLedgerResult`.
+    pub fn revalidate(
+        &mut self,
+        current_slot: SlotNo,
+        available_inputs: &std::collections::HashSet<ShelleyTxIn>,
+    ) -> usize {
+        let mut removed_count = 0;
+        let mut i = 0;
+        while i < self.entries.len() {
+            let entry = &self.entries[i].entry;
+            // Check TTL expiry first.
+            let expired = current_slot > entry.ttl;
+            // Check if any required input has been consumed.
+            let inputs_spent = entry.inputs.iter().any(|inp| !available_inputs.contains(inp));
+            if expired || inputs_spent {
+                let removed = self.entries.remove(i);
+                self.current_bytes -= removed.entry.size_bytes;
+                for input in &removed.entry.inputs {
+                    self.claimed_inputs.remove(input);
+                }
+                removed_count += 1;
+            } else {
+                i += 1;
+            }
+        }
+        removed_count
+    }
 }
 
 /// Shared wrapper for concurrent mempool access.
@@ -589,6 +630,21 @@ impl SharedMempool {
             .write()
             .expect("shared mempool poisoned")
             .purge_expired(current_slot)
+    }
+
+    /// Re-validate remaining transactions after a block has been applied.
+    ///
+    /// Removes entries whose inputs are no longer available or whose TTL has
+    /// expired.  Returns the number of entries removed.
+    pub fn revalidate(
+        &self,
+        current_slot: SlotNo,
+        available_inputs: &std::collections::HashSet<ShelleyTxIn>,
+    ) -> usize {
+        self.inner
+            .write()
+            .expect("shared mempool poisoned")
+            .revalidate(current_slot, available_inputs)
     }
 
     /// Check whether a transaction with the given id exists in the mempool.

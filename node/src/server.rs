@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool};
 use crate::sync::recover_ledger_state_chaindb;
+use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock,
     Decoder, MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo,
@@ -407,7 +408,8 @@ pub async fn run_keepalive_server(
 ) -> Result<(), KeepAliveServerError> {
     loop {
         let result = tokio::time::timeout(
-            yggdrasil_network::protocol_limits::keepalive::SERVER.unwrap(),
+            yggdrasil_network::protocol_limits::keepalive::SERVER
+                .expect("keepalive server timeout constant must be set"),
             server.recv_keep_alive(),
         )
         .await;
@@ -476,42 +478,105 @@ pub trait ChainProvider: Send + Sync {
     ///
     /// Returns `(found_point, tip)` or `None` if no intersection.
     fn find_intersect(&self, points: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<u8>)>;
+
+    /// Return the tentative tip header, if diffusion pipelining is active.
+    ///
+    /// When a tentative header is set (header validated, body not yet),
+    /// this returns `(point, header_cbor, tip)` representing the tentative
+    /// extension of the confirmed chain.  ChainSync servers use this to
+    /// announce the header before body validation completes.
+    ///
+    /// Reference: `cdbTentativeHeader` in
+    /// `Ouroboros.Consensus.Storage.ChainDB.Impl.Types`.
+    fn tentative_tip(&self) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        None
+    }
 }
 
 /// Run the ChainSync server loop, serving headers from a [`ChainProvider`].
+///
+/// When `tip_notify` is provided, the server awaits it instead of busy-loop
+/// polling when the client is at the tip.  This is the Rust equivalent of
+/// the upstream ChainDB follower notification mechanism.
 pub async fn run_chainsync_server(
     mut server: ChainSyncServer,
     provider: &dyn ChainProvider,
+    tip_notify: Option<crate::runtime::ChainTipNotify>,
 ) -> Result<(), ChainSyncServerError> {
     let mut cursor: Option<Vec<u8>> = None;
+    // Track whether the last served header was a tentative (pipelined)
+    // header.  If the tentative header is later trapped (body invalid),
+    // we must roll-backward to the confirmed tip before serving new data.
+    let mut served_tentative = false;
 
     loop {
         match server.recv_request().await? {
             ChainSyncServerRequest::RequestNext => {
+                // If we previously served a tentative header and it has
+                // since been cleared (either adopted into confirmed chain
+                // or trapped), reconcile:
+                // - If confirmed chain now includes the cursor → ok, keep going.
+                // - Otherwise → tentative was trapped, roll backward.
+                if served_tentative {
+                    if provider.next_header(&cursor).is_some()
+                        || provider.tentative_tip().is_some()
+                    {
+                        // Tentative was adopted: confirmed chain advanced
+                        // past the cursor, or tentative is still set.
+                        // Fall through to normal processing.
+                    } else {
+                        // Tentative was trapped: roll backward to confirmed tip.
+                        served_tentative = false;
+                        let confirmed_tip = provider.chain_tip();
+                        // Reset cursor to the confirmed chain tip.
+                        cursor = Some(confirmed_tip.clone());
+                        server.roll_backward(confirmed_tip.clone(), confirmed_tip).await?;
+                        continue;
+                    }
+                }
+
                 match provider.next_header(&cursor) {
                     Some((point, header, tip)) => {
+                        served_tentative = false;
                         cursor = Some(point);
                         server.roll_forward(header, tip).await?;
                     }
                     None => {
-                        // No new data — tell client to wait, then block until
-                        // data arrives (simplified: immediate await + retry).
-                        server.await_reply().await?;
-                        // In a production server this would use a notification
-                        // channel from the chain-sync pipeline. For now, yield
-                        // and return the tip when the provider has data.
-                        loop {
-                            tokio::task::yield_now().await;
-                            if let Some((point, header, tip)) = provider.next_header(&cursor) {
-                                cursor = Some(point);
-                                server.roll_forward(header, tip).await?;
-                                break;
+                        // At confirmed tip — check for tentative header.
+                        if let Some((point, header, tip)) = provider.tentative_tip() {
+                            served_tentative = true;
+                            cursor = Some(point);
+                            server.roll_forward(header, tip).await?;
+                        } else {
+                            // No tentative either — tell client to wait.
+                            server.await_reply().await?;
+                            loop {
+                                if let Some(ref notify) = tip_notify {
+                                    notify.notified().await;
+                                } else {
+                                    tokio::task::yield_now().await;
+                                }
+                                // Check confirmed chain first.
+                                if let Some((point, header, tip)) = provider.next_header(&cursor) {
+                                    served_tentative = false;
+                                    cursor = Some(point);
+                                    server.roll_forward(header, tip).await?;
+                                    break;
+                                }
+                                // Check tentative header.
+                                if let Some((point, header, tip)) = provider.tentative_tip() {
+                                    served_tentative = true;
+                                    cursor = Some(point);
+                                    server.roll_forward(header, tip).await?;
+                                    break;
+                                }
                             }
                         }
                     }
                 }
             }
             ChainSyncServerRequest::FindIntersect { points } => {
+                served_tentative = false;
                 match provider.find_intersect(&points) {
                     Some((point, tip)) => {
                         cursor = Some(point.clone());
@@ -586,7 +651,7 @@ pub async fn run_txsubmission_server(
 
                 let txs = {
                     let timeout = yggdrasil_network::protocol_limits::txsubmission::ST_TXS
-                        .unwrap();
+                        .expect("txsubmission ST_TXS timeout constant must be set");
                     match tokio::time::timeout(
                         timeout,
                         server.request_txs(to_request.clone()),
@@ -652,6 +717,7 @@ pub async fn run_peersharing_server(
 #[derive(Clone, Debug)]
 pub struct SharedChainDb<I, V, L> {
     inner: Arc<RwLock<ChainDb<I, V, L>>>,
+    tentative: Option<Arc<RwLock<TentativeState>>>,
 }
 
 impl<I, V, L> SharedChainDb<I, V, L> {
@@ -659,12 +725,25 @@ impl<I, V, L> SharedChainDb<I, V, L> {
     pub fn new(chain_db: ChainDb<I, V, L>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(chain_db)),
+            tentative: None,
         }
     }
 
     /// Create a shared handle from a pre-existing `Arc`.
     pub fn from_arc(arc: Arc<RwLock<ChainDb<I, V, L>>>) -> Self {
-        Self { inner: arc }
+        Self { inner: arc, tentative: None }
+    }
+
+    /// Create a shared handle from a pre-existing `Arc` with a shared
+    /// `TentativeState` for diffusion pipelining.
+    pub fn from_arc_with_tentative(
+        arc: Arc<RwLock<ChainDb<I, V, L>>>,
+        tentative: Arc<RwLock<TentativeState>>,
+    ) -> Self {
+        Self {
+            inner: arc,
+            tentative: Some(tentative),
+        }
     }
 
     /// Obtain a read-only reference to the underlying `Arc<RwLock<_>>`.
@@ -855,6 +934,19 @@ where
 
         None
     }
+
+    fn tentative_tip(&self) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        let tentative = self.tentative.as_ref()?;
+        let ts = tentative.read().ok()?;
+        let th = ts.tentative()?;
+
+        // The tentative tip point is the tentative header's block point.
+        let tip_point = Point::BlockPoint(th.slot, th.header_hash);
+        let point_cbor = tip_point.to_cbor_bytes();
+        let header_cbor = th.raw_header.clone();
+        let tip_cbor = tip_point.to_cbor_bytes();
+        Some((point_cbor, header_cbor, tip_cbor))
+    }
 }
 
 /// Find the first block strictly after `cursor` in the combined chain.
@@ -943,6 +1035,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
     accepted_connections_limit: Option<AcceptedConnectionsLimit>,
     shared_tx_state: Option<SharedTxState>,
+    tip_notify: Option<crate::runtime::ChainTipNotify>,
     tracer: Option<&crate::tracer::NodeTracer>,
     metrics: Option<&Arc<crate::tracer::NodeMetrics>>,
     shutdown: F,
@@ -1126,6 +1219,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 let shared_cm = connection_manager.clone();
                 let shared_ig = inbound_governor.clone();
                 let session_tx_state = shared_tx_state.clone();
+                let session_tip_notify = tip_notify.clone();
                 let remote_addr = session.remote_addr;
                 let connection_id = conn_id;
                 let base = start;
@@ -1226,6 +1320,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         let shared_ig = shared_ig.clone();
                         let shared_cm = shared_cm.clone();
                         let responder_counters = responder_counters.clone();
+                        let notify = session_tip_notify.clone();
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1244,7 +1339,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 );
                             }
 
-                            let _ = run_chainsync_server(session.chain_sync, &*provider).await;
+                            let _ = run_chainsync_server(session.chain_sync, &*provider, notify).await;
 
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1470,7 +1565,7 @@ mod tests {
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
         ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo,
     };
-    use yggdrasil_network::{HandshakeVersion, PeerListener, TxIdAndSize};
+    use yggdrasil_network::{HandshakeVersion, NextResponse, PeerListener, TxIdAndSize};
     use yggdrasil_storage::{
         ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         VolatileStore,
@@ -1664,6 +1759,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     async move {
                         let _ = shutdown_rx.await;
                     },
@@ -1794,5 +1890,137 @@ mod tests {
         let provider = SharedPeerSharingProvider::new(Arc::new(RwLock::new(registry)));
         let peers = provider.shareable_peers(2);
         assert_eq!(peers.len(), 2, "should return at most the requested amount");
+    }
+
+    type RawChainSyncTip = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+    #[derive(Clone)]
+    struct MockTentativeChainProvider {
+        confirmed_tip: Point,
+        tentative: Arc<RwLock<Option<RawChainSyncTip>>>,
+    }
+
+    impl ChainProvider for MockTentativeChainProvider {
+        fn chain_tip(&self) -> Vec<u8> {
+            self.confirmed_tip.to_cbor_bytes()
+        }
+
+        fn next_header(
+            &self,
+            _cursor: &Option<Vec<u8>>,
+        ) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+            None
+        }
+
+        fn find_intersect(&self, points: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<u8>)> {
+            points
+                .iter()
+                .find(|candidate| {
+                    Point::from_cbor_bytes(candidate)
+                        .map(|point| point == self.confirmed_tip)
+                        .unwrap_or(false)
+                })
+                .map(|point| (point.clone(), self.confirmed_tip.to_cbor_bytes()))
+        }
+
+        fn tentative_tip(&self) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+            self.tentative.read().ok()?.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn chainsync_server_rolls_back_after_tentative_trap() {
+        let listener = PeerListener::bind(
+            "127.0.0.1:0",
+            42,
+            vec![HandshakeVersion(15)],
+        )
+        .await
+        .expect("bind listener");
+        let listen_addr = listener.local_addr().expect("listen addr");
+
+        let confirmed_point = Point::BlockPoint(SlotNo(1), HeaderHash([0xCD; 32]));
+        let tentative_point = Point::BlockPoint(SlotNo(42), HeaderHash([0xAB; 32]));
+        let tentative_state = Arc::new(RwLock::new(Some((
+            tentative_point.to_cbor_bytes(),
+            vec![0x80],
+            tentative_point.to_cbor_bytes(),
+        ))));
+
+        let provider = Arc::new(MockTentativeChainProvider {
+            confirmed_tip: confirmed_point,
+            tentative: Arc::clone(&tentative_state),
+        });
+        let chain_provider: Arc<dyn ChainProvider> = provider;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let accept_task = tokio::spawn(async move {
+            run_inbound_accept_loop(
+                &listener,
+                None,
+                Some(chain_provider),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                async move {
+                    let _ = shutdown_rx.await;
+                },
+            )
+            .await
+        });
+
+        let mut session = bootstrap(&NodeConfig {
+            peer_addr: listen_addr,
+            network_magic: 42,
+            protocol_versions: vec![HandshakeVersion(15)],
+        })
+        .await
+        .expect("bootstrap client");
+
+        let first = session
+            .chain_sync
+            .request_next()
+            .await
+            .expect("first request_next");
+        match first {
+            NextResponse::RollForward { tip, .. }
+            | NextResponse::AwaitRollForward { tip, .. } => {
+                assert_eq!(tip, tentative_point.to_cbor_bytes());
+            }
+            other => panic!("expected tentative roll-forward, got {other:?}"),
+        }
+
+        {
+            let mut state = tentative_state.write().expect("tentative state lock");
+            *state = None;
+        }
+
+        let second = session
+            .chain_sync
+            .request_next()
+            .await
+            .expect("second request_next");
+        match second {
+            NextResponse::RollBackward { point, tip }
+            | NextResponse::AwaitRollBackward { point, tip } => {
+                assert_eq!(point, confirmed_point.to_cbor_bytes());
+                assert_eq!(tip, confirmed_point.to_cbor_bytes());
+            }
+            other => panic!("expected rollback after tentative trap, got {other:?}"),
+        }
+
+        session.mux.abort();
+        let _ = shutdown_tx.send(());
+        accept_task
+            .await
+            .expect("accept task join")
+            .expect("accept loop");
     }
 }

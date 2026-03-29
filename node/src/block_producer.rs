@@ -29,7 +29,10 @@ use yggdrasil_crypto::vrf::{
     VrfOutput, VrfSecretKey, VrfVerificationKey,
     VRF_SIGNING_KEY_SIZE,
 };
-use yggdrasil_ledger::{BlockNo, HeaderHash, Nonce, SlotNo, TxId, Era};
+use yggdrasil_ledger::{
+    BlockNo, CborEncode, Encoder, HeaderHash, Nonce, SlotNo, TxId, Era,
+    PraosHeader, PraosHeaderBody, ShelleyOpCert, ShelleyVrfCert,
+};
 use yggdrasil_mempool::MempoolEntry;
 
 use thiserror::Error;
@@ -636,6 +639,7 @@ pub struct ForgedBlockHeader {
 ///
 /// Reference: `forgePraosFields` in
 /// `Ouroboros.Consensus.Protocol.Praos`.
+#[allow(clippy::too_many_arguments)]
 pub fn forge_block_header(
     creds: &BlockProducerCredentials,
     election: &LeaderElectionResult,
@@ -987,6 +991,7 @@ pub struct ForgedBlock {
 ///
 /// Reference: `forgeShelleyBlock` in
 /// `Ouroboros.Consensus.Shelley.Node.Forging`.
+#[allow(clippy::too_many_arguments)]
 pub fn forge_block(
     creds: &BlockProducerCredentials,
     election: &LeaderElectionResult,
@@ -1045,14 +1050,173 @@ pub fn forge_block(
     })
 }
 
+/// Serialize a forged block into the multi-era CBOR envelope.
+///
+/// Produces `[era_tag, ConwayBlock_CBOR]` where the Conway block is
+/// `[header, tx_bodies, witness_sets, aux_data_map, invalid_txs]`.
+///
+/// The header is encoded as a `PraosHeader` with a 14-element
+/// `PraosHeaderBody` matching the on-chain Babbage/Conway wire format.
+///
+/// Transaction bodies and witness sets are extracted from each
+/// `ForgeBodyTx.raw_tx` which carries the submitted-tx CBOR
+/// `[body, witnesses, is_valid, aux_data]`.
+///
+/// Reference: `Cardano.Ledger.Block`, `forgeShelleyBlock`.
+pub fn serialize_forged_block_cbor(forged: &ForgedBlock) -> Vec<u8> {
+    // Conway era tag in the multi-era envelope.
+    const CONWAY_ERA_TAG: u64 = 7;
+
+    // Convert consensus HeaderBody → ledger PraosHeader for CBOR encoding.
+    let hb = &forged.header.header_body;
+    let praos_hdr = PraosHeader {
+        body: PraosHeaderBody {
+            block_number: hb.block_number.0,
+            slot: hb.slot.0,
+            prev_hash: hb.prev_hash.map(|h| h.0),
+            issuer_vkey: hb.issuer_vkey.0,
+            vrf_vkey: hb.vrf_vkey.to_bytes(),
+            vrf_result: ShelleyVrfCert {
+                output: hb.leader_vrf_output.clone(),
+                proof: hb.leader_vrf_proof,
+            },
+            block_body_size: hb.block_body_size,
+            block_body_hash: hb.block_body_hash,
+            operational_cert: ShelleyOpCert {
+                hot_vkey: hb.operational_cert.hot_vkey.to_bytes(),
+                sequence_number: hb.operational_cert.sequence_number,
+                kes_period: hb.operational_cert.kes_period,
+                sigma: hb.operational_cert.sigma.0,
+            },
+            protocol_version: hb.protocol_version,
+        },
+        signature: forged.header.kes_signature.to_bytes().to_vec(),
+    };
+
+    // Parse each raw_tx to split tx body and witness set CBOR.
+    // Submitted-tx format: [body, witnesses, is_valid, aux_data / null]
+    let mut raw_bodies: Vec<&[u8]> = Vec::with_capacity(forged.transactions.len());
+    let mut raw_witnesses: Vec<&[u8]> = Vec::with_capacity(forged.transactions.len());
+    let mut aux_entries: Vec<(u64, &[u8])> = Vec::new();
+
+    for (idx, btx) in forged.transactions.iter().enumerate() {
+        let data = &btx.raw_tx;
+        if let Ok((body_slice, wit_slice, aux_slice)) = split_submitted_tx(data) {
+            raw_bodies.push(body_slice);
+            raw_witnesses.push(wit_slice);
+            if let Some(aux) = aux_slice {
+                aux_entries.push((idx as u64, aux));
+            }
+        } else {
+            // Fallback: use the stored body bytes and an empty witness set.
+            raw_bodies.push(&btx.body);
+            raw_witnesses.push(&[0xa0]); // empty CBOR map
+        }
+    }
+
+    // Encode the multi-era envelope: [7, ConwayBlock]
+    let mut enc = Encoder::with_capacity(
+        2 + praos_hdr.to_cbor_bytes().len()
+            + forged.transactions.iter().map(|t| t.raw_tx.len()).sum::<usize>()
+            + 64,
+    );
+
+    // Outer envelope
+    enc.array(2);
+    enc.unsigned(CONWAY_ERA_TAG);
+
+    // ConwayBlock: [header, tx_bodies, witnesses, aux_map, invalid_txs]
+    enc.array(5);
+    praos_hdr.encode_cbor(&mut enc);
+
+    // transaction_bodies
+    enc.array(raw_bodies.len() as u64);
+    for body in &raw_bodies {
+        enc.raw(body);
+    }
+
+    // transaction_witness_sets
+    enc.array(raw_witnesses.len() as u64);
+    for wit in &raw_witnesses {
+        enc.raw(wit);
+    }
+
+    // auxiliary_data_set (map of tx_index → raw aux bytes)
+    enc.map(aux_entries.len() as u64);
+    for &(idx, aux) in &aux_entries {
+        enc.unsigned(idx);
+        enc.raw(aux);
+    }
+
+    // invalid_transactions (empty for locally forged blocks)
+    enc.array(0);
+
+    enc.into_bytes()
+}
+
+/// Split a submitted-transaction CBOR `[body, witnesses, is_valid, aux]`
+/// into references to the body, witness, and optional auxiliary slices
+/// within the original buffer.
+///
+/// Returns `(body_slice, witness_slice, Option<aux_slice>)`.
+type SubmittedTxSlices<'a> = (&'a [u8], &'a [u8], Option<&'a [u8]>);
+
+fn split_submitted_tx(data: &[u8]) -> Result<SubmittedTxSlices<'_>, ()> {
+    use yggdrasil_ledger::Decoder;
+    let mut dec = Decoder::new(data);
+
+    let arr_len = dec.array().map_err(|_| ())?;
+    if arr_len < 3 {
+        return Err(());
+    }
+
+    // Element 0: tx body
+    let body_start = dec.position();
+    dec.skip().map_err(|_| ())?;
+    let body_end = dec.position();
+    let body_slice = dec.slice(body_start, body_end).map_err(|_| ())?;
+
+    // Element 1: witness set
+    let wit_start = dec.position();
+    dec.skip().map_err(|_| ())?;
+    let wit_end = dec.position();
+    let wit_slice = dec.slice(wit_start, wit_end).map_err(|_| ())?;
+
+    // Element 2: is_valid (skip)
+    dec.skip().map_err(|_| ())?;
+
+    // Element 3 (optional): auxiliary data
+    let aux_slice = if arr_len >= 4 {
+        let aux_start = dec.position();
+        dec.skip().map_err(|_| ())?;
+        let aux_end = dec.position();
+        let raw = dec.slice(aux_start, aux_end).map_err(|_| ())?;
+        // Check for CBOR null (0xf6)
+        if raw == [0xf6] {
+            None
+        } else {
+            Some(raw)
+        }
+    } else {
+        None
+    };
+
+    Ok((body_slice, wit_slice, aux_slice))
+}
+
 /// Convert a `ForgedBlock` into the storage-facing `Block` type suitable
 /// for insertion into the volatile ChainDB.
 ///
-/// Note: this creates the `Block` without `raw_cbor` since the block was
-/// locally forged rather than received from the network. Future work may
-/// serialize the block for relay.
+/// The block is fully serialized to its multi-era CBOR envelope so that
+/// ChainSync servers can serve its header and BlockFetch servers can
+/// relay the complete block to downstream peers.
+///
+/// Reference: upstream `forgeShelleyBlock` → `ShelleyBlock` with
+/// serialized CBOR for wire relay.
 pub fn forged_block_to_storage_block(forged: &ForgedBlock) -> yggdrasil_ledger::Block {
     use yggdrasil_ledger::{Block, BlockHeader, Era, Tx};
+
+    let raw_cbor = serialize_forged_block_cbor(forged);
 
     let txs: Vec<Tx> = forged
         .transactions
@@ -1076,7 +1240,7 @@ pub fn forged_block_to_storage_block(forged: &ForgedBlock) -> yggdrasil_ledger::
         .unwrap_or(HeaderHash([0u8; 32]));
 
     Block {
-        era: Era::Conway, // Forged blocks are always in the current era.
+        era: Era::Conway,
         header: BlockHeader {
             hash: forged.header_hash,
             prev_hash,
@@ -1085,7 +1249,7 @@ pub fn forged_block_to_storage_block(forged: &ForgedBlock) -> yggdrasil_ledger::
             issuer_vkey: forged.header.header_body.issuer_vkey.0,
         },
         transactions: txs,
-        raw_cbor: None,
+        raw_cbor: Some(raw_cbor),
     }
 }
 
@@ -1429,6 +1593,85 @@ mod tests {
         let evolutions = evolve_kes_key_to_period(&mut creds, 3).unwrap();
         assert_eq!(evolutions, 3);
         assert_eq!(creds.kes_current_period, 3);
+    }
+
+    #[test]
+    fn forged_storage_block_carries_multi_era_raw_cbor() {
+        use yggdrasil_crypto::ed25519::SigningKey;
+        use yggdrasil_ledger::{CborDecode, ConwayBlock, Decoder};
+
+        let cold_sk = SigningKey::from_bytes([0x9Au8; 32]);
+        let cold_vk = cold_sk.verification_key();
+
+        let kes_sk = gen_sum_kes_signing_key(&[0x8Bu8; 32], 0).unwrap();
+        let kes_vk = derive_sum_kes_vk(&kes_sk).unwrap();
+        let opcert_signable = {
+            let mut buf = [0u8; 48];
+            buf[..32].copy_from_slice(&kes_vk.to_bytes());
+            buf[32..40].copy_from_slice(&0u64.to_be_bytes());
+            buf[40..48].copy_from_slice(&0u64.to_be_bytes());
+            buf
+        };
+        let opcert_sigma = cold_sk.sign(&opcert_signable).unwrap();
+
+        let creds = BlockProducerCredentials {
+            vrf_signing_key: VrfSecretKey::from_seed([0x7Cu8; 32]),
+            vrf_verification_key: VrfSecretKey::from_seed([0x7Cu8; 32]).verification_key(),
+            kes_signing_key: kes_sk,
+            kes_current_period: 0,
+            operational_cert: OpCert {
+                hot_vkey: kes_vk,
+                sequence_number: 0,
+                kes_period: 0,
+                sigma: opcert_sigma,
+            },
+            slots_per_kes_period: 129600,
+            max_kes_evolutions: 62,
+        };
+
+        let election = check_slot_leadership(
+            &creds,
+            SlotNo(123),
+            Nonce::Hash([0x55; 32]),
+            1,
+            1,
+            &ActiveSlotCoeff::new(1.0).unwrap(),
+        )
+        .unwrap()
+        .expect("leader election");
+
+        let forged = forge_block(
+            &creds,
+            &election,
+            &BlockContext {
+                block_number: BlockNo(1),
+                prev_hash: None,
+                prev_slot: None,
+            },
+            SlotNo(123),
+            &[],
+            1024,
+            cold_vk.unwrap(),
+            (9, 0),
+        )
+        .expect("forge block");
+
+        let storage_block = forged_block_to_storage_block(&forged);
+        assert_eq!(storage_block.era, Era::Conway);
+        let raw = storage_block.raw_cbor.expect("raw cbor must be present");
+
+        let mut dec = Decoder::new(&raw);
+        assert_eq!(dec.array().expect("envelope array"), 2);
+        assert_eq!(dec.unsigned().expect("era tag"), 7);
+
+        let body_start = dec.position();
+        dec.skip().expect("skip envelope body");
+        let body_end = dec.position();
+        let conway = ConwayBlock::from_cbor_bytes(&raw[body_start..body_end])
+            .expect("decode conway block");
+
+        assert_eq!(conway.header.body.slot, 123);
+        assert!(conway.transaction_bodies.is_empty());
     }
 
     #[test]

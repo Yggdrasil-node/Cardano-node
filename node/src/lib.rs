@@ -15,10 +15,10 @@ pub mod sync;
 pub mod tracer;
 
 pub use runtime::{
-	MempoolAddTxError, MempoolAddTxResult, NodeConfig, PeerSession,
+	ChainTipNotify, MempoolAddTxError, MempoolAddTxResult, NodeConfig, PeerSession,
 	ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
 	ResumeReconnectingVerifiedSyncRequest, ResumedSyncServiceOutcome,
-	RuntimeBlockProducerConfig, RuntimeGovernorConfig,
+	RuntimeBlockProducerConfig, RuntimeGovernorConfig, SharedBlockProducerState,
 	TxSubmissionServiceError, TxSubmissionServiceOutcome, add_tx_to_mempool,
 	add_tx_to_shared_mempool, add_txs_to_mempool, add_txs_to_shared_mempool,
 	bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
@@ -54,7 +54,8 @@ pub use sync::{
 	shelley_opcert_to_consensus, sync_batch_apply, sync_batch_apply_verified, sync_step,
 	sync_step_decoded, sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed,
 	sync_until_typed, typed_find_intersect, verify_block_body_hash, verify_block_vrf,
-	verify_block_vrf_with_stake, block_issuer_vkey,
+	verify_block_vrf_with_stake, block_issuer_vkey, block_vrf_vkey,
+	block_opcert_sequence_number, validate_block_opcert_counter,
 	verify_multi_era_block,
 	verify_praos_header, verify_shelley_header, SHELLEY_KES_DEPTH,
 };

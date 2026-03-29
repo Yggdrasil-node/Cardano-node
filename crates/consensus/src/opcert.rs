@@ -10,6 +10,8 @@
 use yggdrasil_crypto::ed25519::{Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::SumKesVerificationKey;
 
+use std::collections::BTreeMap;
+
 use crate::error::ConsensusError;
 
 /// Operational certificate: proves that the cold key authorized a hot KES
@@ -99,6 +101,103 @@ pub fn check_kes_period(
         });
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// OcertCounters — monotonic OpCert sequence-number tracking
+// ---------------------------------------------------------------------------
+
+/// Tracks the highest observed operational-certificate sequence number per
+/// pool (keyed by the Blake2b-224 hash of the issuer cold key).
+///
+/// When a new block arrives the counter is validated using the same rules as
+/// the upstream `currentIssueNo` helper in
+/// `Ouroboros.Consensus.Protocol.Praos`:
+///
+/// 1. If the pool is already in the counter map, the new sequence number
+///    `n` must satisfy  `stored ≤ n ≤ stored + 1`.
+/// 2. If the pool is **not** in the counter map but **is** present in the
+///    stake distribution, the counter is initialized — the block is the
+///    first we have seen from this pool.
+/// 3. If the pool is in neither, `NoCounterForKeyHash` is returned.
+///
+/// Reference: `PraosState.csCounters` and `currentIssueNo` in
+/// `Ouroboros.Consensus.Protocol.Praos`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OcertCounters {
+    counters: BTreeMap<[u8; 28], u64>,
+}
+
+impl OcertCounters {
+    /// Returns a fresh (empty) counter map.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Validates a block's OpCert sequence number and updates the map on
+    /// success.
+    ///
+    /// # Arguments
+    ///
+    /// * `pool_key_hash` — Blake2b-224 of the block issuer's cold
+    ///   verification key.
+    /// * `new_seq` — The `sequence_number` from the block's `OpCert`.
+    /// * `pool_in_dist` — Whether the pool appears in the current stake
+    ///   distribution (used only when the pool is not yet tracked).
+    ///
+    /// # Errors
+    ///
+    /// * `OcertCounterTooOld` — `new_seq < stored`.
+    /// * `OcertCounterTooFar` — `new_seq > stored + 1`.
+    /// * `NoCounterForKeyHash` — pool is in neither the counter map nor the
+    ///   stake distribution.
+    pub fn validate_and_update(
+        &mut self,
+        pool_key_hash: [u8; 28],
+        new_seq: u64,
+        pool_in_dist: bool,
+    ) -> Result<(), ConsensusError> {
+        if let Some(&stored) = self.counters.get(&pool_key_hash) {
+            if new_seq < stored {
+                return Err(ConsensusError::OcertCounterTooOld {
+                    stored,
+                    received: new_seq,
+                });
+            }
+            if new_seq > stored.saturating_add(1) {
+                return Err(ConsensusError::OcertCounterTooFar {
+                    stored,
+                    received: new_seq,
+                });
+            }
+            // stored ≤ new_seq ≤ stored + 1 — accept.
+            self.counters.insert(pool_key_hash, new_seq);
+            Ok(())
+        } else if pool_in_dist {
+            // First block seen from a known pool — initialize.
+            self.counters.insert(pool_key_hash, new_seq);
+            Ok(())
+        } else {
+            Err(ConsensusError::NoCounterForKeyHash {
+                hash: pool_key_hash,
+            })
+        }
+    }
+
+    /// Returns the stored counter for `pool_key_hash`, if tracked.
+    pub fn get(&self, pool_key_hash: &[u8; 28]) -> Option<u64> {
+        self.counters.get(pool_key_hash).copied()
+    }
+
+    /// Returns the number of pools currently tracked.
+    pub fn len(&self) -> usize {
+        self.counters.len()
+    }
+
+    /// Returns `true` when no counters are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.counters.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -289,5 +388,107 @@ mod tests {
         // Verify it works without overflow for large slot numbers
         let period = kes_period_of_slot(u64::MAX / 2, 1).unwrap();
         assert_eq!(period, u64::MAX / 2);
+    }
+
+    // ── OcertCounters ────────────────────────────────────────────────
+
+    #[test]
+    fn ocert_counters_new_is_empty() {
+        let c = OcertCounters::new();
+        assert!(c.is_empty());
+        assert_eq!(c.len(), 0);
+    }
+
+    #[test]
+    fn ocert_counters_first_seen_pool_in_dist_accepted() {
+        let mut c = OcertCounters::new();
+        let pool = [0x01; 28];
+        assert!(c.validate_and_update(pool, 5, true).is_ok());
+        assert_eq!(c.get(&pool), Some(5));
+    }
+
+    #[test]
+    fn ocert_counters_first_seen_pool_not_in_dist_rejected() {
+        let mut c = OcertCounters::new();
+        let pool = [0x02; 28];
+        let err = c.validate_and_update(pool, 5, false).unwrap_err();
+        assert_eq!(err, ConsensusError::NoCounterForKeyHash { hash: pool });
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn ocert_counters_same_seq_accepted() {
+        let mut c = OcertCounters::new();
+        let pool = [0x03; 28];
+        c.validate_and_update(pool, 10, true).unwrap();
+        // Re-submitting the same sequence number is valid.
+        assert!(c.validate_and_update(pool, 10, true).is_ok());
+        assert_eq!(c.get(&pool), Some(10));
+    }
+
+    #[test]
+    fn ocert_counters_increment_by_one_accepted() {
+        let mut c = OcertCounters::new();
+        let pool = [0x04; 28];
+        c.validate_and_update(pool, 10, true).unwrap();
+        assert!(c.validate_and_update(pool, 11, true).is_ok());
+        assert_eq!(c.get(&pool), Some(11));
+    }
+
+    #[test]
+    fn ocert_counters_too_old_rejected() {
+        let mut c = OcertCounters::new();
+        let pool = [0x05; 28];
+        c.validate_and_update(pool, 10, true).unwrap();
+        let err = c.validate_and_update(pool, 9, true).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::OcertCounterTooOld {
+                stored: 10,
+                received: 9,
+            }
+        );
+        // Counter should NOT have changed.
+        assert_eq!(c.get(&pool), Some(10));
+    }
+
+    #[test]
+    fn ocert_counters_too_far_rejected() {
+        let mut c = OcertCounters::new();
+        let pool = [0x06; 28];
+        c.validate_and_update(pool, 10, true).unwrap();
+        let err = c.validate_and_update(pool, 12, true).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::OcertCounterTooFar {
+                stored: 10,
+                received: 12,
+            }
+        );
+        // Counter should NOT have changed.
+        assert_eq!(c.get(&pool), Some(10));
+    }
+
+    #[test]
+    fn ocert_counters_multiple_pools_independent() {
+        let mut c = OcertCounters::new();
+        let pool_a = [0x0A; 28];
+        let pool_b = [0x0B; 28];
+        c.validate_and_update(pool_a, 1, true).unwrap();
+        c.validate_and_update(pool_b, 100, true).unwrap();
+        assert_eq!(c.len(), 2);
+
+        // Increment pool_a, pool_b stays unchanged.
+        c.validate_and_update(pool_a, 2, true).unwrap();
+        assert_eq!(c.get(&pool_a), Some(2));
+        assert_eq!(c.get(&pool_b), Some(100));
+    }
+
+    #[test]
+    fn ocert_counters_zero_seq_accepted_for_new_pool() {
+        let mut c = OcertCounters::new();
+        let pool = [0x07; 28];
+        assert!(c.validate_and_update(pool, 0, true).is_ok());
+        assert_eq!(c.get(&pool), Some(0));
     }
 }
