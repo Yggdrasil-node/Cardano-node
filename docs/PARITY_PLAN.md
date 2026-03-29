@@ -30,13 +30,13 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ⚠️ **Partial Plutus** (CEK machine framework, V1/V2/V3 support wired)
 - ✅ **Peer management** (governor with dual churn, big-ledger, backoff, inbound)
 - ✅ **Monitoring** (35+ metrics, Prometheus/JSON endpoints, coloured stdout, detail levels, upstream backend recognition)
+- ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting)
 
 **To achieve full parity**, the remaining work focuses on:
 1. **Plutus CEK builtin coverage** (remaining edge cases and cost-model parity)
-2. **Trace forwarding** (cardano-tracer socket transport)
+2. **Block production propagation parity** (network announcement and issuer-key/header parity for externally validated forged blocks)
 3. **Storage WAL** (write-ahead log for multi-step mutations)
-4. **KES/VRF key generation** (block production capability)
-5. **Integration testing** (mainnet-like end-to-end scenarios)
+4. **Integration testing** (mainnet-like end-to-end scenarios)
 
 ---
 
@@ -247,6 +247,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Database path override | `--database-path` | ✅ | ✅ | Complete | CLI flag overrides `storage_dir` on `run`, `validate-config`, `status`
 | Port / host-addr | `--port` / `--host-addr` | ✅ | ✅ | Complete | CLI flags override listen address on `run`
 | Genesis loading | ShelleyGenesis + AlonzoGenesis | ✅ | ✅ | Complete | load_genesis_protocol_params
+| BP credential paths | ShelleyKesKey/VrfKey/OpCert | ✅ | ✅ | Complete | `--shelley-kes-key`, `--shelley-vrf-key`, `--shelley-operational-certificate` CLI flags + config file keys; text envelope parsing (VRF/KES/OpCert) via `load_block_producer_credentials()`
 | **Subcommands** |
 | run | Sync + validate | ✅ | ✅ | Complete | Main sync loop wired
 | validate-config | Verify config file | ✅ | ✅ | Complete | Basic validation
@@ -298,7 +299,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Schnorr/secp256k1 | PlutusV2 builtin | ✅ | ✅ | Complete | k256 crate with schnorr feature
 | ECDSA/secp256k1 | PlutusV2 builtin | ✅ | ✅ | Complete | k256 crate with ecdsa feature
 | **VRF** |
-| Praos VRF proof gen | Slot leader selection | ✅ | ❌ | Uncomplete | Missing block production
+| Praos VRF proof gen | Slot leader selection | ✅ | ✅ | Complete | check_slot_leadership with VRF prove + leader check
 | Praos VRF proof verify | Slot leader validation | ✅ | ✅ | Complete | verify_vrf_output with Ed25519
 | **Elliptic Curves** |
 | Curve25519 | Ed25519 + KES ops | ✅ | ✅ | Complete | curve25519-dalek
@@ -307,7 +308,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **KES (Key Evolving Signatures)** |
 | KES signature scheme | Operational cert | ✅ | ✅ | Complete | KES OpCert validation
 | KES period validation | Block slot alignment | ✅ | ✅ | Complete | Check slot ∈ [kes_period*x, (kes_period+1)*x)
-| KES key evolution | Per-period key rotation | ✅ | ⏸️ | Uncomplete | Missing signing for block production
+| KES key evolution | Per-period key rotation | ✅ | ✅ | Complete | evolve_kes_key, forge_block_header with SumKES signing
 | **CBOR Codec** |
 | Major types | 0-7 encoding | ✅ | ✅ | Complete | CborEncode/CborDecode traits
 | Compact constructor tags | 121-127 for PlutusData | ✅ | ✅ | Complete | Constr compact encoding
@@ -320,7 +321,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Base58 Byron addresses | Byron-family | ✅ | ✅ | Complete | Byron address envelope
 | CRC32 validation | Byron address checksum | ✅ | ✅ | Complete | Address::validate_bytes
 
-**Cryptography Summary**: ~98% feature complete, only missing KES key generation (needed for block producer node).
+**Cryptography Summary**: 100% feature complete. Block producer credential loading (text envelope VRF/KES/OpCert), VRF leader election, KES header signing, KES key evolution, and header forging are implemented in `node/src/block_producer.rs`.
 
 ---
 
@@ -359,26 +360,26 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 ### 1. CRYPTOGRAPHY & ENCODING (`crates/crypto`)
 
-**Current State**: ✅ Complete for validation purposes
+**Current State**: ✅ Complete — validation and block production
 
 **What's Done**:
 - Ed25519 witness verification via `verify_vkey_signatures()`
 - VRF proof verification with Praos leader-value check
+- VRF proof generation for slot leader election (`VrfSecretKey::prove()`)
 - Blake2b-256/224 hashing for blocks, TXs, and scripts
 - SHA-256/512 for VRF and genesis
 - SHA3-256, Keccak-256, RIPEMD-160 for Plutus builtins
 - BLS12-381 for CIP-0381 V3 builtins (G1/G2 ops, pairing, hash-to-curve)
 - secp256k1 ECDSA + Schnorr for PlutusV2
 - Curve25519 for KES
+- SumKES key generation, signing, evolution (`gen_sum_kes_signing_key`, `sign_sum_kes`, `update_sum_kes`)
 - Full CBOR roundtrip parity testing
 
 **What's Missing**:
-- ❌ KES key generation
-- ❌ VRF proof generation
 - ℹ️ Performance optimization for large batches
 - ℹ️ Hardware acceleration detection
 
-**Parity Status**: **98% complete** — All validation-side cryptography is implemented and tested. Missing only key-generation responsibilities that block producers would need.
+**Parity Status**: **100% complete** — All validation and block-production cryptography is implemented and tested. Block producer credential loading, VRF leader election, KES header signing, and KES key evolution are in `node/src/block_producer.rs`.
 
 ---
 

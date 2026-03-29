@@ -14,6 +14,7 @@
 //!   management.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use yggdrasil_consensus::{
     ActiveSlotCoeff, HeaderBody, OpCert,
@@ -28,7 +29,8 @@ use yggdrasil_crypto::vrf::{
     VrfOutput, VrfSecretKey, VrfVerificationKey,
     VRF_SIGNING_KEY_SIZE,
 };
-use yggdrasil_ledger::{BlockNo, HeaderHash, Nonce, SlotNo};
+use yggdrasil_ledger::{BlockNo, HeaderHash, Nonce, SlotNo, TxId, Era};
+use yggdrasil_mempool::MempoolEntry;
 
 use thiserror::Error;
 
@@ -725,6 +727,369 @@ pub fn evolve_kes_key_to_period(
 }
 
 // ---------------------------------------------------------------------------
+// ShouldForge decision (upstream CheckShouldForge)
+// ---------------------------------------------------------------------------
+
+/// Decision about whether to forge a block for a given slot.
+///
+/// Mirrors the upstream `ShouldForge` type from
+/// `Ouroboros.Consensus.Block.Forging`.
+#[derive(Clone, Debug)]
+pub enum ShouldForge {
+    /// KES key evolution failed — cannot even attempt leader check.
+    ForgeStateUpdateError(String),
+    /// Won the VRF lottery but a gating condition prevents forging
+    /// (e.g. KES period expired relative to opcert).
+    CannotForge(String),
+    /// VRF check returned not-leader for this slot.
+    NotLeader,
+    /// All checks passed — proceed to forge.
+    ShouldForge(LeaderElectionResult),
+}
+
+/// Block context derived from the current chain tip, used to determine
+/// the block number and previous header hash for a new block.
+///
+/// Reference: `BlockContext` in
+/// `Ouroboros.Consensus.NodeKernel` (`mkCurrentBlockContext`).
+#[derive(Clone, Debug)]
+pub struct BlockContext {
+    /// The block number of the new block to be forged.
+    pub block_number: BlockNo,
+    /// The header hash of the predecessor block (None for genesis successor).
+    pub prev_hash: Option<HeaderHash>,
+    /// The slot of the predecessor block (None for genesis successor).
+    pub prev_slot: Option<SlotNo>,
+}
+
+/// Determine the block context from the current chain tip.
+///
+/// Returns `None` if the current slot is not ahead of the tip slot
+/// (the slot is immutable or already occupied by a non-EBB block).
+///
+/// Reference: `mkCurrentBlockContext` in
+/// `Ouroboros.Consensus.NodeKernel`.
+pub fn make_block_context(
+    current_slot: SlotNo,
+    tip_slot: Option<SlotNo>,
+    tip_block_no: Option<BlockNo>,
+    tip_hash: Option<HeaderHash>,
+) -> Option<BlockContext> {
+    match (tip_slot, tip_block_no, tip_hash) {
+        (Some(ts), Some(bn), Some(hash)) => {
+            if current_slot <= ts {
+                // Slot is occupied or in the past — cannot forge.
+                None
+            } else {
+                Some(BlockContext {
+                    block_number: BlockNo(bn.0 + 1),
+                    prev_hash: Some(hash),
+                    prev_slot: Some(ts),
+                })
+            }
+        }
+        // At genesis — first block ever.
+        _ => Some(BlockContext {
+            block_number: BlockNo(0),
+            prev_hash: None,
+            prev_slot: None,
+        }),
+    }
+}
+
+/// Runtime slot clock anchored to an initial slot/time pair.
+///
+/// The clock advances by one slot per `slot_length` elapsed wall-clock
+/// duration from `anchor_instant`.
+#[derive(Clone, Debug)]
+pub struct SlotClock {
+    anchor_slot: SlotNo,
+    anchor_instant: Instant,
+    slot_length: Duration,
+}
+
+impl SlotClock {
+    /// Construct a slot clock anchored at the current instant.
+    pub fn new(anchor_slot: SlotNo, slot_length: Duration) -> Self {
+        let slot_length = if slot_length.is_zero() {
+            Duration::from_secs(1)
+        } else {
+            slot_length
+        };
+        Self {
+            anchor_slot,
+            anchor_instant: Instant::now(),
+            slot_length,
+        }
+    }
+
+    /// Derive the slot number corresponding to `now`.
+    pub fn slot_at(&self, now: Instant) -> SlotNo {
+        let elapsed = now
+            .checked_duration_since(self.anchor_instant)
+            .unwrap_or_default();
+        let slots_elapsed = (elapsed.as_secs_f64() / self.slot_length.as_secs_f64()).floor() as u64;
+        SlotNo(self.anchor_slot.0.saturating_add(slots_elapsed))
+    }
+
+    /// Return the current slot according to the local wall-clock.
+    pub fn current_slot(&self) -> SlotNo {
+        self.slot_at(Instant::now())
+    }
+}
+
+/// Run the upstream `checkShouldForge` sequence for a single slot:
+///
+/// 1. Evolve KES key to the current period (`updateForgeState`).
+/// 2. Check VRF slot leadership (`checkIsLeader`).
+/// 3. Validate that the KES period is within bounds (`checkCanForge`).
+///
+/// Reference: `checkShouldForge` in
+/// `Ouroboros.Consensus.Block.Forging`.
+pub fn check_should_forge(
+    creds: &mut BlockProducerCredentials,
+    slot: SlotNo,
+    epoch_nonce: Nonce,
+    sigma_num: u64,
+    sigma_den: u64,
+    active_slot_coeff: &ActiveSlotCoeff,
+) -> ShouldForge {
+    // Step 1: updateForgeState — evolve KES key to the current period.
+    let target_period = match kes_period_of_slot(slot.0, creds.slots_per_kes_period) {
+        Ok(p) => p,
+        Err(e) => return ShouldForge::ForgeStateUpdateError(e.to_string()),
+    };
+    let target_u32 = match u32::try_from(target_period) {
+        Ok(p) => p,
+        Err(_) => {
+            return ShouldForge::ForgeStateUpdateError(
+                "KES period exceeds u32".to_owned(),
+            )
+        }
+    };
+    if target_u32 > creds.kes_current_period {
+        match evolve_kes_key_to_period(creds, target_u32) {
+            Ok(_) => {}
+            Err(e) => return ShouldForge::ForgeStateUpdateError(e.to_string()),
+        }
+    }
+
+    // Step 2: checkIsLeader — VRF slot lottery.
+    let election = match check_slot_leadership(
+        creds,
+        slot,
+        epoch_nonce,
+        sigma_num,
+        sigma_den,
+        active_slot_coeff,
+    ) {
+        Ok(Some(result)) => result,
+        Ok(None) => return ShouldForge::NotLeader,
+        Err(e) => return ShouldForge::ForgeStateUpdateError(e.to_string()),
+    };
+
+    // Step 3: checkCanForge — KES period bounds.
+    if let Err(e) = check_can_forge(creds, slot) {
+        return ShouldForge::CannotForge(e.to_string());
+    }
+
+    ShouldForge::ShouldForge(election)
+}
+
+/// Transaction selected from the mempool for block body assembly.
+///
+/// Reference: upstream `Validated (GenTx blk)` from `getSnapshotFor`.
+#[derive(Clone, Debug)]
+pub struct ForgeBodyTx {
+    /// Transaction identifier.
+    pub tx_id: TxId,
+    /// Era of the transaction.
+    pub era: Era,
+    /// Raw CBOR-encoded transaction body bytes.
+    pub body: Vec<u8>,
+    /// Raw CBOR-encoded submitted transaction bytes (full tx for the wire).
+    pub raw_tx: Vec<u8>,
+    /// Transaction size in bytes.
+    pub size_bytes: usize,
+    /// Transaction fee in lovelace.
+    pub fee: u64,
+}
+
+/// Assemble the block body by taking a prefix of mempool entries that
+/// fits within the maximum block body size.
+///
+/// Returns the selected transactions and their aggregate CBOR body size.
+///
+/// # Arguments
+///
+/// * `entries` — Fee-ordered mempool entries (highest fee first).
+/// * `max_block_body_size` — Maximum permitted aggregate Tx body size.
+///
+/// Reference: `snapshotTake` with `blockCapacityTxMeasure` in
+/// `Ouroboros.Consensus.Mempool.Impl.Common`.
+pub fn assemble_block_body<'a>(
+    entries: impl Iterator<Item = &'a MempoolEntry>,
+    max_block_body_size: u32,
+) -> (Vec<ForgeBodyTx>, u32) {
+    let mut selected = Vec::new();
+    let mut total_size: u32 = 0;
+
+    for entry in entries {
+        let entry_size = entry.size_bytes as u32;
+        if total_size + entry_size > max_block_body_size {
+            // Block capacity reached — stop.
+            break;
+        }
+        selected.push(ForgeBodyTx {
+            tx_id: entry.tx_id,
+            era: entry.era,
+            body: entry.body.clone(),
+            raw_tx: entry.raw_tx.clone(),
+            size_bytes: entry.size_bytes,
+            fee: entry.fee,
+        });
+        total_size += entry_size;
+    }
+
+    (selected, total_size)
+}
+
+/// Outcome of a successful block forging operation.
+///
+/// Contains all the information needed to add the block to the ChainDB
+/// and announce it to peers.
+#[derive(Clone, Debug)]
+pub struct ForgedBlock {
+    /// The forged block header.
+    pub header: ForgedBlockHeader,
+    /// Transactions included in the block body.
+    pub transactions: Vec<ForgeBodyTx>,
+    /// Blake2b-256 hash of the serialized header (the block's identity).
+    pub header_hash: HeaderHash,
+    /// Slot in which the block was forged.
+    pub slot: SlotNo,
+    /// Block height.
+    pub block_number: BlockNo,
+    /// Aggregate block body size in bytes.
+    pub body_size: u32,
+    /// Total fees collected from the included transactions.
+    pub total_fees: u64,
+}
+
+/// Forge a complete block: assemble body from mempool, compute body hash,
+/// construct and sign the header, and return the fully-formed block.
+///
+/// This composites the upstream `forgeBlock` call from
+/// `Ouroboros.Consensus.Node.BlockForging`:
+/// 1. `assemble_block_body` (mempool prefix selection)
+/// 2. Compute body hash (Blake2b-256 over concatenated tx bodies)
+/// 3. `forge_block_header` (header construction + KES signing)
+///
+/// Reference: `forgeShelleyBlock` in
+/// `Ouroboros.Consensus.Shelley.Node.Forging`.
+pub fn forge_block(
+    creds: &BlockProducerCredentials,
+    election: &LeaderElectionResult,
+    context: &BlockContext,
+    slot: SlotNo,
+    entries: &[MempoolEntry],
+    max_block_body_size: u32,
+    issuer_vkey: VerificationKey,
+    protocol_version: (u64, u64),
+) -> Result<ForgedBlock, BlockProducerError> {
+    // Step 1: Assemble the block body from mempool entries.
+    let (body_txs, body_size) = assemble_block_body(entries.iter(), max_block_body_size);
+
+    // Step 2: Compute the block body hash.
+    // Upstream hashes the concatenation of all transaction body elements.
+    // We hash the concatenation of all raw_tx bytes as the body payload.
+    let body_hash = {
+        use yggdrasil_crypto::blake2b::hash_bytes_256;
+        let mut body_bytes = Vec::new();
+        for tx in &body_txs {
+            body_bytes.extend_from_slice(&tx.raw_tx);
+        }
+        hash_bytes_256(&body_bytes).0
+    };
+
+    let total_fees: u64 = body_txs.iter().map(|tx| tx.fee).sum();
+
+    // Step 3: Forge the header.
+    let config = ForgeBlockConfig { protocol_version };
+    let forged_header = forge_block_header(
+        creds,
+        election,
+        slot,
+        context.block_number,
+        context.prev_hash,
+        body_hash,
+        body_size,
+        issuer_vkey,
+        &config,
+    )?;
+
+    // Step 4: Compute the header hash (Blake2b-256 of the header body signable bytes).
+    let header_hash = {
+        use yggdrasil_crypto::blake2b::hash_bytes_256;
+        HeaderHash(hash_bytes_256(&forged_header.header_body.to_signable_bytes()).0)
+    };
+
+    Ok(ForgedBlock {
+        header: forged_header,
+        transactions: body_txs,
+        header_hash,
+        slot,
+        block_number: context.block_number,
+        body_size,
+        total_fees,
+    })
+}
+
+/// Convert a `ForgedBlock` into the storage-facing `Block` type suitable
+/// for insertion into the volatile ChainDB.
+///
+/// Note: this creates the `Block` without `raw_cbor` since the block was
+/// locally forged rather than received from the network. Future work may
+/// serialize the block for relay.
+pub fn forged_block_to_storage_block(forged: &ForgedBlock) -> yggdrasil_ledger::Block {
+    use yggdrasil_ledger::{Block, BlockHeader, Era, Tx};
+
+    let txs: Vec<Tx> = forged
+        .transactions
+        .iter()
+        .map(|btx| {
+            let tx_id = btx.tx_id;
+            Tx {
+                id: tx_id,
+                body: btx.body.clone(),
+                witnesses: None,
+                auxiliary_data: None,
+                is_valid: None,
+            }
+        })
+        .collect();
+
+    let prev_hash = forged
+        .header
+        .header_body
+        .prev_hash
+        .unwrap_or(HeaderHash([0u8; 32]));
+
+    Block {
+        era: Era::Conway, // Forged blocks are always in the current era.
+        header: BlockHeader {
+            hash: forged.header_hash,
+            prev_hash,
+            slot_no: forged.slot,
+            block_no: forged.block_number,
+            issuer_vkey: forged.header.header_body.issuer_vkey.0,
+        },
+        transactions: txs,
+        raw_cbor: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -957,7 +1322,7 @@ mod tests {
         let vrf_sk = VrfSecretKey::from_seed([0x77u8; 32]);
         let vrf_vk = vrf_sk.verification_key();
 
-        let mut creds = BlockProducerCredentials {
+        let creds = BlockProducerCredentials {
             vrf_signing_key: vrf_sk,
             vrf_verification_key: vrf_vk,
             kes_signing_key: kes_sk,
@@ -1088,5 +1453,21 @@ mod tests {
         let data = [0x84, 0x01, 0x02, 0x03, 0x04];
         let result = unwrap_cbor_bytes(&data, Path::new("test"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn slot_clock_advances_slots_by_elapsed_time() {
+        let clock = SlotClock::new(SlotNo(10), Duration::from_secs(1));
+        let now = Instant::now();
+        let slot = clock.slot_at(now + Duration::from_secs(3));
+        assert_eq!(slot, SlotNo(13));
+    }
+
+    #[test]
+    fn slot_clock_zero_length_falls_back_to_one_second() {
+        let clock = SlotClock::new(SlotNo(7), Duration::ZERO);
+        let now = Instant::now();
+        let slot = clock.slot_at(now + Duration::from_secs(2));
+        assert_eq!(slot, SlotNo(9));
     }
 }

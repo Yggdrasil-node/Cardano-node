@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::block_producer::{
+    BlockProducerCredentials, SlotClock, ShouldForge, assemble_block_body,
+    check_should_forge, forge_block, forged_block_to_storage_block,
+    make_block_context,
+};
 use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
 use crate::sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
@@ -22,6 +27,8 @@ use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use serde_json::json;
 use serde_json::Value;
 use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState};
+use yggdrasil_consensus::praos::ActiveSlotCoeff;
+use yggdrasil_crypto::ed25519::VerificationKey;
 use yggdrasil_network::{
     AbstractState, AcquireOutboundResult,
     AfterSlot, BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
@@ -47,8 +54,8 @@ use yggdrasil_network::{
     PeerSelectionCounters, ConnectionManagerCounters,
 };
 use yggdrasil_ledger::{
-    EpochBoundaryEvent, LedgerError, LedgerState, MultiEraSubmittedTx, Point,
-    PoolRelayAccessPoint, SlotNo, TxId,
+    BlockNo, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
+    MultiEraSubmittedTx, Nonce, Point, PoolRelayAccessPoint, SlotNo, TxId,
     plutus_validation::PlutusEvaluator,
 };
 use yggdrasil_mempool::{
@@ -82,6 +89,58 @@ impl RuntimeGovernorConfig {
             targets,
         }
     }
+}
+
+/// Runtime block-producer configuration derived from node configuration.
+#[derive(Clone, Debug)]
+pub struct RuntimeBlockProducerConfig {
+    /// Slot duration used by the local slot clock.
+    pub slot_length: Duration,
+    /// Active slot coefficient `f` used for Praos leader checks.
+    pub active_slot_coeff: ActiveSlotCoeff,
+    /// Relative stake numerator for the forging key (sigma numerator).
+    pub sigma_num: u64,
+    /// Relative stake denominator for the forging key (sigma denominator).
+    pub sigma_den: u64,
+    /// Epoch nonce used for leader checks.
+    pub epoch_nonce: Nonce,
+    /// Maximum aggregate block-body size in bytes.
+    pub max_block_body_size: u32,
+    /// Protocol version inserted into forged headers.
+    pub protocol_version: (u64, u64),
+}
+
+fn tip_context_from_chain_db<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+) -> (Option<SlotNo>, Option<BlockNo>, Option<HeaderHash>)
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    match chain_db.tip() {
+        Point::Origin => (None, None, None),
+        Point::BlockPoint(slot, hash) => {
+            let block_no = chain_db
+                .volatile()
+                .get_block(&hash)
+                .or_else(|| chain_db.immutable().get_block(&hash))
+                .map(|block| block.header.block_no);
+            (Some(slot), block_no, Some(hash))
+        }
+    }
+}
+
+fn mempool_entries_for_forging(mempool: &SharedMempool) -> Vec<MempoolEntry> {
+    let snapshot = mempool.snapshot();
+    let mut entries = snapshot
+        .mempool_txids_after(MEMPOOL_ZERO_IDX)
+        .into_iter()
+        .filter_map(|(_, idx, _)| snapshot.mempool_lookup_tx(idx).cloned())
+        .collect::<Vec<_>>();
+    // Keep forge-body assembly deterministic and fee-ordered.
+    entries.sort_by(|left, right| right.fee.cmp(&left.fee));
+    entries
 }
 
 struct ManagedWarmPeer {
@@ -1001,6 +1060,218 @@ fn apply_cm_actions(
     }
 
     changed
+}
+
+/// Run the local block-producer loop until shutdown.
+///
+/// The loop advances a relative slot clock, evaluates Praos leadership using
+/// loaded block-producer credentials, assembles a block body from the current
+/// fee-ordered mempool snapshot, forges/signs a header, and inserts the new
+/// block into volatile ChainDb storage.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_block_producer_loop<I, V, L, F>(
+    chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
+    mempool: SharedMempool,
+    mut credentials: BlockProducerCredentials,
+    config: RuntimeBlockProducerConfig,
+    tracer: NodeTracer,
+    metrics: Option<Arc<NodeMetrics>>,
+    shutdown: F,
+) where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+    F: Future<Output = ()>,
+{
+    let (tip_slot, _, _) = {
+        let db = chain_db.read().expect("chain db lock poisoned");
+        tip_context_from_chain_db(&db)
+    };
+    let anchor_slot = tip_slot
+        .map(|slot| SlotNo(slot.0.saturating_add(1)))
+        .unwrap_or(SlotNo(0));
+    let slot_clock = SlotClock::new(anchor_slot, config.slot_length);
+
+    let mut interval = tokio::time::interval(config.slot_length);
+    let mut last_checked_slot: Option<SlotNo> = None;
+    tokio::pin!(shutdown);
+
+    tracer.trace_runtime(
+        "Node.BlockProduction",
+        "Notice",
+        "block producer loop started",
+        trace_fields([
+            ("anchorSlot", json!(anchor_slot.0)),
+            ("slotLengthSecs", json!(config.slot_length.as_secs())),
+        ]),
+    );
+
+    loop {
+        tokio::select! {
+            biased;
+
+            () = &mut shutdown => {
+                tracer.trace_runtime(
+                    "Node.BlockProduction",
+                    "Notice",
+                    "block producer loop stopped",
+                    std::collections::BTreeMap::new(),
+                );
+                return;
+            }
+
+            _ = interval.tick() => {
+                let current_slot = slot_clock.current_slot();
+                if last_checked_slot
+                    .map(|last| current_slot <= last)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                last_checked_slot = Some(current_slot);
+
+                let (tip_slot, tip_block_no, tip_hash) = {
+                    let db = chain_db.read().expect("chain db lock poisoned");
+                    tip_context_from_chain_db(&db)
+                };
+
+                let Some(context) = make_block_context(
+                    current_slot,
+                    tip_slot,
+                    tip_block_no,
+                    tip_hash,
+                ) else {
+                    continue;
+                };
+
+                let should_forge = check_should_forge(
+                    &mut credentials,
+                    current_slot,
+                    config.epoch_nonce,
+                    config.sigma_num,
+                    config.sigma_den,
+                    &config.active_slot_coeff,
+                );
+
+                let election = match should_forge {
+                    ShouldForge::NotLeader => continue,
+                    ShouldForge::ForgeStateUpdateError(err) => {
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Warning",
+                            "forge-state update failed",
+                            trace_fields([
+                                ("slot", json!(current_slot.0)),
+                                ("error", json!(err)),
+                            ]),
+                        );
+                        continue;
+                    }
+                    ShouldForge::CannotForge(err) => {
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Warning",
+                            "cannot forge in elected slot",
+                            trace_fields([
+                                ("slot", json!(current_slot.0)),
+                                ("error", json!(err)),
+                            ]),
+                        );
+                        continue;
+                    }
+                    ShouldForge::ShouldForge(election) => election,
+                };
+
+                let entries = mempool_entries_for_forging(&mempool);
+                let (selected_preview, selected_size) =
+                    assemble_block_body(entries.iter(), config.max_block_body_size);
+                let selected_count = selected_preview.len();
+
+                let issuer_vkey =
+                    VerificationKey::from_bytes(credentials.operational_cert.hot_vkey.to_bytes());
+
+                let forged = match forge_block(
+                    &credentials,
+                    &election,
+                    &context,
+                    current_slot,
+                    &entries,
+                    config.max_block_body_size,
+                    issuer_vkey,
+                    config.protocol_version,
+                ) {
+                    Ok(forged) => forged,
+                    Err(err) => {
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Error",
+                            "failed to forge block",
+                            trace_fields([
+                                ("slot", json!(current_slot.0)),
+                                ("blockNo", json!(context.block_number.0)),
+                                ("error", json!(err.to_string())),
+                            ]),
+                        );
+                        continue;
+                    }
+                };
+
+                let storage_block = forged_block_to_storage_block(&forged);
+                let add_result = {
+                    let mut db = chain_db.write().expect("chain db lock poisoned");
+                    db.add_volatile_block(storage_block)
+                };
+
+                match add_result {
+                    Ok(()) => {
+                        let confirmed_ids = forged
+                            .transactions
+                            .iter()
+                            .map(|tx| tx.tx_id)
+                            .collect::<Vec<_>>();
+                        let removed = if confirmed_ids.is_empty() {
+                            0
+                        } else {
+                            mempool.remove_confirmed(&confirmed_ids)
+                        };
+
+                        if let Some(ref m) = metrics {
+                            m.add_blocks_synced(1);
+                            m.set_current_slot(forged.slot.0);
+                            m.set_current_block_number(forged.block_number.0);
+                            m.set_mempool_gauges(mempool.len() as u64, mempool.size_bytes() as u64);
+                        }
+
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Notice",
+                            "forged local block",
+                            trace_fields([
+                                ("slot", json!(forged.slot.0)),
+                                ("blockNo", json!(forged.block_number.0)),
+                                ("txCount", json!(selected_count)),
+                                ("bodySize", json!(selected_size)),
+                                ("mempoolEvicted", json!(removed)),
+                                ("headerHash", json!(hex::encode(forged.header_hash.0))),
+                            ]),
+                        );
+                    }
+                    Err(err) => {
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Warning",
+                            "failed to persist forged block",
+                            trace_fields([
+                                ("slot", json!(current_slot.0)),
+                                ("blockNo", json!(context.block_number.0)),
+                                ("error", json!(err.to_string())),
+                            ]),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Run the peer governor loop until shutdown.
@@ -3997,6 +4268,7 @@ mod tests {
         peer_share_request_amount,
         ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
         local_root_targets_from_config, record_verified_batch_progress,
+        mempool_entries_for_forging, tip_context_from_chain_db,
         preferred_hot_peer_from_registry,
         preferred_hot_peer_handoff_target,
         ordered_reconnect_fallback_peers,
@@ -4089,6 +4361,53 @@ mod tests {
             relays: vec![relay],
             pool_metadata: None,
         }
+    }
+
+    #[test]
+    fn mempool_entries_for_forging_is_fee_ordered() {
+        let mempool = SharedMempool::with_capacity(1024);
+        mempool
+            .insert(sample_mempool_entry(1, 10, 1000))
+            .expect("insert low-fee tx");
+        mempool
+            .insert(sample_mempool_entry(2, 50, 1000))
+            .expect("insert mid-fee tx");
+        mempool
+            .insert(sample_mempool_entry(3, 100, 1000))
+            .expect("insert high-fee tx");
+
+        let entries = mempool_entries_for_forging(&mempool);
+        let fees = entries.iter().map(|entry| entry.fee).collect::<Vec<_>>();
+        assert_eq!(fees, vec![100, 50, 10]);
+    }
+
+    #[test]
+    fn tip_context_from_chain_db_reads_tip_block_number() {
+        let mut chain_db = ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        );
+        let block = yggdrasil_ledger::Block {
+            era: Era::Conway,
+            header: yggdrasil_ledger::BlockHeader {
+                hash: HeaderHash([9; 32]),
+                prev_hash: HeaderHash([0; 32]),
+                slot_no: SlotNo(42),
+                block_no: yggdrasil_ledger::BlockNo(7),
+                issuer_vkey: [1; 32],
+            },
+            transactions: Vec::new(),
+            raw_cbor: None,
+        };
+        chain_db
+            .add_volatile_block(block)
+            .expect("insert volatile tip block");
+
+        let (tip_slot, tip_block_no, tip_hash) = tip_context_from_chain_db(&chain_db);
+        assert_eq!(tip_slot, Some(SlotNo(42)));
+        assert_eq!(tip_block_no, Some(yggdrasil_ledger::BlockNo(7)));
+        assert_eq!(tip_hash, Some(HeaderHash([9; 32])));
     }
 
     #[test]

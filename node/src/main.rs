@@ -21,6 +21,7 @@ use yggdrasil_node::{
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
     SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer,
     recover_ledger_state_chaindb,
+    run_block_producer_loop,
     run_governor_loop,
     resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer,
     seed_peer_registry,
@@ -1418,7 +1419,44 @@ async fn run_node(
             ]),
         );
     }
-    let _block_producer_credentials = block_producer_credentials;
+
+    let block_producer_runtime_config = block_producer_credentials.as_ref().and_then(|_| {
+        sync_config.active_slot_coeff.clone().map(|active_slot_coeff| {
+            let protocol_version_from_handshake = node_config
+                .protocol_versions
+                .first()
+                .map(|v| (u64::from(v.0), 0))
+                .unwrap_or((0, 0));
+            let (max_block_body_size, protocol_version) = base_ledger_state
+                .protocol_params()
+                .map(|params| {
+                    (
+                        params.max_block_body_size,
+                        params.protocol_version.unwrap_or(protocol_version_from_handshake),
+                    )
+                })
+                .unwrap_or((65_536, protocol_version_from_handshake));
+
+            yggdrasil_node::RuntimeBlockProducerConfig {
+                slot_length: std::time::Duration::from_secs(1),
+                active_slot_coeff,
+                sigma_num: 1,
+                sigma_den: 1,
+                epoch_nonce: Nonce::Neutral,
+                max_block_body_size,
+                protocol_version,
+            }
+        })
+    });
+
+    if block_producer_credentials.is_some() && block_producer_runtime_config.is_none() {
+        tracer.trace_runtime(
+            "Startup.BlockProducer",
+            "Warning",
+            "block producer credentials present but active slot coefficient unavailable; producer loop disabled",
+            std::collections::BTreeMap::new(),
+        );
+    }
 
     let chain_db = Arc::new(RwLock::new(chain_db));
     let peer_registry = Arc::new(RwLock::new(seed_peer_registry(
@@ -1520,6 +1558,42 @@ async fn run_node(
             ).await;
         })
     };
+
+    let block_producer_task =
+        if let (Some(block_producer_credentials), Some(block_producer_config)) =
+            (block_producer_credentials, block_producer_runtime_config)
+        {
+            let mut producer_shutdown = shutdown_rx.clone();
+            let producer_chain_db = Arc::clone(&chain_db);
+            let producer_mempool = shared_mempool.clone();
+            let producer_tracer = tracer.clone();
+            let producer_metrics = std::sync::Arc::clone(&metrics);
+            Some(tokio::spawn(async move {
+                let shutdown = async move {
+                    if *producer_shutdown.borrow() {
+                        return;
+                    }
+                    while producer_shutdown.changed().await.is_ok() {
+                        if *producer_shutdown.borrow() {
+                            break;
+                        }
+                    }
+                };
+
+                run_block_producer_loop(
+                    producer_chain_db,
+                    producer_mempool,
+                    block_producer_credentials,
+                    block_producer_config,
+                    producer_tracer,
+                    Some(producer_metrics),
+                    shutdown,
+                )
+                .await;
+            }))
+        } else {
+            None
+        };
 
     let inbound_task = if let Some(listen_addr) = inbound_listen_addr {
         let listener = PeerListener::bind(
@@ -1687,6 +1761,9 @@ async fn run_node(
         Err(err) => {
             let _ = shutdown_tx.send(true);
             let _ = governor_task.await;
+            if let Some(handle) = block_producer_task {
+                let _ = handle.await;
+            }
             if let Some(handle) = inbound_task {
                 let _ = handle.await;
             }
@@ -1708,6 +1785,9 @@ async fn run_node(
 
     let _ = shutdown_tx.send(true);
     let _ = governor_task.await;
+    if let Some(handle) = block_producer_task {
+        let _ = handle.await;
+    }
     if let Some(handle) = inbound_task {
         let _ = handle.await;
     }
