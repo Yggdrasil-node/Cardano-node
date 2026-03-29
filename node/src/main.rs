@@ -52,7 +52,7 @@ struct Cli {
 enum Command {
     /// Connect to a peer and sync the chain.
     Run {
-        /// Path to a JSON configuration file.
+        /// Path to a JSON or YAML configuration file.
         #[arg(long, short)]
         config: Option<PathBuf>,
         /// Network preset (mainnet, preprod, preview). Overridden by --config.
@@ -94,7 +94,7 @@ enum Command {
     },
     /// Validate config, snapshot inputs, and any existing on-disk storage state.
     ValidateConfig {
-        /// Path to a JSON configuration file.
+        /// Path to a JSON or YAML configuration file.
         #[arg(long, short)]
         config: Option<PathBuf>,
         /// Network preset (mainnet, preprod, preview). Overridden by --config.
@@ -103,7 +103,7 @@ enum Command {
     },
     /// Inspect on-disk storage and report current sync status.
     Status {
-        /// Path to a JSON configuration file.
+        /// Path to a JSON or YAML configuration file.
         #[arg(long, short)]
         config: Option<PathBuf>,
         /// Network preset (mainnet, preprod, preview). Overridden by --config.
@@ -165,6 +165,28 @@ enum QueryCommand {
     },
     /// Query the treasury and reserves.
     TreasuryAndReserves,
+    /// Query UTxO entries for specific transaction inputs (hex-encoded CBOR array of TxIn).
+    UtxoByTxIn {
+        /// Hex-encoded transaction ID (32 bytes).
+        #[arg(long)]
+        tx_id: String,
+        /// Output index within the transaction.
+        #[arg(long)]
+        index: u16,
+    },
+    /// Query the set of all registered stake pool IDs.
+    StakePools,
+    /// Query delegations and reward accounts for a stake credential (hex-encoded 28-byte hash).
+    DelegationsAndRewards {
+        /// Hex-encoded credential hash (28 bytes).
+        #[arg(long)]
+        credential: String,
+        /// Whether the credential is a key hash (true, default) or script hash (false).
+        #[arg(long, default_value = "true")]
+        is_key_hash: bool,
+    },
+    /// Query the DRep stake distribution.
+    DrepStakeDistr,
 }
 
 #[derive(Serialize)]
@@ -292,6 +314,32 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
         QueryCommand::TreasuryAndReserves => {
             enc.array(1).unsigned(7u64);
         }
+        QueryCommand::UtxoByTxIn { tx_id, index } => {
+            let tx_id_bytes = hex::decode(tx_id.trim()).unwrap_or_default();
+            enc.array(2).unsigned(14u64);
+            // Encode as a single-element array of TxIn: [[tx_id_bytes, index]]
+            enc.array(1);
+            enc.array(2).bytes(&tx_id_bytes).unsigned(*index as u64);
+        }
+        QueryCommand::StakePools => {
+            enc.array(1).unsigned(15u64);
+        }
+        QueryCommand::DelegationsAndRewards { credential, is_key_hash } => {
+            let cred_bytes = hex::decode(credential.trim()).unwrap_or_default();
+            enc.array(2).unsigned(16u64);
+            // Encode as a single-element credential array: [[tag, hash]]
+            enc.array(1);
+            enc.array(2);
+            if *is_key_hash {
+                enc.unsigned(0u64);
+            } else {
+                enc.unsigned(1u64);
+            }
+            enc.bytes(&cred_bytes);
+        }
+        QueryCommand::DrepStakeDistr => {
+            enc.array(1).unsigned(17u64);
+        }
     }
     enc.into_bytes()
 }
@@ -347,6 +395,28 @@ fn decode_ntc_result(
             } else {
                 json!({"result_cbor": hex::encode(result)})
             }
+        }
+        QueryCommand::UtxoByTxIn { .. } => {
+            json!({"utxo_cbor": hex::encode(result)})
+        }
+        QueryCommand::StakePools => {
+            // Decode CBOR array of pool hashes, convert to hex strings.
+            let mut dec = Decoder::new(result);
+            let mut pools = Vec::new();
+            if let Ok(n) = dec.array() {
+                for _ in 0..n {
+                    if let Ok(hash_bytes) = dec.bytes() {
+                        pools.push(hex::encode(hash_bytes));
+                    }
+                }
+            }
+            json!({"stake_pools": pools, "count": pools.len()})
+        }
+        QueryCommand::DelegationsAndRewards { .. } => {
+            json!({"delegations_and_rewards_cbor": hex::encode(result)})
+        }
+        QueryCommand::DrepStakeDistr => {
+            json!({"drep_stake_distribution_cbor": hex::encode(result)})
         }
     };
     Ok(val)
@@ -714,8 +784,15 @@ fn load_effective_config(
         Some(path) => {
             let contents = std::fs::read_to_string(&path)
                 .wrap_err_with(|| format!("failed to read config file {}", path.display()))?;
-            let parsed: NodeConfigFile = serde_json::from_str(&contents)
-                .wrap_err_with(|| format!("failed to parse config file {}", path.display()))?;
+            let parsed: NodeConfigFile = match serde_json::from_str(&contents) {
+                Ok(parsed) => parsed,
+                Err(json_err) => serde_yaml::from_str(&contents).map_err(|yaml_err| {
+                    eyre::eyre!(
+                        "failed to parse config file {} as JSON ({json_err}) or YAML ({yaml_err})",
+                        path.display()
+                    )
+                })?,
+            };
             Ok((parsed, path.parent().map(PathBuf::from)))
         }
         None => Ok(match network {
@@ -1864,6 +1941,33 @@ mod tests {
             config_base_dir,
             Some(preset_config_base_dir(yggdrasil_node::config::NetworkPreset::Preview))
         );
+    }
+
+    #[test]
+    fn load_effective_config_parses_yaml_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-config-yaml-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let config_path = dir.join("config.yaml");
+        std::fs::write(
+            &config_path,
+            "peer_addr: 127.0.0.1:3001\nnetwork_magic: 42\nprotocol_versions:\n  - 13\n",
+        )
+        .expect("write yaml config");
+
+        let (cfg, config_base_dir) =
+            load_effective_config(Some(config_path.clone()), None).expect("yaml config");
+
+        assert_eq!(cfg.peer_addr, "127.0.0.1:3001".parse().expect("addr"));
+        assert_eq!(cfg.network_magic, 42);
+        assert_eq!(cfg.protocol_versions, vec![13]);
+        assert_eq!(config_base_dir, Some(dir.clone()));
+
+        std::fs::remove_file(config_path).ok();
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

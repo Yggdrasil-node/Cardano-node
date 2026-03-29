@@ -1626,6 +1626,87 @@ impl LedgerStateSnapshot {
         &self.enact_state
     }
 
+    /// Returns UTxO entries for the given transaction inputs.
+    ///
+    /// For each requested `ShelleyTxIn`, if the entry exists in either
+    /// the multi-era or legacy Shelley UTxO set it is included in the
+    /// result.  Multi-era entries take precedence.
+    ///
+    /// Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+    /// `GetUTxOByTxIn`.
+    pub fn query_utxos_by_txin(&self, txins: &[crate::eras::shelley::ShelleyTxIn]) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
+        let mut matched = BTreeMap::new();
+        for txin in txins {
+            if let Some(txout) = self.multi_era_utxo.get(txin) {
+                matched.insert(txin.clone(), txout.clone());
+            } else if let Some(txout) = self.shelley_utxo.get(txin) {
+                matched.insert(txin.clone(), MultiEraTxOut::Shelley(txout.clone()));
+            }
+        }
+        matched.into_iter().collect()
+    }
+
+    /// Returns the set of all registered pool operator key hashes.
+    ///
+    /// Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+    /// `GetStakePools`.
+    pub fn query_stake_pool_ids(&self) -> Vec<PoolKeyHash> {
+        self.pool_state.iter().map(|(k, _)| *k).collect()
+    }
+
+    /// Returns delegations and reward balances for the given stake credentials.
+    ///
+    /// For each credential present in the ledger, the result includes the
+    /// delegated pool (if any) and the reward balance of the corresponding
+    /// reward account.
+    ///
+    /// Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+    /// `GetFilteredDelegationsAndRewardAccounts`.
+    pub fn query_delegations_and_rewards(
+        &self,
+        credentials: &[StakeCredential],
+    ) -> Vec<(StakeCredential, Option<PoolKeyHash>, u64)> {
+        let mut results = Vec::new();
+        for cred in credentials {
+            if let Some(state) = self.stake_credentials.get(cred) {
+                // Look up reward balance via the reward account built from
+                // network id 1 (mainnet) or 0, then fall back to iterating
+                // reward accounts to find a match by credential.
+                let balance = self.find_reward_balance_for_credential(cred);
+                results.push((*cred, state.delegated_pool(), balance));
+            }
+        }
+        results
+    }
+
+    /// Returns DRep stake distribution: each registered DRep mapped to its
+    /// total delegated stake (sum of reward-account balances of credentials
+    /// that delegate to that DRep).
+    ///
+    /// Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+    /// `GetDRepStakeDistr`.
+    pub fn query_drep_stake_distribution(&self) -> BTreeMap<DRep, u64> {
+        let mut drep_stake: BTreeMap<DRep, u64> = BTreeMap::new();
+        for (cred, cred_state) in self.stake_credentials.iter() {
+            if let Some(drep) = cred_state.delegated_drep() {
+                let balance = self.find_reward_balance_for_credential(cred);
+                *drep_stake.entry(drep).or_insert(0) += balance;
+            }
+        }
+        drep_stake
+    }
+
+    /// Finds the reward balance for a stake credential by scanning reward
+    /// accounts.  Returns 0 if no matching account is found.
+    fn find_reward_balance_for_credential(&self, credential: &StakeCredential) -> u64 {
+        for (account, state) in self.reward_accounts.iter() {
+            if &account.credential == credential {
+                return state.balance();
+            }
+        }
+        0
+    }
+
     /// Returns all UTxO entries paying to `address`.
     ///
     /// Entries from the multi-era UTxO set take precedence when the same

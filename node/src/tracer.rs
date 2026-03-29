@@ -1,10 +1,16 @@
 //! Thin node-side tracing helpers aligned with the Cardano trace dispatcher
 //! vocabulary.
 //!
-//! Yggdrasil currently emits local trace objects to stdout in either machine
-//! or human format, based on the configured `TraceOptions` backends. This keeps
-//! runtime tracing aligned with the official node's producer role while the
-//! dedicated tracer transport remains a future milestone.
+//! Yggdrasil emits local trace objects to stdout in human (plain or
+//! ANSI-coloured), machine (JSON), or both formats, based on the configured
+//! `TraceOptions` backends.  `EKGBackend` backend strings are silently
+//! accepted (metrics flow through [`NodeMetrics`]) and `Forwarder` is
+//! recognized for forward-compatibility with cardano-tracer socket transport.
+//!
+//! Each namespace may carry a `detail` level (`DMinimal`, `DNormal`,
+//! `DDetailed`, `DMaximum`) matching upstream `DetailLevel`.  Callsites can
+//! query the resolved detail via [`NodeTracer::detail_for`] and conditionally
+//! include extra data fields.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,11 +21,45 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::config::{NodeConfigFile, TraceNamespaceConfig};
+use crate::trace_forwarder::TraceForwarder;
 
+/// Trace output backend corresponding to upstream scribe/backend strings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TraceBackend {
+    /// `"Stdout HumanFormatUncoloured"` or `"Stdout HumanFormat"`.
     StdoutHuman,
+    StdoutHumanColoured,
     StdoutMachine,
+    /// `"Forwarder"` — send trace events as CBOR to a Unix socket.
+    Forwarder,
+}
+
+/// Upstream `DetailLevel` controlling trace object verbosity per namespace.
+///
+/// Matches `Cardano.Logging.Types.DetailLevel` in trace-dispatcher.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum TraceDetail {
+    /// Minimal output — only key identification fields.
+    DMinimal,
+    /// Normal output — standard operational fields (upstream default).
+    DNormal,
+    /// Detailed output — additional diagnostic fields.
+    DDetailed,
+    /// Maximum output — all available fields.
+    DMaximum,
+}
+
+impl TraceDetail {
+    /// Parse from the upstream-style label string.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label.trim() {
+            "DMinimal" => Some(Self::DMinimal),
+            "DNormal" => Some(Self::DNormal),
+            "DDetailed" => Some(Self::DDetailed),
+            "DMaximum" => Some(Self::DMaximum),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -64,6 +104,23 @@ impl TraceSeverity {
             Self::Silence => 255,
         }
     }
+
+    /// ANSI escape code prefix for coloured terminal output.
+    fn ansi_colour(self) -> &'static str {
+        match self {
+            Self::Debug => "\x1b[2m",          // dim
+            Self::Info => "",                   // default
+            Self::Notice => "\x1b[36m",         // cyan
+            Self::Warning => "\x1b[33m",        // yellow
+            Self::Error => "\x1b[31m",          // red
+            Self::Critical => "\x1b[1;31m",     // bold red
+            Self::Alert => "\x1b[1;35m",        // bold magenta
+            Self::Emergency => "\x1b[1;41;37m", // bold white on red
+            Self::Silence => "",
+        }
+    }
+
+    const ANSI_RESET: &'static str = "\x1b[0m";
 }
 
 #[derive(Serialize)]
@@ -79,24 +136,45 @@ struct MachineTraceLine<'a> {
 }
 
 /// Lightweight runtime tracer derived from [`NodeConfigFile`] tracing fields.
-#[derive(Clone, Debug)]
+
+#[derive(Debug)]
 pub struct NodeTracer {
     turn_on_logging: bool,
     use_trace_dispatcher: bool,
     trace_option_node_name: Option<String>,
     trace_options: BTreeMap<String, TraceNamespaceConfig>,
     last_emit_ms: Arc<Mutex<BTreeMap<String, u128>>>,
+    forwarder: Option<TraceForwarder>,
+}
+
+impl Clone for NodeTracer {
+    fn clone(&self) -> Self {
+        Self {
+            turn_on_logging: self.turn_on_logging,
+            use_trace_dispatcher: self.use_trace_dispatcher,
+            trace_option_node_name: self.trace_option_node_name.clone(),
+            trace_options: self.trace_options.clone(),
+            last_emit_ms: Arc::new(Mutex::new(self.last_emit_ms.lock().unwrap().clone())),
+            forwarder: None, // Do not clone the forwarder (socket)
+        }
+    }
 }
 
 impl NodeTracer {
     /// Build a tracer from the effective node configuration.
     pub fn from_config(config: &NodeConfigFile) -> Self {
+        let forwarder = if config.trace_options.values().any(|cfg| cfg.backends.iter().any(|b| b == "Forwarder")) {
+            Some(TraceForwarder::new(config.trace_option_forwarder.socket_path.clone()))
+        } else {
+            None
+        };
         Self {
             turn_on_logging: config.turn_on_logging,
             use_trace_dispatcher: config.use_trace_dispatcher,
             trace_option_node_name: config.trace_option_node_name.clone(),
             trace_options: config.trace_options.clone(),
             last_emit_ms: Arc::new(Mutex::new(BTreeMap::new())),
+            forwarder,
         }
     }
 
@@ -108,6 +186,7 @@ impl NodeTracer {
             trace_option_node_name: None,
             trace_options: BTreeMap::new(),
             last_emit_ms: Arc::new(Mutex::new(BTreeMap::new())),
+            forwarder: None,
         }
     }
 
@@ -134,7 +213,13 @@ impl NodeTracer {
                 TraceBackend::StdoutHuman => {
                     println!(
                         "{}",
-                        self.format_human_line(namespace, severity, &message, &data)
+                        self.format_human_line(namespace, severity, &message, &data, false)
+                    );
+                }
+                TraceBackend::StdoutHumanColoured => {
+                    println!(
+                        "{}",
+                        self.format_human_line(namespace, severity, &message, &data, true)
                     );
                 }
                 TraceBackend::StdoutMachine => {
@@ -143,8 +228,53 @@ impl NodeTracer {
                         self.format_machine_line(namespace, severity, &message, &data)
                     );
                 }
+                TraceBackend::Forwarder => {
+                    if let Some(forwarder) = &self.forwarder {
+                        let event = serde_json::json!({
+                            "namespace": namespace,
+                            "severity": severity,
+                            "message": message,
+                            "data": data,
+                            "timestamp": now_ms
+                        });
+                        forwarder.send(&event);
+                    }
+                }
             }
         }
+    }
+
+    /// Emit a runtime trace event only if the configured detail level for
+    /// `namespace` is at least `min_detail`.
+    ///
+    /// This allows callsites to emit verbose trace events that operators can
+    /// enable per-namespace via the `detail` field in `TraceOptions`.
+    pub fn trace_runtime_detailed(
+        &self,
+        namespace: &str,
+        default_severity: &str,
+        min_detail: TraceDetail,
+        message: impl Into<String>,
+        data: BTreeMap<String, Value>,
+    ) {
+        if self.detail_for(namespace) < min_detail {
+            return;
+        }
+        self.trace_runtime(namespace, default_severity, message, data);
+    }
+
+    /// Resolve the effective [`TraceDetail`] for a namespace using
+    /// longest-prefix matching, falling back to the root config and then
+    /// `DNormal` (the upstream default).
+    pub fn detail_for(&self, namespace: &str) -> TraceDetail {
+        self.namespace_config(namespace)
+            .and_then(|cfg| cfg.detail.as_deref().and_then(TraceDetail::from_label))
+            .or_else(|| {
+                self.trace_options
+                    .get("")
+                    .and_then(|cfg| cfg.detail.as_deref().and_then(TraceDetail::from_label))
+            })
+            .unwrap_or(TraceDetail::DNormal)
     }
 
     fn resolve_severity<'a>(&'a self, namespace: &str, default_severity: &'a str) -> Option<&'a str> {
@@ -217,8 +347,18 @@ impl NodeTracer {
                 cfg.backends
                     .iter()
                     .filter_map(|backend| match backend.as_str() {
+                        s if s.starts_with("Stdout HumanFormatColoured") => {
+                            Some(TraceBackend::StdoutHumanColoured)
+                        }
                         s if s.starts_with("Stdout HumanFormat") => Some(TraceBackend::StdoutHuman),
                         s if s.starts_with("Stdout MachineFormat") => Some(TraceBackend::StdoutMachine),
+                        s if s != "Forwarder" && s.starts_with("Forwarder") => Some(TraceBackend::Forwarder),
+                        // EKGBackend flows through NodeMetrics — no trace-line output.
+                        "EKGBackend" => None,
+                        // Forwarder (cardano-tracer socket) recognised for forward compat.
+                        "Forwarder" => None,
+                        // PrometheusSimple recognised — metrics served via /metrics endpoint.
+                        s if s.starts_with("PrometheusSimple") => None,
                         _ => None,
                     })
                     .collect()
@@ -267,9 +407,23 @@ impl NodeTracer {
         severity: &str,
         message: &str,
         data: &BTreeMap<String, Value>,
+        coloured: bool,
     ) -> String {
+        let (colour_start, colour_end) = if coloured {
+            let sev = TraceSeverity::from_label(severity).unwrap_or(TraceSeverity::Info);
+            let start = sev.ansi_colour();
+            let end = if start.is_empty() {
+                ""
+            } else {
+                TraceSeverity::ANSI_RESET
+            };
+            (start, end)
+        } else {
+            ("", "")
+        };
+
         let mut line = format!(
-            "[{}] {} {}",
+            "{colour_start}[{}] {} {}",
             current_unix_millis(),
             severity,
             namespace
@@ -289,6 +443,7 @@ impl NodeTracer {
             line.push_str(&value_to_human(value));
         }
 
+        line.push_str(colour_end);
         line
     }
 
@@ -940,6 +1095,7 @@ mod tests {
                 ("peer", Value::from("127.0.0.1:3001")),
                 ("attempt", Value::from(1)),
             ]),
+            false,
         );
 
         assert!(line.contains("Net.PeerSelection"));
@@ -1153,5 +1309,220 @@ mod tests {
         assert_eq!(snap.active_local_root_peers, 2);
         assert_eq!(snap.warm_local_root_peers, 3);
         assert_eq!(snap.hot_local_root_peers, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Coloured stdout backend tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coloured_human_line_contains_ansi_codes_for_warning() {
+        let tracer = NodeTracer::from_config(&default_config());
+        let line = tracer.format_human_line(
+            "Net.PeerSelection",
+            "Warning",
+            "peer timed out",
+            &BTreeMap::new(),
+            true,
+        );
+
+        // Yellow ANSI start + reset at end.
+        assert!(line.starts_with("\x1b[33m"));
+        assert!(line.ends_with("\x1b[0m"));
+        assert!(line.contains("Warning"));
+    }
+
+    #[test]
+    fn coloured_human_line_no_ansi_for_info() {
+        let tracer = NodeTracer::from_config(&default_config());
+        let line = tracer.format_human_line(
+            "Startup",
+            "Info",
+            "starting",
+            &BTreeMap::new(),
+            true,
+        );
+
+        // Info has no colour code, so no ANSI escape and no reset.
+        assert!(!line.contains("\x1b["));
+    }
+
+    #[test]
+    fn uncoloured_human_line_has_no_ansi() {
+        let tracer = NodeTracer::from_config(&default_config());
+        let line = tracer.format_human_line(
+            "Net.PeerSelection",
+            "Error",
+            "connection failed",
+            &BTreeMap::new(),
+            false,
+        );
+
+        assert!(!line.contains("\x1b["));
+    }
+
+    #[test]
+    fn coloured_backend_recognised_from_config_string() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: None,
+                backends: vec!["Stdout HumanFormatColoured".to_owned()],
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+        let backends = tracer.backends_for("Net.Handshake");
+        assert_eq!(backends, vec![TraceBackend::StdoutHumanColoured]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Upstream backend string recognition tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ekg_backend_string_yields_no_trace_backend() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: None,
+                backends: vec!["EKGBackend".to_owned()],
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+        assert!(tracer.backends_for("Net").is_empty());
+    }
+
+    #[test]
+    fn forwarder_backend_string_yields_no_trace_backend() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: None,
+                backends: vec!["Forwarder".to_owned()],
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+        assert!(tracer.backends_for("Startup").is_empty());
+    }
+
+    #[test]
+    fn prometheus_simple_backend_string_yields_no_trace_backend() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: None,
+                backends: vec![
+                    "PrometheusSimple suffix 127.0.0.1 12798".to_owned(),
+                ],
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+        assert!(tracer.backends_for("ChainDB").is_empty());
+    }
+
+    #[test]
+    fn mixed_upstream_backends_resolve_correctly() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: None,
+                backends: vec![
+                    "EKGBackend".to_owned(),
+                    "Forwarder".to_owned(),
+                    "PrometheusSimple suffix 127.0.0.1 12798".to_owned(),
+                    "Stdout HumanFormatColoured".to_owned(),
+                ],
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+        let backends = tracer.backends_for("Net");
+        // Only the stdout coloured backend produces trace lines.
+        assert_eq!(backends, vec![TraceBackend::StdoutHumanColoured]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Detail level tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detail_for_returns_dnormal_when_unconfigured() {
+        let tracer = NodeTracer::from_config(&default_config());
+        assert_eq!(tracer.detail_for("Net.PeerSelection"), TraceDetail::DNormal);
+    }
+
+    #[test]
+    fn detail_for_respects_root_config() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: Some("DDetailed".to_owned()),
+                backends: vec!["Stdout HumanFormat".to_owned()],
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+        assert_eq!(tracer.detail_for("Any.Namespace"), TraceDetail::DDetailed);
+    }
+
+    #[test]
+    fn detail_for_respects_namespace_override() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: Some("DNormal".to_owned()),
+                backends: vec!["Stdout HumanFormat".to_owned()],
+                max_frequency: None,
+            },
+        );
+        cfg.trace_options.insert(
+            "Net.PeerSelection".to_owned(),
+            TraceNamespaceConfig {
+                severity: None,
+                detail: Some("DMaximum".to_owned()),
+                backends: Vec::new(),
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+        assert_eq!(
+            tracer.detail_for("Net.PeerSelection"),
+            TraceDetail::DMaximum
+        );
+        assert_eq!(tracer.detail_for("Net.Handshake"), TraceDetail::DNormal);
+    }
+
+    #[test]
+    fn detail_from_label_parses_upstream_strings() {
+        assert_eq!(TraceDetail::from_label("DMinimal"), Some(TraceDetail::DMinimal));
+        assert_eq!(TraceDetail::from_label("DNormal"), Some(TraceDetail::DNormal));
+        assert_eq!(TraceDetail::from_label("DDetailed"), Some(TraceDetail::DDetailed));
+        assert_eq!(TraceDetail::from_label("DMaximum"), Some(TraceDetail::DMaximum));
+        assert_eq!(TraceDetail::from_label("invalid"), None);
+    }
+
+    #[test]
+    fn trace_detail_ordering() {
+        assert!(TraceDetail::DMinimal < TraceDetail::DNormal);
+        assert!(TraceDetail::DNormal < TraceDetail::DDetailed);
+        assert!(TraceDetail::DDetailed < TraceDetail::DMaximum);
     }
 }

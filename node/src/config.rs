@@ -88,6 +88,9 @@ pub struct TraceNamespaceConfig {
 /// Forwarder queue sizing aligned with the upstream node tracing config.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct TraceOptionForwarder {
+    /// Path to the Unix socket for trace forwarding.
+    #[serde(default = "default_trace_forwarder_socket_path", rename = "socketPath")]
+    pub socket_path: String,
     /// Maximum buffered connection events.
     #[serde(default = "default_trace_forwarder_conn_queue_size", rename = "connQueueSize")]
     pub conn_queue_size: u64,
@@ -97,6 +100,10 @@ pub struct TraceOptionForwarder {
     /// Maximum reconnect delay in seconds.
     #[serde(default = "default_trace_forwarder_max_reconnect_delay", rename = "maxReconnectDelay")]
     pub max_reconnect_delay: u64,
+}
+
+fn default_trace_forwarder_socket_path() -> String {
+    "/tmp/cardano-trace-forwarder.sock".to_owned()
 }
 
 /// On-disk node configuration parsed from a JSON file.
@@ -689,6 +696,7 @@ fn default_trace_forwarder_max_reconnect_delay() -> u64 {
 
 fn default_trace_option_forwarder() -> TraceOptionForwarder {
     TraceOptionForwarder {
+        socket_path: default_trace_forwarder_socket_path(),
         conn_queue_size: default_trace_forwarder_conn_queue_size(),
         disconn_queue_size: default_trace_forwarder_disconn_queue_size(),
         max_reconnect_delay: default_trace_forwarder_max_reconnect_delay(),

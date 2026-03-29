@@ -1,6 +1,8 @@
+
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-//! Yggdrasil node — integration layer wiring consensus, ledger, network,
-//! storage, and mempool crates into a running Cardano node.
+/// Yggdrasil node — integration layer wiring consensus, ledger, network,
+/// storage, and mempool crates into a running Cardano node.
+pub mod trace_forwarder;
 
 pub mod config;
 pub mod genesis;

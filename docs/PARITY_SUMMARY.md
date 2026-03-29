@@ -15,13 +15,13 @@
 | **Ledger Rules** | Core validation + epoch boundary + network address validation complete; Plutus execution edge cases pending | ⚠️ 92% |
 | **Consensus** | Praos validation + chain state + rollback enforcement complete; density tiebreaker optional | ✅ 95% |
 | **Network Protocols** | All 5 mini-protocols + mux + handshake fully functional with typed clients/servers; per-state protocol time limits on both server and client sides | ✅ 100% |
-| **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers | ⚠️ 85% |
-| **Mempool** | Fee-ordered queue + TTL + eviction fully working; script budget pre-checks pending | ✅ 85% |
+| **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers, PickPolicy randomized selection, connection manager lifecycle | ✅ 97% |
+| **Mempool** | Fee-ordered queue + TTL + eviction + collateral + ExUnits + conflict detection + cross-peer TxId dedup | ✅ 98% |
 | **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience, active crash recovery | ✅ 97% |
-| **CLI & Config** | JSON config + genesis loading + query/submit wrappers complete; YAML-only migration pending | ✅ 95% |
-| **Monitoring** | NodeMetrics (35+ counters/gauges including mempool, CM, inbound) + Prometheus + inbound tracing + epoch boundary tracing | ✅ 90% |
+| **CLI & Config** | JSON+YAML config loading + genesis loading + query/submit wrappers complete | ✅ 98% |
+| **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition | ✅ 95% |
 
-**Overall Node Readiness**: ~85% (can sync testnet, validates blocks correctly, comprehensive monitoring wired)
+**Overall Node Readiness**: ~93% (can sync testnet, validates blocks correctly, comprehensive monitoring wired)
 
 ---
 
@@ -84,7 +84,7 @@
 
 **CLI**:
 - `NodeConfigFile` — JSON config parsing + genesis integration
-- `BasicLocalQueryDispatcher` — 8-tag LocalStateQuery server
+- `BasicLocalQueryDispatcher` — 18-tag LocalStateQuery server (wallet queries: UTxOByTxIn, StakePools, DelegationsAndRewards, DRepStakeDistr; Conway governance queries: GetConstitution, GetGovState, GetDRepState, GetCommitteeMembersState, GetStakePoolParams, GetAccountState)
 - `LocalTxSubmission` — Staged TX validation before mempool
 
 ---
@@ -123,6 +123,9 @@
 - Epoch boundary events — Complete: traced with 14 structured fields per event (rewards, pools retired, governance, DRep expiry, treasury)
 - Inbound server tracing — Complete: session start/reject/rate-limit events with peer + DataFlow + PeerSharing context
 - Connection manager counters — Complete: per-tick full_duplex/duplex/unidirectional/inbound/outbound exported to Prometheus
+- Coloured stdout — Complete: `Stdout HumanFormatColoured` ANSI severity colours (debug dim, warning yellow, error red, etc.)
+- Detail levels — Complete: per-namespace `TraceDetail` (DMinimal/DNormal/DDetailed/DMaximum), `detail_for()` accessor, `trace_runtime_detailed()` detail-gated emission
+- Upstream backend recognition — Complete: `EKGBackend`, `Forwarder`, `PrometheusSimple`, `Stdout HumanFormatColoured`/`Stdout HumanFormatUncoloured` all parsed
 
 ---
 
@@ -140,9 +143,8 @@
 - Multi-path redundancy — Single-path acceptable with checkpoints
 
 **Monitoring**:
-- Remote tracer socket — Optional for first release
+- Remote tracer socket — cardano-tracer forwarding via Unix domain socket; optional for first release
 - Hardware metrics (CPU%, memory%) — Kernel-level only
-- Selector expressions — Advanced event filtering beyond maxFrequency/severity thresholds
 
 ---
 

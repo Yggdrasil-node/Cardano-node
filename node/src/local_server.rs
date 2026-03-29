@@ -585,9 +585,15 @@ where
 /// |   2 | CurrentEpoch           | none                             | CBOR unsigned (epoch no.)                       |
 /// |   3 | ProtocolParameters     | none                             | CBOR-encoded `ProtocolParameters` map or null   |
 /// |   4 | UTxOByAddress          | `[tag, address_bytes]`           | CBOR map { txin => txout }                      |
-/// |   5 | StakeDistribution      | none                             | CBOR map { pool_hash => [num, den] }            |
+/// |   5 | StakeDistribution      | none                             | CBOR map { pool_hash => pool_params }           |
 /// |   6 | RewardBalance          | `[tag, reward_account_bytes]`    | CBOR unsigned (lovelace)                        |
 /// |   7 | TreasuryAndReserves    | none                             | CBOR array [treasury, reserves]                 |
+/// |   8 | GetConstitution        | none                             | CBOR-encoded `Constitution`                     |
+/// |   9 | GetGovState            | none                             | CBOR map { gov_action_id => gov_action_state }  |
+/// |  10 | GetDRepState           | none                             | CBOR-encoded `DrepState` array                  |
+/// |  11 | GetCommitteeMembersState | none                           | CBOR-encoded `CommitteeState` array             |
+/// |  12 | GetStakePoolParams     | `[tag, pool_hash_bytes]`         | CBOR-encoded `RegisteredPool` or null           |
+/// |  13 | GetAccountState        | none                             | CBOR array [treasury, reserves, deposits]       |
 pub struct BasicLocalQueryDispatcher;
 
 impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
@@ -695,6 +701,138 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                 enc.array(2);
                 enc.unsigned(accounting.treasury);
                 enc.unsigned(accounting.reserves);
+            }
+            Some(8) => {
+                // GetConstitution — respond with CBOR-encoded Constitution.
+                snapshot.enact_state().constitution().encode_cbor(&mut enc);
+            }
+            Some(9) => {
+                // GetGovState — respond with CBOR map { GovActionId => GovernanceActionState }.
+                let gov = snapshot.governance_actions();
+                enc.map(gov.len() as u64);
+                for (id, state) in gov {
+                    id.encode_cbor(&mut enc);
+                    state.encode_cbor(&mut enc);
+                }
+            }
+            Some(10) => {
+                // GetDRepState — respond with CBOR-encoded DrepState.
+                snapshot.drep_state().encode_cbor(&mut enc);
+            }
+            Some(11) => {
+                // GetCommitteeMembersState — respond with CBOR-encoded CommitteeState.
+                snapshot.committee_state().encode_cbor(&mut enc);
+            }
+            Some(12) => {
+                // GetStakePoolParams — parameter: pool key hash (28 bytes).
+                // Query format: [12, pool_hash_bytes]
+                if param_start < query.len() {
+                    let mut pdec = Decoder::new(&query[param_start..]);
+                    if let Ok(hash_bytes) = pdec.bytes() {
+                        if hash_bytes.len() == 28 {
+                            let mut pool_hash = [0u8; 28];
+                            pool_hash.copy_from_slice(hash_bytes);
+                            if let Some(pool) = snapshot.registered_pool(&pool_hash) {
+                                pool.encode_cbor(&mut enc);
+                            } else {
+                                enc.null();
+                            }
+                        } else {
+                            enc.null();
+                        }
+                    } else {
+                        enc.null();
+                    }
+                } else {
+                    enc.null();
+                }
+            }
+            Some(13) => {
+                // GetAccountState — respond with [treasury, reserves, deposits].
+                let accounting = snapshot.accounting();
+                let deposits = snapshot.deposit_pot();
+                enc.array(3);
+                enc.unsigned(accounting.treasury);
+                enc.unsigned(accounting.reserves);
+                enc.unsigned(deposits.total());
+            }
+            Some(14) => {
+                // GetUTxOByTxIn — parameter: CBOR array of ShelleyTxIn.
+                // Query format: [14, [txin, ...]]
+                //
+                // Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+                // `GetUTxOByTxIn`.
+                let mut txins = Vec::new();
+                if param_start < query.len() {
+                    let mut pdec = Decoder::new(&query[param_start..]);
+                    if let Ok(n) = pdec.array() {
+                        for _ in 0..n {
+                            if let Ok(txin) = yggdrasil_ledger::eras::shelley::ShelleyTxIn::decode_cbor(&mut pdec) {
+                                txins.push(txin);
+                            }
+                        }
+                    }
+                }
+                let matched = snapshot.query_utxos_by_txin(&txins);
+                enc.map(matched.len() as u64);
+                for (txin, txout) in &matched {
+                    txin.encode_cbor(&mut enc);
+                    txout.encode_cbor(&mut enc);
+                }
+            }
+            Some(15) => {
+                // GetStakePools — respond with CBOR array of pool key hashes.
+                //
+                // Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+                // `GetStakePools`.
+                let pool_ids = snapshot.query_stake_pool_ids();
+                enc.array(pool_ids.len() as u64);
+                for pool_hash in &pool_ids {
+                    enc.bytes(pool_hash);
+                }
+            }
+            Some(16) => {
+                // GetFilteredDelegationsAndRewardAccounts — parameter: CBOR
+                // array of StakeCredential.
+                // Query format: [16, [credential, ...]]
+                //
+                // Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+                // `GetFilteredDelegationsAndRewardAccounts`.
+                let mut creds = Vec::new();
+                if param_start < query.len() {
+                    let mut pdec = Decoder::new(&query[param_start..]);
+                    if let Ok(n) = pdec.array() {
+                        for _ in 0..n {
+                            if let Ok(cred) = yggdrasil_ledger::StakeCredential::decode_cbor(&mut pdec) {
+                                creds.push(cred);
+                            }
+                        }
+                    }
+                }
+                let results = snapshot.query_delegations_and_rewards(&creds);
+                // Encode as CBOR array of [credential, pool_hash_or_null, balance].
+                enc.array(results.len() as u64);
+                for (cred, pool, balance) in &results {
+                    enc.array(3);
+                    cred.encode_cbor(&mut enc);
+                    match pool {
+                        Some(hash) => enc.bytes(hash),
+                        None => enc.null(),
+                    };
+                    enc.unsigned(*balance);
+                }
+            }
+            Some(17) => {
+                // GetDRepStakeDistr — respond with CBOR map { DRep => stake }.
+                //
+                // Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+                // `GetDRepStakeDistr`.
+                let distribution = snapshot.query_drep_stake_distribution();
+                enc.map(distribution.len() as u64);
+                for (drep, stake) in &distribution {
+                    drep.encode_cbor(&mut enc);
+                    enc.unsigned(*stake);
+                }
             }
             _ => {
                 // Unknown query — return empty bytes; client should handle gracefully.
@@ -889,5 +1027,237 @@ mod tests {
         assert!(!result.is_empty());
         // CBOR [0, 0] is 0x82 0x00 0x00
         assert_eq!(result, vec![0x82, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_constitution() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(8u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty(), "GetConstitution should return a non-empty CBOR response");
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_gov_state_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(9u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Should return empty CBOR map: 0xa0
+        assert_eq!(result, vec![0xa0]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_drep_state_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(10u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // DrepState encodes as a CBOR array; empty = 0x80
+        assert_eq!(result, vec![0x80]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_committee_members_state_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(11u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // CommitteeState encodes as CBOR array; empty = 0x80
+        assert_eq!(result, vec![0x80]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_stake_pool_params_null() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query [12, pool_hash_bytes] with a non-existent pool.
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(12u64).bytes(&[0xCC; 28]);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Non-existent pool returns CBOR null: 0xf6
+        assert_eq!(result, vec![0xf6]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_stake_pool_params_no_param() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query [12] with missing parameter.
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(12u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Missing param returns CBOR null: 0xf6
+        assert_eq!(result, vec![0xf6]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_account_state() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(13u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Should return [treasury, reserves, total_deposits] = [0, 0, 0] on fresh state.
+        assert!(!result.is_empty());
+        // CBOR [0, 0, 0] is 0x83 0x00 0x00 0x00
+        assert_eq!(result, vec![0x83, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_utxo_by_txin_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query format: [14, [TxIn, ...]] — send an empty input set.
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(14u64);
+        enc.array(0); // no inputs
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty());
+        // Empty CBOR map is 0xa0.
+        assert_eq!(result, vec![0xa0]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_utxo_by_txin_nonexistent() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query for a non-existent TxIn.
+        let fake_tx_id = [0xab; 32];
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(14u64);
+        enc.array(1);
+        enc.array(2).bytes(&fake_tx_id).unsigned(0u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty());
+        // Should return empty map.
+        assert_eq!(result, vec![0xa0]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_stake_pools_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query format: [15]
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(15u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty());
+        // Empty CBOR array is 0x80.
+        assert_eq!(result, vec![0x80]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_delegations_and_rewards_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query format: [16, [credential, ...]] — send empty credential set.
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(16u64);
+        enc.array(0); // no credentials
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty());
+        // Empty CBOR array is 0x80.
+        assert_eq!(result, vec![0x80]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_delegations_and_rewards_unregistered() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query for an unregistered credential.
+        let fake_hash = [0xcc; 28];
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(16u64);
+        enc.array(1);
+        // StakeCredential::AddrKeyHash(fake_hash) — CBOR [0, hash]
+        enc.array(2).unsigned(0u64).bytes(&fake_hash);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty());
+        // Unregistered credential returns empty array.
+        assert_eq!(result, vec![0x80]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_drep_stake_distr_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query format: [17]
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(17u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        assert!(!result.is_empty());
+        // Empty CBOR map is 0xa0.
+        assert_eq!(result, vec![0xa0]);
     }
 }

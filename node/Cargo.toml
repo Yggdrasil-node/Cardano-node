@@ -6,11 +6,13 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde_cbor = "0.11"
 clap.workspace = true
 eyre.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 yggdrasil-consensus.workspace = true
