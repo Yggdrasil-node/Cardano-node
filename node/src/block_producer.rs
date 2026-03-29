@@ -642,6 +642,7 @@ pub fn forge_block_header(
     prev_hash: Option<HeaderHash>,
     block_body_hash: [u8; 32],
     block_body_size: u32,
+    issuer_vkey: VerificationKey,
     config: &ForgeBlockConfig,
 ) -> Result<ForgedBlockHeader, BlockProducerError> {
     // Compute KES period offset for signing.
@@ -653,7 +654,7 @@ pub fn forge_block_header(
         block_number,
         slot,
         prev_hash,
-        issuer_vkey: VerificationKey([0u8; 32]), // placeholder — cold VK
+        issuer_vkey,
         vrf_vkey: creds.vrf_verification_key,
         leader_vrf_output: election.vrf_output.0.to_vec(),
         leader_vrf_proof: {
@@ -981,7 +982,7 @@ mod tests {
         .unwrap()
         .expect("should be leader with f=1.0");
 
-        let mut forged = forge_block_header(
+        let forged = forge_block_header(
             &creds,
             &election,
             slot,
@@ -989,14 +990,12 @@ mod tests {
             None,
             [0xAA; 32], // body hash
             100,         // body size
+            cold_vk.unwrap(),
             &ForgeBlockConfig {
                 protocol_version: (9, 0),
             },
         )
         .unwrap();
-
-        // Patch in the real cold verification key so verify_header can check.
-        forged.header_body.issuer_vkey = cold_vk.unwrap();
 
         // Verify the forged header.
         let header = yggdrasil_consensus::Header {
