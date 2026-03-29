@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 
 use crate::error::LedgerError;
+use crate::CborDecode;
 
 /// Validates that every required VKey hash is covered by a witness.
 ///
@@ -385,6 +386,92 @@ pub fn required_script_hashes_from_proposal_procedures(
     }
 }
 
+/// Returns `true` if the certificate list contains at least one MIR certificate.
+fn has_mir_cert(certs: Option<&[crate::types::DCert]>) -> bool {
+    certs.map_or(false, |cs| {
+        cs.iter().any(|c| matches!(c, crate::types::DCert::MoveInstantaneousReward(_, _)))
+    })
+}
+
+/// Validates that a transaction containing MIR certificates has enough genesis
+/// delegate key signatures.
+///
+/// The upstream rule requires that the number of genesis delegate key hashes
+/// present in the transaction's VKey witness set is at least `quorum`.
+///
+/// `gen_delg_hashes` is a slice of 28-byte genesis **delegate** key hashes
+/// (i.e. the `delegate` fields of the active `gen_delegs` map, NOT the
+/// genesis owner key hashes).
+///
+/// Returns `Ok(())` when:
+/// - no MIR certificates are present, or
+/// - the number of genesis delegate witnesses ≥ `quorum`.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxow` — `validateMIRInsufficientGenesisSigs`.
+pub fn validate_mir_genesis_quorum_if_present(
+    certs: Option<&[crate::types::DCert]>,
+    gen_delg_hashes: &HashSet<[u8; 28]>,
+    quorum: u64,
+    witness_bytes: Option<&[u8]>,
+) -> Result<(), crate::error::LedgerError> {
+    if !has_mir_cert(certs) {
+        return Ok(());
+    }
+    if gen_delg_hashes.is_empty() {
+        // No genesis delegates configured — skip quorum check.
+        return Ok(());
+    }
+    // Count how many genesis delegate keys actually signed.
+    let present = match witness_bytes {
+        Some(wb) => {
+            let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
+            let wset = witness_vkey_hash_set(&ws.vkey_witnesses);
+            wset.intersection(gen_delg_hashes).count()
+        }
+        None => 0,
+    };
+    let required = quorum as usize;
+    if present < required {
+        return Err(crate::error::LedgerError::MIRInsufficientGenesisSigs { required, present });
+    }
+    Ok(())
+}
+
+/// Typed variant of [`validate_mir_genesis_quorum_if_present`] that accepts
+/// a pre-decoded witness set (used by submitted-tx paths).
+pub fn validate_mir_genesis_quorum_typed(
+    certs: Option<&[crate::types::DCert]>,
+    gen_delg_hashes: &HashSet<[u8; 28]>,
+    quorum: u64,
+    ws: &crate::eras::shelley::ShelleyWitnessSet,
+) -> Result<(), crate::error::LedgerError> {
+    if !has_mir_cert(certs) {
+        return Ok(());
+    }
+    if gen_delg_hashes.is_empty() {
+        return Ok(());
+    }
+    let wset = witness_vkey_hash_set(&ws.vkey_witnesses);
+    let present = wset.intersection(gen_delg_hashes).count();
+    let required = quorum as usize;
+    if present < required {
+        return Err(crate::error::LedgerError::MIRInsufficientGenesisSigs { required, present });
+    }
+    Ok(())
+}
+
+/// Builds a `HashSet` of genesis delegate key hashes from the active
+/// `gen_delegs` map.  These are the delegate key hashes (NOT genesis owner
+/// key hashes) that are expected to sign MIR transactions.
+pub fn gen_delg_hash_set(
+    gen_delegs: &std::collections::BTreeMap<
+        crate::types::GenesisHash,
+        crate::state::GenesisDelegationState,
+    >,
+) -> HashSet<[u8; 28]> {
+    gen_delegs.values().map(|d| d.delegate).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,4 +637,143 @@ mod tests {
         assert!(set.contains(&vkey_hash(&w1.vkey)));
         assert!(set.contains(&vkey_hash(&w2.vkey)));
     }
-}
+
+        // Helper: build a ShelleyWitnessSet with the given VKey hashes in the vkey witness slots.
+        // Signatures are zeroed (unused in quorum checks which only look at the hash of the vkey).
+        fn witness_set_with_vkeys(vkeys: &[[u8; 32]]) -> crate::eras::shelley::ShelleyWitnessSet {
+            crate::eras::shelley::ShelleyWitnessSet {
+                vkey_witnesses: vkeys
+                    .iter()
+                    .map(|vk| crate::eras::shelley::ShelleyVkeyWitness {
+                        vkey: *vk,
+                        signature: [0u8; 64],
+                    })
+                    .collect(),
+                native_scripts: vec![],
+                bootstrap_witnesses: vec![],
+                plutus_v1_scripts: vec![],
+                plutus_data: vec![],
+                redeemers: vec![],
+                plutus_v2_scripts: vec![],
+                plutus_v3_scripts: vec![],
+            }
+        }
+
+        // Helper: build a realistic 32-byte raw Ed25519 public key whose Blake2b-224
+        // hash equals `expected_hash`.  We use the inverse: store the hash as the
+        // first 28 bytes and pad, then compute what hash the vkey_hash() function
+        // would produce.  Instead, we take the direct route: create a vkey whose
+        // hash we know by computing it ourselves.
+        fn vkey_with_known_hash(prefix: u8) -> ([u8; 32], [u8; 28]) {
+            let vk = [prefix; 32];
+            let hash = vkey_hash(&vk);
+            (vk, hash)
+        }
+
+        fn mir_cert() -> crate::types::DCert {
+            crate::types::DCert::MoveInstantaneousReward(
+                crate::types::MirPot::Reserves,
+                crate::types::MirTarget::SendToOppositePot(0),
+            )
+        }
+
+        #[test]
+        fn mir_quorum_passes_when_no_mir_certs() {
+            // No certs at all → quorum check trivially passes.
+            let gen_delg_hashes: HashSet<[u8; 28]> = [[1u8; 28]].into_iter().collect();
+            let ws = witness_set_with_vkeys(&[]);
+            assert!(validate_mir_genesis_quorum_typed(None, &gen_delg_hashes, 5, &ws).is_ok());
+        }
+
+        #[test]
+        fn mir_quorum_passes_when_non_mir_certs_only() {
+            // A cert that is NOT MIR → quorum check trivially passes.
+            let certs = vec![crate::types::DCert::AccountRegistration(
+                crate::types::StakeCredential::AddrKeyHash([0u8; 28]),
+            )];
+            let gen_delg_hashes: HashSet<[u8; 28]> = [[1u8; 28]].into_iter().collect();
+            let ws = witness_set_with_vkeys(&[]);
+            assert!(validate_mir_genesis_quorum_typed(Some(&certs), &gen_delg_hashes, 5, &ws).is_ok());
+        }
+
+        #[test]
+        fn mir_quorum_passes_when_gen_delegs_empty() {
+            // MIR cert present but no genesis delegations on record → quorum check passes
+            // (nothing to intersect against).
+            let certs = vec![mir_cert()];
+            let gen_delg_hashes: HashSet<[u8; 28]> = HashSet::new();
+            let ws = witness_set_with_vkeys(&[]);
+            assert!(validate_mir_genesis_quorum_typed(Some(&certs), &gen_delg_hashes, 5, &ws).is_ok());
+        }
+
+        #[test]
+        fn mir_quorum_fails_when_no_sigs_for_mir_cert() {
+            // MIR cert present, quorum=1, but no genesis delegate key in witness set.
+            let (_, hash1) = vkey_with_known_hash(0xAA);
+            let gen_delg_hashes: HashSet<[u8; 28]> = [hash1].into_iter().collect();
+            let ws = witness_set_with_vkeys(&[]);
+            let result = validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 1, &ws);
+            assert!(matches!(
+                result,
+                Err(LedgerError::MIRInsufficientGenesisSigs { required: 1, present: 0 })
+            ));
+        }
+
+        #[test]
+        fn mir_quorum_fails_when_insufficient_sigs() {
+            // MIR cert present, quorum=3, only 2 delegates sign.
+            let (vk1, hash1) = vkey_with_known_hash(0x01);
+            let (vk2, hash2) = vkey_with_known_hash(0x02);
+            let (_vk3, hash3) = vkey_with_known_hash(0x03);
+            let gen_delg_hashes: HashSet<[u8; 28]> = [hash1, hash2, hash3].into_iter().collect();
+            // Only 2 of the 3 delegates sign.
+            let ws = witness_set_with_vkeys(&[vk1, vk2]);
+            let result = validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 3, &ws);
+            assert!(matches!(
+                result,
+                Err(LedgerError::MIRInsufficientGenesisSigs { required: 3, present: 2 })
+            ));
+        }
+
+        #[test]
+        fn mir_quorum_passes_exact_threshold() {
+            // MIR cert present, quorum=2, exactly 2 delegates sign → pass.
+            let (vk1, hash1) = vkey_with_known_hash(0x01);
+            let (vk2, hash2) = vkey_with_known_hash(0x02);
+            let gen_delg_hashes: HashSet<[u8; 28]> = [hash1, hash2].into_iter().collect();
+            let ws = witness_set_with_vkeys(&[vk1, vk2]);
+            assert!(validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 2, &ws).is_ok());
+        }
+
+        #[test]
+        fn mir_quorum_passes_with_extra_non_delegate_sigs() {
+            // MIR cert present, quorum=1.  Witness set contains both a genesis delegate key
+            // and an unrelated key.  Should pass because ≥ quorum delegates signed.
+            let (vk_delegate, hash_delegate) = vkey_with_known_hash(0xDD);
+            let vk_other = [0x99u8; 32]; // not a genesis delegate
+            let gen_delg_hashes: HashSet<[u8; 28]> = [hash_delegate].into_iter().collect();
+            let ws = witness_set_with_vkeys(&[vk_delegate, vk_other]);
+            assert!(validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 1, &ws).is_ok());
+        }
+
+        #[test]
+        fn gen_delg_hash_set_extracts_delegate_hashes() {
+            // gen_delg_hash_set should return the delegate hashes (not genesis owner hashes).
+            let mut gen_delegs = std::collections::BTreeMap::new();
+            gen_delegs.insert(
+                [0xAAu8; 28],
+                crate::state::GenesisDelegationState { delegate: [0x11u8; 28], vrf: [0x22u8; 32] },
+            );
+            gen_delegs.insert(
+                [0xBBu8; 28],
+                crate::state::GenesisDelegationState { delegate: [0x33u8; 28], vrf: [0x44u8; 32] },
+            );
+            let set = gen_delg_hash_set(&gen_delegs);
+            assert_eq!(set.len(), 2);
+            assert!(set.contains(&[0x11u8; 28]));
+            assert!(set.contains(&[0x33u8; 28]));
+            // The genesis owner keys are NOT in the set.
+            assert!(!set.contains(&[0xAAu8; 28]));
+            assert!(!set.contains(&[0xBBu8; 28]));
+        }
+    }

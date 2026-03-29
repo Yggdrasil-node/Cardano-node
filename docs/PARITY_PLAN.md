@@ -66,6 +66,8 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Core State** |
 | UTxO tracking | Coin + multi-asset semantics | ✅ | ✅ | Complete | ShelleyUtxo + MultiEraUtxo with era dispatch
 | Account state | Rewards + deposits tracking | ✅ | ✅ | Complete | DepositPot, treasury, reserves; reward snapshot + RUPD distribution
+| MIR (Move Instantaneous Rewards) | DCert tag 6, Shelley–Babbage | ✅ | ✅ | Complete | InstantaneousRewards accumulation per block/submitted-tx, epoch-boundary all-or-nothing payout + pot-to-pot transfers; 26 MIR tests
+| MIR genesis quorum | validateMIRInsufficientGenesisSigs, Shelley–Babbage | ✅ | ✅ | Complete | genesis_update_quorum field (ShelleyGenesis.updateQuorum, default 5); gen_delg_hash_set; validate_mir_genesis_quorum_if_present + _typed wired into all 5 block-apply and 5 submitted-tx paths; 8 tests
 | Pool state | Registration, retirement, performance | ✅ | ✅ | Complete | PoolState, PoolParams, retire queues, stake snapshots
 | Delegation state | Stake delegation per account | ✅ | ✅ | Complete | Delegations mapping
 | **Validation** |
@@ -85,6 +87,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | DRep inactivity | drep_activity threshold | ✅ | ✅ | Complete | touch_drep_activity, inactive_dreps
 | Governance expiry | Proposal age limit | ✅ | ✅ | Complete | remove_expired_governance_actions
 | Treasury donation | Conway utxosDonation accumulation + epoch flush | ✅ | ✅ | Complete | Per-tx accumulate_donation (UTXOS rule), epoch-boundary flush_donations_to_treasury (EPOCH rule), value preservation includes donation
+| Deposit/refund preservation | Certificate deposits + refunds in UTxO balance | ✅ | ✅ | Complete | CertBalanceAdjustment flows through all 6 per-era UTxO functions: consumed + withdrawals + refunds = produced + fee + deposits [+ donation]. Covers all 19 DCert variants
 | **Governance** |
 | Proposal storage | Action ID + metadata | ✅ | ✅ | Complete | GovActionState with vote maps
 | Vote accumulation | Committee/DRep/SPO votes | ✅ | ✅ | Complete | apply_conway_votes with per-voter class
@@ -261,7 +264,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | TreasuryAndReserves | Governance pots | ✅ | ✅ | Complete | Tag 7
 | **Submission API (LocalTxSubmission)** |
 | TX validation | Syntax + fee | ✅ | ✅ | Complete | apply_submitted_tx checks
-| TX relay readiness | Mempool admission | ✅ | ⚠️ | Partial | Pre-submission check incomplete
+| TX relay readiness | Mempool admission | ✅ | ✅ | Complete | LocalTxSubmission routes through staged ledger validation (`add_tx_to_shared_mempool` → `apply_submitted_tx`) before `insert_checked`; invalid txs rejected without mutating ledger/mempool
 | Feedback | Acceptance or error | ✅ | ✅ | Complete | Display format (human-readable LedgerError messages via #[error]) sent in rejection CBOR; Debug format replaced
 
 **CLI Summary**: ~95% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. TX rejection feedback now uses Display format for human-readable LedgerError messages. Remaining: YAML config migration.

@@ -455,6 +455,17 @@ pub enum LedgerError {
     #[error("bootstrap witness attributes are not valid CBOR map bytes: {0:02x?}")]
     InvalidBootstrapWitnessAttributes(Vec<u8>),
 
+    /// A transaction containing a MIR certificate (DCert tag 6) does not have
+    /// enough genesis delegate key signatures.  The quorum requires
+    /// `genesis_update_quorum` genesis delegate witnesses but only
+    /// `present` were found.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxow` — `MIRInsufficientGenesisSigsUTXOW`.
+    #[error(
+        "MIR certificate requires {required} genesis delegate signatures but only {present} were provided"
+    )]
+    MIRInsufficientGenesisSigs { required: usize, present: usize },
+
     // -- Auxiliary data validation errors ------------------------------------
 
     #[error(

@@ -31,8 +31,10 @@
 
 **Ledger**:
 - `apply_block()` — Multi-era block application with UTxO state update
-- `apply_epoch_boundary()` — Stake snapshots, pool retirement, governance expiry
+- `apply_epoch_boundary()` — Stake snapshots, pool retirement, governance expiry, MIR application
 - `enact_gov_action()` — Conway governance enactment (all 7 action types)
+- `accumulate_mir_from_certs()` — MIR certificate accumulation (Shelley–Babbage, DCert tag 6)
+- `InstantaneousRewards` — Per-credential MIR state + pot-to-pot delta tracking with CBOR round-trip
 - `validate_witnesses_if_present()` — Ed25519 signature + hash verification
 - `validate_native_scripts_if_present()` — Timelock script evaluation
 - `validate_output_network_ids()` — WrongNetwork check (all eras)
@@ -95,12 +97,11 @@
 - `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; threshold math complete
 - `ratify_and_enact()` — Enacted+expired+subtree-pruned deposit refunds via returnProposalDeposits; unclaimed→treasury
 - `remove_lineage_conflicting_proposals()` — proposalsApplyEnactment: purpose-root chain validation removes stale proposals
-- `apply_submitted_tx()` — Pre-mempool validation; some checks skipped
+- `apply_submitted_tx()` — Pre-mempool validation for LocalTxSubmission and runtime mempool admission paths
 
 **Mempool**:
-- Collateral pre-check — Logic not wired into insert_checked
-- Script budget estimation — Absent before mempool admission
-- TX conflict detection — Not checking input overlap across pending TXs
+- Collateral and script-budget checks — Enforced via staged ledger admission (`add_tx_to_shared_mempool`/`add_tx_to_mempool` calling `apply_submitted_tx` before insert)
+- TX conflict detection — Implemented in `insert_checked` with input-overlap rejection (`ConflictingInputs`)
 
 **Network**:
 - `ChainSyncClient` — Per-state timeouts: ST_INTERSECT 10 s, ST_NEXT_CAN_AWAIT 10 s, waitForever after MsgAwaitReply

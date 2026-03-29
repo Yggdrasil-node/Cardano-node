@@ -84,6 +84,19 @@ pub struct EpochBoundaryEvent {
     /// Accumulated treasury donations (Conway `utxosDonation`) transferred to
     /// treasury during this epoch boundary.
     pub donations_transferred: u64,
+    /// Number of reward accounts credited via MIR at this epoch boundary.
+    pub mir_accounts_credited: usize,
+    /// Total lovelace credited to reward accounts from reserves via MIR.
+    pub mir_from_reserves: u64,
+    /// Total lovelace credited to reward accounts from treasury via MIR.
+    pub mir_from_treasury: u64,
+    /// Net delta applied to reserves from pot-to-pot MIR transfers.
+    pub mir_pot_delta_reserves: i64,
+    /// Net delta applied to treasury from pot-to-pot MIR transfers.
+    pub mir_pot_delta_treasury: i64,
+    /// `true` when MIR rewards were skipped because a pot had insufficient
+    /// funds (all-or-nothing rule).
+    pub mir_pots_insufficient: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +174,18 @@ pub fn apply_epoch_boundary(
 
     let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, pool_performance);
     let accounts_rewarded = distribute_rewards(ledger, &reward_dist);
+
+    // -----------------------------------------------------------------------
+    // 1b. MIR — apply accumulated Move Instantaneous Rewards.
+    //
+    //     The upstream NEWEPOCH rule: RUPD → **MIR** → EPOCH (SNAP …).
+    //     MIR rewards from reserves and treasury are credited to
+    //     registered reward accounts, pot-to-pot delta transfers are
+    //     applied, and accumulated IR state is cleared.
+    //
+    //     Reference: `Cardano.Ledger.Shelley.Rules.Mir`.
+    // -----------------------------------------------------------------------
+    let mir_result = apply_mir_at_epoch_boundary(ledger);
 
     // -----------------------------------------------------------------------
     // 2. SNAP — compute a fresh mark snapshot from post-reward state
@@ -264,6 +289,12 @@ pub fn apply_epoch_boundary(
         removed_due_to_enactment_deposit_refunds: ratify_result.removed_due_to_enactment_deposit_refunds,
         unclaimed_governance_deposits: ratify_result.unclaimed_deposits,
         donations_transferred,
+        mir_accounts_credited: mir_result.accounts_credited,
+        mir_from_reserves: mir_result.from_reserves,
+        mir_from_treasury: mir_result.from_treasury,
+        mir_pot_delta_reserves: mir_result.pot_delta_reserves,
+        mir_pot_delta_treasury: mir_result.pot_delta_treasury,
+        mir_pots_insufficient: mir_result.pots_insufficient,
     })
 }
 
@@ -293,6 +324,162 @@ fn distribute_rewards(
         // next epoch boundary (upstream behavior).
     }
     count
+}
+
+// ---------------------------------------------------------------------------
+// MIR epoch application
+// ---------------------------------------------------------------------------
+
+/// Result of applying MIR at an epoch boundary.
+#[derive(Clone, Debug, Default)]
+struct MirEpochResult {
+    /// Number of reward accounts credited.
+    accounts_credited: usize,
+    /// Total lovelace debited from reserves for MIR rewards.
+    from_reserves: u64,
+    /// Total lovelace debited from treasury for MIR rewards.
+    from_treasury: u64,
+    /// Net delta applied to reserves from pot-to-pot transfers.
+    pot_delta_reserves: i64,
+    /// Net delta applied to treasury from pot-to-pot transfers.
+    pot_delta_treasury: i64,
+    /// Whether rewards were skipped due to pot insufficiency.
+    pots_insufficient: bool,
+}
+
+/// Applies accumulated Move Instantaneous Rewards at the epoch boundary.
+///
+/// Implements the upstream MIR rule (`Cardano.Ledger.Shelley.Rules.Mir`):
+///
+/// 1. Filter `ir_reserves` and `ir_treasury` to registered reward accounts.
+/// 2. All-or-nothing check: if reserves < Σ(filtered_reserves) **or**
+///    treasury < Σ(filtered_treasury), no rewards are distributed from
+///    either pot.
+/// 3. On success: merge per-credential amounts from both pots and credit
+///    reward accounts; debit the respective pots.
+/// 4. Apply pot-to-pot delta transfers (from `SendToOppositePot` certs)
+///    regardless of whether rewards were distributed.
+/// 5. Always clear the `InstantaneousRewards` state.
+///
+/// MIR certificates exist in Shelley through Babbage; Conway does not
+/// produce any MIR entries.
+fn apply_mir_at_epoch_boundary(ledger: &mut LedgerState) -> MirEpochResult {
+    // Take and clear the IR state from ledger.
+    let ir = std::mem::take(ledger.instantaneous_rewards_mut());
+
+    if ir.is_empty() {
+        return MirEpochResult::default();
+    }
+
+    let delta_reserves = ir.delta_reserves;
+    let delta_treasury = ir.delta_treasury;
+
+    // 1. Build registered credential set from reward accounts so we can
+    //    filter MIR maps without needing the network id for lookups.
+    let cred_to_account: BTreeMap<crate::types::StakeCredential, RewardAccount> = ledger
+        .reward_accounts()
+        .iter()
+        .map(|(account, _)| (account.credential, *account))
+        .collect();
+
+    let filtered_reserves: BTreeMap<crate::types::StakeCredential, i64> = ir
+        .ir_reserves
+        .into_iter()
+        .filter(|(cred, _)| cred_to_account.contains_key(cred))
+        .collect();
+
+    let filtered_treasury: BTreeMap<crate::types::StakeCredential, i64> = ir
+        .ir_treasury
+        .into_iter()
+        .filter(|(cred, _)| cred_to_account.contains_key(cred))
+        .collect();
+
+    let total_reserves: i64 = filtered_reserves.values().sum();
+    let total_treasury: i64 = filtered_treasury.values().sum();
+
+    // 2. All-or-nothing: both pots must be sufficient, or neither pays.
+    let reserves = ledger.accounting().reserves;
+    let treasury = ledger.accounting().treasury;
+
+    let reserves_ok = total_reserves <= 0 || reserves >= total_reserves as u64;
+    let treasury_ok = total_treasury <= 0 || treasury >= total_treasury as u64;
+    let can_pay = reserves_ok && treasury_ok;
+
+    let mut accounts_credited = 0usize;
+    let mut from_reserves = 0u64;
+    let mut from_treasury = 0u64;
+
+    if can_pay && (total_reserves != 0 || total_treasury != 0) {
+        // 3. Merge per-credential amounts from both pots.
+        let mut combined: BTreeMap<crate::types::StakeCredential, i64> = BTreeMap::new();
+        for (cred, delta) in &filtered_reserves {
+            *combined.entry(*cred).or_insert(0) += delta;
+        }
+        for (cred, delta) in &filtered_treasury {
+            *combined.entry(*cred).or_insert(0) += delta;
+        }
+
+        // Credit reward accounts.
+        let ra = ledger.reward_accounts_mut();
+        for (cred, &delta) in &combined {
+            if delta == 0 {
+                continue;
+            }
+            if let Some(account) = cred_to_account.get(cred) {
+                if let Some(state) = ra.get_mut(account) {
+                    if delta > 0 {
+                        state.set_balance(state.balance().saturating_add(delta as u64));
+                    } else {
+                        state.set_balance(state.balance().saturating_sub((-delta) as u64));
+                    }
+                    accounts_credited += 1;
+                }
+            }
+        }
+
+        // Record debits.
+        from_reserves = if total_reserves > 0 {
+            total_reserves as u64
+        } else {
+            0
+        };
+        from_treasury = if total_treasury > 0 {
+            total_treasury as u64
+        } else {
+            0
+        };
+    }
+
+    // 4. Update pots: debit reward sums (if paid) + apply delta transfers.
+    {
+        let acct = ledger.accounting_mut();
+        // Debit for distributed MIR rewards.
+        if can_pay {
+            apply_signed_delta(&mut acct.reserves, -total_reserves);
+            apply_signed_delta(&mut acct.treasury, -total_treasury);
+        }
+        // Pot-to-pot delta transfers (always applied).
+        apply_signed_delta(&mut acct.reserves, delta_reserves);
+        apply_signed_delta(&mut acct.treasury, delta_treasury);
+    }
+
+    MirEpochResult {
+        accounts_credited,
+        from_reserves,
+        from_treasury,
+        pot_delta_reserves: delta_reserves,
+        pot_delta_treasury: delta_treasury,
+        pots_insufficient: !can_pay,
+    }
+}
+
+/// Applies a signed delta to an unsigned pot balance (saturating).
+fn apply_signed_delta(pot: &mut u64, delta: i64) {
+    if delta > 0 {
+        *pot = pot.saturating_add(delta as u64);
+    } else if delta < 0 {
+        *pot = pot.saturating_sub((-delta) as u64);
+    }
 }
 
 /// Removes governance actions whose `expires_after` is strictly before `epoch`,

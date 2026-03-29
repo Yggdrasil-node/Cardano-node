@@ -681,7 +681,8 @@ fn strict_base_ledger_state(
                 })
                 .collect(),
         );
-    }
+        state.set_genesis_update_quorum(bootstrap.update_quorum);
+        }
     if let Some(params) = file_cfg
         .load_genesis_protocol_params(config_base_dir)
         .wrap_err("failed to load genesis protocol parameters")?

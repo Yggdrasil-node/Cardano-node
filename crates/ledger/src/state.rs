@@ -6,9 +6,9 @@ use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyUtxo};
 use crate::types::{
-    Address, Anchor, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, Point,
-    PoolKeyHash, PoolParams, RewardAccount, Relay, StakeCredential, UnitInterval,
-    VrfKeyHash,
+    Address, Anchor, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, MirPot,
+    MirTarget, Point, PoolKeyHash, PoolParams, RewardAccount, Relay, StakeCredential,
+    UnitInterval, VrfKeyHash,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
@@ -1671,6 +1671,120 @@ impl LedgerStateSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// InstantaneousRewards — MIR accumulation state
+// ---------------------------------------------------------------------------
+
+/// Accumulated instantaneous rewards (MIR) state.
+///
+/// During Shelley through Babbage block application, `MoveInstantaneousReward`
+/// certificates accumulate per-credential reward deltas and pot-to-pot
+/// transfer deltas here.  At each epoch boundary the MIR rule processes the
+/// accumulated state: per-credential amounts are credited to reward accounts
+/// (if still registered), pot transfers adjust reserves/treasury, and the
+/// accumulator is cleared.
+///
+/// Invariant: `delta_reserves + delta_treasury == 0` (transfers are
+/// zero-sum between the two pots).
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `InstantaneousRewards`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InstantaneousRewards {
+    /// Per-credential reward deltas sourced from reserves.
+    ///
+    /// Accumulated via `StakeCredentials` MIR targets with `MirPot::Reserves`.
+    /// Positive values credit; post-Alonzo negative deltas are allowed as
+    /// long as the combined map stays non-negative.
+    pub ir_reserves: BTreeMap<StakeCredential, i64>,
+    /// Per-credential reward deltas sourced from treasury.
+    ///
+    /// Accumulated via `StakeCredentials` MIR targets with `MirPot::Treasury`.
+    pub ir_treasury: BTreeMap<StakeCredential, i64>,
+    /// Signed delta applied to reserves for pot-to-pot transfers.
+    ///
+    /// A negative value means reserves are being transferred out (to
+    /// treasury); a positive value means reserves are receiving from
+    /// treasury.
+    pub delta_reserves: i64,
+    /// Signed delta applied to treasury for pot-to-pot transfers.
+    ///
+    /// Invariant: `delta_treasury == -delta_reserves`.
+    pub delta_treasury: i64,
+}
+
+impl InstantaneousRewards {
+    /// Returns `true` when there are no accumulated MIR entries.
+    pub fn is_empty(&self) -> bool {
+        self.ir_reserves.is_empty()
+            && self.ir_treasury.is_empty()
+            && self.delta_reserves == 0
+            && self.delta_treasury == 0
+    }
+
+    /// Clears all accumulated MIR state.
+    pub fn clear(&mut self) {
+        self.ir_reserves.clear();
+        self.ir_treasury.clear();
+        self.delta_reserves = 0;
+        self.delta_treasury = 0;
+    }
+}
+
+impl CborEncode for InstantaneousRewards {
+    fn encode_cbor(&self, enc: &mut Encoder) {
+        enc.array(4);
+        // ir_reserves: map credential → i64
+        enc.map(self.ir_reserves.len() as u64);
+        for (cred, &delta) in &self.ir_reserves {
+            cred.encode_cbor(enc);
+            enc.integer(delta);
+        }
+        // ir_treasury: map credential → i64
+        enc.map(self.ir_treasury.len() as u64);
+        for (cred, &delta) in &self.ir_treasury {
+            cred.encode_cbor(enc);
+            enc.integer(delta);
+        }
+        // delta_reserves, delta_treasury
+        enc.integer(self.delta_reserves);
+        enc.integer(self.delta_treasury);
+    }
+}
+
+impl CborDecode for InstantaneousRewards {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        let len = dec.array()?;
+        if len != 4 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 4,
+                actual: len as usize,
+            });
+        }
+        let map_len = dec.map()?;
+        let mut ir_reserves = BTreeMap::new();
+        for _ in 0..map_len {
+            let cred = StakeCredential::decode_cbor(dec)?;
+            let delta = dec.integer()?;
+            ir_reserves.insert(cred, delta);
+        }
+        let map_len = dec.map()?;
+        let mut ir_treasury = BTreeMap::new();
+        for _ in 0..map_len {
+            let cred = StakeCredential::decode_cbor(dec)?;
+            let delta = dec.integer()?;
+            ir_treasury.insert(cred, delta);
+        }
+        let delta_reserves = dec.integer()?;
+        let delta_treasury = dec.integer()?;
+        Ok(Self {
+            ir_reserves,
+            ir_treasury,
+            delta_reserves,
+            delta_treasury,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // DepositPot — aggregate deposit tracking
 // ---------------------------------------------------------------------------
 
@@ -1873,6 +1987,20 @@ pub struct LedgerState {
     ///
     /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `utxosDonation`.
     utxos_donation: u64,
+    /// Accumulated instantaneous rewards (MIR) state.
+    ///
+    /// MIR certificates (DCert tag 6, Shelley through Babbage) accumulate
+    /// per-credential reward deltas and pot-to-pot transfer deltas here.
+    /// At the epoch boundary the MIR rule applies accumulated rewards and
+    /// clears this state.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `dsIRewards`.
+    instantaneous_rewards: InstantaneousRewards,
+    /// Number of genesis delegate key signatures required to authorise a
+    /// MIR certificate.  Loaded from `ShelleyGenesis.updateQuorum` (mainnet: 5).
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxow` — `validateMIRInsufficientGenesisSigs`.
+    genesis_update_quorum: u64,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -1888,7 +2016,7 @@ pub struct LedgerStateCheckpoint {
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(19);
+        enc.array(21);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
         match self.expected_network_id {
@@ -1940,16 +2068,20 @@ impl CborEncode for LedgerState {
         }
         // utxos_donation: accumulated treasury donations (Conway).
         enc.unsigned(self.utxos_donation);
+        // instantaneous_rewards: accumulated MIR state (Shelley–Babbage).
+        self.instantaneous_rewards.encode_cbor(enc);
+        // genesis_update_quorum: MIR cert signature threshold.
+        enc.unsigned(self.genesis_update_quorum);
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept legacy 9/10-element arrays and current 12-19-element arrays.
-        if len != 9 && len != 10 && !(12..=19).contains(&len) {
+        // Accept legacy 9/10-element arrays and current 12-21-element arrays.
+        if len != 9 && len != 10 && !(12..=21).contains(&len) {
             return Err(LedgerError::CborInvalidLength {
-                expected: 19,
+                expected: 21,
                 actual: len as usize,
             });
         }
@@ -2087,6 +2219,18 @@ impl CborDecode for LedgerState {
             0
         };
 
+        let instantaneous_rewards = if len >= 20 {
+            InstantaneousRewards::decode_cbor(dec)?
+        } else {
+            InstantaneousRewards::default()
+        };
+
+        let genesis_update_quorum = if len >= 21 {
+            dec.unsigned()?
+        } else {
+            5 // upstream default (mainnet)
+        };
+
         Ok(Self {
             current_era,
             tip,
@@ -2107,6 +2251,8 @@ impl CborDecode for LedgerState {
             gen_delegs,
             pending_pparam_updates,
             utxos_donation,
+            instantaneous_rewards,
+            genesis_update_quorum,
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
@@ -2181,6 +2327,8 @@ impl LedgerState {
             gen_delegs: BTreeMap::new(),
             pending_pparam_updates: BTreeMap::new(),
             utxos_donation: 0,
+            instantaneous_rewards: InstantaneousRewards::default(),
+            genesis_update_quorum: 5,
         }
     }
 
@@ -2489,6 +2637,19 @@ impl LedgerState {
         self.expected_network_id = Some(network_id);
     }
 
+    /// Sets the genesis update quorum (number of genesis delegate signatures
+    /// required to authorize a MIR certificate or protocol parameter update).
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Genesis` — `sgUpdateQuorum`.
+    pub fn set_genesis_update_quorum(&mut self, quorum: u64) {
+        self.genesis_update_quorum = quorum;
+    }
+
+    /// Returns the genesis update quorum threshold.
+    pub fn genesis_update_quorum(&self) -> u64 {
+        self.genesis_update_quorum
+    }
+
     /// Sets the current epoch carried by the ledger state.
     pub fn set_current_epoch(&mut self, current_epoch: EpochNo) {
         self.current_epoch = current_epoch;
@@ -2553,6 +2714,16 @@ impl LedgerState {
             self.utxos_donation = 0;
         }
         donated
+    }
+
+    /// Returns a reference to the accumulated instantaneous rewards state.
+    pub fn instantaneous_rewards(&self) -> &InstantaneousRewards {
+        &self.instantaneous_rewards
+    }
+
+    /// Returns a mutable reference to the accumulated instantaneous rewards state.
+    pub fn instantaneous_rewards_mut(&mut self) -> &mut InstantaneousRewards {
+        &mut self.instantaneous_rewards
     }
 
     /// Returns a reference to the Conway enactment state.
@@ -2730,6 +2901,7 @@ impl LedgerState {
         current_slot: crate::types::SlotNo,
         evaluator: Option<&dyn crate::plutus_validation::PlutusEvaluator>,
     ) -> Result<(), LedgerError> {
+        let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         match tx {
             crate::tx::MultiEraSubmittedTx::Shelley(tx) => {
                 validate_auxiliary_data(
@@ -2771,6 +2943,12 @@ impl LedgerState {
                     }
                     let tx_body_hash = crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0;
                     validate_witnesses_typed(&tx.witness_set, &required, &tx_body_hash)?;
+                    crate::witnesses::validate_mir_genesis_quorum_typed(
+                        tx.body.certificates.as_deref(),
+                        &gen_delg_set,
+                        self.genesis_update_quorum,
+                        &tx.witness_set,
+                    )?;
                 }
                 let mut staged = self.shelley_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
@@ -2810,6 +2988,10 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                accumulate_mir_from_certs(
+                    &mut self.instantaneous_rewards,
+                    tx.body.certificates.as_deref(),
+                );
             }
             crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
                 validate_auxiliary_data(
@@ -2849,6 +3031,12 @@ impl LedgerState {
                         crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
+                    crate::witnesses::validate_mir_genesis_quorum_typed(
+                        tx.body.certificates.as_deref(),
+                        &gen_delg_set,
+                        self.genesis_update_quorum,
+                        &tx.witness_set,
+                    )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 // Native script validation (Allegra submitted path)
@@ -2918,6 +3106,10 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                accumulate_mir_from_certs(
+                    &mut self.instantaneous_rewards,
+                    tx.body.certificates.as_deref(),
+                );
             }
             crate::tx::MultiEraSubmittedTx::Mary(tx) => {
                 validate_auxiliary_data(
@@ -2957,6 +3149,12 @@ impl LedgerState {
                         crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
+                    crate::witnesses::validate_mir_genesis_quorum_typed(
+                        tx.body.certificates.as_deref(),
+                        &gen_delg_set,
+                        self.genesis_update_quorum,
+                        &tx.witness_set,
+                    )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 // Native script validation (Mary submitted path)
@@ -3029,6 +3227,10 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                accumulate_mir_from_certs(
+                    &mut self.instantaneous_rewards,
+                    tx.body.certificates.as_deref(),
+                );
             }
             crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
                 // Reject submitted transactions with is_valid = false.
@@ -3091,6 +3293,12 @@ impl LedgerState {
                         }
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
+                    crate::witnesses::validate_mir_genesis_quorum_typed(
+                        tx.body.certificates.as_deref(),
+                        &gen_delg_set,
+                        self.genesis_update_quorum,
+                        &tx.witness_set,
+                    )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 let mut required_scripts = HashSet::new();
@@ -3236,6 +3444,10 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                accumulate_mir_from_certs(
+                    &mut self.instantaneous_rewards,
+                    tx.body.certificates.as_deref(),
+                );
             }
             crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
                 // Reject submitted transactions with is_valid = false.
@@ -3298,6 +3510,12 @@ impl LedgerState {
                         }
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
+                    crate::witnesses::validate_mir_genesis_quorum_typed(
+                        tx.body.certificates.as_deref(),
+                        &gen_delg_set,
+                        self.genesis_update_quorum,
+                        &tx.witness_set,
+                    )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
                 // Reference input validation (Babbage+ rule)
@@ -3453,6 +3671,10 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                accumulate_mir_from_certs(
+                    &mut self.instantaneous_rewards,
+                    tx.body.certificates.as_deref(),
+                );
             }
             crate::tx::MultiEraSubmittedTx::Conway(tx) => {
                 // Reject submitted transactions with is_valid = false.
@@ -3939,6 +4161,9 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
+        // Pre-compute genesis delegate key hash set for MIR quorum validation
+        // (uses pre-block gen_delegs per upstream UTXOW rule).
+        let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -3974,6 +4199,13 @@ impl LedgerState {
                 crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
+            crate::witnesses::validate_mir_genesis_quorum_if_present(
+                body.certificates.as_deref(),
+                &gen_delg_set,
+                self.genesis_update_quorum,
+                witness_bytes.as_deref(),
+            )?;
             let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -3997,11 +4229,16 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
-        // Collect protocol parameter update proposals (PPUP rule).
+        // Collect protocol parameter update proposals (PPUP rule) and
+        // accumulate MIR certificates (Shelley through Babbage only).
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
             if let Some(ref update) = body.update {
                 self.collect_pparam_proposals(update);
             }
+            accumulate_mir_from_certs(
+                &mut self.instantaneous_rewards,
+                body.certificates.as_deref(),
+            );
         }
         Ok(())
     }
@@ -4033,6 +4270,8 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
+        // Pre-compute genesis delegate key hash set for MIR quorum validation.
+        let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -4067,6 +4306,13 @@ impl LedgerState {
                 crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
+            crate::witnesses::validate_mir_genesis_quorum_if_present(
+                body.certificates.as_deref(),
+                &gen_delg_set,
+                self.genesis_update_quorum,
+                witness_bytes.as_deref(),
+            )?;
             // Native script validation (Allegra+)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -4118,11 +4364,16 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
-        // Collect protocol parameter update proposals (PPUP rule).
+        // Collect protocol parameter update proposals (PPUP rule) and
+        // accumulate MIR certificates (Shelley through Babbage only).
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
             if let Some(ref update) = body.update {
                 self.collect_pparam_proposals(update);
             }
+            accumulate_mir_from_certs(
+                &mut self.instantaneous_rewards,
+                body.certificates.as_deref(),
+            );
         }
         Ok(())
     }
@@ -4154,6 +4405,7 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
+        let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -4188,6 +4440,13 @@ impl LedgerState {
                 crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
+            crate::witnesses::validate_mir_genesis_quorum_if_present(
+                body.certificates.as_deref(),
+                &gen_delg_set,
+                self.genesis_update_quorum,
+                witness_bytes.as_deref(),
+            )?;
             // Native script validation (Mary)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -4239,11 +4498,16 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
-        // Collect protocol parameter update proposals (PPUP rule).
+        // Collect protocol parameter update proposals (PPUP rule) and
+        // accumulate MIR certificates (Shelley through Babbage only).
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
             if let Some(ref update) = body.update {
                 self.collect_pparam_proposals(update);
             }
+            accumulate_mir_from_certs(
+                &mut self.instantaneous_rewards,
+                body.certificates.as_deref(),
+            );
         }
         Ok(())
     }
@@ -4284,6 +4548,7 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
+        let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
             let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
@@ -4336,6 +4601,13 @@ impl LedgerState {
                 }
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
+            crate::witnesses::validate_mir_genesis_quorum_if_present(
+                body.certificates.as_deref(),
+                &gen_delg_set,
+                self.genesis_update_quorum,
+                witness_bytes.as_deref(),
+            )?;
             // Native script validation (Alonzo)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -4474,11 +4746,16 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
-        // Collect protocol parameter update proposals (PPUP rule).
+        // Collect protocol parameter update proposals (PPUP rule) and
+        // accumulate MIR certificates (Shelley through Babbage only).
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, _is_valid) in &decoded {
             if let Some(ref update) = body.update {
                 self.collect_pparam_proposals(update);
             }
+            accumulate_mir_from_certs(
+                &mut self.instantaneous_rewards,
+                body.certificates.as_deref(),
+            );
         }
         Ok(())
     }
@@ -4519,6 +4796,7 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
+        let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
             let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
@@ -4576,6 +4854,13 @@ impl LedgerState {
                 }
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
+            // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
+            crate::witnesses::validate_mir_genesis_quorum_if_present(
+                body.certificates.as_deref(),
+                &gen_delg_set,
+                self.genesis_update_quorum,
+                witness_bytes.as_deref(),
+            )?;
             // Native script validation (Babbage)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -4721,11 +5006,16 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
-        // Collect protocol parameter update proposals (PPUP rule).
+        // Collect protocol parameter update proposals (PPUP rule) and
+        // accumulate MIR certificates (Shelley through Babbage only).
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, _is_valid) in &decoded {
             if let Some(ref update) = body.update {
                 self.collect_pparam_proposals(update);
             }
+            accumulate_mir_from_certs(
+                &mut self.instantaneous_rewards,
+                body.certificates.as_deref(),
+            );
         }
         Ok(())
     }
@@ -5999,6 +6289,60 @@ struct CertBalanceAdjustment {
     total_deposits: u64,
     /// Total deposit refunds from deregistration certificates.
     total_refunds: u64,
+}
+
+/// Scans a certificate list for `MoveInstantaneousReward` entries and
+/// accumulates their effects into the given `InstantaneousRewards` state.
+///
+/// For `StakeCredentials` targets the per-credential deltas are merged
+/// (Alonzo+ `unionWith (<>)` semantics) into the per-pot map.
+///
+/// For `SendToOppositePot` targets the signed pot-to-pot deltas are
+/// adjusted.  The invariant `delta_reserves + delta_treasury == 0` is
+/// maintained.
+///
+/// This function is called after each successful transaction commit
+/// during block application (Shelley through Babbage).  MIR certificates
+/// are absent in Conway.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — DELEG MIR handling.
+pub fn accumulate_mir_from_certs(
+    ir: &mut InstantaneousRewards,
+    certs: Option<&[DCert]>,
+) {
+    let Some(certs) = certs else { return };
+    for cert in certs {
+        if let DCert::MoveInstantaneousReward(pot, target) = cert {
+            match target {
+                MirTarget::StakeCredentials(map) => {
+                    let ir_map = match pot {
+                        MirPot::Reserves => &mut ir.ir_reserves,
+                        MirPot::Treasury => &mut ir.ir_treasury,
+                    };
+                    for (cred, &delta) in map {
+                        *ir_map.entry(*cred).or_insert(0) += delta;
+                    }
+                }
+                MirTarget::SendToOppositePot(coin) => {
+                    let signed_coin = *coin as i64;
+                    match pot {
+                        MirPot::Reserves => {
+                            ir.delta_reserves =
+                                ir.delta_reserves.saturating_sub(signed_coin);
+                            ir.delta_treasury =
+                                ir.delta_treasury.saturating_add(signed_coin);
+                        }
+                        MirPot::Treasury => {
+                            ir.delta_reserves =
+                                ir.delta_reserves.saturating_add(signed_coin);
+                            ir.delta_treasury =
+                                ir.delta_treasury.saturating_sub(signed_coin);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

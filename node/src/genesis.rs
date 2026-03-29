@@ -131,6 +131,13 @@ pub struct ShelleyGenesis {
     /// Initial Shelley protocol parameters embedded in the genesis file.
     #[serde(default)]
     pub protocol_params: ShelleyGenesisProtocolParams,
+
+    /// Number of genesis key signatures required to authorise a MIR certificate
+    /// or a protocol parameter update proposal (mainnet: 5 of 7).
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Genesis` — `sgUpdateQuorum`.
+    #[serde(default = "default_update_quorum")]
+    pub update_quorum: u64,
 }
 
 /// Genesis delegation entry from `genDelegs`.
@@ -157,6 +164,8 @@ pub struct ShelleyGenesisBootstrap {
     pub gen_delegs: BTreeMap<GenesisHash, ParsedShelleyGenesisDelegation>,
     /// Static genesis stake delegations keyed by stake credential hash.
     pub staking: BTreeMap<AddrKeyHash, PoolKeyHash>,
+    /// Number of genesis key signatures required for MIR certs or update proposals.
+    pub update_quorum: u64,
 }
 
 /// Parsed genesis delegation entry with fixed-width hashes.
@@ -667,6 +676,7 @@ pub fn build_shelley_genesis_bootstrap(
         initial_funds,
         gen_delegs,
         staking,
+        update_quorum: shelley.update_quorum,
     })
 }
 
@@ -1075,6 +1085,7 @@ fn default_epoch_length() -> u64 { 432_000 }
 fn default_slots_per_kes_period() -> u64 { 129_600 }
 fn default_max_kes_evolutions() -> u64 { 62 }
 fn default_security_param() -> u64 { 2_160 }
+fn default_update_quorum() -> u64 { 5 }
 fn default_min_fee_a() -> u64 { 44 }
 fn default_min_fee_b() -> u64 { 155_381 }
 fn default_max_block_body_size() -> u32 { 65_536 }
@@ -1189,7 +1200,8 @@ mod tests {
                 min_utxo_value: 1_000_000,
                 min_pool_cost: 340_000_000,
             },
-        }
+            update_quorum: 5,
+            }
     }
 
     fn sample_alonzo() -> AlonzoGenesis {
