@@ -6,6 +6,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.BlockFetch.Server`.
 
+use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
     BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
@@ -37,6 +38,10 @@ pub enum BlockFetchServerError {
     /// Unexpected message from the client.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+
+    /// Per-state time limit exceeded (upstream `ExceededTimeLimit`).
+    #[error("protocol timeout")]
+    Timeout,
 }
 
 // ---------------------------------------------------------------------------
@@ -113,9 +118,14 @@ impl BlockFetchServer {
 
     /// Wait for the next client request in `StIdle`.
     ///
-    /// Returns `RequestRange(range)` or `ClientDone`.
+    /// Returns `RequestRange(range)` or `ClientDone`.  Times out after
+    /// [`PROTOCOL_RECV_TIMEOUT`] if the client sends nothing (upstream
+    /// `timeLimitsBlockFetch` `shortWait` for `StIdle`).
     pub async fn recv_request(&mut self) -> Result<BlockFetchServerRequest, BlockFetchServerError> {
-        match self.recv_msg().await? {
+        let msg = tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
+            .await
+            .map_err(|_| BlockFetchServerError::Timeout)??;
+        match msg {
             BlockFetchMessage::MsgRequestRange(range) => {
                 Ok(BlockFetchServerRequest::RequestRange(range))
             }

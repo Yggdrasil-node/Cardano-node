@@ -183,7 +183,7 @@ where
                         server.accept().await?;
                     }
                     Ok(MempoolAddTxResult::MempoolTxRejected(_, reason)) => {
-                        let reason_bytes = encode_rejection_reason(&format!("{reason:?}"));
+                        let reason_bytes = encode_rejection_reason(&format!("{reason}"));
                         server.reject(reason_bytes).await?;
                     }
                     Err(e) => {

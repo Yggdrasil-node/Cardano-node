@@ -632,6 +632,14 @@ pub mod timeouts {
     ///
     /// Upstream: `local_TIME_WAIT_TIMEOUT = 0s`.
     pub const LOCAL_TIME_WAIT_TIMEOUT: Duration = Duration::ZERO;
+
+    /// Per-protocol message receive deadline for N2N server-side drivers.
+    ///
+    /// Applied when a server driver is waiting for the next client message
+    /// (client has protocol agency).  Corresponds to upstream `shortWait`
+    /// in `ouroboros-network-protocols` (60 s).  The TxSubmission blocking
+    /// request is the only exception and has no deadline (`waitForever`).
+    pub const PROTOCOL_RECV_TIMEOUT: Duration = Duration::from_secs(60);
 }
 
 // ---------------------------------------------------------------------------

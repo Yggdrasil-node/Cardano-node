@@ -22,6 +22,50 @@ enum TraceBackend {
     StdoutMachine,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum TraceSeverity {
+    Debug,
+    Info,
+    Notice,
+    Warning,
+    Error,
+    Critical,
+    Alert,
+    Emergency,
+    Silence,
+}
+
+impl TraceSeverity {
+    fn from_label(label: &str) -> Option<Self> {
+        match label.trim().to_ascii_lowercase().as_str() {
+            "debug" => Some(Self::Debug),
+            "info" | "informational" => Some(Self::Info),
+            "notice" => Some(Self::Notice),
+            "warning" | "warn" => Some(Self::Warning),
+            "error" => Some(Self::Error),
+            "critical" | "crit" => Some(Self::Critical),
+            "alert" => Some(Self::Alert),
+            "emergency" | "emerg" | "fatal" => Some(Self::Emergency),
+            "silence" | "silent" | "off" => Some(Self::Silence),
+            _ => None,
+        }
+    }
+
+    fn level(self) -> u8 {
+        match self {
+            Self::Debug => 10,
+            Self::Info => 20,
+            Self::Notice => 30,
+            Self::Warning => 40,
+            Self::Error => 50,
+            Self::Critical => 60,
+            Self::Alert => 70,
+            Self::Emergency => 80,
+            Self::Silence => 255,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct MachineTraceLine<'a> {
     at_ms: u128,
@@ -108,29 +152,65 @@ impl NodeTracer {
             return None;
         }
 
+        if matches!(
+            TraceSeverity::from_label(default_severity),
+            Some(TraceSeverity::Silence)
+        ) {
+            return None;
+        }
+
         let namespace_severity = self
-            .trace_options
-            .get(namespace)
+            .namespace_config(namespace)
             .and_then(|cfg| cfg.severity.as_deref());
         let root_severity = self
             .trace_options
             .get("")
             .and_then(|cfg| cfg.severity.as_deref());
-        let severity = namespace_severity.or(root_severity).unwrap_or(default_severity);
+        let configured_threshold = namespace_severity.or(root_severity);
 
-        if severity.eq_ignore_ascii_case("Silence") {
-            None
-        } else {
-            Some(severity)
+        if let Some(threshold) = configured_threshold {
+            if !passes_severity_threshold(default_severity, threshold) {
+                return None;
+            }
         }
+
+        Some(default_severity)
+    }
+
+    fn namespace_config(&self, namespace: &str) -> Option<&TraceNamespaceConfig> {
+        let mut best_match: Option<(&TraceNamespaceConfig, usize)> = None;
+
+        for (selector, cfg) in &self.trace_options {
+            if selector.is_empty() {
+                continue;
+            }
+
+            let prefix = selector.trim_end_matches('.');
+            if prefix.is_empty() {
+                continue;
+            }
+
+            let is_match = namespace == prefix
+                || (namespace.starts_with(prefix)
+                    && namespace.as_bytes().get(prefix.len()) == Some(&b'.'));
+            if !is_match {
+                continue;
+            }
+
+            let candidate_len = prefix.len();
+            if best_match.is_none_or(|(_, len)| candidate_len > len) {
+                best_match = Some((cfg, candidate_len));
+            }
+        }
+
+        best_match.map(|(cfg, _)| cfg)
     }
 
     fn backends_for(&self, namespace: &str) -> Vec<TraceBackend> {
         let configured = self
-            .trace_options
-            .get(namespace)
+            .namespace_config(namespace)
             .filter(|cfg| !cfg.backends.is_empty())
-            .or_else(|| self.trace_options.get(""));
+            .or_else(|| self.trace_options.get("").filter(|cfg| !cfg.backends.is_empty()));
 
         configured
             .map(|cfg| {
@@ -168,8 +248,7 @@ impl NodeTracer {
 
     fn min_emit_interval_ms(&self, namespace: &str) -> Option<u128> {
         let frequency = self
-            .trace_options
-            .get(namespace)
+            .namespace_config(namespace)
             .and_then(|cfg| cfg.max_frequency)
             .or_else(|| self.trace_options.get("").and_then(|cfg| cfg.max_frequency));
 
@@ -252,6 +331,26 @@ fn value_to_human(value: &Value) -> String {
         Value::String(text) => text.clone(),
         _ => value.to_string(),
     }
+}
+
+fn passes_severity_threshold(event_severity: &str, threshold: &str) -> bool {
+    let Some(threshold) = TraceSeverity::from_label(threshold) else {
+        return true;
+    };
+
+    if threshold == TraceSeverity::Silence {
+        return false;
+    }
+
+    let Some(event) = TraceSeverity::from_label(event_severity) else {
+        return true;
+    };
+
+    if event == TraceSeverity::Silence {
+        return false;
+    }
+
+    event.level() >= threshold.level()
 }
 
 // ---------------------------------------------------------------------------
@@ -711,7 +810,89 @@ mod tests {
 
         assert_eq!(
             tracer.resolve_severity("Node.Recovery.Checkpoint", "Notice"),
+            Some("Notice")
+        );
+    }
+
+    #[test]
+    fn root_severity_threshold_filters_lower_events() {
+        let tracer = NodeTracer::from_config(&default_config());
+
+        // Root threshold is Notice in default config.
+        assert_eq!(tracer.resolve_severity("Node.Runtime", "Info"), None);
+        assert_eq!(
+            tracer.resolve_severity("Node.Runtime", "Warning"),
+            Some("Warning")
+        );
+    }
+
+    #[test]
+    fn prefix_namespace_severity_is_applied() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "Net".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Warning".to_owned()),
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+
+        assert_eq!(tracer.resolve_severity("Net.Handshake", "Info"), None);
+        assert_eq!(
+            tracer.resolve_severity("Net.Handshake", "Warning"),
+            Some("Warning")
+        );
+    }
+
+    #[test]
+    fn exact_namespace_overrides_prefix_threshold() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "Net".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Warning".to_owned()),
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: None,
+            },
+        );
+        cfg.trace_options.insert(
+            "Net.PeerSelection".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Info".to_owned()),
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: None,
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+
+        assert_eq!(
+            tracer.resolve_severity("Net.PeerSelection", "Info"),
             Some("Info")
+        );
+    }
+
+    #[test]
+    fn prefix_namespace_frequency_is_applied() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "Node.Recovery".to_owned(),
+            TraceNamespaceConfig {
+                severity: None,
+                detail: None,
+                backends: Vec::new(),
+                max_frequency: Some(2.0),
+            },
+        );
+        let tracer = NodeTracer::from_config(&cfg);
+
+        assert_eq!(
+            tracer.min_emit_interval_ms("Node.Recovery.Custom"),
+            Some(500)
         );
     }
 

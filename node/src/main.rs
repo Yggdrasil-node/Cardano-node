@@ -1247,6 +1247,7 @@ async fn run_node(
         let governor_chain_db = Arc::clone(&chain_db);
         let governor_registry = Arc::clone(&peer_registry);
         let governor_tracer = tracer.clone();
+        let governor_metrics = std::sync::Arc::clone(&metrics);
         let governor_topology = topology_config.clone();
         let governor_base_ledger_state = base_ledger_state.clone();
         let governor_mempool = shared_mempool.clone();
@@ -1276,6 +1277,7 @@ async fn run_node(
                 Some(governor_mempool),
                 Some(governor_inbound_peers),
                 governor_tracer,
+                Some(governor_metrics),
                 shutdown,
             ).await;
         })

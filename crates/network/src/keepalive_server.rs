@@ -7,6 +7,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.KeepAlive.Server`.
 
+use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
 
@@ -36,6 +37,10 @@ pub enum KeepAliveServerError {
     /// Unexpected message from the client.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+
+    /// Per-state time limit exceeded (upstream `ExceededTimeLimit`).
+    #[error("protocol timeout")]
+    Timeout,
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +102,17 @@ impl KeepAliveServer {
     /// Wait for the next client message.
     ///
     /// Returns `Some(cookie)` when the client sends `MsgKeepAlive`, or
-    /// `None` when the client sends `MsgDone` (protocol terminates).
+    /// `None` when the client sends `MsgDone` (protocol terminates).  Times
+    /// out after [`PROTOCOL_RECV_TIMEOUT`] if the client stops sending keep-
+    /// alive pings (upstream `timeLimitsKeepAlive` `shortWait` for `StClient`;
+    /// generous to accommodate wide ping intervals).
     ///
     /// Must be called when the server is in `StClient` (client agency).
     pub async fn recv_keep_alive(&mut self) -> Result<Option<u16>, KeepAliveServerError> {
-        match self.recv_msg().await? {
+        let msg = tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
+            .await
+            .map_err(|_| KeepAliveServerError::Timeout)??;
+        match msg {
             KeepAliveMessage::MsgKeepAlive { cookie } => Ok(Some(cookie)),
             KeepAliveMessage::MsgDone => Ok(None),
             msg => Err(KeepAliveServerError::UnexpectedMessage(format!("{msg:?}"))),

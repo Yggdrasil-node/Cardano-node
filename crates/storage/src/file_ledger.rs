@@ -43,12 +43,28 @@ impl FileLedgerStore {
         fs::create_dir_all(&data_dir)?;
 
         let dirty_path = data_dir.join("dirty.flag");
-        if dirty_path.exists() {
+        let had_dirty = dirty_path.exists();
+        if had_dirty {
             eprintln!(
                 "[storage] LedgerStore: dirty sentinel found at {:?}; \
                  recovering from unclean shutdown",
                 dirty_path
             );
+            // Remove leftover .tmp files from incomplete atomic writes.
+            let mut tmp_removed = 0usize;
+            if let Ok(entries) = fs::read_dir(&data_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.extension().and_then(|e| e.to_str()) == Some("tmp") {
+                        if fs::remove_file(&p).is_ok() {
+                            tmp_removed += 1;
+                        }
+                    }
+                }
+            }
+            if tmp_removed > 0 {
+                eprintln!("  -> removed {tmp_removed} incomplete .tmp file(s)");
+            }
         }
 
         let mut snapshots = Vec::new();
@@ -70,6 +86,12 @@ impl FileLedgerStore {
         }
 
         snapshots.sort_by_key(|(slot, _)| *slot);
+
+        // Stale dirty sentinel has been recovered; clear it so subsequent
+        // opens do not produce spurious warnings.
+        if had_dirty {
+            let _ = fs::remove_file(&dirty_path);
+        }
 
         Ok(Self { data_dir, dirty_path, snapshots })
     }

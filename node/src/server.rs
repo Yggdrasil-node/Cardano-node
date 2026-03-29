@@ -397,14 +397,25 @@ impl InboundPeerSession {
 // ---------------------------------------------------------------------------
 
 /// Run the KeepAlive echo loop until the client sends `MsgDone` or the
-/// connection drops.
+/// Run the KeepAlive server loop, echoing cookies back until the client
+/// sends `MsgDone` or the connection drops.
+///
+/// Enforces upstream `timeLimitsKeepAlive` — 60 s server-side timeout
+/// (upstream `SingServer → Just 60`) per receive.
 pub async fn run_keepalive_server(
     mut server: KeepAliveServer,
 ) -> Result<(), KeepAliveServerError> {
     loop {
-        match server.recv_keep_alive().await? {
-            Some(cookie) => server.respond(cookie).await?,
-            None => return Ok(()), // client sent MsgDone
+        let result = tokio::time::timeout(
+            yggdrasil_network::protocol_limits::keepalive::SERVER.unwrap(),
+            server.recv_keep_alive(),
+        )
+        .await;
+        match result {
+            Ok(Ok(Some(cookie))) => server.respond(cookie).await?,
+            Ok(Ok(None)) => return Ok(()), // client sent MsgDone
+            Ok(Err(e)) => return Err(e),
+            Err(_elapsed) => return Err(KeepAliveServerError::Timeout),
         }
     }
 }
@@ -573,7 +584,30 @@ pub async fn run_txsubmission_server(
                     all_txids
                 };
 
-                let txs = server.request_txs(to_request.clone()).await?;
+                let txs = {
+                    let timeout = yggdrasil_network::protocol_limits::txsubmission::ST_TXS
+                        .unwrap();
+                    match tokio::time::timeout(
+                        timeout,
+                        server.request_txs(to_request.clone()),
+                    )
+                    .await
+                    {
+                        Ok(Ok(txs)) => txs,
+                        Ok(Err(e)) => {
+                            if let Some((tx_state, peer_addr)) = &dedup {
+                                tx_state.unregister_peer(peer_addr);
+                            }
+                            return Err(e);
+                        }
+                        Err(_elapsed) => {
+                            if let Some((tx_state, peer_addr)) = &dedup {
+                                tx_state.unregister_peer(peer_addr);
+                            }
+                            return Err(TxSubmissionServerError::Timeout);
+                        }
+                    }
+                };
 
                 // Track which txids were successfully received.
                 if let Some((tx_state, peer_addr)) = &dedup {

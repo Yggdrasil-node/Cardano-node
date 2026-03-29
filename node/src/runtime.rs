@@ -44,6 +44,7 @@ use yggdrasil_network::{
     refresh_root_peer_state_and_registry, resolve_peer_access_points,
     churn_mode_from_fetch_mode, compute_association_mode,
     fetch_mode_from_judgement, peer_selection_mode, pick_churn_regime,
+    PeerSelectionCounters,
 };
 use yggdrasil_ledger::{
     LedgerError, LedgerState, MultiEraSubmittedTx, Point, PoolRelayAccessPoint,
@@ -1021,6 +1022,7 @@ pub async fn run_governor_loop<I, V, L, F>(
     mempool: Option<SharedMempool>,
     inbound_peers: Option<Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>>>,
     tracer: NodeTracer,
+    metrics: Option<Arc<NodeMetrics>>,
     shutdown: F,
 ) where
     I: ImmutableStore,
@@ -1275,14 +1277,41 @@ pub async fn run_governor_loop<I, V, L, F>(
                 }
                 let actions = {
                     let registry = peer_registry.read().expect("peer registry lock poisoned");
-                    governor_state.tick(
+                    let actions = governor_state.tick(
                         &registry,
                         &config.targets,
                         &local_root_groups,
                         selection_mode,
                         association_mode,
                         Instant::now(),
-                    )
+                    );
+
+                    // Update Prometheus peer-selection counters after every tick.
+                    if let Some(m) = metrics.as_ref() {
+                        let c = PeerSelectionCounters::from_registry(
+                            &registry,
+                            Some(&governor_state),
+                        );
+                        m.set_peer_selection_counters(
+                            config.targets.target_known as u64,
+                            config.targets.target_established as u64,
+                            config.targets.target_active as u64,
+                            config.targets.target_known_big_ledger as u64,
+                            config.targets.target_established_big_ledger as u64,
+                            config.targets.target_active_big_ledger as u64,
+                            c.known as u64,
+                            c.established as u64,
+                            c.active as u64,
+                            c.known_big_ledger as u64,
+                            c.established_big_ledger as u64,
+                            c.active_big_ledger as u64,
+                            c.known_local_root as u64,
+                            c.established_local_root as u64,
+                            c.active_local_root as u64,
+                        );
+                    }
+
+                    actions
                 };
 
                 if actions.is_empty() {
@@ -2357,6 +2386,9 @@ fn record_verified_batch_progress(
         m.inc_batches_completed();
         if let Point::BlockPoint(slot, _) = progress.current_point {
             m.set_current_slot(slot.0);
+        }
+        if let Some(block_no) = progress.latest_block_number() {
+            m.set_current_block_number(block_no);
         }
     }
 }

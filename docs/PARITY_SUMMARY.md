@@ -17,8 +17,8 @@
 | **Network Protocols** | All 5 mini-protocols + mux + handshake fully functional with typed clients/servers | ✅ 100% |
 | **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers | ⚠️ 85% |
 | **Mempool** | Fee-ordered queue + TTL + eviction fully working; script budget pre-checks pending | ✅ 85% |
-| **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience | ✅ 85% |
-| **CLI & Config** | JSON config + genesis loading complete; YAML-only migration + query/submit wrappers pending | ✅ 85% |
+| **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience, active crash recovery | ✅ 97% |
+| **CLI & Config** | JSON config + genesis loading + query/submit wrappers complete; YAML-only migration pending | ✅ 95% |
 | **Monitoring** | NodeMetrics + Prometheus endpoint + JSON trace log + health endpoint functional | ✅ 75% |
 
 **Overall Node Readiness**: ~80% (can sync testnet, validates blocks correctly, missing monitoring & robustness)
@@ -67,7 +67,7 @@
 - `purge_expired()` — TTL-based expiry
 
 **Storage**:
-- `FileImmutable` — JSON-backed immutable block storage
+- `FileImmutable` — CBOR-backed immutable block storage with active crash recovery
 - `FileVolatile` — Rollback-aware volatile storage
 - `FileLedgerStore` — Checkpoint-based ledger state persistence
 - `apply_to_ledger_state()` — Atomic checkpoint write
@@ -109,9 +109,9 @@
 - Connection pooling — No max inbound/outbound limits
 
 **Storage**:
-- Garbage collection — Framework only; no actual trimming
-- Crash recovery — No dirty-state detection
-- Slot-based indexing — Not optimized
+- Garbage collection — Complete: `trim_before_slot`, `garbage_collect`, `compact`, `gc_immutable_before_slot`, `gc_volatile_before_slot`
+- Crash recovery — Complete: stale dirty.flag removes .tmp files + clears sentinel after success
+- Slot-based indexing — Complete: binary search in FileImmutable
 
 **Monitoring**:
 - Structured logging — Framework only; no actual trace emission

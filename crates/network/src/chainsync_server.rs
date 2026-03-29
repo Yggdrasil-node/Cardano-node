@@ -6,6 +6,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.ChainSync.Server`.
 
+use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
 
@@ -35,6 +36,10 @@ pub enum ChainSyncServerError {
     /// Unexpected message from the client.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+
+    /// Per-state time limit exceeded (upstream `ExceededTimeLimit`).
+    #[error("protocol timeout")]
+    Timeout,
 }
 
 // ---------------------------------------------------------------------------
@@ -121,9 +126,14 @@ impl ChainSyncServer {
 
     /// Wait for the next client request in `StIdle`.
     ///
-    /// Returns `RequestNext`, `FindIntersect`, or `Done`.
+    /// Returns `RequestNext`, `FindIntersect`, or `Done`.  Times out after
+    /// [`PROTOCOL_RECV_TIMEOUT`] if the client sends nothing (upstream
+    /// `timeLimitsChainSync` `shortWait` for `StIdle`).
     pub async fn recv_request(&mut self) -> Result<ChainSyncServerRequest, ChainSyncServerError> {
-        match self.recv_msg().await? {
+        let msg = tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
+            .await
+            .map_err(|_| ChainSyncServerError::Timeout)??;
+        match msg {
             ChainSyncMessage::MsgRequestNext => Ok(ChainSyncServerRequest::RequestNext),
             ChainSyncMessage::MsgFindIntersect { points } => {
                 Ok(ChainSyncServerRequest::FindIntersect { points })

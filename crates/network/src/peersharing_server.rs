@@ -6,6 +6,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.PeerSharing.Server`.
 
+use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
@@ -37,6 +38,10 @@ pub enum PeerSharingServerError {
     /// Unexpected message from the client.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+
+    /// Per-state time limit exceeded (upstream `ExceededTimeLimit`).
+    #[error("protocol timeout")]
+    Timeout,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,9 +114,13 @@ impl PeerSharingServer {
 
     /// Wait for the next client request.
     ///
-    /// The server must be in `StClient` (awaiting client agency).
+    /// The server must be in `StClient` (awaiting client agency).  Times out
+    /// after [`PROTOCOL_RECV_TIMEOUT`] if the client sends nothing (upstream
+    /// `timeLimitsPeerSharing` `shortWait` for `StClient`).
     pub async fn recv_request(&mut self) -> Result<PeerSharingServerRequest, PeerSharingServerError> {
-        let msg = self.recv_msg().await?;
+        let msg = tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
+            .await
+            .map_err(|_| PeerSharingServerError::Timeout)??;
         match msg {
             PeerSharingMessage::MsgShareRequest { amount } => {
                 Ok(PeerSharingServerRequest::ShareRequest { amount })

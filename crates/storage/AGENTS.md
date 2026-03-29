@@ -39,4 +39,5 @@ Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - Integration coverage now includes trait behavior, ChainDb coordination for promotion, rollback, and snapshot lookup/truncation across in-memory and file-backed paths, checkpoint fallback recovery tests, and atomic write verification.
 - File-backed block stores (`FileImmutable`, `FileVolatile`) now persist blocks as CBOR (`*.cbor`) and keep backward-compatible reads for legacy JSON (`*.json`) block files. `FileLedgerStore` remains raw-byte (`*.dat`) for typed checkpoint encoding flexibility.
 - During open, when both CBOR and legacy JSON files exist for the same block hash, file-backed block stores deduplicate to a single in-memory block and prefer the CBOR representation.
+- Active crash recovery on stale `dirty.flag`: all three file-backed stores (`FileImmutable`, `FileVolatile`, `FileLedgerStore`) now actively recover when a stale sentinel is found on open — incomplete `.tmp` files from interrupted atomic writes are deleted, and the dirty flag itself is cleared after the recovery scan completes so subsequent opens do not emit spurious warnings.
 

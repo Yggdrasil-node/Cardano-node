@@ -35,6 +35,8 @@ pub mod root_peers;
 pub mod root_peers_provider;
 /// Peer candidate resolution and ordering helpers for runtime bootstrap.
 pub mod peer_selection;
+/// Per-protocol per-state time limits matching upstream `ProtocolTimeLimits`.
+pub mod protocol_limits;
 /// Mini-protocol state machine modules.
 pub mod protocols;
 /// TxSubmission2 client driver — typed, state-machine-correct protocol loop.

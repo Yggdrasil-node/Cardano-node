@@ -7,6 +7,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.TxSubmission2.Server`.
 
+use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
@@ -39,6 +40,10 @@ pub enum TxSubmissionServerError {
     /// Unexpected message from the client.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+
+    /// Per-state time limit exceeded (upstream `ExceededTimeLimit`).
+    #[error("protocol timeout")]
+    Timeout,
 }
 
 // ---------------------------------------------------------------------------
@@ -114,9 +119,14 @@ impl TxSubmissionServer {
 
     /// Wait for the client to send `MsgInit`.
     ///
-    /// Must be called exactly once, immediately after construction.
+    /// Must be called exactly once, immediately after construction.  Times out
+    /// after [`PROTOCOL_RECV_TIMEOUT`] if the client does not send `MsgInit`
+    /// promptly (upstream `timeLimitsTxSubmission2` `shortWait` for `StInit`).
     pub async fn recv_init(&mut self) -> Result<(), TxSubmissionServerError> {
-        match self.recv_msg().await? {
+        match tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
+            .await
+            .map_err(|_| TxSubmissionServerError::Timeout)??
+        {
             TxSubmissionMessage::MsgInit => Ok(()),
             msg => Err(TxSubmissionServerError::UnexpectedMessage(format!(
                 "expected MsgInit, got {msg:?}"
@@ -148,7 +158,17 @@ impl TxSubmissionServer {
         })
         .await?;
 
-        match self.recv_msg().await? {
+        // Blocking requests use `waitForever` (client must eventually reply);
+        // non-blocking requests use `PROTOCOL_RECV_TIMEOUT` (upstream
+        // `timeLimitsTxSubmission2` `shortWait` for `StTxIds NonBlocking`).
+        let msg = if blocking {
+            self.recv_msg().await?
+        } else {
+            tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
+                .await
+                .map_err(|_| TxSubmissionServerError::Timeout)??
+        };
+        match msg {
             TxSubmissionMessage::MsgReplyTxIds { txids } => Ok(TxIdsReply::TxIds(txids)),
             TxSubmissionMessage::MsgDone => Ok(TxIdsReply::Done),
             msg => Err(TxSubmissionServerError::UnexpectedMessage(format!(
@@ -159,7 +179,9 @@ impl TxSubmissionServer {
 
     /// Send `MsgRequestTxs` and receive the client's reply.
     ///
-    /// Returns the list of serialized transaction bodies.
+    /// Returns the list of serialized transaction bodies.  Times out after
+    /// [`PROTOCOL_RECV_TIMEOUT`] if the client does not respond (upstream
+    /// `timeLimitsTxSubmission2` `shortWait` for `StTxs`).
     pub async fn request_txs(
         &mut self,
         txids: Vec<TxId>,
@@ -167,7 +189,10 @@ impl TxSubmissionServer {
         self.send_msg(&TxSubmissionMessage::MsgRequestTxs { txids })
             .await?;
 
-        match self.recv_msg().await? {
+        match tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
+            .await
+            .map_err(|_| TxSubmissionServerError::Timeout)??
+        {
             TxSubmissionMessage::MsgReplyTxs { txs } => Ok(txs),
             msg => Err(TxSubmissionServerError::UnexpectedMessage(format!(
                 "expected MsgReplyTxs, got {msg:?}"

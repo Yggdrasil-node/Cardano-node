@@ -2532,6 +2532,24 @@ pub struct MultiEraSyncProgress {
     pub rollback_count: usize,
 }
 
+impl MultiEraSyncProgress {
+    /// Return the block number of the last block in the last roll-forward
+    /// step, if any.
+    ///
+    /// Walks steps in reverse to find the final roll-forward and extracts
+    /// the block number from its last decoded block.
+    pub fn latest_block_number(&self) -> Option<u64> {
+        for step in self.steps.iter().rev() {
+            if let MultiEraSyncStep::RollForward { blocks, .. } = step {
+                if let Some(entry) = blocks.last().and_then(multi_era_block_to_chain_entry) {
+                    return Some(entry.block_no.0);
+                }
+            }
+        }
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 40: Mempool sync eviction
 // ---------------------------------------------------------------------------

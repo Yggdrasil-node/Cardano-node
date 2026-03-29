@@ -150,7 +150,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Backpressure | SDU queue limits + egress soft limit | ✅ | ✅ | Complete | Per-protocol ingress byte limit (2 MB) + egress soft limit (262 KB) + 30 s bearer read timeout (SDU_READ_TIMEOUT)
 | Fair scheduling | Weighted round-robin + priority | ✅ | ✅ | Complete | Per-protocol egress channels with dynamic WeightHandle; hot peers get ChainSync=3/BlockFetch=2
 | CBOR reassembly | Multi-SDU message handling | ✅ | ✅ | Complete | MessageChannel with cbor_item_length detection, transparent segmentation/reassembly
-| Timeout handling | Protocol-specific timeouts | ✅ | ⚠️ | Partial | CM responder/time-wait + SDU bearer read timeout wired; per-protocol idle timeouts remain
+| Timeout handling | Protocol-specific timeouts | ✅ | ✅ | Complete | CM responder/time-wait + SDU bearer read timeout + per-protocol recv deadline: N2N server drivers wrap recv_msg() with PROTOCOL_RECV_TIMEOUT (60 s, upstream shortWait); TxSubmission blocking requests use waitForever
 | **Peer Management** |
 | Peer sources | LocalRoot/PublicRoot/PeerShare | ✅ | ✅ | Complete | PeerSource enum + provider layer
 | DNS resolution | Dynamic root-set updates | ✅ | ✅ | Complete | DnsRootPeerProvider with TTL clamping
@@ -173,7 +173,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Connection pooling | Max connection limits | ✅ | ✅ | Complete | AcceptedConnectionsLimit (512 hard/384 soft/5s delay), prune_for_inbound eviction, inbound duplex reuse for outbound
 | Graceful shutdown | In-flight message draining | ✅ | ✅ | Complete | Outbound CM-drain with ControlMessage::Terminate + bounded timeout; inbound JoinSet drain
 
-**Network Summary**: ~92% feature complete. All mini-protocols, mux with weighted fair scheduling, peer governor, connection manager with rate limiting and pruning, and graceful shutdown all implemented. Remaining: per-protocol idle timeouts and Genesis density (network-layer, future milestone).
+**Network Summary**: ~95% feature complete. All mini-protocols, mux with weighted fair scheduling, peer governor, connection manager with rate limiting and pruning, graceful shutdown, and per-protocol recv deadlines (PROTOCOL_RECV_TIMEOUT 60 s on all N2N server drivers) all implemented. Remaining: Genesis density (network-layer, future milestone).
 
 ---
 
@@ -226,11 +226,11 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Point → block | By block hash | ✅ | ✅ | Complete | Storage scanning on open
 | Slot → block | By slot number | ✅ | ✅ | Complete | get_block_by_slot with binary search (FileImmutable)
 | **Recovery & Crash Handling** |
-| Dirty ledger detection | Incomplete state write | ✅ | ⏸️ | Not Started | Crash detection + recovery path
+| Dirty ledger detection | Incomplete state write | ✅ | ✅ | Complete | Active recovery on stale dirty.flag: removes leftover .tmp files, clears sentinel after successful scan; all three file stores (FileVolatile, FileImmutable, FileLedgerStore)
 | Corruption resilience | Skip/repair bad blocks | ✅ | ✅ | Complete | FileImmutable + FileVolatile + FileLedgerStore skip corrupted files on open
-| Dirty sentinel | Unclean-shutdown detection | ✅ | ✅ | Complete | dirty.flag written before every mutation, removed on success; open() warns on stale sentinel in all three file stores
+| Dirty sentinel | Unclean-shutdown detection | ✅ | ✅ | Complete | dirty.flag written before every mutation, removed on success; open() actively cleans .tmp files + clears sentinel after successful recovery scan in all three file stores
 
-**Storage Summary**: ~90% feature complete. GC, slot-based indexing, corruption-tolerant open, checkpoint pruning, and dirty-flag crash detection all complete. Remaining: volatile compaction and WAL-style recovery.
+**Storage Summary**: ~97% feature complete. GC, slot-based indexing, corruption-tolerant open, checkpoint pruning, dirty-flag crash detection, and active crash recovery (tmp cleanup + sentinel clear after successful recovery scan) all complete.
 
 ---
 
@@ -261,9 +261,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Submission API (LocalTxSubmission)** |
 | TX validation | Syntax + fee | ✅ | ✅ | Complete | apply_submitted_tx checks
 | TX relay readiness | Mempool admission | ✅ | ⚠️ | Partial | Pre-submission check incomplete
-| Feedback | Acceptance or error | ✅ | ⚠️ | Partial | Error detail reporting incomplete
+| Feedback | Acceptance or error | ✅ | ✅ | Complete | Display format (human-readable LedgerError messages via #[error]) sent in rejection CBOR; Debug format replaced
 
-**CLI Summary**: ~92% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. Remaining: YAML config migration.
+**CLI Summary**: ~95% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. TX rejection feedback now uses Display format for human-readable LedgerError messages. Remaining: YAML config migration.
 
 ---
 
@@ -316,8 +316,8 @@ The Rust Cardano node (Yggdrasil) has achieved:
 |---------|-------|---------|------|--------|-------|
 | **Trace Events** |
 | Structured events | Typed trace messages | ✅ | ✅ | Complete | NodeTracer with namespace/severity dispatch and upstream-style trace objects
-| Namespace hierarchy | net., chain., ledger., etc | ✅ | ✅ | Complete | Namespace-based routing with per-namespace maxFrequency
-| Filtering & routing | Selector expressions | ✅ | ⚠️ | Partial | maxFrequency filtering works; selector expressions not implemented
+| Namespace hierarchy | net., chain., ledger., etc | ✅ | ✅ | Complete | Longest-prefix namespace routing for `TraceOptions` (severity/backends/maxFrequency)
+| Filtering & routing | Selector expressions | ✅ | ⚠️ | Partial | Severity hierarchy threshold filtering + `maxFrequency` + prefix matching work; selector expressions not implemented
 | **Transports** |
 | Stdout | Console output | ✅ | ✅ | Complete | NodeTracer stdout dispatch with human/machine formats
 | JSON | Structured output | ✅ | ✅ | Complete | GET /metrics/json endpoint + JSON MetricsSnapshot serialization
@@ -332,7 +332,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Memory profiling | Heap analysis | ✅ | ⏸️ | Not Started | Allocation tracking
 | Latency tracing | Operation timing | ✅ | ⏸️ | Not Started | Latency measurement
 
-**Monitoring Summary**: ~75% feature complete. NodeMetrics (25+ counters/gauges), Prometheus/JSON/health endpoints, and NodeTracer with namespace filtering all implemented. Remaining: socket transport, selector expressions, profiling.
+**Monitoring Summary**: ~75% feature complete. NodeMetrics (25+ counters/gauges), Prometheus/JSON/health endpoints, and NodeTracer with severity-threshold + namespace-prefix filtering all implemented. Remaining: socket transport, selector expressions, profiling.
 
 ---
 
@@ -520,7 +520,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 **What's Done**:
 - **NodeTracer** with namespace/severity dispatch and upstream-style trace objects
-- **Namespace hierarchy**: net., chain., ledger., etc with per-namespace `maxFrequency` filtering
+- **Namespace hierarchy**: net., chain., ledger., etc with longest-prefix `TraceOptions` matching and per-namespace `maxFrequency` filtering
 - **Structured JSON output**: `GET /metrics/json` endpoint + JSON MetricsSnapshot serialization
 - **Stdout transport**: human/machine format dispatch
 - **NodeMetrics**: 25+ atomic counters/gauges (blocks_synced, current_slot, block_no, peers×6, checkpoint, rollbacks, uptime_ms)
@@ -532,7 +532,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ⏸️ **Selector expressions** (advanced event filtering beyond maxFrequency)
 - ⏸️ **CPU/memory/latency profiling** (performance instrumentation)
 
-**Parity Status**: **~75% complete** — NodeMetrics, Prometheus/JSON/health endpoints, and NodeTracer with namespace filtering all implemented. Remaining: socket transport, selector expressions, profiling.
+**Parity Status**: **~75% complete** — NodeMetrics, Prometheus/JSON/health endpoints, and NodeTracer with severity-threshold + namespace-prefix filtering all implemented. Remaining: socket transport, selector expressions, profiling.
 
 ---
 
