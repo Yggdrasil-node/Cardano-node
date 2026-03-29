@@ -243,6 +243,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Configuration** |
 | YAML parsing | Config file format | ✅ | ✅ | Complete | `load_effective_config` accepts JSON first with YAML fallback for equivalent `NodeConfigFile` shape
 | Environment overrides | CLI flag precedence | ✅ | ✅ | Complete | clap-based override model
+| Topology file loading | `--topology` / `TopologyFilePath` | ✅ | ✅ | Complete | `load_topology_file()` reads upstream P2P JSON format; `apply_topology_to_config()` overrides inline topology; CLI flag takes priority over config key
+| Database path override | `--database-path` | ✅ | ✅ | Complete | CLI flag overrides `storage_dir` on `run`, `validate-config`, `status`
+| Port / host-addr | `--port` / `--host-addr` | ✅ | ✅ | Complete | CLI flags override listen address on `run`
 | Genesis loading | ShelleyGenesis + AlonzoGenesis | ✅ | ✅ | Complete | load_genesis_protocol_params
 | **Subcommands** |
 | run | Sync + validate | ✅ | ✅ | Complete | Main sync loop wired
@@ -274,7 +277,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | TX relay readiness | Mempool admission | ✅ | ✅ | Complete | LocalTxSubmission routes through staged ledger validation (`add_tx_to_shared_mempool` → `apply_submitted_tx`) before `insert_checked`; invalid txs rejected without mutating ledger/mempool
 | Feedback | Acceptance or error | ✅ | ✅ | Complete | Display format (human-readable LedgerError messages via #[error]) sent in rejection CBOR; Debug format replaced
 
-**CLI Summary**: ~98% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. TX rejection feedback now uses Display format for human-readable LedgerError messages, and config-file loading now accepts both JSON and YAML.
+**CLI Summary**: ~99% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. TX rejection feedback now uses Display format for human-readable LedgerError messages. Config-file loading accepts both JSON and YAML. External topology file loading via `--topology` CLI flag and `TopologyFilePath` config key with upstream P2P JSON format support. `--database-path`, `--port`, `--host-addr` CLI flags for runtime overrides.
 
 ---
 
@@ -334,7 +337,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Transports** |
 | Stdout | Console output | ✅ | ✅ | Complete | NodeTracer stdout dispatch with human/machine formats
 | JSON | Structured output | ✅ | ✅ | Complete | GET /metrics/json endpoint + JSON MetricsSnapshot serialization
-| Socket | Remote tracer | ✅ | ⏸️ | Not Started | Socket transport not implemented
+| Socket | Remote tracer | ✅ | ✅ | Complete | `Forwarder` backend emits trace events as CBOR to Unix domain socket (`TraceForwarder`) via `trace_option_forwarder.socket_path`; compatible with upstream cardano-tracer
 | **Metrics** |
 | EKG integration | Live metrics endpoint | ✅ | ✅ | Complete | 35+ atomic counters/gauges in NodeMetrics
 | Prometheus export | /metrics endpoint | ✅ | ✅ | Complete | MetricsSnapshot::to_prometheus_text() with Prometheus text exposition
@@ -348,7 +351,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Memory profiling | Heap analysis | ✅ | ⏸️ | Not Started | Allocation tracking
 | Latency tracing | Operation timing | ✅ | ⏸️ | Not Started | Latency measurement
 
-**Monitoring Summary**: ~95% feature complete. NodeMetrics (35+ counters/gauges), Prometheus/JSON/health endpoints, mempool + CM + inbound counters, epoch boundary + inbound session tracing, ANSI-coloured stdout backend (`Stdout HumanFormatColoured`), per-namespace `TraceDetail` levels (DMinimal/DNormal/DDetailed/DMaximum), upstream backend string recognition (EKGBackend/Forwarder/PrometheusSimple), and NodeTracer with severity-threshold + namespace-prefix filtering all implemented. Remaining: socket transport, profiling.
+**Monitoring Summary**: ~98% feature complete. NodeMetrics (35+ counters/gauges), Prometheus/JSON/health endpoints, mempool + CM + inbound counters, epoch boundary + inbound session tracing, ANSI-coloured stdout backend (`Stdout HumanFormatColoured`), per-namespace `TraceDetail` levels (DMinimal/DNormal/DDetailed/DMaximum), upstream backend string recognition (EKGBackend/Forwarder/PrometheusSimple), `Forwarder` CBOR socket transport (cardano-tracer compatible), and NodeTracer with severity-threshold + namespace-prefix filtering all implemented. Remaining: profiling.
 
 ---
 
@@ -551,7 +554,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Inbound accept/reject counters**: tracked on hard-limit rejection and successful session start
 
 **What's Missing**:
-- ⏸️ **Socket transport** (remote tracer connection to cardano-tracer)
+- ⏸️ **Profiling** (hardware CPU/memory metrics)
 - ⏸️ **CPU/memory/latency profiling** (performance instrumentation)
 
 **Parity Status**: **~95% complete** — Full operational metrics, Prometheus/JSON/health endpoints, epoch boundary + inbound lifecycle tracing, mempool + CM counters, ANSI-coloured stdout, per-namespace `TraceDetail` levels, and upstream backend string recognition all implemented. Remaining: socket transport, profiling.

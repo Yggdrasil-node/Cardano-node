@@ -18,10 +18,10 @@
 | **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers, PickPolicy randomized selection, connection manager lifecycle | ✅ 97% |
 | **Mempool** | Fee-ordered queue + TTL + eviction + collateral + ExUnits + conflict detection + cross-peer TxId dedup | ✅ 98% |
 | **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience, active crash recovery | ✅ 97% |
-| **CLI & Config** | JSON+YAML config loading + genesis loading + query/submit wrappers complete | ✅ 98% |
-| **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition | ✅ 95% |
+| **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
+| **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~93% (can sync testnet, validates blocks correctly, comprehensive monitoring wired)
+**Overall Node Readiness**: ~95% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired)
 
 ---
 
@@ -84,6 +84,9 @@
 
 **CLI**:
 - `NodeConfigFile` — JSON config parsing + genesis integration
+- `load_topology_file()` — External P2P topology file loading (upstream JSON format)
+- `apply_topology_to_config()` — Override inline topology from external file
+- `apply_topology_override()` — CLI `--topology` flag and `TopologyFilePath` config key integration
 - `BasicLocalQueryDispatcher` — 18-tag LocalStateQuery server (wallet queries: UTxOByTxIn, StakePools, DelegationsAndRewards, DRepStakeDistr; Conway governance queries: GetConstitution, GetGovState, GetDRepState, GetCommitteeMembersState, GetStakePoolParams, GetAccountState)
 - `LocalTxSubmission` — Staged TX validation before mempool
 
@@ -126,6 +129,7 @@
 - Coloured stdout — Complete: `Stdout HumanFormatColoured` ANSI severity colours (debug dim, warning yellow, error red, etc.)
 - Detail levels — Complete: per-namespace `TraceDetail` (DMinimal/DNormal/DDetailed/DMaximum), `detail_for()` accessor, `trace_runtime_detailed()` detail-gated emission
 - Upstream backend recognition — Complete: `EKGBackend`, `Forwarder`, `PrometheusSimple`, `Stdout HumanFormatColoured`/`Stdout HumanFormatUncoloured` all parsed
+- Trace forwarding — Complete: `Forwarder` backend emits CBOR-encoded trace events to Unix domain socket via `TraceForwarder`; compatible with upstream cardano-tracer
 
 ---
 
@@ -143,7 +147,6 @@
 - Multi-path redundancy — Single-path acceptable with checkpoints
 
 **Monitoring**:
-- Remote tracer socket — cardano-tracer forwarding via Unix domain socket; optional for first release
 - Hardware metrics (CPU%, memory%) — Kernel-level only
 
 ---

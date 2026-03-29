@@ -11,7 +11,7 @@ use serde_json::json;
 
 use yggdrasil_node::config::{
     NetworkPreset, NodeConfigFile, TraceNamespaceConfig, default_config,
-    load_peer_snapshot_file,
+    load_peer_snapshot_file, load_topology_file, apply_topology_to_config,
 };
 use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
@@ -58,12 +58,25 @@ enum Command {
         /// Network preset (mainnet, preprod, preview). Overridden by --config.
         #[arg(long, value_parser = clap::value_parser!(NetworkPreset))]
         network: Option<NetworkPreset>,
+        /// Path to a P2P topology file (upstream format). Overrides topology
+        /// embedded in the config file.
+        #[arg(long)]
+        topology: Option<PathBuf>,
         /// Peer address (host:port). Overrides config file.
         #[arg(long)]
         peer: Option<SocketAddr>,
         /// Network magic. Overrides config file.
         #[arg(long)]
         network_magic: Option<u32>,
+        /// Database directory path. Overrides config `storage_dir`.
+        #[arg(long)]
+        database_path: Option<PathBuf>,
+        /// Listen port for inbound node-to-node connections.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Listen host address for inbound node-to-node connections.
+        #[arg(long)]
+        host_addr: Option<String>,
         /// Disable header verification.
         #[arg(long)]
         no_verify: bool,
@@ -100,6 +113,13 @@ enum Command {
         /// Network preset (mainnet, preprod, preview). Overridden by --config.
         #[arg(long, value_parser = clap::value_parser!(NetworkPreset))]
         network: Option<NetworkPreset>,
+        /// Path to a P2P topology file (upstream format). Overrides topology
+        /// embedded in the config file.
+        #[arg(long)]
+        topology: Option<PathBuf>,
+        /// Database directory path. Overrides config `storage_dir`.
+        #[arg(long)]
+        database_path: Option<PathBuf>,
     },
     /// Inspect on-disk storage and report current sync status.
     Status {
@@ -109,6 +129,13 @@ enum Command {
         /// Network preset (mainnet, preprod, preview). Overridden by --config.
         #[arg(long, value_parser = clap::value_parser!(NetworkPreset))]
         network: Option<NetworkPreset>,
+        /// Path to a P2P topology file (upstream format). Overrides topology
+        /// embedded in the config file.
+        #[arg(long)]
+        topology: Option<PathBuf>,
+        /// Database directory path. Overrides config `storage_dir`.
+        #[arg(long)]
+        database_path: Option<PathBuf>,
     },
     /// Print the default configuration as JSON.
     DefaultConfig,
@@ -474,15 +501,23 @@ fn main() -> Result<()> {
             println!("{json}");
             Ok(())
         }
-        Command::ValidateConfig { config, network } => {
-            let (file_cfg, config_base_dir) = load_effective_config(config, network)?;
+        Command::ValidateConfig { config, network, topology, database_path } => {
+            let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
+            apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
+            if let Some(ref db_path) = database_path {
+                file_cfg.storage_dir = db_path.clone();
+            }
             let report = validate_config_report(&file_cfg, config_base_dir.as_deref())?;
             let json = serde_json::to_string_pretty(&report)?;
             println!("{json}");
             Ok(())
         }
-        Command::Status { config, network } => {
-            let (file_cfg, config_base_dir) = load_effective_config(config, network)?;
+        Command::Status { config, network, topology, database_path } => {
+            let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
+            apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
+            if let Some(ref db_path) = database_path {
+                file_cfg.storage_dir = db_path.clone();
+            }
             let report = status_report(&file_cfg, config_base_dir.as_deref())?;
             let json = serde_json::to_string_pretty(&report)?;
             println!("{json}");
@@ -491,8 +526,12 @@ fn main() -> Result<()> {
         Command::Run {
             config,
             network,
+            topology,
             peer,
             network_magic,
+            database_path,
+            port,
+            host_addr,
             no_verify,
             batch_size,
             checkpoint_interval_slots,
@@ -504,6 +543,23 @@ fn main() -> Result<()> {
             socket_path,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
+            apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
+
+            // CLI --database-path overrides config file storage_dir.
+            if let Some(ref db_path) = database_path {
+                file_cfg.storage_dir = db_path.clone();
+            }
+
+            // CLI --port and --host-addr override inbound listen address.
+            if port.is_some() || host_addr.is_some() {
+                let listen_ip: std::net::IpAddr = host_addr
+                    .as_deref()
+                    .unwrap_or("0.0.0.0")
+                    .parse()
+                    .wrap_err("invalid --host-addr")?;
+                let listen_port = port.unwrap_or(3001);
+                file_cfg.inbound_listen_addr = Some(SocketAddr::new(listen_ip, listen_port));
+            }
 
             // CLI --socket-path overrides config file SocketPath.
             if let Some(ref sp) = socket_path {
@@ -806,6 +862,40 @@ fn preset_config_base_dir(preset: NetworkPreset) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("configuration")
         .join(preset.to_string())
+}
+
+/// Apply topology overrides from --topology CLI flag or TopologyFilePath config key.
+///
+/// If `cli_topology` is provided it takes priority.  Otherwise falls back to the
+/// `TopologyFilePath` field in the config file.  The loaded topology replaces the
+/// inline peer topology fields in the config.
+fn apply_topology_override(
+    file_cfg: &mut NodeConfigFile,
+    cli_topology: Option<&std::path::Path>,
+    config_base_dir: Option<&std::path::Path>,
+) -> Result<()> {
+    let topology_path = if let Some(path) = cli_topology {
+        Some(path.to_path_buf())
+    } else {
+        file_cfg.topology_file_path.as_deref().map(|s| {
+            resolve_config_path(std::path::Path::new(s), config_base_dir)
+        })
+    };
+
+    if let Some(path) = topology_path {
+        let topology = load_topology_file(&path)
+            .wrap_err_with(|| format!("failed to load topology file {}", path.display()))?;
+        apply_topology_to_config(file_cfg, &topology);
+
+        // Also update the primary peer from the topology's first bootstrap
+        // or root candidate when available.
+        let candidates = topology.resolved_root_providers().ordered_candidates();
+        if let Some(first) = candidates.first() {
+            file_cfg.peer_addr = *first;
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_config_report(
@@ -1682,7 +1772,7 @@ async fn serve_metrics(
 #[cfg(test)]
 mod tests {
     use super::{
-        CHECKPOINT_TRACE_NAMESPACE, checkpoint_trace_config_mut,
+        CHECKPOINT_TRACE_NAMESPACE, apply_topology_override, checkpoint_trace_config_mut,
         configured_fallback_peers, ledger_peer_snapshot_from_ledger_state,
         load_effective_config, preset_config_base_dir, status_report,
         validate_config_report,
@@ -2058,5 +2148,139 @@ mod tests {
         assert_eq!(parsed["storage_initialized"], serde_json::Value::Bool(false));
 
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn apply_topology_override_from_cli_flag() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-topo-override-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let topo_path = dir.join("topology.json");
+        std::fs::write(
+            &topo_path,
+            r#"{
+                "bootstrapPeers": [
+                    {"address": "127.0.0.50", "port": 3001}
+                ],
+                "localRoots": [],
+                "publicRoots": [],
+                "useLedgerAfterSlot": 77000
+            }"#,
+        )
+        .expect("write topology file");
+
+        let mut cfg = default_config();
+        cfg.use_ledger_after_slot = None;
+        cfg.peer_snapshot_file = None;
+
+        apply_topology_override(&mut cfg, Some(topo_path.as_path()), None)
+            .expect("apply topology override");
+
+        assert_eq!(cfg.use_ledger_after_slot, Some(77000));
+        assert_eq!(cfg.peer_addr, "127.0.0.50:3001".parse().expect("addr"));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn apply_topology_override_from_config_topology_file_path() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-topo-config-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let topo_path = dir.join("my-topology.json");
+        std::fs::write(
+            &topo_path,
+            r#"{
+                "bootstrapPeers": [],
+                "localRoots": [
+                    {
+                        "accessPoints": [
+                            {"address": "127.0.0.60", "port": 3001}
+                        ],
+                        "advertise": false,
+                        "valency": 1,
+                        "trustable": true
+                    }
+                ],
+                "publicRoots": [],
+                "useLedgerAfterSlot": 55000
+            }"#,
+        )
+        .expect("write topology file");
+
+        let mut cfg = default_config();
+        cfg.topology_file_path = Some("my-topology.json".to_owned());
+        cfg.use_ledger_after_slot = None;
+
+        apply_topology_override(&mut cfg, None, Some(dir.as_path()))
+            .expect("apply topology from config key");
+
+        assert_eq!(cfg.use_ledger_after_slot, Some(55000));
+        assert_eq!(cfg.local_roots.len(), 1);
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn apply_topology_override_cli_takes_priority_over_config_key() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-topo-priority-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let config_topo = dir.join("config-topology.json");
+        std::fs::write(
+            &config_topo,
+            r#"{
+                "bootstrapPeers": [],
+                "localRoots": [],
+                "publicRoots": [],
+                "useLedgerAfterSlot": 11000
+            }"#,
+        )
+        .expect("write config topology");
+
+        let cli_topo = dir.join("cli-topology.json");
+        std::fs::write(
+            &cli_topo,
+            r#"{
+                "bootstrapPeers": [],
+                "localRoots": [],
+                "publicRoots": [],
+                "useLedgerAfterSlot": 22000
+            }"#,
+        )
+        .expect("write cli topology");
+
+        let mut cfg = default_config();
+        cfg.topology_file_path = Some(config_topo.display().to_string());
+
+        apply_topology_override(&mut cfg, Some(cli_topo.as_path()), Some(dir.as_path()))
+            .expect("apply topology");
+
+        // CLI topology (22000) should win over config TopologyFilePath (11000).
+        assert_eq!(cfg.use_ledger_after_slot, Some(22000));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn apply_topology_override_noop_when_neither_cli_nor_config() {
+        let mut cfg = default_config();
+        cfg.topology_file_path = None;
+        let original_ledger_slot = cfg.use_ledger_after_slot;
+
+        apply_topology_override(&mut cfg, None, None)
+            .expect("apply topology no-op");
+
+        assert_eq!(cfg.use_ledger_after_slot, original_ledger_slot);
     }
 }

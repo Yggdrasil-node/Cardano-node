@@ -237,6 +237,87 @@ pub struct NodeConfigFile {
         /// in the official Cardano node configuration.
         #[serde(rename = "ConwayGenesisFile", default, skip_serializing_if = "Option::is_none")]
         pub conway_genesis_file: Option<String>,
+    /// Relative path to a P2P topology file.  Matches `TopologyFilePath` in
+    /// the official Cardano node configuration.  When set, the topology file
+    /// overrides any inline `local_roots`, `public_roots`, `bootstrap_peers`,
+    /// `use_ledger_after_slot`, and `peer_snapshot_file` values in this config.
+    ///
+    /// Reference: `Cardano.Node.Types.TopologyFile` in cardano-node.
+    #[serde(rename = "TopologyFilePath", default, skip_serializing_if = "Option::is_none")]
+    pub topology_file_path: Option<String>,
+}
+
+/// Errors returned while loading a P2P topology file.
+#[derive(Debug, Error)]
+pub enum TopologyFileError {
+    /// Reading the topology file failed.
+    #[error("failed to read topology file {path}: {source}")]
+    Io {
+        /// File path that could not be read.
+        path: PathBuf,
+        /// Underlying filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Topology JSON decoding failed.
+    #[error("failed to parse topology file {path}: {source}")]
+    Json {
+        /// File path containing invalid JSON.
+        path: PathBuf,
+        /// Underlying JSON parse error.
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+/// Load a P2P topology file from disk matching the upstream format.
+///
+/// The expected JSON format is:
+/// ```json
+/// {
+///   "bootstrapPeers": [{"address": "...", "port": 3001}],
+///   "localRoots": [{"accessPoints": [...], "advertise": false, "valency": 1, "trustable": false}],
+///   "publicRoots": [{"accessPoints": [...], "advertise": false}],
+///   "useLedgerAfterSlot": 128908821,
+///   "peerSnapshotFile": "peer-snapshot.json"
+/// }
+/// ```
+///
+/// Reference: `Ouroboros.Network.Diffusion.Topology.NetworkTopology` and
+/// `Cardano.Node.Configuration.TopologyP2P.readTopologyFile`.
+pub fn load_topology_file(path: &Path) -> Result<TopologyConfig, TopologyFileError> {
+    let contents = fs::read_to_string(path).map_err(|source| TopologyFileError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    serde_json::from_str::<TopologyConfig>(&contents).map_err(|source| TopologyFileError::Json {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Apply a loaded topology file to a [`NodeConfigFile`], overriding the
+/// inline peer topology fields.
+///
+/// This mirrors how the official Cardano node treats `--topology`: the
+/// topology file is the authority for peer discovery and its fields replace
+/// any values set in the main config.
+pub fn apply_topology_to_config(cfg: &mut NodeConfigFile, topology: &TopologyConfig) {
+    cfg.local_roots = topology.local_roots.clone();
+    cfg.public_roots = topology.public_roots.clone();
+    cfg.use_ledger_after_slot = topology.use_ledger_peers.to_after_slot();
+    cfg.peer_snapshot_file = topology.peer_snapshot_file.clone();
+
+    // Rebuild bootstrap_peers from the topology.
+    let resolved = topology.resolved_root_providers();
+    let mut addrs = Vec::new();
+    for peer in resolved.public_roots.bootstrap_peers.iter() {
+        if !addrs.contains(peer) {
+            addrs.push(*peer);
+        }
+    }
+    cfg.bootstrap_peers = addrs;
 }
 
 fn default_storage_dir() -> PathBuf {
@@ -908,6 +989,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
+        topology_file_path: None,
     }
 }
 
@@ -961,6 +1043,7 @@ pub fn preprod_config() -> NodeConfigFile {
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
+        topology_file_path: None,
     }
 }
 
@@ -1014,6 +1097,7 @@ pub fn preview_config() -> NodeConfigFile {
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
+        topology_file_path: None,
     }
 }
 
@@ -1672,5 +1756,138 @@ mod tests {
         assert_eq!(def.epoch_length, mainnet.epoch_length);
         assert_eq!(def.security_param_k, mainnet.security_param_k);
         assert_eq!(def.expected_network_id(), 1);
+    }
+
+    #[test]
+    fn topology_file_path_config_parses() {
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "TopologyFilePath": "topology.json"
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert_eq!(cfg.topology_file_path.as_deref(), Some("topology.json"));
+    }
+
+    #[test]
+    fn topology_file_path_absent_defaults_to_none() {
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13]
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert!(cfg.topology_file_path.is_none());
+    }
+
+    #[test]
+    fn load_topology_file_reads_upstream_format() {
+        let dir = std::env::temp_dir().join(format!(
+            "yggdrasil-topology-load-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let topo_path = dir.join("topology.json");
+        std::fs::write(
+            &topo_path,
+            r#"{
+                "bootstrapPeers": [
+                    {"address": "127.0.0.20", "port": 3001}
+                ],
+                "localRoots": [
+                    {
+                        "accessPoints": [
+                            {"address": "127.0.0.21", "port": 3002}
+                        ],
+                        "advertise": false,
+                        "valency": 1,
+                        "trustable": true
+                    }
+                ],
+                "publicRoots": [
+                    {
+                        "accessPoints": [
+                            {"address": "127.0.0.22", "port": 3003}
+                        ],
+                        "advertise": false
+                    }
+                ],
+                "useLedgerAfterSlot": 42000,
+                "peerSnapshotFile": "snap.json"
+            }"#,
+        )
+        .expect("write topology file");
+
+        let topology = load_topology_file(&topo_path).expect("load topology");
+        assert_eq!(topology.local_roots.len(), 1);
+        assert_eq!(topology.public_roots.len(), 1);
+        assert_eq!(topology.use_ledger_peers.to_after_slot(), Some(42000));
+        assert_eq!(topology.peer_snapshot_file.as_deref(), Some("snap.json"));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn load_topology_file_returns_error_on_missing_file() {
+        let result = load_topology_file(std::path::Path::new("/tmp/nonexistent-topology.json"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, TopologyFileError::Io { .. }));
+    }
+
+    #[test]
+    fn apply_topology_to_config_overrides_inline_topology() {
+        use yggdrasil_network::TopologyConfig;
+        let mut cfg = default_config();
+        cfg.local_roots = Vec::new();
+        cfg.public_roots = Vec::new();
+        cfg.use_ledger_after_slot = None;
+        cfg.peer_snapshot_file = None;
+
+        let topology = TopologyConfig {
+            local_roots: vec![yggdrasil_network::LocalRootConfig {
+                access_points: vec![yggdrasil_network::PeerAccessPoint {
+                    address: "127.0.0.30".to_owned(),
+                    port: 3001,
+                }],
+                advertise: false,
+                trustable: true,
+                hot_valency: 1,
+                warm_valency: None,
+                diffusion_mode: Default::default(),
+            }],
+            public_roots: vec![yggdrasil_network::PublicRootConfig {
+                access_points: vec![yggdrasil_network::PeerAccessPoint {
+                    address: "127.0.0.31".to_owned(),
+                    port: 3002,
+                }],
+                advertise: false,
+            }],
+            use_ledger_peers: yggdrasil_network::UseLedgerPeers::UseLedgerPeers(
+                yggdrasil_network::AfterSlot::After(99000),
+            ),
+            peer_snapshot_file: Some("my-snap.json".to_owned()),
+            ..Default::default()
+        };
+
+        apply_topology_to_config(&mut cfg, &topology);
+
+        assert_eq!(cfg.local_roots.len(), 1);
+        assert_eq!(cfg.public_roots.len(), 1);
+        assert_eq!(cfg.use_ledger_after_slot, Some(99000));
+        assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("my-snap.json"));
+    }
+
+    #[test]
+    fn topology_file_path_round_trips_json() {
+        let mut cfg = default_config();
+        cfg.topology_file_path = Some("my-topology.json".to_owned());
+        let json = serde_json::to_string_pretty(&cfg).expect("serialize");
+        let parsed: NodeConfigFile = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.topology_file_path.as_deref(), Some("my-topology.json"));
     }
 }
