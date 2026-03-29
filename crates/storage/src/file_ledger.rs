@@ -27,6 +27,8 @@ fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// Snapshots are persisted as `snapshot_{slot}.dat` files inside `data_dir`.
 pub struct FileLedgerStore {
     data_dir: PathBuf,
+    /// Path to the write-ahead dirty sentinel file.
+    dirty_path: PathBuf,
     /// Ordered (slot, data) pairs loaded at startup.
     snapshots: Vec<(SlotNo, Vec<u8>)>,
 }
@@ -39,6 +41,15 @@ impl FileLedgerStore {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
+
+        let dirty_path = data_dir.join("dirty.flag");
+        if dirty_path.exists() {
+            eprintln!(
+                "[storage] LedgerStore: dirty sentinel found at {:?}; \
+                 recovering from unclean shutdown",
+                dirty_path
+            );
+        }
 
         let mut snapshots = Vec::new();
         for entry in fs::read_dir(&data_dir)? {
@@ -60,7 +71,20 @@ impl FileLedgerStore {
 
         snapshots.sort_by_key(|(slot, _)| *slot);
 
-        Ok(Self { data_dir, snapshots })
+        Ok(Self { data_dir, dirty_path, snapshots })
+    }
+
+    fn mark_dirty(&self) -> std::io::Result<()> {
+        // Sentinel is written before any mutation begins.  If the process
+        // crashes between mark_dirty and mark_clean the sentinel survives,
+        // and the next open() will log a warning before recovering normally.
+        fs::write(&self.dirty_path, b"")?;
+        Ok(())
+    }
+
+    fn mark_clean(&self) -> std::io::Result<()> {
+        let _ = fs::remove_file(&self.dirty_path);
+        Ok(())
     }
 
     fn snapshot_path(&self, slot: SlotNo) -> PathBuf {
@@ -71,6 +95,7 @@ impl FileLedgerStore {
 impl LedgerStore for FileLedgerStore {
     fn save_snapshot(&mut self, slot: SlotNo, data: Vec<u8>) -> Result<(), StorageError> {
         let path = self.snapshot_path(slot);
+        self.mark_dirty()?;
         atomic_write_file(&path, &data)?;
         if let Some((_, existing)) = self
             .snapshots
@@ -82,6 +107,7 @@ impl LedgerStore for FileLedgerStore {
             self.snapshots.push((slot, data));
             self.snapshots.sort_by_key(|(snapshot_slot, _)| *snapshot_slot);
         }
+        self.mark_clean()?;
         Ok(())
     }
 
@@ -98,6 +124,7 @@ impl LedgerStore for FileLedgerStore {
     }
 
     fn truncate_after(&mut self, slot: Option<SlotNo>) -> Result<(), StorageError> {
+        self.mark_dirty()?;
         let retained: Vec<(SlotNo, Vec<u8>)> = self
             .snapshots
             .iter()
@@ -115,6 +142,7 @@ impl LedgerStore for FileLedgerStore {
         }
 
         self.snapshots = if slot.is_some() { retained } else { Vec::new() };
+        self.mark_clean()?;
         Ok(())
     }
 
@@ -135,6 +163,7 @@ impl LedgerStore for FileLedgerStore {
             .map(|(slot, _)| *slot)
             .collect();
 
+        self.mark_dirty()?;
         for slot in &removed {
             let path = self.snapshot_path(*slot);
             if path.exists() {
@@ -143,6 +172,7 @@ impl LedgerStore for FileLedgerStore {
         }
 
         self.snapshots.drain(..remove_count);
+        self.mark_clean()?;
         Ok(())
     }
 

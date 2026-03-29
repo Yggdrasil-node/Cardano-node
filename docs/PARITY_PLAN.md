@@ -147,9 +147,10 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | PeerSharing | Peer candidate exchange | ✅ | ✅ | Complete | PeerSharingClient/Server with AddressInfo
 | **Multiplexing** |
 | Protocol switching | Per-protocol state machines | ✅ | ✅ | Complete | Mux dispatch via protocol ID
-| Backpressure | SDU queue limits | ✅ | ⚠️ | Partial | SDU queue framework present; timeout recovery incomplete
-| Fair scheduling | Round-robin + priority | ✅ | ⏸️ | In Design | Mux orchestrator skeleton
-| Timeout handling | Protocol-specific timeouts | ✅ | ⚠️ | Partial | CM responder/time-wait timeout tick wired; broader mux/backpressure timeout recovery still incomplete
+| Backpressure | SDU queue limits + egress soft limit | ✅ | ✅ | Complete | Per-protocol ingress byte limit (2 MB) + egress soft limit (262 KB) + 30 s bearer read timeout (SDU_READ_TIMEOUT)
+| Fair scheduling | Weighted round-robin + priority | ✅ | ✅ | Complete | Per-protocol egress channels with dynamic WeightHandle; hot peers get ChainSync=3/BlockFetch=2
+| CBOR reassembly | Multi-SDU message handling | ✅ | ✅ | Complete | MessageChannel with cbor_item_length detection, transparent segmentation/reassembly
+| Timeout handling | Protocol-specific timeouts | ✅ | ⚠️ | Partial | CM responder/time-wait + SDU bearer read timeout wired; per-protocol idle timeouts remain
 | **Peer Management** |
 | Peer sources | LocalRoot/PublicRoot/PeerShare | ✅ | ✅ | Complete | PeerSource enum + provider layer
 | DNS resolution | Dynamic root-set updates | ✅ | ✅ | Complete | DnsRootPeerProvider with TTL clamping
@@ -169,10 +170,10 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Connection Management** |
 | Inbound accept | Role negotiation | ✅ | ✅ | Complete | Inbound handshake in acceptor role
 | Outbound connect | Peer candidates | ✅ | ✅ | Complete | Outbound connection flow
-| Connection pooling | Max connection limits | ✅ | ⏸️ | Not Started | Connection pool management incomplete
-| Graceful shutdown | In-flight message draining | ✅ | ⚠️ | Partial | Governor now drains outbound CM-managed peers on shutdown; full inbound/mux-wide drain orchestration remains
+| Connection pooling | Max connection limits | ✅ | ✅ | Complete | AcceptedConnectionsLimit (512 hard/384 soft/5s delay), prune_for_inbound eviction, inbound duplex reuse for outbound
+| Graceful shutdown | In-flight message draining | ✅ | ✅ | Complete | Outbound CM-drain with ControlMessage::Terminate + bounded timeout; inbound JoinSet drain
 
-**Network Summary**: ~85% feature complete. Core protocols fully wired; governor decision engine has full parity with upstream PeerSelectionState tracking. Remaining work on connection pooling, graceful shutdown, backpressure timeouts, and fair scheduling.
+**Network Summary**: ~92% feature complete. All mini-protocols, mux with weighted fair scheduling, peer governor, connection manager with rate limiting and pruning, and graceful shutdown all implemented. Remaining: per-protocol idle timeouts and Genesis density (network-layer, future milestone).
 
 ---
 
@@ -199,9 +200,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Relay Semantics** |
 | TxId advertising | Before full TX | ✅ | ✅ | Complete | TxSubmissionClient announces IDs first
 | TX request flow | Solicit after ID seen | ✅ | ✅ | Complete | TxSubmissionServer responds to requests
-| Duplicate filtering | Peer + global | ✅ | ⚠️ | Partial | Global dedup via TxId + conflict detection; distributed dedup incomplete
+| Duplicate filtering | Peer + global | ✅ | ✅ | Complete | SharedTxState cross-peer dedup: filter_advertised/mark_in_flight/mark_received per-peer + global known ring (16 384)
 
-**Mempool Summary**: ~95% feature complete. Collateral, ExUnits, and conflict detection all wired via apply_submitted_tx and claimed_inputs. Remaining: distributed deduplication.
+**Mempool Summary**: ~98% feature complete. Collateral, ExUnits, conflict detection, and cross-peer TxId dedup all wired. SharedTxState integrated into run_txsubmission_server and run_inbound_accept_loop.
 
 ---
 
@@ -219,7 +220,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Rollback support | Revert to prior checkpoints | ✅ | ✅ | Complete | Checkpoint time-travel
 | **Garbage Collection** |
 | Immutable trimming | Delete blocks >retention | ✅ | ✅ | Complete | trim_before_slot + ChainDb::gc_immutable_before_slot
-| Volatile compaction | Deduplicate on rollback | ✅ | ⏸️ | Not Started | Compaction needed on frequent reorgs
+| Volatile compaction | GC + orphan cleanup | ✅ | ✅ | Complete | garbage_collect(slot) + compact() + gc_volatile_before_slot
 | Checkpoint pruning | Keep recent snapshots | ✅ | ✅ | Complete | retain_latest + persist_ledger_checkpoint
 | **Index & Lookup** |
 | Point → block | By block hash | ✅ | ✅ | Complete | Storage scanning on open
@@ -227,8 +228,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Recovery & Crash Handling** |
 | Dirty ledger detection | Incomplete state write | ✅ | ⏸️ | Not Started | Crash detection + recovery path
 | Corruption resilience | Skip/repair bad blocks | ✅ | ✅ | Complete | FileImmutable + FileVolatile + FileLedgerStore skip corrupted files on open
+| Dirty sentinel | Unclean-shutdown detection | ✅ | ✅ | Complete | dirty.flag written before every mutation, removed on success; open() warns on stale sentinel in all three file stores
 
-**Storage Summary**: ~85% feature complete. GC (trim_before_slot), slot-based indexing (get_block_by_slot), corruption-tolerant open, and checkpoint pruning all complete. Remaining: dirty-flag detection, volatile compaction, and WAL.
+**Storage Summary**: ~90% feature complete. GC, slot-based indexing, corruption-tolerant open, checkpoint pruning, and dirty-flag crash detection all complete. Remaining: volatile compaction and WAL-style recovery.
 
 ---
 
@@ -245,7 +247,8 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | validate-config | Verify config file | ✅ | ✅ | Complete | Basic validation
 | status | Tip + epoch info | ✅ | ✅ | Complete | Status query framework
 | query | LocalStateQuery wrapper | ✅ | ⏸️ | In Design | LocalStateQuery types present
-| submit-tx | LocalTxSubmission wrapper | ✅ | ⏸️ | In Design | LocalTxSubmission types present
+| query | LocalStateQuery wrapper | ✅ | ✅ | Complete | run_query: Unix socket → LocalStateQueryClient, 8 query types, JSON output
+| submit-tx | LocalTxSubmission wrapper | ✅ | ✅ | Complete | run_submit_tx: Unix socket → LocalTxSubmissionClient, JSON accept/reject result
 | **Query API (LocalStateQuery)** |
 | CurrentEra | Active era | ✅ | ✅ | Complete | BasicLocalQueryDispatcher tag 0
 | ChainTip | Best block info | ✅ | ✅ | Complete | Tag 1
@@ -260,7 +263,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | TX relay readiness | Mempool admission | ✅ | ⚠️ | Partial | Pre-submission check incomplete
 | Feedback | Acceptance or error | ✅ | ⚠️ | Partial | Error detail reporting incomplete
 
-**CLI Summary**: ~85% feature complete, remaining work on CLI wrappers around LocalStateQuery/Submission and YAML-only config migration.
+**CLI Summary**: ~92% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. Remaining: YAML config migration.
 
 ---
 
@@ -412,30 +415,32 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 ### 4. NETWORK & PEER MANAGEMENT (`crates/network`)
 
-**Current State**: ⚠️ Protocols complete, peer governor partially complete
+**Current State**: ✅ Protocols and governor complete, connection lifecycle hardened
 
 **What's Done**:
 - **5 mini-protocols** fully wired (ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing)
-- **Mux** with protocol dispatch
+- **Mux** with weighted round-robin fair scheduling + dynamic `WeightHandle` per protocol
+- **SDU segmentation/reassembly** via `MessageChannel` with CBOR-aware boundary detection
+- **Backpressure**: per-protocol ingress byte limits (2 MB) + egress soft limit (262 KB)
+- **Bearer timeout**: 30 s SDU read timeout (`SDU_READ_TIMEOUT`) in demux_loop
 - **Handshake** with role negotiation
-- **Typed client drivers** for all protocols
-- **Typed server drivers** for all protocols
-- **Root providers**: local, bootstrap, public, DNS-backed with TTL
+- **Typed client/server drivers** for all protocols
+- **Root providers**: local, bootstrap, public, DNS-backed with TTL clamping
 - **Peer registry**: Cold/Warm/Hot states + 6 peer sources
-- **Governor framework**: targets + action types
+- **Governor framework**: targets, promotions/demotions, churn, bootstrap-sensitive, tepid, backoff
 - **Ledger peer provider**: normalization + refresh orchestration
 - **Local-root handling**: hotValency + warmValency targets
+- **Connection manager**: AcceptedConnectionsLimit (512/384/5s), prune_for_inbound, duplex reuse
+- **Inbound governor**: state tracking, matured duplex peers, inactivity timeout
+- **Graceful shutdown**: outbound ControlMessage::Terminate drain + bounded timeout; inbound JoinSet drain
+- **Rate limiting**: RateLimitDecision applied in accept loop
+- **Hot-peer scheduling**: ChainSync weight 3, BlockFetch weight 2 on promote; reset on demote
 
 **What's Missing**:
-- ⚠️ **Promotion scoring** (which peers get promoted; currently generic)
-- ⚠️ **Demotion triggers** (under what conditions peers drop hot status)
-- ⚠️ **Churn policy** (peer replacement rate + anti-churn mitigation)
-- ⏸️ **Connection pooling** (max outbound/inbound connections)
-- ⏸️ **Backpressure handling** (SDU queue overflow recovery)
-- ⏸️ **Timeout recovery** (protocol-specific timeout handling + reconnect)
-- ⏸️ **Graceful shutdown** (in-flight message draining)
+- ⚠️ **Per-protocol idle timeouts** (ChainSync/BlockFetch-specific idle detection)
+- ⏸️ **Genesis density tracking** (network-layer ChainSync density; future milestone)
 
-**Parity Status**: **~75% complete** — All wiring and state machines present. Missing peer selection policy specifics and connection lifecycle refinement.
+**Parity Status**: **~92% complete** — All protocols, mux, governor, connection lifecycle, and peer management fully implemented and tested (300+ tests). Remaining: protocol-level idle timeouts and Genesis mode.
 
 ---
 
@@ -456,74 +461,78 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Transaction conflict detection** via claimed_inputs HashMap in FeeOrderedQueue
 
 **What's Missing**:
-- ⏸️ **Distributed deduplication** (peer-aware duplicate filtering)
+- All critical mempool features implemented
 
-**Parity Status**: **~95% complete** — Core queue, conflict detection, collateral, and ExUnits all wired. Missing distributed dedup.
+**Parity Status**: **~98% complete** — Core queue, conflict detection, collateral, ExUnits, and cross-peer TxId dedup all wired via SharedTxState.
 
 ---
 
 ### 6. STORAGE (`crates/storage`)
 
-**Current State**: ⚠️ Functional with GC and optimization pending
+**Current State**: ✅ Functional with robust crash handling
 
 **What's Done**:
-- **Immutable store** for blocks >3k slots old
+- **Immutable store** for blocks >3k slots old (CBOR persistence, legacy JSON read compat)
 - **Volatile store** with rollback on reorg
-- **Ledger checkpoints** for state recovery
+- **Ledger checkpoints** for state recovery (raw-byte `.dat` snapshots)
 - **Point lookup** by block hash
-- **Atomicity** via file-based writes
-- **Recovery** from last checkpoint
+- **Slot-based indexing** via `get_block_by_slot` with binary search
+- **Atomicity** via tmp+rename writes in all three file-backed stores
+- **Garbage collection**: `trim_before_slot` + `ChainDb::gc_immutable_before_slot`
+- **Checkpoint pruning**: `retain_latest` + `persist_ledger_checkpoint`
+- **Crash detection**: `dirty.flag` sentinel in all three stores (written before mutations, removed on success)
+- **Corruption resilience**: skip/repair bad blocks on open
 
 **What's Missing**:
-- ⏸️ **Garbage collection** (trimming old immutable blocks)
-- ⏸️ **Slot-based indexing** (efficient slot → block lookup)
-- ⏸️ **Crash detection** (dirty state handling)
-- ⏸️ **Corruption resilience** (skip/repair on bad blocks)
-- ⏸️ **Compaction** (volatility deduplication)
+- ⏸️ **WAL-style recovery** (write-ahead log for multi-step mutations)
 
-**Parity Status**: **~70% complete** — Core functionality working. Missing performance optimizations and edge-case resilience.
+**Parity Status**: **~92% complete** — Core functionality, GC (immutable + volatile), compaction, crash detection, and corruption resilience all working. Missing WAL.
 
 ---
 
 ### 7. CLI & CONFIGURATION (`node/`)
 
-**Current State**: ✅ Functional, with query wrappers pending
+**Current State**: ✅ Functional with query and submit-tx subcommands complete
 
 **What's Done**:
 - **Configuration loading** (JSON + YAML preset support)
-- **CLI subcommands**: run, validate-config, status, default-config
-- **LocalStateQuery** types + 8 query tags fully implemented
-- **LocalTxSubmission** types + validation framework
-- **Genesis loading** (all 3 genesis files)
+- **CLI subcommands**: run, validate-config, status, default-config, query, submit-tx
+- **`query`**: Unix socket → LocalStateQueryClient, 8 query types (CurrentEra, Tip, Epoch, ProtocolParams, UTxO, StakeDistribution, Rewards, Treasury), JSON output
+- **`submit-tx`**: Unix socket → LocalTxSubmissionClient, hex-encoded TX input, JSON accept/reject result
+- **LocalStateQuery** server: BasicLocalQueryDispatcher with 8 tags
+- **LocalTxSubmission** server: staged `apply_submitted_tx` before mempool insertion
+- **LocalTxMonitor** server: wired into SharedMempool
+- **Genesis loading** (ShelleyGenesis, AlonzoGenesis, ConwayGenesis)
+- **Network presets** (Mainnet, Preprod, Preview)
 - **Tracing config** alignment with upstream
 
 **What's Missing**:
-- ⏸️ **query subcommand** (wrapper around LocalStateQuery)
-- ⏸️ **submit-tx subcommand** (wrapper around LocalTxSubmission)
-- ⏸️ **TX feedback detail** (comprehensive error messages)
+- ⏸️ **YAML-only config migration** (currently JSON primary)
+- ⏸️ **TX feedback detail** (comprehensive rejection error messages)
 
-**Parity Status**: **~85% complete** — All types present; CLI wrappers need completion.
+**Parity Status**: **~92% complete** — All subcommands wired with full NtC client drivers.
 
 ---
 
 ### 8. MONITORING & TRACING (`node/`)
 
-**Current State**: ⏸️ Framework only, major work pending
+**Current State**: ✅ Functional with comprehensive metrics and structured tracing
 
 **What's Done**:
-- ℹ️ Basic stderr output framework
-- ℹ️ Trace event structure skeleton
+- **NodeTracer** with namespace/severity dispatch and upstream-style trace objects
+- **Namespace hierarchy**: net., chain., ledger., etc with per-namespace `maxFrequency` filtering
+- **Structured JSON output**: `GET /metrics/json` endpoint + JSON MetricsSnapshot serialization
+- **Stdout transport**: human/machine format dispatch
+- **NodeMetrics**: 25+ atomic counters/gauges (blocks_synced, current_slot, block_no, peers×6, checkpoint, rollbacks, uptime_ms)
+- **Prometheus export**: `MetricsSnapshot::to_prometheus_text()` with text exposition at `GET /metrics`
+- **Health endpoint**: `GET /health` with status, uptime, blocks_synced, current_slot
 
 **What's Missing**:
-- ❌ **Structured JSON output** (serialization to stdout)
-- ❌ **Socket transport** (remote tracer connection)
-- ❌ **Event namespace hierarchy** (net.*, chain.*, ledger.*)
-- ❌ **EKG metrics** (Counter/Gauge/Timer types)
-- ❌ **Prometheus export** (/metrics endpoint)
-- ❌ **Event filtering** (selector expressions)
-- ❌ **Named trace points** (all 50+ node events)
+- ⏸️ **Socket transport** (remote tracer connection)
+- ⏸️ **Selector expressions** (advanced event filtering beyond maxFrequency)
+- ⏸️ **CPU/memory/latency profiling** (performance instrumentation)
 
-**Parity Status**: **~25% complete** — Framework skeleton present. Significant work needed on infrastructure.
+**Parity Status**: **~75% complete** — NodeMetrics, Prometheus/JSON/health endpoints, and NodeTracer with namespace filtering all implemented. Remaining: socket transport, selector expressions, profiling.
 
 ---
 

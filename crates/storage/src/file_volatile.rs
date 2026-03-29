@@ -10,7 +10,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use yggdrasil_ledger::{Block, HeaderHash, Point};
+use yggdrasil_ledger::{Block, HeaderHash, Point, SlotNo};
 
 use crate::error::StorageError;
 use crate::volatile_db::VolatileStore;
@@ -32,6 +32,8 @@ fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// prevent the node from restarting.
 pub struct FileVolatile {
     data_dir: PathBuf,
+    /// Path to the write-ahead dirty sentinel file.
+    dirty_path: PathBuf,
     /// Ordered list of header hashes matching insertion order.
     chain: Vec<HeaderHash>,
     /// In-memory block cache keyed by header hash.
@@ -49,6 +51,15 @@ impl FileVolatile {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
+
+        let dirty_path = data_dir.join("dirty.flag");
+        if dirty_path.exists() {
+            eprintln!(
+                "[storage] VolatileStore: dirty sentinel found at {:?}; \
+                 recovering from unclean shutdown",
+                dirty_path
+            );
+        }
 
         let mut blocks_by_hash: HashMap<HeaderHash, (Block, bool)> = HashMap::new();
         let mut skipped: usize = 0;
@@ -120,13 +131,23 @@ impl FileVolatile {
             .map(|b| (b.header.hash, b))
             .collect();
 
-        Ok(Self { data_dir, chain, index, skipped_on_open: skipped })
+        Ok(Self { data_dir, dirty_path, chain, index, skipped_on_open: skipped })
     }
 
     /// Returns the number of block files that were skipped during open
     /// due to corruption or read errors.
     pub fn skipped_on_open(&self) -> usize {
         self.skipped_on_open
+    }
+
+    fn mark_dirty(&self) -> std::io::Result<()> {
+        fs::write(&self.dirty_path, b"")?;
+        Ok(())
+    }
+
+    fn mark_clean(&self) -> std::io::Result<()> {
+        let _ = fs::remove_file(&self.dirty_path);
+        Ok(())
     }
 
     fn block_path(&self, hash: &HeaderHash) -> PathBuf {
@@ -136,6 +157,54 @@ impl FileVolatile {
     fn legacy_json_block_path(&self, hash: &HeaderHash) -> PathBuf {
         self.data_dir.join(format!("{}.json", hex_encode(&hash.0)))
     }
+
+    /// Removes orphaned block files from disk that are not tracked by the
+    /// in-memory index.
+    ///
+    /// After a crash during rollback, files for discarded blocks may remain
+    /// on disk even though they are no longer part of the volatile chain.
+    /// This method scans the data directory and deletes any `.cbor` or
+    /// `.json` block files whose decoded hash is not present in the current
+    /// index, as well as stale `.tmp` files left by interrupted atomic
+    /// writes.
+    ///
+    /// Returns the number of orphaned files removed.
+    ///
+    /// Reference: upstream VolatileDB recovery re-validates on open; this
+    /// method provides an explicit post-open cleanup path.
+    pub fn compact(&self) -> Result<usize, StorageError> {
+        let mut removed = 0usize;
+        for entry in fs::read_dir(&self.data_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str());
+            match ext {
+                Some("cbor") | Some("json") => {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        match hex_decode_hash(stem) {
+                            Some(hash) if !self.index.contains_key(&hash) => {
+                                let _ = fs::remove_file(&path);
+                                removed += 1;
+                            }
+                            None => {
+                                // Not a valid block file — remove.
+                                let _ = fs::remove_file(&path);
+                                removed += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Some("tmp") => {
+                    // Stale temp file from an interrupted atomic write.
+                    let _ = fs::remove_file(&path);
+                    removed += 1;
+                }
+                _ => {}
+            }
+        }
+        Ok(removed)
+    }
 }
 
 impl VolatileStore for FileVolatile {
@@ -144,6 +213,7 @@ impl VolatileStore for FileVolatile {
             return Err(StorageError::DuplicateBlock(block.header.hash));
         }
 
+        self.mark_dirty()?;
         let path = self.block_path(&block.header.hash);
         let cbor = serde_cbor::to_vec(&block)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
@@ -151,6 +221,7 @@ impl VolatileStore for FileVolatile {
 
         self.chain.push(block.header.hash);
         self.index.insert(block.header.hash, block);
+        self.mark_clean()?;
         Ok(())
     }
 
@@ -184,6 +255,7 @@ impl VolatileStore for FileVolatile {
         match point {
             Point::Origin => Ok(()),
             Point::BlockPoint(_, hash) => {
+                self.mark_dirty()?;
                 let prune_count = self
                     .chain
                     .iter()
@@ -199,6 +271,7 @@ impl VolatileStore for FileVolatile {
                     let _ = fs::remove_file(json_path);
                     self.index.remove(&removed_hash);
                 }
+                self.mark_clean()?;
                 Ok(())
             }
         }
@@ -207,6 +280,7 @@ impl VolatileStore for FileVolatile {
     fn rollback_to(&mut self, point: &Point) {
         match point {
             Point::Origin => {
+                let _ = self.mark_dirty();
                 for hash in &self.chain {
                     let cbor_path = self.block_path(hash);
                     let json_path = self.legacy_json_block_path(hash);
@@ -215,9 +289,11 @@ impl VolatileStore for FileVolatile {
                 }
                 self.chain.clear();
                 self.index.clear();
+                let _ = self.mark_clean();
             }
             Point::BlockPoint(_, hash) => {
                 if let Some(pos) = self.chain.iter().position(|h| h == hash) {
+                    let _ = self.mark_dirty();
                     let removed: Vec<HeaderHash> = self.chain.drain((pos + 1)..).collect();
                     for h in &removed {
                         let cbor_path = self.block_path(h);
@@ -226,6 +302,7 @@ impl VolatileStore for FileVolatile {
                         let _ = fs::remove_file(json_path);
                         self.index.remove(h);
                     }
+                    let _ = self.mark_clean();
                 }
             }
         }
@@ -256,6 +333,46 @@ impl VolatileStore for FileVolatile {
             .filter_map(|h| self.index.get(h).cloned())
             .collect()
     }
+
+    fn garbage_collect(&mut self, slot: SlotNo) -> usize {
+        // Collect hashes of blocks with slot < the given threshold.
+        let to_remove: Vec<HeaderHash> = self
+            .chain
+            .iter()
+            .filter_map(|h| {
+                let block = self.index.get(h)?;
+                if block.header.slot_no < slot {
+                    Some(*h)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if to_remove.is_empty() {
+            return 0;
+        }
+
+        let _ = self.mark_dirty();
+        let count = to_remove.len();
+        for hash in &to_remove {
+            let cbor_path = self.block_path(hash);
+            let json_path = self.legacy_json_block_path(hash);
+            let _ = fs::remove_file(cbor_path);
+            let _ = fs::remove_file(json_path);
+            self.index.remove(hash);
+        }
+
+        let remove_set: std::collections::HashSet<HeaderHash> =
+            to_remove.into_iter().collect();
+        self.chain.retain(|h| !remove_set.contains(h));
+        let _ = self.mark_clean();
+        count
+    }
+
+    fn block_count(&self) -> usize {
+        self.chain.len()
+    }
 }
 
 /// Encode a byte slice as lowercase hex.
@@ -265,4 +382,16 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(acc, "{b:02x}");
         acc
     })
+}
+
+/// Decode a 64-character hex string into a 32-byte `HeaderHash`.
+fn hex_decode_hash(hex: &str) -> Option<HeaderHash> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(HeaderHash(bytes))
 }

@@ -19,3 +19,4 @@ Use this directory to pin queue semantics and mempool boundary behavior.
 
 ## Current Phase
 - Tests in this directory pin duplicate rejection, fee ordering, TTL expiry, shared snapshots, and confirmation-driven eviction.
+- Cross-peer TxId dedup tests (in `tx_state.rs` unit tests, 9 tests): filter new/known/in-flight, mark_received, mark_not_found frees for another peer, unregister cancels in-flight, known ring eviction, mark_confirmed cleans peer state, shared concurrent filter. 42 mempool tests total.

@@ -1576,3 +1576,154 @@ fn file_immutable_open_handles_empty_json_file() {
     assert_eq!(store.len(), 0);
     assert_eq!(store.skipped_on_open(), 1);
 }
+
+// ===========================================================================
+// Volatile garbage collection (upstream garbageCollect parity)
+// ===========================================================================
+
+#[test]
+fn volatile_garbage_collect_removes_blocks_below_slot() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 10)).unwrap();
+    store.add_block(test_block(0x02, 20)).unwrap();
+    store.add_block(test_block(0x03, 30)).unwrap();
+    store.add_block(test_block(0x04, 40)).unwrap();
+
+    // GC with slot 25: removes blocks at slot 10 and 20.
+    let removed = store.garbage_collect(SlotNo(25));
+    assert_eq!(removed, 2);
+    assert_eq!(store.block_count(), 2);
+    assert!(store.get_block(&HeaderHash([0x01; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
+    assert!(store.get_block(&HeaderHash([0x03; 32])).is_some());
+    assert!(store.get_block(&HeaderHash([0x04; 32])).is_some());
+}
+
+#[test]
+fn volatile_garbage_collect_slot_zero_is_noop() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 10)).unwrap();
+
+    let removed = store.garbage_collect(SlotNo(0));
+    assert_eq!(removed, 0);
+    assert_eq!(store.block_count(), 1);
+}
+
+#[test]
+fn volatile_garbage_collect_all_blocks() {
+    let mut store = InMemoryVolatile::default();
+    store.add_block(test_block(0x01, 5)).unwrap();
+    store.add_block(test_block(0x02, 10)).unwrap();
+
+    let removed = store.garbage_collect(SlotNo(100));
+    assert_eq!(removed, 2);
+    assert_eq!(store.block_count(), 0);
+    assert_eq!(store.tip(), Point::Origin);
+}
+
+#[test]
+fn volatile_block_count() {
+    let mut store = InMemoryVolatile::default();
+    assert_eq!(store.block_count(), 0);
+    store.add_block(test_block(0x01, 10)).unwrap();
+    assert_eq!(store.block_count(), 1);
+    store.add_block(test_block(0x02, 20)).unwrap();
+    assert_eq!(store.block_count(), 2);
+    store.rollback_to(&Point::Origin);
+    assert_eq!(store.block_count(), 0);
+}
+
+#[test]
+fn file_volatile_garbage_collect_removes_files() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+
+    let mut store = FileVolatile::open(&path).expect("open");
+    store.add_block(test_block(0x01, 10)).expect("add 1");
+    store.add_block(test_block(0x02, 20)).expect("add 2");
+    store.add_block(test_block(0x03, 30)).expect("add 3");
+
+    let hash1_hex = hex_hash(&HeaderHash([0x01; 32]));
+    let hash2_hex = hex_hash(&HeaderHash([0x02; 32]));
+
+    // Confirm files exist before GC.
+    assert!(path.join(format!("{hash1_hex}.cbor")).exists());
+    assert!(path.join(format!("{hash2_hex}.cbor")).exists());
+
+    // GC at slot 25: removes slot 10 and 20.
+    let removed = store.garbage_collect(SlotNo(25));
+    assert_eq!(removed, 2);
+    assert_eq!(store.block_count(), 1);
+
+    // Files should be deleted.
+    assert!(!path.join(format!("{hash1_hex}.cbor")).exists());
+    assert!(!path.join(format!("{hash2_hex}.cbor")).exists());
+
+    // Remaining block should survive.
+    assert!(store.get_block(&HeaderHash([0x03; 32])).is_some());
+}
+
+#[test]
+fn file_volatile_compact_removes_orphaned_files() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+
+    let mut store = FileVolatile::open(&path).expect("open");
+    store.add_block(test_block(0x01, 10)).expect("add 1");
+    store.add_block(test_block(0x02, 20)).expect("add 2");
+
+    // Manually place an orphaned .cbor file (simulating crash during rollback).
+    let orphan_hash = HeaderHash([0xFF; 32]);
+    let orphan_hex = hex_hash(&orphan_hash);
+    let orphan_block = test_block(0xFF, 99);
+    let orphan_cbor = serde_cbor::to_vec(&orphan_block).expect("serialize orphan");
+    std::fs::write(path.join(format!("{orphan_hex}.cbor")), orphan_cbor).expect("write orphan");
+
+    // Also place a stale .tmp file (interrupted atomic write).
+    std::fs::write(path.join("something.tmp"), b"garbage").expect("write tmp");
+
+    let removed = store.compact().expect("compact");
+    assert_eq!(removed, 2); // orphan .cbor + stale .tmp
+
+    // Orphan and tmp files should be gone.
+    assert!(!path.join(format!("{orphan_hex}.cbor")).exists());
+    assert!(!path.join("something.tmp").exists());
+
+    // Tracked blocks remain.
+    assert!(store.get_block(&HeaderHash([0x01; 32])).is_some());
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_some());
+}
+
+#[test]
+fn file_volatile_compact_on_clean_store_is_noop() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+
+    let mut store = FileVolatile::open(&path).expect("open");
+    store.add_block(test_block(0x01, 10)).expect("add 1");
+
+    let removed = store.compact().expect("compact");
+    assert_eq!(removed, 0);
+}
+
+#[test]
+fn chain_db_gc_volatile_before_slot() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    chain_db
+        .add_volatile_block(test_block(0x01, 10))
+        .expect("add 1");
+    chain_db
+        .add_volatile_block(test_block(0x02, 20))
+        .expect("add 2");
+    chain_db
+        .add_volatile_block(test_block(0x03, 30))
+        .expect("add 3");
+
+    let removed = chain_db.gc_volatile_before_slot(SlotNo(25));
+    assert_eq!(removed, 2);
+    assert_eq!(chain_db.volatile().block_count(), 1);
+}

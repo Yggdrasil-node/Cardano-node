@@ -31,6 +31,8 @@ fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// except via [`ImmutableStore::trim_before_slot`] garbage collection.
 pub struct FileImmutable {
     data_dir: PathBuf,
+    /// Path to the write-ahead dirty sentinel file.
+    dirty_path: PathBuf,
     /// Ordered list of header hashes matching insertion order.
     chain: Vec<HeaderHash>,
     /// In-memory block cache keyed by header hash.
@@ -52,6 +54,19 @@ impl FileImmutable {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
+
+        let dirty_path = data_dir.join("dirty.flag");
+        if dirty_path.exists() {
+            // A dirty sentinel left from a previous run indicates that the
+            // node did not shut down cleanly.  The scan below will recover
+            // whatever complete block files are present; corrupted or
+            // partially-written files are silently skipped.
+            eprintln!(
+                "[storage] ImmutableStore: dirty sentinel found at {:?}; \
+                 recovering from unclean shutdown",
+                dirty_path
+            );
+        }
 
         let mut blocks_by_hash: HashMap<HeaderHash, (Block, bool)> = HashMap::new();
         let mut skipped: usize = 0;
@@ -126,13 +141,26 @@ impl FileImmutable {
             .map(|b| (b.header.hash, b))
             .collect();
 
-        Ok(Self { data_dir, chain, index, skipped_on_open: skipped })
+        Ok(Self { data_dir, dirty_path, chain, index, skipped_on_open: skipped })
     }
 
     /// Returns the number of block files that were skipped during
     /// [`FileImmutable::open`] due to corruption or read errors.
     pub fn skipped_on_open(&self) -> usize {
         self.skipped_on_open
+    }
+
+    fn mark_dirty(&self) -> std::io::Result<()> {
+        // Sentinel is written before any mutation begins.  If the process
+        // crashes between mark_dirty and mark_clean the sentinel survives,
+        // and the next open() will log a warning before recovering normally.
+        fs::write(&self.dirty_path, b"")?;
+        Ok(())
+    }
+
+    fn mark_clean(&self) -> std::io::Result<()> {
+        let _ = fs::remove_file(&self.dirty_path);
+        Ok(())
     }
 
     fn block_path(&self, hash: &HeaderHash) -> PathBuf {
@@ -150,6 +178,7 @@ impl ImmutableStore for FileImmutable {
             return Err(StorageError::DuplicateBlock(block.header.hash));
         }
 
+        self.mark_dirty()?;
         let path = self.block_path(&block.header.hash);
         let cbor = serde_cbor::to_vec(&block)
             .map_err(|e| StorageError::Serialization(e.to_string()))?;
@@ -157,6 +186,7 @@ impl ImmutableStore for FileImmutable {
 
         self.chain.push(block.header.hash);
         self.index.insert(block.header.hash, block);
+        self.mark_clean()?;
         Ok(())
     }
 
@@ -222,6 +252,7 @@ impl ImmutableStore for FileImmutable {
     }
 
     fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
+        self.mark_dirty()?;
         let to_remove: Vec<HeaderHash> = self
             .chain
             .iter()
@@ -241,6 +272,7 @@ impl ImmutableStore for FileImmutable {
             self.index.remove(hash);
         }
         self.chain.retain(|hash| !to_remove.contains(hash));
+        self.mark_clean()?;
         Ok(removed)
     }
 }

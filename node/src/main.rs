@@ -28,7 +28,7 @@ use yggdrasil_node::{
 };
 use yggdrasil_consensus::{ActiveSlotCoeff, EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam};
 use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
-use yggdrasil_mempool::SharedMempool;
+use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::{
     ConnectionManagerState,
     GovernorState, GovernorTargets,
@@ -88,6 +88,9 @@ enum Command {
         /// Port for Prometheus metrics HTTP endpoint. Disabled when not set.
         #[arg(long)]
         metrics_port: Option<u16>,
+        /// Path to the NtC Unix domain socket for local client connections.
+        #[arg(long)]
+        socket_path: Option<PathBuf>,
     },
     /// Validate config, snapshot inputs, and any existing on-disk storage state.
     ValidateConfig {
@@ -109,6 +112,59 @@ enum Command {
     },
     /// Print the default configuration as JSON.
     DefaultConfig,
+    /// Query the running node via the NtC LocalStateQuery protocol.
+    #[cfg(unix)]
+    Query {
+        /// Path to the NtC Unix domain socket of the running node.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Query tag to execute.
+        #[command(subcommand)]
+        query: QueryCommand,
+    },
+    /// Submit a transaction to the running node via the NtC LocalTxSubmission protocol.
+    #[cfg(unix)]
+    SubmitTx {
+        /// Path to the NtC Unix domain socket of the running node.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Path to a file containing the CBOR-encoded transaction.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR transaction bytes.
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+    },
+}
+
+/// LocalStateQuery query sub-commands.
+#[cfg(unix)]
+#[derive(Subcommand)]
+enum QueryCommand {
+    /// Query the current era.
+    CurrentEra,
+    /// Query the chain tip.
+    Tip,
+    /// Query the current epoch number.
+    CurrentEpoch,
+    /// Query the current protocol parameters.
+    ProtocolParams,
+    /// Query the UTxO set for a given address (hex-encoded).
+    UtxoByAddress {
+        /// Hex-encoded address bytes.
+        #[arg(long)]
+        address: String,
+    },
+    /// Query the stake distribution.
+    StakeDistribution,
+    /// Query the reward balance for a reward account (hex-encoded).
+    RewardBalance {
+        /// Hex-encoded reward account bytes.
+        #[arg(long)]
+        account: String,
+    },
+    /// Query the treasury and reserves.
+    TreasuryAndReserves,
 }
 
 #[derive(Serialize)]
@@ -147,6 +203,198 @@ struct StorageValidationReport {
     ledger_peer_count: usize,
 }
 
+// ---------------------------------------------------------------------------
+// NtC client helpers — query and submit-tx subcommands
+// ---------------------------------------------------------------------------
+
+/// Connect to the running node's NtC Unix socket and execute a
+/// LocalStateQuery request, printing the result as JSON.
+///
+/// Reference: `cardano-cli query` commands against
+/// `ouroboros-network-protocols` LocalStateQuery.
+#[cfg(unix)]
+async fn run_query(socket_path: PathBuf, query: QueryCommand) -> Result<()> {
+    use tokio::net::UnixStream;
+    use yggdrasil_network::{
+        AcquireTarget, LocalStateQueryClient, MiniProtocolDir, MiniProtocolNum,
+        start_mux_unix,
+    };
+
+    let stream = UnixStream::connect(&socket_path)
+        .await
+        .wrap_err_with(|| format!("failed to connect to NtC socket {}", socket_path.display()))?;
+
+    let protocols = [
+        MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
+        MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
+        MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
+    ];
+    let (mut handles, _mux) = start_mux_unix(stream, MiniProtocolDir::Initiator, &protocols, 32);
+
+    let sq_handle = handles
+        .remove(&MiniProtocolNum::NTC_LOCAL_STATE_QUERY)
+        .expect("NTC_LOCAL_STATE_QUERY handle missing");
+    let mut client = LocalStateQueryClient::new(sq_handle);
+
+    // Acquire at the volatile tip — always available on a running node.
+    client
+        .acquire(AcquireTarget::VolatileTip)
+        .await
+        .wrap_err("LocalStateQuery acquire failed")?;
+
+    // Encode the query as CBOR [tag] or [tag, param].
+    let query_bytes = encode_ntc_query(&query);
+
+    let result = client
+        .query(query_bytes)
+        .await
+        .wrap_err("LocalStateQuery query failed")?;
+
+    // Decode the result according to the known response format.
+    let json_val = decode_ntc_result(&query, &result)?;
+    println!("{}", serde_json::to_string_pretty(&json_val)?);
+
+    let _ = client.release().await;
+    let _ = client.done().await;
+    Ok(())
+}
+
+/// Encode a [`QueryCommand`] as a CBOR `[tag, ...]` byte vector matching
+/// the format expected by [`BasicLocalQueryDispatcher`].
+#[cfg(unix)]
+fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    let mut enc = Encoder::new();
+    match query {
+        QueryCommand::CurrentEra => {
+            enc.array(1).unsigned(0u64);
+        }
+        QueryCommand::Tip => {
+            enc.array(1).unsigned(1u64);
+        }
+        QueryCommand::CurrentEpoch => {
+            enc.array(1).unsigned(2u64);
+        }
+        QueryCommand::ProtocolParams => {
+            enc.array(1).unsigned(3u64);
+        }
+        QueryCommand::UtxoByAddress { address } => {
+            let addr_bytes = hex::decode(address.trim()).unwrap_or_default();
+            enc.array(2).unsigned(4u64).bytes(&addr_bytes);
+        }
+        QueryCommand::StakeDistribution => {
+            enc.array(1).unsigned(5u64);
+        }
+        QueryCommand::RewardBalance { account } => {
+            let acct_bytes = hex::decode(account.trim()).unwrap_or_default();
+            enc.array(2).unsigned(6u64).bytes(&acct_bytes);
+        }
+        QueryCommand::TreasuryAndReserves => {
+            enc.array(1).unsigned(7u64);
+        }
+    }
+    enc.into_bytes()
+}
+
+/// Decode a raw CBOR result from the node into a `serde_json::Value` suitable
+/// for pretty-printing.
+#[cfg(unix)]
+fn decode_ntc_result(
+    query: &QueryCommand,
+    result: &[u8],
+) -> Result<serde_json::Value> {
+    use yggdrasil_ledger::Decoder;
+    let val = match query {
+        QueryCommand::CurrentEra => {
+            let mut dec = Decoder::new(result);
+            let era = dec.unsigned().unwrap_or(0);
+            json!({"era": era})
+        }
+        QueryCommand::Tip => {
+            // Point is CBOR encoded — return hex for now; callers can decode.
+            json!({"tip": hex::encode(result)})
+        }
+        QueryCommand::CurrentEpoch => {
+            let mut dec = Decoder::new(result);
+            let epoch = dec.unsigned().unwrap_or(0);
+            json!({"epoch": epoch})
+        }
+        QueryCommand::ProtocolParams => {
+            // CBOR null (0xf6) means no parameters available yet.
+            if result == [0xf6] {
+                json!({"protocol_parameters": null})
+            } else {
+                json!({"protocol_parameters": hex::encode(result)})
+            }
+        }
+        QueryCommand::UtxoByAddress { .. } => {
+            json!({"utxo_cbor": hex::encode(result)})
+        }
+        QueryCommand::StakeDistribution => {
+            json!({"stake_distribution_cbor": hex::encode(result)})
+        }
+        QueryCommand::RewardBalance { .. } => {
+            let mut dec = Decoder::new(result);
+            let balance = dec.unsigned().unwrap_or(0);
+            json!({"reward_balance_lovelace": balance})
+        }
+        QueryCommand::TreasuryAndReserves => {
+            let mut dec = Decoder::new(result);
+            if dec.array().ok() == Some(2) {
+                let treasury = dec.unsigned().unwrap_or(0);
+                let reserves = dec.unsigned().unwrap_or(0);
+                json!({"treasury_lovelace": treasury, "reserves_lovelace": reserves})
+            } else {
+                json!({"result_cbor": hex::encode(result)})
+            }
+        }
+    };
+    Ok(val)
+}
+
+/// Connect to the running node's NtC Unix socket and submit a transaction
+/// via the LocalTxSubmission protocol, printing the accept/reject outcome.
+///
+/// Reference: `cardano-cli transaction submit` against
+/// `ouroboros-network-protocols` LocalTxSubmission.
+#[cfg(unix)]
+async fn run_submit_tx(socket_path: PathBuf, tx_bytes: Vec<u8>) -> Result<()> {
+    use tokio::net::UnixStream;
+    use yggdrasil_network::{
+        LocalTxSubmissionClient, MiniProtocolDir, MiniProtocolNum,
+        start_mux_unix,
+    };
+
+    let stream = UnixStream::connect(&socket_path)
+        .await
+        .wrap_err_with(|| format!("failed to connect to NtC socket {}", socket_path.display()))?;
+
+    let protocols = [
+        MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
+        MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
+        MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
+    ];
+    let (mut handles, _mux) = start_mux_unix(stream, MiniProtocolDir::Initiator, &protocols, 32);
+
+    let tx_handle = handles
+        .remove(&MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION)
+        .expect("NTC_LOCAL_TX_SUBMISSION handle missing");
+    let mut client = LocalTxSubmissionClient::new(tx_handle);
+
+    match client.submit(tx_bytes).await {
+        Ok(()) => {
+            let result = json!({"result": "accepted"});
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Err(e) => {
+            let result = json!({"result": "rejected", "reason": e.to_string()});
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+    }
+    let _ = client.done().await;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -183,8 +431,14 @@ fn main() -> Result<()> {
             checkpoint_trace_severity,
             checkpoint_trace_backend,
             metrics_port,
+            socket_path,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
+
+            // CLI --socket-path overrides config file SocketPath.
+            if let Some(ref sp) = socket_path {
+                file_cfg.socket_path = Some(sp.display().to_string());
+            }
 
             if let Some(max_frequency) = checkpoint_trace_max_frequency {
                 checkpoint_trace_config_mut(&mut file_cfg).max_frequency = if max_frequency > 0.0 {
@@ -368,7 +622,28 @@ fn main() -> Result<()> {
                 peer_snapshot_path,
                 metrics_port,
                 base_ledger_state,
+                socket_path: file_cfg.socket_path.map(PathBuf::from),
             }))
+        }
+        #[cfg(unix)]
+        Command::Query { socket_path, query } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_query(socket_path, query))
+        }
+        #[cfg(unix)]
+        Command::SubmitTx { socket_path, tx_file, tx_hex } => {
+            let tx_bytes = match (tx_file, tx_hex) {
+                (Some(path), _) => std::fs::read(&path)
+                    .wrap_err_with(|| format!("failed to read tx file {}", path.display()))?,
+                (_, Some(hex)) => {
+                    let hex = hex.trim();
+                    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+                    hex::decode(hex).wrap_err("invalid hex in --tx-hex")?
+                }
+                (None, None) => bail!("one of --tx-file or --tx-hex is required"),
+            };
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_submit_tx(socket_path, tx_bytes))
         }
     }
 }
@@ -904,6 +1179,7 @@ async fn run_node(
         peer_snapshot_path,
         metrics_port,
         base_ledger_state,
+        socket_path,
     } = request;
 
     let chain_db = Arc::new(RwLock::new(chain_db));
@@ -1033,6 +1309,7 @@ async fn run_node(
         ));
         let inbound_connection_manager = Arc::clone(&shared_connection_manager);
         let inbound_governor = Arc::clone(&shared_inbound_governor);
+        let inbound_tx_state = SharedTxState::default();
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
         let inbound_peers = Arc::clone(&shared_inbound_peers);
@@ -1059,6 +1336,7 @@ async fn run_node(
                 Some(inbound_connection_manager),
                 Some(inbound_governor),
                 Some(yggdrasil_network::AcceptedConnectionsLimit::default()),
+                Some(inbound_tx_state),
                 shutdown,
             )
             .await
@@ -1072,6 +1350,63 @@ async fn run_node(
             }
         }))
     } else {
+        None
+    };
+
+    // -- NtC local server (Unix socket for CLI queries / tx submission) ----
+    #[cfg(unix)]
+    let ntc_task = if let Some(ref ntc_path) = socket_path {
+        let ntc_chain_db = Arc::clone(&chain_db);
+        let ntc_mempool = shared_mempool.clone();
+        let ntc_path = ntc_path.clone();
+        let ntc_tracer = tracer.clone();
+        let mut ntc_shutdown = shutdown_rx.clone();
+        let ntc_evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>> = None;
+
+        tracer.trace_runtime(
+            "Net.NtC",
+            "Notice",
+            "starting NtC local server",
+            trace_fields([("socketPath", json!(ntc_path.display().to_string()))]),
+        );
+
+        Some(tokio::spawn(async move {
+            let dispatcher: Arc<dyn yggdrasil_node::LocalQueryDispatcher> =
+                Arc::new(yggdrasil_node::BasicLocalQueryDispatcher);
+            let shutdown = async move {
+                if *ntc_shutdown.borrow() {
+                    return;
+                }
+                while ntc_shutdown.changed().await.is_ok() {
+                    if *ntc_shutdown.borrow() {
+                        break;
+                    }
+                }
+            };
+            if let Err(err) = yggdrasil_node::run_local_accept_loop(
+                &ntc_path,
+                ntc_chain_db,
+                ntc_mempool,
+                dispatcher,
+                ntc_evaluator,
+                shutdown,
+            )
+            .await
+            {
+                ntc_tracer.trace_runtime(
+                    "Net.NtC",
+                    "Error",
+                    "NtC local server stopped with error",
+                    trace_fields([("error", json!(err.to_string()))]),
+                );
+            }
+        }))
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
+    let ntc_task: Option<tokio::task::JoinHandle<()>> = {
+        let _ = &socket_path;
         None
     };
 
@@ -1112,6 +1447,9 @@ async fn run_node(
             if let Some(handle) = inbound_task {
                 let _ = handle.await;
             }
+            if let Some(handle) = ntc_task {
+                let _ = handle.await;
+            }
             tracer.trace_runtime(
                 "Node.Sync",
                 "Error",
@@ -1128,6 +1466,9 @@ async fn run_node(
     let _ = shutdown_tx.send(true);
     let _ = governor_task.await;
     if let Some(handle) = inbound_task {
+        let _ = handle.await;
+    }
+    if let Some(handle) = ntc_task {
         let _ = handle.await;
     }
 
@@ -1191,6 +1532,8 @@ struct RunNodeRequest {
     metrics_port: Option<u16>,
     /// Genesis-seeded base ledger state used for recovery and fresh sync.
     base_ledger_state: LedgerState,
+    /// NtC Unix domain socket path for local client queries.
+    socket_path: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------

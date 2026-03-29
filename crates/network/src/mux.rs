@@ -31,6 +31,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::Duration;
 
 use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SduHeader, SDU_HEADER_SIZE};
 
@@ -57,6 +58,16 @@ pub const DEFAULT_INGRESS_LIMIT: usize = 2_000_000;
 pub const EGRESS_SOFT_LIMIT: usize = 0x3ffff; // 262_143 bytes
 
 /// Default protocol scheduling weight for the egress round-robin.
+
+/// SDU read timeout on the bearer connection.
+///
+/// If no SDU header bytes arrive within this window the demuxer terminates
+/// the connection with [`MuxError::SduTimeout`].  This matches upstream
+/// `network-mux` idle-timeout behaviour (30 seconds).
+///
+/// Reference: `Network.Mux.Bearer` — `bearerAsChannel` read timeout.
+pub const SDU_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 ///
 /// All protocols start with weight 1 (uniform scheduling).  Hot-tier
 /// protocols (ChainSync, BlockFetch) can be assigned higher weights
@@ -153,6 +164,12 @@ pub enum MuxError {
         /// Configured limit.
         limit: usize,
     },
+
+    /// No SDU bytes arrived within [`SDU_READ_TIMEOUT`].
+    ///
+    /// Upstream: bearer read timeout in `Network.Mux.Bearer.bearerAsChannel`.
+    #[error("SDU read timeout after {0:?}")]
+    SduTimeout(Duration),
 }
 
 // ---------------------------------------------------------------------------
@@ -485,12 +502,13 @@ async fn demux_loop<R: tokio::io::AsyncRead + Unpin>(
     loop {
         // Read the 8-byte SDU header.
         let mut hdr_buf = [0u8; SDU_HEADER_SIZE];
-        match reader.read_exact(&mut hdr_buf).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+        match tokio::time::timeout(SDU_READ_TIMEOUT, reader.read_exact(&mut hdr_buf)).await {
+            Err(_elapsed) => return Err(MuxError::SduTimeout(SDU_READ_TIMEOUT)),
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 return Err(MuxError::ConnectionClosed);
             }
-            Err(e) => return Err(MuxError::Io(e)),
+            Ok(Err(e)) => return Err(MuxError::Io(e)),
+            Ok(Ok(_)) => {}
         }
 
         // Decode — never fails on an 8-byte buffer.

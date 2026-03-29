@@ -366,6 +366,17 @@ where
         self.immutable.trim_before_slot(slot)
     }
 
+    /// Garbage-collects volatile blocks with slots strictly before `slot`.
+    ///
+    /// This is the coordinated counterpart to `VolatileStore::garbage_collect`
+    /// and corresponds to the upstream `garbageCollect` function invoked
+    /// after stable blocks have been promoted to immutable storage.
+    ///
+    /// Returns the number of blocks removed.
+    pub fn gc_volatile_before_slot(&mut self, slot: SlotNo) -> usize {
+        self.volatile.garbage_collect(slot)
+    }
+
     /// Borrows the immutable store.
     pub fn immutable(&self) -> &I {
         &self.immutable

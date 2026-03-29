@@ -89,6 +89,17 @@ pub mod local_tx_monitor_server;
 /// LocalStateQuery server driver — NtC ledger state query responder.
 pub mod local_state_query_server;
 
+// -- Node-to-Client (NtC) client drivers ----------------------------------
+
+/// LocalStateQuery client driver — NtC ledger state query initiator.
+pub mod local_state_query_client;
+
+/// LocalTxSubmission client driver — NtC transaction submission initiator.
+pub mod local_tx_submission_client;
+
+/// LocalTxMonitor client driver — NtC mempool monitor initiator.
+pub mod local_tx_monitor_client;
+
 // -- Bearer re-exports --------------------------------------------------------
 pub use bearer::{Bearer, BearerError, Sdu, TcpBearer, MAX_SDU_PAYLOAD};
 
@@ -283,3 +294,8 @@ pub use peer_state_actions::{
     PeerStateActions, governor_action_to_peer_state_action,
     governor_actions_to_peer_state_actions,
 };
+
+// -- NtC client driver re-exports ---------------------------------------------
+pub use local_state_query_client::{LocalStateQueryClient, LocalStateQueryClientError};
+pub use local_tx_submission_client::{LocalTxSubmissionClient, LocalTxSubmissionClientError};
+pub use local_tx_monitor_client::{LocalTxMonitorClient, LocalTxMonitorClientError};

@@ -445,9 +445,9 @@ pub async fn run_local_client_session<I, V, L>(
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
 ) -> yggdrasil_network::MuxHandle
 where
-    I: ImmutableStore + Send + Sync + Clone + 'static,
-    V: VolatileStore + Send + Sync + Clone + 'static,
-    L: LedgerStore + Send + Sync + Clone + 'static,
+    I: ImmutableStore + Send + Sync + 'static,
+    V: VolatileStore + Send + Sync + 'static,
+    L: LedgerStore + Send + Sync + 'static,
 {
     use yggdrasil_network::{start_mux_unix, MiniProtocolNum};
 
@@ -527,9 +527,9 @@ pub async fn run_local_accept_loop<I, V, L, F>(
     shutdown: F,
 ) -> Result<(), LocalServerError>
 where
-    I: ImmutableStore + Send + Sync + Clone + 'static,
-    V: VolatileStore + Send + Sync + Clone + 'static,
-    L: LedgerStore + Send + Sync + Clone + 'static,
+    I: ImmutableStore + Send + Sync + 'static,
+    V: VolatileStore + Send + Sync + 'static,
+    L: LedgerStore + Send + Sync + 'static,
     F: std::future::Future<Output = ()>,
 {
     use tokio::net::UnixListener;

@@ -23,7 +23,7 @@ use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock,
     Decoder, MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo,
 };
-use yggdrasil_mempool::SharedMempool;
+use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::{
     AcceptedConnectionsLimit,
     BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
@@ -527,22 +527,59 @@ pub async fn run_chainsync_server(
 /// bodies, hands those bodies to the provided consumer, then acknowledges the
 /// advertised ids on the next request. The loop terminates cleanly when the
 /// remote client responds with `MsgDone` to a blocking request.
+///
+/// When a [`SharedTxState`] and remote `SocketAddr` are provided, the server
+/// performs cross-peer TxId deduplication: advertised TxIds that are already
+/// known or being fetched from another peer are acknowledged without
+/// downloading, preventing duplicate work across concurrent inbound sessions.
 pub async fn run_txsubmission_server(
     mut server: TxSubmissionServer,
     consumer: &dyn TxSubmissionConsumer,
+    dedup: Option<(&SharedTxState, SocketAddr)>,
 ) -> Result<(), TxSubmissionServerError> {
     const TXSUBMISSION_BATCH_SIZE: u16 = 16;
 
     server.recv_init().await?;
     let mut ack = 0u16;
 
+    // Register this peer for dedup tracking at session start.
+    if let Some((tx_state, peer_addr)) = &dedup {
+        tx_state.register_peer(*peer_addr);
+    }
+
     loop {
         match server.request_tx_ids(true, ack, TXSUBMISSION_BATCH_SIZE).await? {
-            TxIdsReply::Done => return Ok(()),
+            TxIdsReply::Done => {
+                if let Some((tx_state, peer_addr)) = &dedup {
+                    tx_state.unregister_peer(peer_addr);
+                }
+                return Ok(());
+            }
             TxIdsReply::TxIds(txids) => {
                 ack = txids.len().min(u16::MAX as usize) as u16;
-                let requested = txids.into_iter().map(|item| item.txid).collect();
-                let txs = server.request_txs(requested).await?;
+
+                let all_txids: Vec<_> = txids.into_iter().map(|item| item.txid).collect();
+
+                // Filter through shared state to avoid re-fetching known txids.
+                let to_request = if let Some((tx_state, peer_addr)) = &dedup {
+                    let outcome = tx_state.filter_advertised(peer_addr, &all_txids);
+                    if outcome.to_fetch.is_empty() {
+                        // All txids already known — ack them without requesting.
+                        continue;
+                    }
+                    tx_state.mark_in_flight(peer_addr, &outcome.to_fetch);
+                    outcome.to_fetch
+                } else {
+                    all_txids
+                };
+
+                let txs = server.request_txs(to_request.clone()).await?;
+
+                // Track which txids were successfully received.
+                if let Some((tx_state, peer_addr)) = &dedup {
+                    tx_state.mark_received(peer_addr, &to_request);
+                }
+
                 let _accepted = consumer.consume_txs(txs);
             }
         }
@@ -860,6 +897,7 @@ pub enum InboundServiceError {
 ///
 /// The loop runs until the `shutdown` future resolves or a fatal listener
 /// error occurs.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     listener: &PeerListener,
     block_provider: Option<Arc<dyn BlockProvider>>,
@@ -870,6 +908,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     connection_manager: Option<Arc<RwLock<ConnectionManagerState>>>,
     inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
     accepted_connections_limit: Option<AcceptedConnectionsLimit>,
+    shared_tx_state: Option<SharedTxState>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
     let listener_local_addr = listener
@@ -1008,6 +1047,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 let shared_inbound_peers = inbound_peers.clone();
                 let shared_cm = connection_manager.clone();
                 let shared_ig = inbound_governor.clone();
+                let session_tx_state = shared_tx_state.clone();
                 let remote_addr = session.remote_addr;
                 let connection_id = conn_id;
                 let base = start;
@@ -1152,6 +1192,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         let shared_ig = shared_ig.clone();
                         let shared_cm = shared_cm.clone();
                         let responder_counters = responder_counters.clone();
+                        let dedup = session_tx_state.as_ref().map(|ts| (ts.clone(), connection_id.remote));
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1170,7 +1211,8 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 );
                             }
 
-                            let _ = run_txsubmission_server(session.tx_submission, &*consumer).await;
+                            let dedup_ref = dedup.as_ref().map(|(ts, addr)| (ts, *addr));
+                            let _ = run_txsubmission_server(session.tx_submission, &*consumer, dedup_ref).await;
 
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1536,6 +1578,7 @@ mod tests {
                     None,
                     None,
                     Some(consumer),
+                    None,
                     None,
                     None,
                     None,

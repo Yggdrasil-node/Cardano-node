@@ -1,4 +1,4 @@
-use yggdrasil_ledger::{Block, HeaderHash, Point};
+use yggdrasil_ledger::{Block, HeaderHash, Point, SlotNo};
 
 use crate::error::StorageError;
 
@@ -48,6 +48,20 @@ pub trait VolatileStore {
     /// `Origin` (the entire chain would be returned by the rollback path
     /// instead) or if the point is not found.
     fn suffix_after(&self, point: &Point) -> Vec<Block>;
+
+    /// Removes all blocks with a slot number strictly less than `slot`.
+    ///
+    /// Returns the number of blocks removed. This is the volatile-store
+    /// counterpart of `ImmutableStore::trim_before_slot` and corresponds to
+    /// the upstream `garbageCollect` function.
+    ///
+    /// Reference: `Ouroboros.Consensus.Storage.VolatileDB.API.garbageCollect`
+    /// — removes blocks older than the most recent immutable block so they
+    /// are not stored indefinitely.
+    fn garbage_collect(&mut self, slot: SlotNo) -> usize;
+
+    /// Returns the number of blocks currently stored.
+    fn block_count(&self) -> usize;
 }
 
 /// In-memory volatile store for tests and interface stabilization.
@@ -128,5 +142,15 @@ impl VolatileStore for InMemoryVolatile {
                 }
             }
         }
+    }
+
+    fn garbage_collect(&mut self, slot: SlotNo) -> usize {
+        let before = self.blocks.len();
+        self.blocks.retain(|b| b.header.slot_no >= slot);
+        before - self.blocks.len()
+    }
+
+    fn block_count(&self) -> usize {
+        self.blocks.len()
     }
 }

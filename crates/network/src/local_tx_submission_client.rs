@@ -9,7 +9,7 @@
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
-    LocalTxSubmissionError, LocalTxSubmissionMessage, LocalTxSubmissionState,
+    LocalTxSubmissionMessage, LocalTxSubmissionState, LocalTxSubmissionTransitionError,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ pub enum LocalTxSubmissionClientError {
 
     /// Protocol state machine violation.
     #[error("protocol error: {0}")]
-    Protocol(#[from] LocalTxSubmissionError),
+    Protocol(String),
 
     /// Transaction rejected by the node, with the raw era-specific rejection bytes.
     #[error("transaction rejected")]
@@ -38,6 +38,12 @@ pub enum LocalTxSubmissionClientError {
     /// Unexpected message received from the server.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+}
+
+impl From<LocalTxSubmissionTransitionError> for LocalTxSubmissionClientError {
+    fn from(e: LocalTxSubmissionTransitionError) -> Self {
+        Self::Protocol(e.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -81,14 +87,12 @@ impl LocalTxSubmissionClient {
         &mut self,
         msg: &LocalTxSubmissionMessage,
     ) -> Result<(), LocalTxSubmissionClientError> {
-        let next = msg
-            .apply(self.state)
-            .ok_or_else(|| LocalTxSubmissionError::InvalidTransition {
-                tag: msg.tag(),
-                state: self.state,
-            })?;
+        let next = self
+            .state
+            .transition(msg)
+            .map_err(|e| LocalTxSubmissionClientError::Protocol(e.to_string()))?;
         self.channel
-            .send(msg.encode_cbor())
+            .send(msg.to_cbor())
             .await
             .map_err(LocalTxSubmissionClientError::Mux)?;
         self.state = next;
@@ -101,14 +105,12 @@ impl LocalTxSubmissionClient {
             .recv()
             .await
             .ok_or(LocalTxSubmissionClientError::ConnectionClosed)?;
-        let msg = LocalTxSubmissionMessage::decode_cbor(&raw)
-            .map_err(LocalTxSubmissionClientError::Protocol)?;
-        let next = msg
-            .apply(self.state)
-            .ok_or_else(|| LocalTxSubmissionError::InvalidTransition {
-                tag: msg.tag(),
-                state: self.state,
-            })?;
+        let msg = LocalTxSubmissionMessage::from_cbor(&raw)
+            .map_err(|e| LocalTxSubmissionClientError::Protocol(e.to_string()))?;
+        let next = self
+            .state
+            .transition(&msg)
+            .map_err(|e| LocalTxSubmissionClientError::Protocol(e.to_string()))?;
         self.state = next;
         Ok(msg)
     }
@@ -131,8 +133,8 @@ impl LocalTxSubmissionClient {
         let msg = self.recv_msg().await?;
         match msg {
             LocalTxSubmissionMessage::MsgAcceptTx => Ok(()),
-            LocalTxSubmissionMessage::MsgRejectTx { reject_reason } => {
-                Err(LocalTxSubmissionClientError::TransactionRejected(reject_reason))
+            LocalTxSubmissionMessage::MsgRejectTx { reason } => {
+                Err(LocalTxSubmissionClientError::TransactionRejected(reason))
             }
             other => Err(LocalTxSubmissionClientError::UnexpectedMessage(format!(
                 "{other:?}"

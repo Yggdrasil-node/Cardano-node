@@ -9,8 +9,8 @@
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
-    AcquireFailure, AcquireTarget, LocalStateQueryError, LocalStateQueryMessage,
-    LocalStateQueryState,
+    AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
+    LocalStateQueryTransitionError,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ pub enum LocalStateQueryClientError {
 
     /// Protocol state machine violation or CBOR decode failure.
     #[error("protocol error: {0}")]
-    Protocol(#[from] LocalStateQueryError),
+    Protocol(String),
 
     /// The server refused to acquire the requested point.
     #[error("acquire failed: {0:?}")]
@@ -39,6 +39,12 @@ pub enum LocalStateQueryClientError {
     /// Unexpected message received from the server.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+}
+
+impl From<LocalStateQueryTransitionError> for LocalStateQueryClientError {
+    fn from(e: LocalStateQueryTransitionError) -> Self {
+        Self::Protocol(e.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -84,14 +90,12 @@ impl LocalStateQueryClient {
         &mut self,
         msg: &LocalStateQueryMessage,
     ) -> Result<(), LocalStateQueryClientError> {
-        let next = msg
-            .apply(self.state)
-            .ok_or_else(|| LocalStateQueryError::InvalidTransition {
-                tag: msg.tag(),
-                state: self.state,
-            })?;
+        let next = self
+            .state
+            .transition(msg)
+            .map_err(|e| LocalStateQueryClientError::Protocol(e.to_string()))?;
         self.channel
-            .send(msg.encode_cbor())
+            .send(msg.to_cbor())
             .await
             .map_err(LocalStateQueryClientError::Mux)?;
         self.state = next;
@@ -104,14 +108,12 @@ impl LocalStateQueryClient {
             .recv()
             .await
             .ok_or(LocalStateQueryClientError::ConnectionClosed)?;
-        let msg = LocalStateQueryMessage::decode_cbor(&raw)
-            .map_err(LocalStateQueryClientError::Protocol)?;
-        let next = msg
-            .apply(self.state)
-            .ok_or_else(|| LocalStateQueryError::InvalidTransition {
-                tag: msg.tag(),
-                state: self.state,
-            })?;
+        let msg = LocalStateQueryMessage::from_cbor(&raw)
+            .map_err(|e| LocalStateQueryClientError::Protocol(e.to_string()))?;
+        let next = self
+            .state
+            .transition(&msg)
+            .map_err(|e| LocalStateQueryClientError::Protocol(e.to_string()))?;
         self.state = next;
         Ok(msg)
     }
@@ -134,8 +136,8 @@ impl LocalStateQueryClient {
         let msg = self.recv_msg().await?;
         match msg {
             LocalStateQueryMessage::MsgAcquired => Ok(()),
-            LocalStateQueryMessage::MsgFailure { failure } => {
-                Err(LocalStateQueryClientError::AcquireFailed(failure))
+            LocalStateQueryMessage::MsgFailure { reason } => {
+                Err(LocalStateQueryClientError::AcquireFailed(reason))
             }
             other => Err(LocalStateQueryClientError::UnexpectedMessage(format!(
                 "{other:?}"
@@ -186,8 +188,8 @@ impl LocalStateQueryClient {
         let msg = self.recv_msg().await?;
         match msg {
             LocalStateQueryMessage::MsgAcquired => Ok(()),
-            LocalStateQueryMessage::MsgFailure { failure } => {
-                Err(LocalStateQueryClientError::AcquireFailed(failure))
+            LocalStateQueryMessage::MsgFailure { reason } => {
+                Err(LocalStateQueryClientError::AcquireFailed(reason))
             }
             other => Err(LocalStateQueryClientError::UnexpectedMessage(format!(
                 "{other:?}"

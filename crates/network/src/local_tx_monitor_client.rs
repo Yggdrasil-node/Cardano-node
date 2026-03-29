@@ -9,7 +9,7 @@
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{
-    LocalTxMonitorError, LocalTxMonitorMessage, LocalTxMonitorState, MempoolSizeAndCapacity,
+    LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,11 +29,34 @@ pub enum LocalTxMonitorClientError {
 
     /// Protocol state machine violation or CBOR decode failure.
     #[error("protocol error: {0}")]
-    Protocol(#[from] LocalTxMonitorError),
+    Protocol(String),
 
     /// Unexpected message received from the server.
     #[error("unexpected message: {0}")]
     UnexpectedMessage(String),
+}
+
+impl From<LocalTxMonitorTransitionError> for LocalTxMonitorClientError {
+    fn from(e: LocalTxMonitorTransitionError) -> Self {
+        Self::Protocol(e.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MempoolSizeAndCapacity
+// ---------------------------------------------------------------------------
+
+/// Aggregate mempool capacity and size metrics returned by `MsgReplyGetSizes`.
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Type` — `MsgReplyGetSizes`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MempoolSizeAndCapacity {
+    /// Maximum mempool capacity in bytes.
+    pub capacity_in_bytes: u32,
+    /// Current aggregate size of all mempool transactions in bytes.
+    pub size_in_bytes: u32,
+    /// Number of transactions currently in the mempool.
+    pub num_txs: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -94,14 +117,12 @@ impl LocalTxMonitorClient {
         &mut self,
         msg: &LocalTxMonitorMessage,
     ) -> Result<(), LocalTxMonitorClientError> {
-        let next = msg
-            .apply(self.state)
-            .ok_or_else(|| LocalTxMonitorError::InvalidTransition {
-                tag: msg.tag(),
-                state: self.state,
-            })?;
+        let next = self
+            .state
+            .transition(msg)
+            .map_err(|e| LocalTxMonitorClientError::Protocol(e.to_string()))?;
         self.channel
-            .send(msg.encode_cbor())
+            .send(msg.to_cbor())
             .await
             .map_err(LocalTxMonitorClientError::Mux)?;
         self.state = next;
@@ -114,14 +135,12 @@ impl LocalTxMonitorClient {
             .recv()
             .await
             .ok_or(LocalTxMonitorClientError::ConnectionClosed)?;
-        let msg = LocalTxMonitorMessage::decode_cbor(&raw)
-            .map_err(LocalTxMonitorClientError::Protocol)?;
-        let next = msg
-            .apply(self.state)
-            .ok_or_else(|| LocalTxMonitorError::InvalidTransition {
-                tag: msg.tag(),
-                state: self.state,
-            })?;
+        let msg = LocalTxMonitorMessage::from_cbor(&raw)
+            .map_err(|e| LocalTxMonitorClientError::Protocol(e.to_string()))?;
+        let next = self
+            .state
+            .transition(&msg)
+            .map_err(|e| LocalTxMonitorClientError::Protocol(e.to_string()))?;
         self.state = next;
         Ok(msg)
     }
@@ -148,13 +167,13 @@ impl LocalTxMonitorClient {
 
     /// Ask the server to wait until the mempool changes and then re-acquire.
     ///
-    /// Sends `MsgAwaitAcquire` and waits for `MsgAcquired`.  Returns a new
+    /// Sends `MsgAcquire` (from `StAcquired`) and waits for `MsgAcquired`.  Returns a new
     /// [`MempoolSnapshot`] after the mempool has changed.
     ///
     /// The client must be in `StAcquired`.  On success the driver is in
     /// `StAcquired`.
     pub async fn await_acquire(&mut self) -> Result<MempoolSnapshot, LocalTxMonitorClientError> {
-        self.send_msg(&LocalTxMonitorMessage::MsgAwaitAcquire)
+        self.send_msg(&LocalTxMonitorMessage::MsgAcquire)
             .await?;
         let msg = self.recv_msg().await?;
         match msg {
@@ -210,7 +229,7 @@ impl LocalTxMonitorClient {
         self.send_msg(&LocalTxMonitorMessage::MsgGetSizes).await?;
         let msg = self.recv_msg().await?;
         match msg {
-            LocalTxMonitorMessage::MsgReplyGetSizes { sizes } => Ok(sizes),
+            LocalTxMonitorMessage::MsgReplyGetSizes { capacity_in_bytes, size_in_bytes, num_txs } => Ok(MempoolSizeAndCapacity { capacity_in_bytes, size_in_bytes, num_txs }),
             other => Err(LocalTxMonitorClientError::UnexpectedMessage(format!(
                 "{other:?}"
             ))),

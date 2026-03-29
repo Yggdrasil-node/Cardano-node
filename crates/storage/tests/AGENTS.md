@@ -23,3 +23,4 @@ Use this directory to pin persistence and rollback expectations for storage back
 
 ## Current Phase
 - Tests in this directory verify trait conformance, persistence after reopen, rollback deletion, snapshot-visible behavior, and volatile→immutable promotion for storage backends.
+- Volatile garbage collection tests: `garbage_collect` removes blocks below a slot threshold (keeps at/above), slot-zero is a no-op, GC-all empties store. `block_count` returns correct count. File-backed GC verifies disk file deletion. `compact` removes orphaned `.cbor`/`.json` and stale `.tmp` files not in the index. `chain_db_gc_volatile_before_slot` verifies ChainDb coordination. 80 tests total.

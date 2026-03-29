@@ -209,7 +209,16 @@ pub struct NodeConfigFile {
     /// Namespace trace options following the official node config shape.
     #[serde(rename = "TraceOptions", default = "default_trace_options")]
     pub trace_options: BTreeMap<String, TraceNamespaceConfig>,
-        /// Relative path to the Shelley genesis file.  Matches `ShelleyGenesisFile`
+        /// Path to the NtC (node-to-client) Unix domain socket.
+    ///
+    /// When configured, the `Run` command starts an NtC local server on this
+    /// socket, allowing CLI tools and wallets to issue queries and submit
+    /// transactions via the LocalStateQuery / LocalTxSubmission protocols.
+    ///
+    /// Matches `SocketPath` in the official Cardano node configuration.
+    #[serde(rename = "SocketPath", default, skip_serializing_if = "Option::is_none")]
+    pub socket_path: Option<String>,
+    /// Relative path to the Shelley genesis file.  Matches `ShelleyGenesisFile`
         /// in the official Cardano node configuration.
         #[serde(rename = "ShelleyGenesisFile", default, skip_serializing_if = "Option::is_none")]
         pub shelley_genesis_file: Option<String>,
@@ -887,6 +896,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         trace_option_resource_frequency: default_trace_option_resource_frequency(),
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
+        socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
@@ -939,6 +949,7 @@ pub fn preprod_config() -> NodeConfigFile {
         trace_option_resource_frequency: default_trace_option_resource_frequency(),
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
+        socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
@@ -991,6 +1002,7 @@ pub fn preview_config() -> NodeConfigFile {
         trace_option_resource_frequency: default_trace_option_resource_frequency(),
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
+        socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
