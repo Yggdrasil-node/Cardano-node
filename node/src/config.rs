@@ -159,6 +159,14 @@ pub struct NodeConfigFile {
     /// Active slot coefficient `f` (mainnet: 0.05).
     #[serde(default = "default_active_slot_coeff")]
     pub active_slot_coeff: f64,
+    /// Maximum major protocol version accepted in block headers.
+    ///
+    /// Blocks whose protocol-version major component exceeds this value are
+    /// rejected during verification.  Matches `MaxMajorProtVer` from
+    /// `Ouroboros.Consensus.Protocol.Abstract` in the Haskell node; the
+    /// Conway-era default is 10.
+    #[serde(default = "default_max_major_protocol_version")]
+    pub max_major_protocol_version: u64,
     /// KeepAlive heartbeat interval in seconds. `null` disables heartbeats.
     #[serde(default)]
     pub keepalive_interval_secs: Option<u64>,
@@ -746,6 +754,11 @@ fn default_active_slot_coeff() -> f64 {
     0.05
 }
 
+/// Conway-era `MaxMajorProtVer` (upstream default: 10).
+fn default_max_major_protocol_version() -> u64 {
+    10
+}
+
 fn default_governor_tick_interval_secs() -> u64 {
     5
 }
@@ -999,6 +1012,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         epoch_length: 432_000,
         security_param_k: 2160,
         active_slot_coeff: 0.05,
+        max_major_protocol_version: default_max_major_protocol_version(),
         keepalive_interval_secs: Some(60),
         governor_tick_interval_secs: default_governor_tick_interval_secs(),
         governor_target_known: default_governor_target_known(),
@@ -1057,6 +1071,7 @@ pub fn preprod_config() -> NodeConfigFile {
         epoch_length: 432_000,
         security_param_k: 2160,
         active_slot_coeff: 0.05,
+        max_major_protocol_version: default_max_major_protocol_version(),
         keepalive_interval_secs: Some(60),
         governor_tick_interval_secs: default_governor_tick_interval_secs(),
         governor_target_known: default_governor_target_known(),
@@ -1115,6 +1130,7 @@ pub fn preview_config() -> NodeConfigFile {
         epoch_length: 86_400,
         security_param_k: 432,
         active_slot_coeff: 0.05,
+        max_major_protocol_version: default_max_major_protocol_version(),
         keepalive_interval_secs: Some(60),
         governor_tick_interval_secs: default_governor_tick_interval_secs(),
         governor_target_known: default_governor_target_known(),
@@ -1937,5 +1953,34 @@ mod tests {
         let json = serde_json::to_string_pretty(&cfg).expect("serialize");
         let parsed: NodeConfigFile = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed.topology_file_path.as_deref(), Some("my-topology.json"));
+    }
+
+    /// Default `max_major_protocol_version` matches Conway-era `MaxMajorProtVer`
+    /// (upstream value: 10).
+    #[test]
+    fn max_major_protocol_version_default_is_conway_era() {
+        let cfg = default_config();
+        assert_eq!(cfg.max_major_protocol_version, 10);
+    }
+
+    /// `max_major_protocol_version` round-trips through JSON serialization and
+    /// deserializes to the default when absent from the input.
+    #[test]
+    fn max_major_protocol_version_round_trips_and_defaults() {
+        // Explicit value round-trips.
+        let mut cfg = default_config();
+        cfg.max_major_protocol_version = 12;
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        let parsed: NodeConfigFile = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.max_major_protocol_version, 12);
+
+        // Missing from JSON → defaults to 10.
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13]
+        }"#;
+        let parsed: NodeConfigFile = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(parsed.max_major_protocol_version, 10);
     }
 }

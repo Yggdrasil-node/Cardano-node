@@ -73,9 +73,10 @@ pub use state::{
     DepositPot, DrepState, EnactOutcome, EnactState, GenesisDelegationState,
     GovernanceActionState, InstantaneousRewards, LedgerState,
     LedgerStateCheckpoint, LedgerStateSnapshot, PoolRelayAccessPoint, PoolState,
+    PpupSlotContext,
     RegisteredDrep, RegisteredPool, RewardAccountState,
     RewardAccounts, StakeCredentialState, StakeCredentials,
-    accumulate_mir_from_certs,
+    accumulate_mir_from_certs, pv_can_follow,
 };
 
 // -- Tx/Block re-exports ------------------------------------------------------

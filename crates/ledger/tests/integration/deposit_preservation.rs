@@ -148,6 +148,9 @@ fn shelley_key_deregistration_refund_balances_value_preservation() {
 fn conway_explicit_deposit_registration_balances() {
     let mut state = LedgerState::new(Era::Conway);
     let deposit = 3_000_000u64;
+    let mut pp = ProtocolParameters::default();
+    pp.key_deposit = deposit;
+    state.set_protocol_params(pp);
 
     // consumed = output + fee + deposit
     let consumed = 1_000_000 + 200_000 + deposit;
@@ -193,6 +196,9 @@ fn conway_explicit_deposit_registration_balances() {
 fn conway_explicit_deposit_deregistration_refund_balances() {
     let mut state = LedgerState::new(Era::Conway);
     let deposit = 3_000_000u64;
+    let mut pp = ProtocolParameters::default();
+    pp.key_deposit = deposit;
+    state.set_protocol_params(pp);
 
     let cred = StakeCredential::AddrKeyHash([0x31; 28]);
     state.stake_credentials_mut().register(cred);
@@ -333,6 +339,7 @@ fn shelley_registration_deposit_plus_withdrawal_balances() {
 fn conway_deposit_plus_donation_balances() {
     let mut state = LedgerState::new(Era::Conway);
     let deposit = 2_000_000u64;
+    state.set_protocol_params(ProtocolParameters::default());
     let donation = 1_000_000u64;
 
     // consumed = output + fee + deposit + donation

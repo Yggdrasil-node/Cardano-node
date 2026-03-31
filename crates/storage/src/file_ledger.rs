@@ -6,6 +6,7 @@
 //! Reference: `Ouroboros.Consensus.Storage.LedgerDB` in the official node.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use yggdrasil_ledger::SlotNo;
@@ -15,10 +16,28 @@ use crate::ledger_db::LedgerStore;
 
 /// Writes `data` to `path` atomically by writing to a temp file first and
 /// then renaming. This prevents partial writes on crash.
+///
+/// `sync_all()` is called on the temp file before rename to ensure data
+/// reaches durable storage, and the parent directory is synced after rename
+/// so the directory entry is durable.
 fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, data)?;
+    {
+        let mut f = fs::File::create(&tmp_path)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
     fs::rename(&tmp_path, path)?;
+    sync_dir(path.parent())?;
+    Ok(())
+}
+
+/// Syncs the parent directory to make rename/unlink metadata durable.
+fn sync_dir(dir: Option<&Path>) -> std::io::Result<()> {
+    if let Some(d) = dir {
+        let f = fs::File::open(d)?;
+        f.sync_all()?;
+    }
     Ok(())
 }
 
@@ -100,7 +119,11 @@ impl FileLedgerStore {
         // Sentinel is written before any mutation begins.  If the process
         // crashes between mark_dirty and mark_clean the sentinel survives,
         // and the next open() will log a warning before recovering normally.
-        fs::write(&self.dirty_path, b"")?;
+        {
+            let f = fs::File::create(&self.dirty_path)?;
+            f.sync_all()?;
+        }
+        sync_dir(self.dirty_path.parent())?;
         Ok(())
     }
 

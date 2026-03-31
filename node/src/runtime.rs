@@ -30,7 +30,10 @@ use crate::sync::{
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use serde_json::json;
 use serde_json::Value;
-use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState, TentativeState};
+use yggdrasil_consensus::{
+    ChainState, NonceEvolutionConfig, NonceEvolutionState, TentativeState,
+    kes_period_of_slot,
+};
 use yggdrasil_consensus::praos::ActiveSlotCoeff;
 use yggdrasil_network::{
     AbstractState, AcquireOutboundResult,
@@ -54,7 +57,7 @@ use yggdrasil_network::{
     refresh_root_peer_state_and_registry, resolve_peer_access_points,
     churn_mode_from_fetch_mode, compute_association_mode,
     fetch_mode_from_judgement, peer_selection_mode, pick_churn_regime,
-    PeerSelectionCounters, ConnectionManagerCounters,
+    PeerSelectionCounters,
 };
 use yggdrasil_ledger::{
     BlockNo, Decoder, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
@@ -193,6 +196,55 @@ fn self_validate_forged_block(forged: &ForgedBlock) -> Result<(), SyncError> {
     }
 
     Ok(())
+}
+
+/// Emit a warning when the operational certificate is close to KES expiry.
+///
+/// Upstream reference: `praosCheckCanForge` / `KESInfo` style operator
+/// observability around certificate validity windows.
+const KES_EXPIRY_WARNING_THRESHOLD_PERIODS: u64 = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct KesExpiryWarning {
+    current_period: u64,
+    cert_start_period: u64,
+    cert_end_period: u64,
+    remaining_periods: u64,
+    remaining_slots: u64,
+}
+
+fn kes_expiry_warning(
+    creds: &BlockProducerCredentials,
+    current_slot: SlotNo,
+) -> Option<KesExpiryWarning> {
+    let current_period = kes_period_of_slot(current_slot.0, creds.slots_per_kes_period).ok()?;
+    kes_expiry_warning_from_periods(
+        current_period,
+        creds.operational_cert.kes_period,
+        creds.max_kes_evolutions,
+        creds.slots_per_kes_period,
+    )
+}
+
+fn kes_expiry_warning_from_periods(
+    current_period: u64,
+    cert_start_period: u64,
+    max_kes_evolutions: u64,
+    slots_per_kes_period: u64,
+) -> Option<KesExpiryWarning> {
+    let cert_end_period = cert_start_period.checked_add(max_kes_evolutions)?;
+    let remaining_periods = cert_end_period.saturating_sub(current_period);
+    if remaining_periods > KES_EXPIRY_WARNING_THRESHOLD_PERIODS {
+        return None;
+    }
+
+    Some(KesExpiryWarning {
+        current_period,
+        cert_start_period,
+        cert_end_period,
+        remaining_periods,
+        remaining_slots: remaining_periods.saturating_mul(slots_per_kes_period),
+    })
 }
 
 struct ManagedWarmPeer {
@@ -1148,6 +1200,7 @@ pub async fn run_block_producer_loop<I, V, L, F>(
 
     let mut interval = tokio::time::interval(config.slot_length);
     let mut last_checked_slot: Option<SlotNo> = None;
+    let mut last_kes_warning_period: Option<u64> = None;
     tokio::pin!(shutdown);
 
     tracer.trace_runtime(
@@ -1183,6 +1236,25 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                     continue;
                 }
                 last_checked_slot = Some(current_slot);
+
+                if let Some(kes) = kes_expiry_warning(&credentials, current_slot) {
+                    if last_kes_warning_period != Some(kes.current_period) {
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Warning",
+                            "operational certificate nearing KES expiry",
+                            trace_fields([
+                                ("slot", json!(current_slot.0)),
+                                ("currentKesPeriod", json!(kes.current_period)),
+                                ("certStartKesPeriod", json!(kes.cert_start_period)),
+                                ("certEndKesPeriod", json!(kes.cert_end_period)),
+                                ("remainingKesPeriods", json!(kes.remaining_periods)),
+                                ("remainingKesSlots", json!(kes.remaining_slots)),
+                            ]),
+                        );
+                        last_kes_warning_period = Some(kes.current_period);
+                    }
+                }
 
                 let (tip_slot, tip_block_no, tip_hash) = {
                     let db = chain_db.read().expect("chain db lock poisoned");
@@ -1721,8 +1793,11 @@ pub async fn run_governor_loop<I, V, L, F>(
                             c.active_local_root as u64,
                         );
 
-                        // Update connection-manager Prometheus counters.
-                        let cm_c = ConnectionManagerCounters::from_registry(&registry);
+                        // Update connection-manager Prometheus counters from actual CM state.
+                        let cm_c = {
+                            let cm = connection_manager.read().expect("cm lock poisoned");
+                            cm.counters()
+                        };
                         m.set_connection_manager_counters(
                             cm_c.full_duplex_conns as u64,
                             cm_c.duplex_conns as u64,
@@ -3322,6 +3397,7 @@ where
 
     let mut run_state = ReconnectingRunState::new();
     let mut chain_state = config.security_param.map(ChainState::new);
+    let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut had_session = false;
     let mut preferred_peer = None;
     let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
@@ -3400,6 +3476,7 @@ where
                 config.batch_size,
                 Some(&config.verification),
                 tentative_state.as_ref(),
+                &mut ocert_counters,
             );
 
             tokio::select! {
@@ -3647,6 +3724,7 @@ where
 
     let mut run_state = ReconnectingRunState::new();
     let mut chain_state = config.security_param.map(ChainState::new);
+    let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut had_session = false;
     let mut preferred_peer = None;
     let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
@@ -3725,6 +3803,7 @@ where
                 config.batch_size,
                 Some(&config.verification),
                 tentative_state.as_ref(),
+                &mut ocert_counters,
             );
 
             tokio::select! {
@@ -4191,6 +4270,7 @@ where
 
     let mut run_state = ReconnectingRunState::new();
     let mut chain_state = config.security_param.map(ChainState::new);
+    let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut had_session = false;
     let mut attempt_state = peer_attempt_state(node_config.peer_addr, fallback_peer_addrs);
 
@@ -4223,6 +4303,7 @@ where
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
+                &mut ocert_counters,
             );
 
             tokio::select! {
@@ -4557,7 +4638,7 @@ mod tests {
         refresh_ledger_peer_sources_from_chain_db,
         self_validate_forged_block,
         seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
-        verified_sync_batch_trace_fields,
+        verified_sync_batch_trace_fields, kes_expiry_warning_from_periods,
     };
     use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
     use crate::tracer::NodeTracer;
@@ -4618,7 +4699,9 @@ mod tests {
             verification: VerificationConfig {
                 slots_per_kes_period: 129_600,
                 max_kes_evolutions: 62,
-                verify_body_hash: true, future_check: None,
+                verify_body_hash: true,
+                max_major_protocol_version: Some(10),
+                future_check: None,
                 ocert_counters: None,
             },
             nonce_config: None,
@@ -4774,6 +4857,26 @@ mod tests {
             err.to_string().contains("forged header hash mismatch"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn kes_expiry_warning_triggers_near_window_end() {
+        // cert validity window: [100, 162)
+        let warning = kes_expiry_warning_from_periods(158, 100, 62, 129_600)
+            .expect("warning should be emitted near KES expiry");
+
+        assert_eq!(warning.current_period, 158);
+        assert_eq!(warning.cert_start_period, 100);
+        assert_eq!(warning.cert_end_period, 162);
+        assert_eq!(warning.remaining_periods, 4);
+        assert_eq!(warning.remaining_slots, 4 * 129_600);
+    }
+
+    #[test]
+    fn kes_expiry_warning_suppressed_when_far_from_expiry() {
+        // cert validity window: [10, 72), current=40 => remaining=32 (> threshold)
+        let warning = kes_expiry_warning_from_periods(40, 10, 62, 129_600);
+        assert!(warning.is_none());
     }
 
     #[test]

@@ -36,7 +36,7 @@ pub use runtime::{
 	serve_txsubmission_request_from_reader,
 };
 pub use sync::{
-	DecodedSyncStep, MultiEraBlock, MultiEraSyncProgress, MultiEraSyncStep, SyncError,
+	DecodedSyncStep, FutureBlockCheckConfig, MultiEraBlock, MultiEraSyncProgress, MultiEraSyncStep, SyncError,
 	SyncProgress, SyncServiceConfig, SyncServiceOutcome, SyncStep, TypedIntersectResult,
 	LedgerCheckpointPolicy, LedgerRecoveryOutcome,
 	TypedSyncProgress, TypedSyncStep, VerificationConfig, VerifiedSyncServiceConfig,

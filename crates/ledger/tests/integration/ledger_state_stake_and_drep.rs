@@ -586,5 +586,5 @@ fn ledger_state_rejects_unregistered_drep_delegation() {
     );
 
     let err = state.apply_block(&block).expect_err("unregistered drep should fail");
-    assert_eq!(err, LedgerError::DrepNotRegistered(drep));
+    assert_eq!(err, LedgerError::DelegateeDRepNotRegistered(drep));
 }

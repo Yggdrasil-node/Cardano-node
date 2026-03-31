@@ -144,6 +144,15 @@ pub struct ShelleyGenesis {
     /// Reference: `Cardano.Ledger.Shelley.Genesis` — `sgUpdateQuorum`.
     #[serde(default = "default_update_quorum")]
     pub update_quorum: u64,
+
+    /// Chain start time as an ISO-8601 / RFC-3339 UTC timestamp.
+    ///
+    /// Used to derive the current wall-clock slot for blocks-from-the-future
+    /// detection during sync.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Genesis` — `sgSystemStart`.
+    #[serde(default, rename = "systemStart")]
+    pub system_start: Option<String>,
 }
 
 /// Genesis delegation entry from `genDelegs`.
@@ -1082,6 +1091,70 @@ pub fn load_conway_genesis(path: &Path) -> Result<ConwayGenesis, GenesisLoadErro
     load_json(path)
 }
 
+/// Compute the current wall-clock slot from `system_start` and `slot_length`.
+///
+/// Returns `None` if the current time is before `system_start` or if the
+/// timestamp cannot be parsed.
+///
+/// The slot calculation matches the upstream `SlotNo` derivation in
+/// `Ouroboros.Consensus.BlockchainTime.WallClock.HardFork`:
+///
+///   `current_slot = floor((now - system_start) / slot_length)`
+///
+/// The Byron era is assumed to have the same slot length (this is an
+/// acceptable approximation for blocks-from-the-future detection since
+/// the check is only applied to Shelley+ blocks during live sync).
+pub fn current_wall_slot(system_start: &str, slot_length_secs: f64) -> Option<u64> {
+    use std::time::SystemTime;
+
+    let start = chrono_parse_system_start(system_start)?;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?;
+    let start_secs = start;
+    if now.as_secs_f64() < start_secs {
+        return None;
+    }
+    let elapsed = now.as_secs_f64() - start_secs;
+    if slot_length_secs <= 0.0 {
+        return None;
+    }
+    Some((elapsed / slot_length_secs) as u64)
+}
+
+/// Parse an ISO-8601 / RFC-3339 UTC timestamp like `"2017-09-23T21:44:51Z"`
+/// into seconds since the Unix epoch.
+fn chrono_parse_system_start(s: &str) -> Option<f64> {
+    // Accept the common `YYYY-MM-DDTHH:MM:SSZ` format used by upstream
+    // genesis files.  We avoid pulling in a `chrono` dependency by doing
+    // a minimal manual parse of the limited format that upstream emits.
+    let s = s.trim();
+    if s.len() < 19 {
+        return None;
+    }
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    let month: u32 = s.get(5..7)?.parse().ok()?;
+    let day: u32 = s.get(8..10)?.parse().ok()?;
+    let hour: u32 = s.get(11..13)?.parse().ok()?;
+    let min: u32 = s.get(14..16)?.parse().ok()?;
+    let sec: u32 = s.get(17..19)?.parse().ok()?;
+    if month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || min > 59 || sec > 59 {
+        return None;
+    }
+    // Convert to days since epoch using a well-known civil-calendar formula.
+    let (y, m) = if month <= 2 {
+        (year - 1, month + 9)
+    } else {
+        (year, month - 3)
+    };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32;
+    let doy = (153 * m + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe as i64 - 719468;
+    Some(days as f64 * 86400.0 + hour as f64 * 3600.0 + min as f64 * 60.0 + sec as f64)
+}
+
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
@@ -1180,6 +1253,7 @@ mod tests {
 
     fn sample_shelley() -> ShelleyGenesis {
         ShelleyGenesis {
+            system_start: Some("2022-04-01T00:00:00Z".to_owned()),
             active_slots_coeff: 0.05,
             epoch_length: 432_000,
             slot_length: 1.0,
@@ -1574,5 +1648,50 @@ mod tests {
         let dvt = genesis.drep_voting_thresholds.as_ref().expect("dRepVotingThresholds");
         assert!(dvt.motion_no_confidence.numerator > 0);
         assert!(dvt.update_to_constitution.numerator > 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // chrono_parse_system_start / current_wall_slot tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn chrono_parse_unix_epoch() {
+        let secs = chrono_parse_system_start("1970-01-01T00:00:00Z").unwrap();
+        assert!((secs - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn chrono_parse_mainnet_system_start() {
+        // Mainnet genesis: 2017-09-23T21:44:51Z
+        let secs = chrono_parse_system_start("2017-09-23T21:44:51Z").unwrap();
+        // Known Unix timestamp for that instant: 1506203091
+        assert!((secs - 1_506_203_091.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn chrono_parse_rejects_garbage() {
+        assert!(chrono_parse_system_start("not-a-date").is_none());
+        assert!(chrono_parse_system_start("").is_none());
+        assert!(chrono_parse_system_start("2025-13-01T00:00:00Z").is_none()); // month 13
+        assert!(chrono_parse_system_start("2025-00-01T00:00:00Z").is_none()); // month 0
+    }
+
+    #[test]
+    fn current_wall_slot_past_system_start() {
+        // Use a system start far in the past so we get a positive slot number.
+        let slot = current_wall_slot("2020-01-01T00:00:00Z", 1.0);
+        assert!(slot.is_some());
+        assert!(slot.unwrap() > 0);
+    }
+
+    #[test]
+    fn current_wall_slot_future_system_start_is_none() {
+        // System start in the far future should return None.
+        assert!(current_wall_slot("2099-01-01T00:00:00Z", 1.0).is_none());
+    }
+
+    #[test]
+    fn current_wall_slot_zero_slot_length_is_none() {
+        assert!(current_wall_slot("2020-01-01T00:00:00Z", 0.0).is_none());
     }
 }

@@ -98,6 +98,21 @@ pub enum LedgerError {
     #[error("drep not registered: {0:?}")]
     DrepNotRegistered(DRep),
 
+    /// Upstream: `DelegateeNotRegisteredDELEG` — delegation target DRep is
+    /// not currently registered.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
+    #[error("delegatee DRep not registered: {0:?}")]
+    DelegateeDRepNotRegistered(DRep),
+
+    /// Upstream: `UnelectedCommitteeVoters` — votes by committee hot
+    /// credentials that are not authorized by any currently-elected,
+    /// non-resigned committee member.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Gov`.
+    #[error("unelected committee voters: {0:?}")]
+    UnelectedCommitteeVoters(Vec<StakeCredential>),
+
     #[error("committee cold credential is unknown: {0:?}")]
     CommitteeIsUnknown(StakeCredential),
 
@@ -201,6 +216,29 @@ pub enum LedgerError {
     #[error("hard-fork proposal cannot be validated without a current protocol-version baseline: {0:?}")]
     MissingProtocolVersionForHardFork(crate::eras::conway::ProposalProcedure),
 
+    /// Upstream: `InvalidGuardrailsScriptHash` — the guardrails (policy)
+    /// script hash carried by a `ParameterChange` or `TreasuryWithdrawals`
+    /// proposal does not match the constitution's guardrails script hash.
+    #[error(
+        "invalid guardrails script hash: proposal has {proposal_hash:02x?}, constitution has {constitution_hash:02x?}"
+    )]
+    InvalidGuardrailsScriptHash {
+        /// The guardrails script hash in the proposal (or `None`).
+        proposal_hash: Option<[u8; 28]>,
+        /// The guardrails script hash of the current constitution (or `None`).
+        constitution_hash: Option<[u8; 28]>,
+    },
+
+    /// Upstream: `ProposalReturnAccountDoesNotExist` — the proposal's
+    /// return (deposit refund) address is not a registered stake credential.
+    #[error("proposal return account does not exist: {0:?}")]
+    ProposalReturnAccountDoesNotExist(RewardAccount),
+
+    /// Upstream: `TreasuryWithdrawalReturnAccountsDoNotExist` — one or more
+    /// treasury withdrawal target accounts are not registered.
+    #[error("treasury withdrawal return accounts do not exist: {0:?}")]
+    TreasuryWithdrawalReturnAccountsDoNotExist(Vec<RewardAccount>),
+
     #[error(
         "withdrawal exceeds reward balance for {account:?}: requested {requested}, available {available}"
     )]
@@ -209,6 +247,59 @@ pub enum LedgerError {
         requested: u64,
         available: u64,
     },
+
+    /// Upstream: `WithdrawalsNotInRewardsCERTS` — Conway requires each
+    /// withdrawal to drain the full reward account balance (no partial
+    /// withdrawals).  The `Withdrawals` map must match every account's
+    /// balance exactly.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Certs` — `conwayTransition`.
+    #[error(
+        "withdrawal does not drain reward account {account:?}: requested {requested}, balance {balance}"
+    )]
+    WithdrawalNotFullDrain {
+        account: RewardAccount,
+        requested: u64,
+        balance: u64,
+    },
+
+    /// Upstream: `IncorrectDepositDELEG` — the deposit amount carried in a
+    /// Conway `RegCert` / `RegDelegCert` / `RegDelegStakeVDelegCert` does
+    /// not match `ppKeyDeposit`.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
+    #[error(
+        "incorrect key deposit in certificate: supplied {supplied}, expected {expected}"
+    )]
+    IncorrectDepositDELEG { supplied: u64, expected: u64 },
+
+    /// Upstream: `IncorrectDepositDELEG` (refund variant) — the refund
+    /// amount carried in a Conway `UnRegCert` does not match the credential's
+    /// stored deposit.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
+    #[error(
+        "incorrect key deposit refund in certificate: supplied {supplied}, expected {expected}"
+    )]
+    IncorrectKeyDepositRefund { supplied: u64, expected: u64 },
+
+    /// Upstream: `ConwayDRepIncorrectDeposit` — the deposit amount in a
+    /// `ConwayRegDRep` certificate does not match `ppDRepDeposit`.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.GovCert`.
+    #[error(
+        "DRep deposit incorrect: supplied {supplied}, expected {expected}"
+    )]
+    DrepIncorrectDeposit { supplied: u64, expected: u64 },
+
+    /// Upstream: `ConwayDRepIncorrectRefund` — the refund amount in a
+    /// `ConwayUnRegDRep` certificate does not match the DRep's stored deposit.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.GovCert`.
+    #[error(
+        "DRep refund incorrect: supplied {supplied}, expected {expected}"
+    )]
+    DrepIncorrectRefund { supplied: u64, expected: u64 },
 
     #[error("unsupported certificate kind in this ledger slice: {0}")]
     UnsupportedCertificate(&'static str),
@@ -539,6 +630,49 @@ pub enum LedgerError {
 
     #[error("protocol parameters are required but missing")]
     MissingProtocolParameters,
+
+    // -- PPUP (protocol parameter update proposal) validation errors --------
+
+    /// A protocol parameter update was proposed by a key hash that is not a
+    /// recognized genesis delegate.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Ppup` — `NonGenesisUpdatePPUP`.
+    #[error("PPUP proposer {proposer:02x?} is not a genesis delegate")]
+    NonGenesisUpdatePPUP { proposer: [u8; 28] },
+
+    /// A protocol parameter update targets the wrong epoch.
+    ///
+    /// Before the stability window boundary (`tooLate` slot), the target must
+    /// equal the current epoch; after it, the target must equal `current + 1`.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Ppup` — `PPUpdateWrongEpoch`.
+    #[error(
+        "PPUP wrong epoch: current {current_epoch}, target {target_epoch}, \
+         expected {expected_epoch} ({voting_period})"
+    )]
+    PPUpdateWrongEpoch {
+        current_epoch: u64,
+        target_epoch: u64,
+        expected_epoch: u64,
+        voting_period: &'static str,
+    },
+
+    /// A protocol parameter update proposes a protocol version that does not
+    /// follow the current protocol version according to `pvCanFollow` rules:
+    /// either increment major by 1 (setting minor to 0), or keep major and
+    /// increment minor by 1.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Ppup` — `PVCannotFollowPPUP`.
+    #[error(
+        "PPUP proposed protocol version ({proposed_major}.{proposed_minor}) cannot follow \
+         current ({current_major}.{current_minor})"
+    )]
+    PVCannotFollowPPUP {
+        current_major: u64,
+        current_minor: u64,
+        proposed_major: u64,
+        proposed_minor: u64,
+    },
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -258,6 +258,19 @@ pub fn apply_epoch_boundary(
     }
 
     // -----------------------------------------------------------------------
+    // 5c. Dormant epoch counter — if no active governance proposals
+    //     remain after expiry pruning and ratification enactment,
+    //     increment the dormant counter.  Otherwise reset it to zero.
+    //     Upstream: `updateNumDormantEpochs` in
+    //     `Cardano.Ledger.Conway.Rules.Epoch`.
+    // -----------------------------------------------------------------------
+    if ledger.governance_actions().is_empty() {
+        ledger.num_dormant_epochs = ledger.num_dormant_epochs.saturating_add(1);
+    } else {
+        ledger.num_dormant_epochs = 0;
+    }
+
+    // -----------------------------------------------------------------------
     // 6. DRep inactivity — compute the set of DReps that have exceeded
     //    the `drep_activity` window.  Inactive DReps remain registered
     //    but are excluded from ratification quorum calculations.

@@ -17,6 +17,7 @@ use yggdrasil_node::genesis;
 use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
     BlockProvider, ChainProvider,
+    FutureBlockCheckConfig,
     LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome,
     RuntimeGovernorConfig, VerificationConfig,
     ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
@@ -28,8 +29,8 @@ use yggdrasil_node::{
     seed_peer_registry,
     run_inbound_accept_loop,
 };
-use yggdrasil_consensus::{ActiveSlotCoeff, DiffusionPipeliningSupport, EpochSize, NonceEvolutionConfig, NonceEvolutionState, SecurityParam, TentativeState};
-use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, StakeCredential};
+use yggdrasil_consensus::{ActiveSlotCoeff, ClockSkew, DiffusionPipeliningSupport, EpochSize, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, SecurityParam, TentativeState};
+use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, SlotNo, StakeCredential};
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::{
     ConnectionManagerState,
@@ -633,14 +634,51 @@ fn main() -> Result<()> {
                 .load_plutus_cost_model(config_base_dir.as_deref())
                 .wrap_err("failed to load genesis Plutus cost model")?;
 
+            // Load the slot length and system start from shelley genesis for the
+            // block producer's slot clock and the blocks-from-the-future check.
+            // Falls back to 1.0 s slot length when the genesis file is missing.
+            let shelley_genesis: Option<genesis::ShelleyGenesis> = file_cfg
+                .shelley_genesis_file
+                .as_deref()
+                .and_then(|path| {
+                    let full_path = if let Some(base) = config_base_dir.as_deref() {
+                        base.join(std::path::Path::new(path))
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    genesis::load_shelley_genesis(&full_path).ok()
+                });
+            let genesis_slot_length: Option<f64> =
+                shelley_genesis.as_ref().map(|g| g.slot_length);
+
+            // Compute FutureBlockCheckConfig from genesis system_start.
+            // This provides the blocks-from-the-future detection for sync.
+            // Reference: `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`
+            let future_check: Option<FutureBlockCheckConfig> = shelley_genesis
+                .as_ref()
+                .and_then(|g| g.system_start.as_deref())
+                .and_then(|start| {
+                    let slot_len = genesis_slot_length.unwrap_or(1.0);
+                    let wall_slot = genesis::current_wall_slot(start, slot_len)?;
+                    let clock_skew = ClockSkew::default_for_slot_length(
+                        std::time::Duration::from_secs_f64(slot_len),
+                    );
+                    Some(FutureBlockCheckConfig {
+                        current_wall_slot: SlotNo(wall_slot),
+                        clock_skew,
+                    })
+                });
+
             let verification = if no_verify {
                 None
             } else {
                 Some(VerificationConfig {
                     slots_per_kes_period: file_cfg.slots_per_kes_period,
                     max_kes_evolutions: file_cfg.max_kes_evolutions,
-                    verify_body_hash: true, future_check: None,
-                    ocert_counters: None,
+                    verify_body_hash: true,
+                    max_major_protocol_version: Some(file_cfg.max_major_protocol_version),
+                    future_check,
+                    ocert_counters: Some(OcertCounters::new()),
                 })
             };
 
@@ -659,22 +697,6 @@ fn main() -> Result<()> {
                 .unwrap_or(file_cfg.max_ledger_snapshots);
 
             let active_slot_coeff = ActiveSlotCoeff::new(file_cfg.active_slot_coeff).ok();
-
-            // Load the slot length from shelley genesis for the block producer's
-            // slot clock.  Falls back to 1.0 s when the genesis file is missing.
-            let genesis_slot_length: Option<f64> = file_cfg
-                .shelley_genesis_file
-                .as_deref()
-                .and_then(|path| {
-                    let full_path = if let Some(base) = config_base_dir.as_deref() {
-                        base.join(std::path::Path::new(path))
-                    } else {
-                        std::path::PathBuf::from(path)
-                    };
-                    genesis::load_shelley_genesis(&full_path)
-                        .ok()
-                        .map(|g| g.slot_length)
-                });
 
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
@@ -697,8 +719,10 @@ fn main() -> Result<()> {
                     verification: VerificationConfig {
                         slots_per_kes_period: file_cfg.slots_per_kes_period,
                         max_kes_evolutions: file_cfg.max_kes_evolutions,
-                        verify_body_hash: false, future_check: None,
-                        ocert_counters: None,
+                        verify_body_hash: false,
+                        max_major_protocol_version: Some(file_cfg.max_major_protocol_version),
+                        future_check,
+                        ocert_counters: Some(OcertCounters::new()),
                     },
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),

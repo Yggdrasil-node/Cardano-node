@@ -45,6 +45,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ✅ **Blocks-from-the-future check** — `ClockSkew` + `FutureSlotJudgement` in consensus crate; blocks exceeding clock-skew tolerance rejected as `SyncError::BlockFromFuture` (upstream `InFutureCheck`)
 - ✅ **Diffusion pipelining tentative-chain wiring (DPvDV)** — node runtime now threads shared `TentativeState` through reconnecting verified sync and inbound ChainSync serving; verified batch sync sets tentative headers on roll-forward announcements and clears adopted/trap outcomes; inbound ChainSync now serves tentative tips and rolls followers back when a served tentative header is trapped (upstream `SupportsDiffusionPipelining` / `cdbTentativeHeader` behavior)
 - ✅ **Block propagation wiring** — locally forged blocks now persist multi-era raw CBOR for downstream relay, and reconnecting sync notifies chain-tip followers after each applied batch so inbound ChainSync responders can wake without polling (upstream ChainDB follower wakeup intent)
+- ✅ **MaxMajorProtVer population** — `NodeConfigFile.max_major_protocol_version` (default 10, Conway era) now wires through to `VerificationConfig` in both verified and unverified sync paths; blocks with a protocol version major > configured max are rejected at verification time (upstream `Ouroboros.Consensus.Protocol.Abstract.MaxMajorProtVer`)
+- ✅ **Future-block check runtime wiring** — `ShelleyGenesis.system_start` parsed at startup; `current_wall_slot()` computed from `(now - system_start) / slot_length`; `FutureBlockCheckConfig` wired into `VerificationConfig` with `ClockSkew::default_for_slot_length`; batch sync rejects far-future blocks (upstream `InFutureCheck.realHeaderInFutureCheck`)
+- ✅ **OpCert counter runtime wiring** — `OcertCounters::new()` initialized at startup in both verified and unverified `VerificationConfig` paths; batch sync functions thread `&mut Option<OcertCounters>` across batches and reconnects; permissive mode accepts first-seen pools without stake-distribution lookup; per-pool monotonic sequence validation (same or +1) is enforced for all tracked pools (upstream `PraosState.csCounters` / `currentIssueNo`)
 
 ### Runtime Parity Hardening (March 2026)
 
@@ -94,6 +97,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Collateral checks | Alonzo+ collateral UTxO | ✅ | ✅ | Complete | validate_collateral with VKey-locked + mandatory-when-scripts
 | Min UTxO enforcement | Per-output minimum lovelace | ✅ | ✅ | Complete | min_utxo.rs with era-aware calculation
 | Network address validation | WrongNetwork + WrongNetworkWithdrawal + WrongNetworkInTxBody | ✅ | ✅ | Complete | validate_output_network_ids, validate_withdrawal_network_ids, validate_tx_body_network_id across all 6 eras
+| PPUP proposal validation | NonGenesisUpdatePPUP, PPUpdateWrongEpoch, PVCannotFollowPPUP | ✅ | ✅ | Complete | validate_ppup_proposal (Shelley.Rules.Ppup parity): genesis-delegate authorization, epoch voting-period (with optional slot-of-no-return), pvCanFollow protocol-version succession; wired into all 5 block-apply paths (Shelley–Babbage); 18 tests
 | **Epoch Boundary** |
 | Stake snapshot | per-pool reward snapshot | ✅ | ✅ | Complete | compute_stake_snapshot with fees
 | Reward calculation | Per-epoch payouts | ✅ | ✅ | Complete | compute_epoch_rewards with upstream RUPD→SNAP ordering, delta_reserves accounting
@@ -106,10 +110,16 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Proposal storage | Action ID + metadata | ✅ | ✅ | Complete | GovActionState with vote maps
 | Vote accumulation | Committee/DRep/SPO votes | ✅ | ✅ | Complete | apply_conway_votes with per-voter class
 | Enacted-root validation | Lineage + prev-action-id | ✅ | ✅ | Complete | validate_conway_proposals with EnactState
-| Ratification tally | Threshold voting | ✅ | ✅ | Complete | tally_* functions, AlwaysNoConfidence auto-yes, epoch-boundary ratification+enactment+deposit lifecycle
+| Ratification tally | Threshold voting | ✅ | ✅ | Complete | tally_* functions, AlwaysNoConfidence auto-yes, CC expired-member term filtering, epoch-boundary ratification+enactment+deposit lifecycle
 | Enactment | Constitution, committee, params | ✅ | ✅ | Complete | enact_gov_action with 7 action types
 | Deposit refund | Key/pool/DRep deposit return | ✅ | ✅ | Complete | Enacted+expired+lineage-pruned deposits refunded; unclaimed→treasury
 | Lineage subtree pruning | proposalsApplyEnactment | ✅ | ✅ | Complete | remove_lineage_conflicting_proposals with purpose-root chain validation
+| Unelected committee voters | PV ≥ 10 gate on voting credentials | ✅ | ✅ | Complete | validate_unelected_committee_voters + authorized_elected_hot_committee_credentials
+| DRep delegation error | DelegateeNotRegisteredDELEG | ✅ | ✅ | Complete | DelegateeDRepNotRegistered error variant in delegate_drep
+| Conway deregistration rewards | ConwayUnRegCert enforces reward check | ✅ | ✅ | Complete | tag 8 calls unregister_stake_credential (same reward-balance check as tag 1)
+| DRep delegation clearing | clearDRepDelegations on DRep unreg | ✅ | ✅ | Complete | StakeCredentials::clear_drep_delegation in unregister_drep
+| Committee future member | isPotentialFutureMember check | ✅ | ✅ | Complete | is_potential_future_member scans UpdateCommittee proposals for auth/resign
+| ZeroTreasuryWithdrawals gate | Bootstrap phase bypass (PV < 10) | ✅ | ✅ | Complete | past_bootstrap guard on ZeroTreasuryWithdrawals check
 
 **Ledger Summary**: ~95% feature complete. Phase-2 Plutus validation wired for both block and submitted-tx paths across all Alonzo+ eras.
 
@@ -139,10 +149,11 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | BlockNo sequence | Incrementing | ✅ | ✅ | Complete | blockNo validation
 | Issuer validation | Known pool + stake | ✅ | ✅ | Complete | verify_block_vrf_with_stake wired in production sync (verify_vrf defaults true)
 | VRF check | Leader eligibility | ✅ | ✅ | Complete | verify_block_vrf
-| OpCert check | Valid + not superseded | ✅ | ✅ | Complete | OpCert validation
+| OpCert check | Valid + not superseded | ✅ | ✅ | Complete | OpCert validation; OcertCounters runtime wiring (permissive-mode counter tracking threads across sync batches and reconnects)
+| OpCert counter enforcement | Per-pool monotonic seq no | ✅ | ✅ | Complete | OcertCounters.validate_and_update; threaded through batch/service/runtime loops via `&mut Option<OcertCounters>`
 | Body hash verify | Blake2b-256 of body | ✅ | ✅ | Complete | verify_block_body_hash
 | Body size verify | Declared vs actual body size | ✅ | ✅ | Complete | validate_block_body_size (upstream WrongBlockBodySizeBBODY)
-| Protocol version check | Era/version consistency | ✅ | ✅ | Complete | validate_block_protocol_version (hard-fork combinator era transitions)
+| Protocol version check | Era/version consistency + MaxMajorProtVer guard | ✅ | ✅ | Complete | validate_block_protocol_version (hard-fork combinator era transitions); MaxMajorProtVer config-wired (default 10, Conway)
 | Header size check | Header CBOR ≤ maxBlockHeaderSize | ✅ | ✅ | Complete | `LedgerError::HeaderTooLarge`; `Block::header_cbor_size` set from wire bytes in sync.rs for all Shelley-family eras; checked in `apply_block_validated` (upstream `Cardano.Ledger.Shelley.Rules.Bbody` `bHeaderSize`)
 | UTxO rules | UTXO + CERTS + REWARDS | ✅ | ✅ | Complete | Full era-specific UTxO rules with cert/reward processing
 | **Density Tiebreaker** |
@@ -236,7 +247,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | **Block Store** |
 | Immutable store | Blocks >3k slots old | ✅ | ✅ | Complete | FileImmutable with CBOR persistence (legacy JSON read compatibility)
 | Volatile store | Recent blocks <3k slots | ✅ | ✅ | Complete | FileVolatile with rollback
-| Atomicity | All-or-nothing writes | ✅ | ✅ | Complete | Atomic write-to-temp + rename in file-backed stores
+| Atomicity | All-or-nothing writes | ✅ | ✅ | Complete | Atomic write-to-temp + fsync + rename in file-backed stores\n| Fsync durability | Data reaches durable storage | ✅ | ✅ | Complete | sync_all() on temp file before rename + directory sync after rename in all three stores
 | **Ledger State** |
 | Snapshot storage | Checkpoint every N blocks | ✅ | ✅ | Complete | FileLedgerStore raw-byte snapshots (`.dat`) for typed CBOR checkpoints
 | State recovery | From last checkpoint | ✅ | ✅ | Complete | Open + replay pattern
@@ -253,7 +264,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Corruption resilience | Skip/repair bad blocks | ✅ | ✅ | Complete | FileImmutable + FileVolatile + FileLedgerStore skip corrupted files on open
 | Dirty sentinel | Unclean-shutdown detection | ✅ | ✅ | Complete | dirty.flag written before every mutation, removed on success; open() actively cleans .tmp files + clears sentinel after successful recovery scan in all three file stores
 
-**Storage Summary**: ~97% feature complete. GC, slot-based indexing, corruption-tolerant open, checkpoint pruning, dirty-flag crash detection, and active crash recovery (tmp cleanup + sentinel clear after successful recovery scan) all complete.
+**Storage Summary**: ~98% feature complete. GC, slot-based indexing, corruption-tolerant open, checkpoint pruning, dirty-flag crash detection, active crash recovery (tmp cleanup + sentinel clear after successful recovery scan), and fsync durability (sync_all on writes + directory sync after rename) all complete.
 
 ---
 
@@ -366,7 +377,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Key metrics | Block height, peers, mempool size | ✅ | ✅ | Complete | blocks_synced, current_slot, block_no, peers (6 variants), checkpoint, rollbacks, uptime_ms, mempool tx/bytes, CM counters, inbound accept/reject
 | Health endpoint | Orchestrator liveness | ✅ | ✅ | Complete | GET /health with status, uptime, blocks_synced, current_slot
 | Mempool metrics | Mempool tx count & bytes | ✅ | ✅ | Complete | mempool_tx_count, mempool_bytes gauges updated each governor tick; mempool_tx_added, mempool_tx_rejected counters
-| Connection manager counters | Full/duplex/uni/in/out | ✅ | ✅ | Complete | ConnectionManagerCounters::from_registry() exported to Prometheus each governor tick
+| Connection manager counters | Full/duplex/uni/in/out | ✅ | ✅ | Complete | ConnectionManagerState::counters() folds actual per-connection state; exported to Prometheus each governor tick
 | Inbound counters | Accept/reject totals | ✅ | ✅ | Complete | inbound_connections_accepted, inbound_connections_rejected counters
 | **Profiling** |
 | CPU profiling | Bottleneck identification | ✅ | ⏸️ | Not Started | Profiling integration
@@ -406,7 +417,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 ### 2. LEDGER STATE MANAGEMENT (`crates/ledger`)
 
-**Current State**: ⚠️ Mostly complete, with governance and Plutus details pending
+**Current State**: ⚠️ Mostly complete, with Plutus edge cases pending
 
 **What's Done**:
 - **Multi-era types** (Byron → Conway) with CBOR codecs
@@ -414,8 +425,10 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **State transitions** via `apply_block()` dispatch
 - **Era types** with all certificate variants (19 DCert types)
 - **Transaction validation**: syntax, fees, witnesses, native scripts
-- **Epoch boundary**: stake snapshots, pool retirement, DRep inactivity, proposal expiry
+- **Epoch boundary**: stake snapshots, pool retirement, DRep inactivity, proposal expiry, dormant epoch counter
 - **Governance**: proposal storage, vote accumulation, enacted-root validation, enactment
+- **Conway deposit/refund parity**: certificate deposits (DELEG/GOVCERT), proposal deposits in value preservation, exact-drain withdrawals
+- **Conway dormant epoch tracking**: `numDormantEpochs` increment/reset, per-tx DRep expiry bump on proposals, dormant-adjusted DRep activity
 - **PlutusData**: Full AST with compact/general constructor encoding
 - **Addresses**: Base/Enterprise/Pointer/Reward/Byron with validation
 
@@ -427,7 +440,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ✅ **Deposit refunds** (enacted+expired+lineage-pruned deposits refunded via returnProposalDeposits; unclaimed→treasury)
 - ✅ **Lineage subtree pruning** (proposalsApplyEnactment: remove_lineage_conflicting_proposals with purpose-root chain validation)
 
-**Parity Status**: **~95% complete** — All era types, core rules, Conway governance lifecycle, and Phase-2 Plutus validation (block + submitted-tx). Remaining work on CEK builtin coverage and edge cases.
+**Parity Status**: **~96% complete** — All era types, core rules, Conway governance lifecycle, deposit/refund validation, dormant epoch tracking, and Phase-2 Plutus validation (block + submitted-tx). Remaining work on CEK builtin coverage and edge cases.
 
 ---
 
@@ -572,7 +585,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Epoch boundary tracing**: `trace_epoch_boundary_events()` emits 14-field structured events for each NEWEPOCH transition (new_epoch, rewards, pools_retired, governance, DReps, treasury)
 - **Inbound server tracing**: `run_inbound_accept_loop` traces session start, rate-limit soft delay, hard-limit rejection with peer/DataFlow/PeerSharing context
 - **Mempool gauges**: mempool tx count and bytes updated from `SharedMempool` every governor tick
-- **Connection manager counters**: `ConnectionManagerCounters::from_registry()` exported to Prometheus every governor tick
+- **Connection manager counters**: `ConnectionManagerState::counters()` derives accurate full/duplex/uni/in/out counts from actual per-connection state machine entries (upstream `connection_state_to_counters`)
 - **Inbound accept/reject counters**: tracked on hard-limit rejection and successful session start
 
 **What's Missing**:

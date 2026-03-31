@@ -121,6 +121,22 @@ pub enum SyncError {
         /// Human-readable expected range string.
         expected_range: String,
     },
+
+    /// The block header's major protocol version exceeds the maximum
+    /// major version configured for this node.
+    ///
+    /// Reference: `MaxMajorProtVer` in
+    /// `Ouroboros.Consensus.Shelley.Ledger.Block`.
+    #[error(
+        "protocol version too high: block major version {major} exceeds \
+         node maximum {max}"
+    )]
+    ProtocolVersionTooHigh {
+        /// Declared major version from the block header.
+        major: u64,
+        /// The node's configured `MaxMajorProtVer`.
+        max: u64,
+    },
 }
 
 impl SyncError {
@@ -147,6 +163,7 @@ impl SyncError {
                 | SyncError::BlockFromFuture { .. }
                 | SyncError::WrongBlockBodySize { .. }
                 | SyncError::ProtocolVersionMismatch { .. }
+                | SyncError::ProtocolVersionTooHigh { .. }
         )
     }
 }
@@ -1300,6 +1317,7 @@ where
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
+    let mut ocert_counters = config.verification.ocert_counters.clone();
 
     loop {
         let batch_fut = sync_batch_apply_verified(
@@ -1309,6 +1327,7 @@ where
             from_point,
             config.batch_size,
             Some(&config.verification),
+            &mut ocert_counters,
         );
 
         tokio::select! {
@@ -1381,6 +1400,7 @@ where
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
+    let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut checkpoint_tracking = default_checkpoint_tracking(
         chain_db,
         base_ledger_state,
@@ -1400,6 +1420,7 @@ where
             from_point,
             config.batch_size,
             Some(&config.verification),
+            &mut ocert_counters,
         );
 
         tokio::select! {
@@ -2024,6 +2045,17 @@ pub struct VerificationConfig {
     pub max_kes_evolutions: u64,
     /// Whether to verify the block body hash against the header.
     pub verify_body_hash: bool,
+    /// Maximum major protocol version the node can understand.
+    ///
+    /// Blocks whose header protocol version major exceeds this value
+    /// are rejected outright — preventing the node from attempting
+    /// to validate blocks from a future hard fork it does not support.
+    ///
+    /// Upstream default for Conway-era nodes: 10.
+    ///
+    /// Reference: `MaxMajorProtVer` in
+    /// `Ouroboros.Consensus.Shelley.Ledger.Block`.
+    pub max_major_protocol_version: Option<u64>,
     /// Optional future-block check.  When `Some`, decoded blocks are
     /// compared against the given current wall-clock slot and rejected
     /// if they exceed `clock_skew` tolerance.
@@ -2202,6 +2234,35 @@ pub fn validate_block_opcert_counter(
 
     counters
         .validate_and_update(pool_hash, new_seq, pool_in_dist)
+        .map_err(SyncError::Consensus)
+}
+
+/// Validate a block's OpCert counter in permissive mode.
+///
+/// This variant always treats the issuer pool as "in distribution",
+/// which means any first-seen pool is accepted and tracked.  Once
+/// tracked, the standard monotonicity rules apply (same or +1).
+///
+/// Use this during initial sync when the full stake distribution is
+/// not yet available.  When a stake distribution is available, prefer
+/// [`validate_block_opcert_counter`] for full upstream fidelity.
+fn validate_block_opcert_counter_permissive(
+    block: &MultiEraBlock,
+    counters: &mut OcertCounters,
+) -> Result<(), SyncError> {
+    let issuer_vkey_bytes = match block_issuer_vkey(block) {
+        Some(vk) => vk,
+        None => return Ok(()), // Byron
+    };
+    let new_seq = match block_opcert_sequence_number(block) {
+        Some(s) => s,
+        None => return Ok(()), // Byron
+    };
+
+    let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey_bytes).0;
+
+    counters
+        .validate_and_update(pool_hash, new_seq, /* pool_in_dist */ true)
         .map_err(SyncError::Consensus)
 }
 
@@ -2414,7 +2475,7 @@ pub fn verify_multi_era_block(
     config: &VerificationConfig,
 ) -> Result<(), SyncError> {
     // BBODY/BHEAD-level protocol-version check (Shelley+ only).
-    validate_block_protocol_version(block)?;
+    validate_block_protocol_version_with_max(block, config.max_major_protocol_version)?;
 
     match block {
         MultiEraBlock::Shelley(shelley) => {
@@ -2523,12 +2584,44 @@ fn compute_actual_body_size(raw_inner_block: &[u8]) -> Result<u32, SyncError> {
 pub fn validate_block_protocol_version(
     block: &MultiEraBlock,
 ) -> Result<(), SyncError> {
+    validate_block_protocol_version_with_max(block, None)
+}
+
+/// Validate block protocol version constraints with an optional global
+/// maximum major-version guard.
+///
+/// The optional maximum major-version guard mirrors upstream
+/// `MaxMajorProtVer` behavior from
+/// `Ouroboros.Consensus.Shelley.Ledger.Block`.
+fn validate_block_protocol_version_with_max(
+    block: &MultiEraBlock,
+    max_major_protocol_version: Option<u64>,
+) -> Result<(), SyncError> {
     let (major, minor) = match block.protocol_version() {
         Some(v) => v,
         None => return Ok(()), // Byron
     };
 
-    let era = block.era();
+    validate_protocol_version_for_era(block.era(), major, minor, max_major_protocol_version)
+}
+
+/// Validate protocol-version constraints for a specific era.
+///
+/// This helper enforces both:
+/// 1. Era-local major-version ranges.
+/// 2. Optional global `MaxMajorProtVer` cap.
+fn validate_protocol_version_for_era(
+    era: Era,
+    major: u64,
+    minor: u64,
+    max_major_protocol_version: Option<u64>,
+) -> Result<(), SyncError> {
+
+    if let Some(max) = max_major_protocol_version {
+        if major > max {
+            return Err(SyncError::ProtocolVersionTooHigh { major, max });
+        }
+    }
 
     let (valid, expected_range) = match era {
         Era::Byron => return Ok(()),
@@ -2858,6 +2951,7 @@ pub(crate) async fn sync_batch_verified(
     from_point: Point,
     batch_size: usize,
     verification: Option<&VerificationConfig>,
+    ocert_counters: &mut Option<OcertCounters>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     sync_batch_verified_with_tentative(
         chain_sync,
@@ -2866,6 +2960,7 @@ pub(crate) async fn sync_batch_verified(
         batch_size,
         verification,
         None,
+        ocert_counters,
     )
     .await
 }
@@ -2877,6 +2972,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     batch_size: usize,
     verification: Option<&VerificationConfig>,
     tentative_state: Option<&Arc<RwLock<TentativeState>>>,
+    ocert_counters: &mut Option<OcertCounters>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     let mut steps = Vec::new();
     let mut fetched_blocks = 0usize;
@@ -2979,6 +3075,28 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                     }
                 }
 
+                // OpCert counter validation: each Shelley-family block's
+                // OpCert sequence number must be ≥ the stored counter for
+                // its issuer pool and ≤ stored + 1.  First-seen pools are
+                // accepted permissively (without stake distribution lookup).
+                //
+                // Reference: `PraosState.csCounters` in
+                // `Ouroboros.Consensus.Protocol.Praos`.
+                if let Some(ref mut counters) = *ocert_counters {
+                    for block in &decoded_blocks {
+                        if let Err(err) =
+                            validate_block_opcert_counter_permissive(block, counters)
+                        {
+                            if tentative_set {
+                                if let Some(state) = tentative_state {
+                                    clear_tentative_trap(state);
+                                }
+                            }
+                            return Err(err);
+                        }
+                    }
+                }
+
                 if tentative_set {
                     if let Some(state) = tentative_state {
                         clear_tentative_adopted(state);
@@ -3034,6 +3152,7 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
     from_point: Point,
     batch_size: usize,
     verification: Option<&VerificationConfig>,
+    ocert_counters: &mut Option<OcertCounters>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     let progress = sync_batch_verified(
         chain_sync,
@@ -3041,6 +3160,7 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
         from_point,
         batch_size,
         verification,
+        ocert_counters,
     )
     .await?;
 
@@ -3089,8 +3209,9 @@ impl MultiEraSyncProgress {
 /// Extract transaction IDs from a multi-era block.
 ///
 /// For all Shelley-family eras, each transaction body is CBOR-encoded and
-/// hashed (Blake2b-256) to derive the canonical `TxId`. Byron blocks
-/// return an empty list since structural decode is not yet implemented.
+/// hashed (Blake2b-256) to derive the canonical `TxId`.  Byron main blocks
+/// derive transaction IDs from their `ByronTx` payloads.  Byron epoch
+/// boundary blocks (EBBs) contain no transactions.
 pub fn extract_tx_ids(block: &MultiEraBlock) -> Vec<TxId> {
     match block {
         MultiEraBlock::Shelley(shelley) => shelley
@@ -3316,5 +3437,48 @@ mod tests {
         assert!(!SyncError::KeepAlive(
             yggdrasil_network::KeepAliveClientError::ConnectionClosed
         ).is_peer_attributable());
+    }
+
+    #[test]
+    fn protocol_version_constraints_enforce_alonzo_era_gate() {
+        // Alonzo accepts major 5 and 6.
+        assert!(validate_protocol_version_for_era(Era::Alonzo, 5, 0, None).is_ok());
+        assert!(validate_protocol_version_for_era(Era::Alonzo, 6, 2, None).is_ok());
+
+        // Pre-Alonzo and post-Alonzo majors are rejected for the Alonzo era.
+        assert!(matches!(
+            validate_protocol_version_for_era(Era::Alonzo, 4, 3, None),
+            Err(SyncError::ProtocolVersionMismatch {
+                era: Era::Alonzo,
+                major: 4,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_protocol_version_for_era(Era::Alonzo, 7, 0, None),
+            Err(SyncError::ProtocolVersionMismatch {
+                era: Era::Alonzo,
+                major: 7,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn protocol_version_constraints_enforce_max_major_guard() {
+        // Conway-era major 10 is accepted when max is 10.
+        assert!(validate_protocol_version_for_era(Era::Conway, 10, 0, Some(10)).is_ok());
+
+        // Future major versions are rejected by MaxMajorProtVer.
+        assert!(matches!(
+            validate_protocol_version_for_era(Era::Conway, 11, 0, Some(10)),
+            Err(SyncError::ProtocolVersionTooHigh { major: 11, max: 10 })
+        ));
+
+        // Guard is global: it applies even when era-local range would otherwise fail.
+        assert!(matches!(
+            validate_protocol_version_for_era(Era::Alonzo, 7, 0, Some(6)),
+            Err(SyncError::ProtocolVersionTooHigh { major: 7, max: 6 })
+        ));
     }
 }

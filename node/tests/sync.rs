@@ -374,7 +374,9 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         verification: VerificationConfig {
             slots_per_kes_period: 129_600,
             max_kes_evolutions: 62,
-            verify_body_hash: true, future_check: None, ocert_counters: None,
+            verify_body_hash: true,
+            max_major_protocol_version: None,
+            future_check: None, ocert_counters: None,
         },
         nonce_config: None,
         security_param: Some(SecurityParam(1)),
@@ -1789,7 +1791,9 @@ fn verify_multi_era_block_byron_is_noop() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
-        verify_body_hash: false, future_check: None, ocert_counters: None,
+        verify_body_hash: false,
+            max_major_protocol_version: None,
+            future_check: None, ocert_counters: None,
     };
     assert!(verify_multi_era_block(&me, &config).is_ok());
 }
@@ -2507,7 +2511,9 @@ fn verify_multi_era_block_babbage_passes() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
-        verify_body_hash: false, future_check: None, ocert_counters: None,
+        verify_body_hash: false,
+            max_major_protocol_version: None,
+            future_check: None, ocert_counters: None,
     };
     let result = verify_multi_era_block(&me, &config);
     // Expect error since the signature is dummy bytes, confirming the
@@ -2531,7 +2537,9 @@ fn verify_multi_era_block_conway_passes() {
     let config = VerificationConfig {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
-        verify_body_hash: false, future_check: None, ocert_counters: None,
+        verify_body_hash: false,
+            max_major_protocol_version: None,
+            future_check: None, ocert_counters: None,
     };
     let result = verify_multi_era_block(&me, &config);
     assert!(result.is_err());
@@ -4348,6 +4356,7 @@ fn verify_multi_era_block_rejects_bad_protocol_version() {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
         verify_body_hash: false,
+        max_major_protocol_version: None,
         future_check: None,
         ocert_counters: None,
     };

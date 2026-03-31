@@ -432,7 +432,7 @@ fn conway_block_rejects_unregistered_proposal_return_account() {
         .apply_block(&make_conway_block(500, 1, 0xCD, vec![tx]))
         .unwrap_err();
 
-    assert_eq!(err, LedgerError::RewardAccountNotRegistered(reward_account));
+    assert_eq!(err, LedgerError::ProposalReturnAccountDoesNotExist(reward_account));
 }
 
 #[test]
@@ -507,7 +507,7 @@ fn conway_block_rejects_treasury_withdrawals_proposal_with_unregistered_target_a
         .apply_block(&make_conway_block(500, 1, 0xCE, vec![tx]))
         .unwrap_err();
 
-    assert_eq!(err, LedgerError::RewardAccountNotRegistered(treasury_target_account));
+    assert_eq!(err, LedgerError::TreasuryWithdrawalReturnAccountsDoNotExist(vec![treasury_target_account]));
 }
 
 #[test]
@@ -560,6 +560,10 @@ fn conway_block_accepts_proposal_return_account_registered_by_same_tx_certificat
     };
 
     let mut state = LedgerState::new(Era::Conway);
+    let mut pp = ProtocolParameters::default();
+    pp.min_fee_a = 0;
+    pp.min_fee_b = 0;
+    state.set_protocol_params(pp);
     let err = state
         .apply_block(&make_conway_block(500, 1, 0xCF, vec![tx]))
         .unwrap_err();
@@ -2291,6 +2295,13 @@ fn conway_block_rejects_empty_treasury_withdrawals_proposal() {
     };
 
     let mut state = LedgerState::new(Era::Conway);
+    // ZeroTreasuryWithdrawals is only enforced after the Conway bootstrap
+    // phase (PV major ≥ 10).
+    let mut pp = ProtocolParameters::default();
+    pp.protocol_version = Some((10, 0));
+    pp.min_fee_a = 0;
+    pp.min_fee_b = 0;
+    state.set_protocol_params(pp);
     state
         .stake_credentials_mut()
         .register(proposal_return_account.credential);
@@ -2369,6 +2380,11 @@ fn conway_block_rejects_all_zero_treasury_withdrawals_proposal() {
     };
 
     let mut state = LedgerState::new(Era::Conway);
+    let mut pp = ProtocolParameters::default();
+    pp.protocol_version = Some((10, 0));
+    pp.min_fee_a = 0;
+    pp.min_fee_b = 0;
+    state.set_protocol_params(pp);
     state
         .stake_credentials_mut()
         .register(proposal_return_account.credential);

@@ -12,12 +12,12 @@
 |-----------|--------|--------------|
 | **Cryptography** | All validation primitives (Ed25519, VRF, BLS12-381, secp256k1) fully wired and tested | ✅ 98% |
 | **Ledger Types** | All 7 eras (Byron→Conway) with complete CBOR codec and multi-era UTxO model | ✅ 95% |
-| **Ledger Rules** | Core validation + epoch boundary + network address validation complete; Plutus execution edge cases pending | ⚠️ 92% |
+| **Ledger Rules** | Core validation + epoch boundary + governance ratification (incl. CC term expiry filtering) + network address validation + Conway deposit/refund parity + dormant epoch tracking complete; Plutus execution edge cases pending | ⚠️ 95% |
 | **Consensus** | Praos validation + chain state + rollback enforcement complete; density tiebreaker optional | ✅ 95% |
 | **Network Protocols** | All 5 mini-protocols + mux + handshake fully functional with typed clients/servers; per-state protocol time limits on both server and client sides | ✅ 100% |
 | **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers, PickPolicy randomized selection, connection manager lifecycle | ✅ 97% |
 | **Mempool** | Fee-ordered queue + TTL + eviction + collateral + ExUnits + conflict detection + cross-peer TxId dedup | ✅ 98% |
-| **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience, active crash recovery | ✅ 97% |
+| **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience, active crash recovery, fsync durability | ✅ 98% |
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
@@ -31,7 +31,7 @@
 
 **Ledger**:
 - `apply_block()` — Multi-era block application with UTxO state update
-- `apply_epoch_boundary()` — Stake snapshots, pool retirement, governance expiry, MIR application
+- `apply_epoch_boundary()` — Stake snapshots, pool retirement, governance ratification+enactment, governance expiry, MIR application
 - `enact_gov_action()` — Conway governance enactment (all 7 action types)
 - `accumulate_mir_from_certs()` — MIR certificate accumulation (Shelley–Babbage, DCert tag 6)
 - `InstantaneousRewards` — Per-credential MIR state + pot-to-pot delta tracking with CBOR round-trip
@@ -42,6 +42,10 @@
 - `validate_tx_body_network_id()` — WrongNetworkInTxBody check (Alonzo+)
 - `compute_stake_snapshot()` — Per-pool reward slot calculation
 - `accumulate_donation()` / `flush_donations_to_treasury()` — Conway treasury donation accumulation (UTXOS rule) + epoch-boundary flush (EPOCH rule)
+- `update_dormant_drep_expiries()` — Conway dormant epoch DRep activity bump when proposals appear (upstream `updateDormantDRepExpiries`)
+- `validate_conway_current_treasury_value()` — Conway currentTreasuryValue field validation
+- Conway deposit validation — `IncorrectDepositDELEG`, `IncorrectKeyDepositRefund`, `DrepIncorrectDeposit`, `DrepIncorrectRefund`, `WithdrawalNotFullDrain` (exact-drain semantics)
+- Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
 - `MultiEraUtxo` — Unified UTxO model for all eras
 
 **Consensus**:
@@ -100,7 +104,7 @@
 **Ledger**:
 - `validate_collateral()` — Complete: VKey-locked address enforcement, mandatory when redeemers present, Babbage return/total-collateral checks
 - `compute_epoch_rewards()` — Complete: upstream RUPD→SNAP ordering, delta_reserves-only reserves debit, fee pot not subtracted from reserves
-- `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; threshold math complete
+- `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; CC expired-member term filtering; threshold math complete
 - `ratify_and_enact()` — Enacted+expired+subtree-pruned deposit refunds via returnProposalDeposits; unclaimed→treasury
 - `remove_lineage_conflicting_proposals()` — proposalsApplyEnactment: purpose-root chain validation removes stale proposals
 - `apply_submitted_tx()` — Pre-mempool validation for LocalTxSubmission and runtime mempool admission paths
@@ -139,7 +143,6 @@
 ### ❌ Not Started (Can Defer or Externalize)
 
 **Ledger**:
-- Shelley parameter update proposal validation (PPUP) — Often deprecated post-Conway
 - Plutus budget shape tuning — Can use upstream cost models
 
 **Network**:
@@ -179,9 +182,9 @@
 | Risk | Severity | Mitigation | Effort |
 |------|----------|-----------|--------|
 | Plutus execution divergence | 🔴 High | Cross-check CEK impl against upstream; test vectors | 2 weeks |
-| Governance state fork | � Medium | Deposit lifecycle + subtree pruning complete; remaining: epoch-boundary ratification scheduling | 0.5 weeks |
+| Governance state fork | 🟡 Medium | Deposit lifecycle + subtree pruning + CC term-expiry filtering complete; DRep pulser deferred | Done |
 | Peer selection thrashing | 🟡 Medium | Implement upstream governor scoring; load test | 1.5 weeks |
-| Storage crash corruption | 🟡 Medium | Atomic checkpoints + verification on open | 1 week |
+| Storage crash corruption | � Low | Atomic checkpoints + fsync durability + verification on open | Done |
 | CBOR bytes mismatch | 🟡 Medium | Roundtrip golden tests (already passing) | Ongoing |
 | Missing CLI commands | 🟢 Low | Implement wrappers after APIs stable | 0.5 weeks |
 

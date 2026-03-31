@@ -188,6 +188,21 @@ impl ConnectionManagerState {
             .collect()
     }
 
+    /// Compute accurate connection-manager counters by folding
+    /// `connection_state_to_counters` over all tracked connections.
+    ///
+    /// Upstream: `connectionManagerStateToCounters` from
+    /// `Ouroboros.Network.ConnectionManager.Core`.
+    pub fn counters(&self) -> crate::governor::ConnectionManagerCounters {
+        use crate::connection::connection_state_to_counters;
+        let mut acc = crate::governor::ConnectionManagerCounters::default();
+        for entry in self.connections.values() {
+            let c = connection_state_to_counters(&entry.state);
+            acc = acc + c;
+        }
+        acc
+    }
+
     // -----------------------------------------------------------------------
     // 1. Acquire outbound connection
     // -----------------------------------------------------------------------
@@ -2519,5 +2534,74 @@ mod tests {
         let new_cid = ConnectionId { local: local(), remote: peer(3060) };
         let err = cm.include_inbound_connection(new_cid).unwrap_err();
         assert!(matches!(err, ConnectionManagerError::ForbiddenOperation { .. }));
+    }
+
+    // -- counters() --
+
+    #[test]
+    fn counters_empty_state() {
+        let cm = ConnectionManagerState::new();
+        let c = cm.counters();
+        assert_eq!(c.full_duplex_conns, 0);
+        assert_eq!(c.duplex_conns, 0);
+        assert_eq!(c.unidirectional_conns, 0);
+        assert_eq!(c.inbound_conns, 0);
+        assert_eq!(c.outbound_conns, 0);
+    }
+
+    #[test]
+    fn counters_outbound_unidirectional() {
+        let mut cm = ConnectionManagerState::new();
+        let _ = cm.acquire_outbound_connection(local(), peer(4001)).expect("acquire");
+        cm.outbound_handshake_done(local(), peer(4001), DataFlow::Unidirectional)
+            .expect("handshake");
+        let c = cm.counters();
+        assert_eq!(c.outbound_conns, 1);
+        assert_eq!(c.unidirectional_conns, 1);
+        assert_eq!(c.duplex_conns, 0);
+        assert_eq!(c.inbound_conns, 0);
+    }
+
+    #[test]
+    fn counters_outbound_duplex() {
+        let mut cm = ConnectionManagerState::new();
+        let _ = cm.acquire_outbound_connection(local(), peer(4002)).expect("acquire");
+        cm.outbound_handshake_done(local(), peer(4002), DataFlow::Duplex)
+            .expect("handshake");
+        let c = cm.counters();
+        assert_eq!(c.outbound_conns, 1);
+        assert_eq!(c.duplex_conns, 1);
+    }
+
+    #[test]
+    fn counters_inbound_duplex() {
+        let mut cm = ConnectionManagerState::new();
+        let cid = ConnectionId { local: local(), remote: peer(4003) };
+        cm.include_inbound_connection(cid).unwrap();
+        cm.inbound_handshake_done(peer(4003), DataFlow::Duplex).unwrap();
+        let c = cm.counters();
+        assert_eq!(c.inbound_conns, 1);
+        assert_eq!(c.duplex_conns, 1);
+    }
+
+    #[test]
+    fn counters_mixed_connections() {
+        let mut cm = ConnectionManagerState::new();
+        // Outbound unidirectional
+        let _ = cm.acquire_outbound_connection(local(), peer(4010)).expect("acquire");
+        cm.outbound_handshake_done(local(), peer(4010), DataFlow::Unidirectional).expect("hs");
+        // Outbound duplex
+        let _ = cm.acquire_outbound_connection(local(), peer(4011)).expect("acquire");
+        cm.outbound_handshake_done(local(), peer(4011), DataFlow::Duplex).expect("hs");
+        // Inbound duplex
+        let cid = ConnectionId { local: local(), remote: peer(4012) };
+        cm.include_inbound_connection(cid).unwrap();
+        cm.inbound_handshake_done(peer(4012), DataFlow::Duplex).unwrap();
+
+        let c = cm.counters();
+        assert_eq!(c.outbound_conns, 2);
+        assert_eq!(c.inbound_conns, 1);
+        assert_eq!(c.unidirectional_conns, 1);
+        assert_eq!(c.duplex_conns, 2);
     }
 }
