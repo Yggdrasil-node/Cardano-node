@@ -48,6 +48,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ✅ **MaxMajorProtVer population** — `NodeConfigFile.max_major_protocol_version` (default 10, Conway era) now wires through to `VerificationConfig` in both verified and unverified sync paths; blocks with a protocol version major > configured max are rejected at verification time (upstream `Ouroboros.Consensus.Protocol.Abstract.MaxMajorProtVer`)
 - ✅ **Future-block check runtime wiring** — `ShelleyGenesis.system_start` parsed at startup; `current_wall_slot()` computed from `(now - system_start) / slot_length`; `FutureBlockCheckConfig` wired into `VerificationConfig` with `ClockSkew::default_for_slot_length`; batch sync rejects far-future blocks (upstream `InFutureCheck.realHeaderInFutureCheck`)
 - ✅ **OpCert counter runtime wiring** — `OcertCounters::new()` initialized at startup in both verified and unverified `VerificationConfig` paths; batch sync functions thread `&mut Option<OcertCounters>` across batches and reconnects; permissive mode accepts first-seen pools without stake-distribution lookup; per-pool monotonic sequence validation (same or +1) is enforced for all tracked pools (upstream `PraosState.csCounters` / `currentIssueNo`)
+- ✅ **TriesToForgeADA** — `validate_no_ada_in_mint` rejects any transaction whose `mint` field contains the ADA policy ID (`[0u8; 28]`), implementing the formal spec predicate `adaPolicy ∉ supp mint tx` (upstream `Cardano.Ledger.Mary.Rules.Utxo`, Mary through Conway). In Haskell this is guaranteed by construction (the `MultiAsset` type cannot represent ADA); in Rust the `BTreeMap<[u8; 28], …>` representation requires a runtime check. Wired into all 4 mint-capable era UTxO apply functions covering both block-apply and submitted-tx paths; 6 unit tests.
 
 ### Runtime Parity Hardening (March 2026)
 
@@ -108,6 +109,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | DRep inactivity | drep_activity threshold | ✅ | ✅ | Complete | touch_drep_activity, inactive_dreps
 | Governance expiry | Proposal age limit | ✅ | ✅ | Complete | remove_expired_governance_actions
 | Treasury donation | Conway utxosDonation accumulation + epoch flush | ✅ | ✅ | Complete | Per-tx accumulate_donation (UTXOS rule), epoch-boundary flush_donations_to_treasury (EPOCH rule), value preservation includes donation
+| Treasury value check | Conway `current_treasury_value` declaration | ✅ | ✅ | Complete | `validate_conway_current_treasury_value` runs as Phase-1 UTXO rule in both block-apply and submitted-tx paths (before Plutus evaluation), matching upstream `Cardano.Ledger.Conway.Rules.Utxo` ordering
 | Deposit/refund preservation | Certificate deposits + refunds in UTxO balance | ✅ | ✅ | Complete | CertBalanceAdjustment flows through all 6 per-era UTxO functions: consumed + withdrawals + refunds = produced + fee + deposits [+ donation]. Covers all 19 DCert variants
 | **Governance** |
 | Proposal storage | Action ID + metadata | ✅ | ✅ | Complete | GovActionState with vote maps
@@ -126,8 +128,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Bootstrap DRep delegation | preserveIncorrectDelegation (PV < 10) | ✅ | ✅ | Complete | delegate_drep skips checkDRepRegistered during bootstrap phase (upstream Cardano.Ledger.Conway.Rules.Deleg); 4 integration tests
 | Bootstrap DRep expiry | computeDRepExpiryVersioned bootstrap gate | ✅ | ✅ | Complete | apply_conway_votes and touch_drep_activity_for_certs skip dormant epoch subtraction during bootstrap (upstream Cardano.Ledger.Conway.Rules.GovCert)
 | Withdrawal DRep delegation | `ConwayWdrlNotDelegatedToDRep` post-bootstrap gate | ✅ | ✅ | Complete | validate_withdrawals_delegated checks pre-CERTS key-hash withdrawal credentials for existing DRep delegation, skips during bootstrap, and excludes script-hash reward accounts
+| TriesToForgeADA | `adaPolicy ∉ supp mint tx` (Mary–Conway) | ✅ | ✅ | Complete | validate_no_ada_in_mint rejects mint maps containing the ADA policy ID ([0u8; 28]); wired into all 4 mint-capable era UTxO apply functions (Mary/Alonzo/Babbage/Conway) covering both block-apply and submitted-tx paths; 6 unit tests
 
-**Ledger Summary**: ~95% feature complete. Phase-2 Plutus validation wired for both block and submitted-tx paths across all Alonzo+ eras.
+**Ledger Summary**: ~96% feature complete. Phase-2 Plutus validation wired for both block and submitted-tx paths across all Alonzo+ eras.
 
 ---
 
@@ -446,6 +449,8 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ✅ **Ratification tally** (voting functions complete incl. AlwaysNoConfidence auto-yes; epoch-boundary ratification+enactment+deposit lifecycle)
 - ✅ **Deposit refunds** (enacted+expired+lineage-pruned deposits refunded via returnProposalDeposits; unclaimed→treasury)
 - ✅ **Lineage subtree pruning** (proposalsApplyEnactment: remove_lineage_conflicting_proposals with purpose-root chain validation)
+- ✅ **Treasury value check ordering** (`validate_conway_current_treasury_value` now Phase-1 in submitted-tx path, matching block-apply and upstream UTXO rule layering)
+- ✅ **Submitted-tx reference-input validation** (cleaned duplicate calls in Babbage/Conway — early direct-UTxO check retained, redundant staged-clone check removed)
 
 **Parity Status**: **~96% complete** — All era types, core rules, Conway governance lifecycle, deposit/refund validation, dormant epoch tracking, exact redeemer-set checks, and Phase-2 Plutus validation (block + submitted-tx). Remaining work on CEK builtin coverage and edge cases.
 

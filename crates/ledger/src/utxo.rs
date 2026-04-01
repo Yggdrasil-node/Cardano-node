@@ -516,6 +516,7 @@ impl MultiEraUtxo {
         )?;
 
         // Multi-asset preservation.
+        validate_no_ada_in_mint(&body.mint)?;
         let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
         let produced_ma = sum_output_multi_asset_mary(&body.outputs);
         check_multi_asset_preservation(&consumed_ma, &produced_ma, &body.mint)?;
@@ -585,6 +586,7 @@ impl MultiEraUtxo {
             body.fee.saturating_add(deposits),
         )?;
 
+        validate_no_ada_in_mint(&body.mint)?;
         let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
         let produced_ma = sum_output_multi_asset_alonzo(&body.outputs);
         check_multi_asset_preservation(&consumed_ma, &produced_ma, &body.mint)?;
@@ -654,6 +656,7 @@ impl MultiEraUtxo {
             body.fee.saturating_add(deposits),
         )?;
 
+        validate_no_ada_in_mint(&body.mint)?;
         let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
         let produced_ma = sum_output_multi_asset_babbage(&body.outputs);
         check_multi_asset_preservation(&consumed_ma, &produced_ma, &body.mint)?;
@@ -734,6 +737,7 @@ impl MultiEraUtxo {
             fee_plus_deposits_donation,
         )?;
 
+        validate_no_ada_in_mint(&body.mint)?;
         let consumed_ma = self.sum_consumed_multi_asset(&body.inputs);
         let produced_ma = sum_output_multi_asset_babbage(&body.outputs);
         check_multi_asset_preservation(&consumed_ma, &produced_ma, &body.mint)?;
@@ -979,6 +983,26 @@ fn add_multi_asset(dst: &mut MultiAsset, src: &MultiAsset) {
             *entry.entry(name.clone()).or_insert(0) += qty;
         }
     }
+}
+
+/// The ADA policy ID: 28 zero bytes.
+///
+/// The formal ledger spec defines `adaPolicy` as the empty/zero script hash.
+/// No transaction may mint or burn tokens under this policy ID.
+const ADA_POLICY_ID: [u8; 28] = [0u8; 28];
+
+/// Validates that the transaction's `mint` field does not contain the ADA
+/// policy ID (`[0u8; 28]`).
+///
+/// Reference: formal spec predicate `adaPolicy ∉ supp mint tx`
+/// (`Cardano.Ledger.Mary.Rules.Utxo` — Mary through Conway).
+fn validate_no_ada_in_mint(mint: &Option<MintAsset>) -> Result<(), LedgerError> {
+    if let Some(minted) = mint {
+        if minted.contains_key(&ADA_POLICY_ID) {
+            return Err(LedgerError::TriesToForgeADA);
+        }
+    }
+    Ok(())
 }
 
 /// Checks that consumed multi-assets plus minted/burned equals produced.
@@ -1506,5 +1530,66 @@ mod tests {
         policy_assets.insert(b"token".to_vec(), -30i64);
         mint.insert([0xaa; 28], policy_assets);
         assert!(check_multi_asset_preservation(&consumed, &produced, &Some(mint)).is_ok());
+    }
+
+    // ── TriesToForgeADA (validate_no_ada_in_mint) ──────────────────────
+
+    #[test]
+    fn no_ada_in_mint_none_is_ok() {
+        assert!(validate_no_ada_in_mint(&None).is_ok());
+    }
+
+    #[test]
+    fn no_ada_in_mint_empty_map_is_ok() {
+        let mint: MintAsset = std::collections::BTreeMap::new();
+        assert!(validate_no_ada_in_mint(&Some(mint)).is_ok());
+    }
+
+    #[test]
+    fn no_ada_in_mint_non_ada_policy_is_ok() {
+        let mut mint: MintAsset = std::collections::BTreeMap::new();
+        let mut assets = std::collections::BTreeMap::new();
+        assets.insert(b"token".to_vec(), 100i64);
+        mint.insert([0xaa; 28], assets);
+        assert!(validate_no_ada_in_mint(&Some(mint)).is_ok());
+    }
+
+    #[test]
+    fn no_ada_in_mint_ada_policy_rejected() {
+        let mut mint: MintAsset = std::collections::BTreeMap::new();
+        let mut assets = std::collections::BTreeMap::new();
+        assets.insert(b"ada".to_vec(), 1_000_000i64);
+        mint.insert(ADA_POLICY_ID, assets);
+        assert!(matches!(
+            validate_no_ada_in_mint(&Some(mint)),
+            Err(LedgerError::TriesToForgeADA)
+        ));
+    }
+
+    #[test]
+    fn no_ada_in_mint_ada_policy_with_burn_rejected() {
+        let mut mint: MintAsset = std::collections::BTreeMap::new();
+        let mut assets = std::collections::BTreeMap::new();
+        assets.insert(b"ada".to_vec(), -500i64);
+        mint.insert(ADA_POLICY_ID, assets);
+        assert!(matches!(
+            validate_no_ada_in_mint(&Some(mint)),
+            Err(LedgerError::TriesToForgeADA)
+        ));
+    }
+
+    #[test]
+    fn no_ada_in_mint_mixed_policies_with_ada_rejected() {
+        let mut mint: MintAsset = std::collections::BTreeMap::new();
+        let mut good_assets = std::collections::BTreeMap::new();
+        good_assets.insert(b"token".to_vec(), 50i64);
+        mint.insert([0xbb; 28], good_assets);
+        let mut bad_assets = std::collections::BTreeMap::new();
+        bad_assets.insert(b"fake_ada".to_vec(), 1i64);
+        mint.insert(ADA_POLICY_ID, bad_assets);
+        assert!(matches!(
+            validate_no_ada_in_mint(&Some(mint)),
+            Err(LedgerError::TriesToForgeADA)
+        ));
     }
 }

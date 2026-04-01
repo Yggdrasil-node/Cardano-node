@@ -706,6 +706,19 @@ pub enum LedgerError {
         proposed_major: u64,
         proposed_minor: u64,
     },
+
+    /// The transaction's `mint` field contains the ADA policy ID (`[0u8; 28]`).
+    ///
+    /// The formal ledger spec requires `adaPolicy ∉ supp mint tx`.
+    /// In the Haskell implementation this is enforced by construction
+    /// (the `MultiAsset` type cannot represent ADA), but our Rust
+    /// representation uses a plain `BTreeMap<[u8; 28], …>` which can hold
+    /// the all-zeros policy ID, so we enforce it at validation time.
+    ///
+    /// Reference: `Cardano.Ledger.Mary.Rules.Utxo` — formal spec predicate
+    /// `adaPolicy ∉ supp mint tx` (Mary through Conway).
+    #[error("transaction attempts to mint or burn ADA (policy ID is the zero hash)")]
+    TriesToForgeADA,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
