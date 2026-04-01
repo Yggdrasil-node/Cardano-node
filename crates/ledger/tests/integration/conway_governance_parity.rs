@@ -19,6 +19,14 @@
 //!
 //! 6. `ZeroTreasuryWithdrawals` is only enforced after the bootstrap phase
 //!    (PV ≥ 10) — upstream `hardforkConwayBootstrapPhase`.
+//!
+//! 7. Bootstrap-phase DRep delegation skip — upstream `preserveIncorrectDelegation`
+//!    / `hardforkConwayBootstrapPhase` from `Cardano.Ledger.Conway.Rules.Deleg`:
+//!    during bootstrap (PV == 9), delegation to an unregistered DRep is allowed.
+//!
+//! 8. Bootstrap-phase DRep expiry — upstream `computeDRepExpiryVersioned` from
+//!    `Cardano.Ledger.Conway.Rules.GovCert`: during bootstrap, dormant epoch
+//!    subtraction is skipped when computing DRep last-active-epoch.
 
 use super::*;
 use yggdrasil_ledger::GovernanceActionState;
@@ -1071,4 +1079,350 @@ fn nonzero_treasury_withdrawal_accepted_after_bootstrap() {
     )]);
 
     state.apply_block(&block).expect("non-zero treasury withdrawal should be accepted");
+}
+
+// -----------------------------------------------------------------------
+// 7. Bootstrap-phase DRep delegation (preserveIncorrectDelegation)
+// -----------------------------------------------------------------------
+
+/// During bootstrap phase (PV 9), delegating to an unregistered KeyHash DRep
+/// is allowed — upstream `preserveIncorrectDelegation` /
+/// `hardforkConwayBootstrapPhase` from `Cardano.Ledger.Conway.Rules.Deleg`.
+#[test]
+fn bootstrap_phase_allows_delegation_to_unregistered_drep() {
+    let mut state = conway_state_pv(9, 0, 2_000_000);
+
+    // Register a stake credential.
+    let cred = StakeCredential::AddrKeyHash([0xB1; 28]);
+    state.stake_credentials_mut().register(cred);
+    state.reward_accounts_mut().insert(
+        RewardAccount { network: 1, credential: cred },
+        RewardAccountState::new(0, None),
+    );
+
+    // Attempt delegation to an unregistered KeyHash DRep — during bootstrap
+    // this should succeed (upstream skips checkDRepRegistered).
+    let drep = DRep::KeyHash([0xB2; 28]);
+
+    let consumed = 10_000_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xB0; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let block = make_conway_block(10, 1, 0xB0, vec![conway_tx_single_cert(
+        [0xB0; 32],
+        consumed,
+        0,
+        DCert::DelegationToDrep(cred, drep),
+    )]);
+
+    state.apply_block(&block).expect(
+        "bootstrap phase should allow delegation to unregistered DRep",
+    );
+}
+
+/// Same scenario at PV 10 (post-bootstrap) must be rejected.
+#[test]
+fn post_bootstrap_rejects_delegation_to_unregistered_drep() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    let cred = StakeCredential::AddrKeyHash([0xB3; 28]);
+    state.stake_credentials_mut().register(cred);
+    state.reward_accounts_mut().insert(
+        RewardAccount { network: 1, credential: cred },
+        RewardAccountState::new(0, None),
+    );
+
+    let drep = DRep::KeyHash([0xB4; 28]);
+
+    let consumed = 10_000_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xB5; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let block = make_conway_block(10, 1, 0xB5, vec![conway_tx_single_cert(
+        [0xB5; 32],
+        consumed,
+        0,
+        DCert::DelegationToDrep(cred, drep),
+    )]);
+
+    let err = state.apply_block(&block).unwrap_err();
+    assert_eq!(err, LedgerError::DelegateeDRepNotRegistered(drep));
+}
+
+/// Bootstrap phase allows DelegationToStakePoolAndDrep with an unregistered
+/// DRep — dual delegation variant of the same upstream gate.
+#[test]
+fn bootstrap_phase_allows_dual_delegation_to_unregistered_drep() {
+    let mut state = conway_state_pv(9, 0, 2_000_000);
+
+    let cred = StakeCredential::AddrKeyHash([0xB6; 28]);
+    state.stake_credentials_mut().register(cred);
+    state.reward_accounts_mut().insert(
+        RewardAccount { network: 1, credential: cred },
+        RewardAccountState::new(0, None),
+    );
+
+    // Register a pool so pool delegation leg succeeds.
+    let pool_id: [u8; 28] = [0xBB; 28];
+    state.pool_state_mut().register(PoolParams {
+        operator: pool_id,
+        vrf_keyhash: [0u8; 32],
+        pledge: 0,
+        cost: 0,
+        margin: UnitInterval { numerator: 0, denominator: 1 },
+        reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB6; 28]) },
+        pool_owners: vec![pool_id],
+        relays: vec![],
+        pool_metadata: None,
+    });
+
+    let drep = DRep::KeyHash([0xB7; 28]); // NOT registered
+
+    let consumed = 10_000_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xB8; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let block = make_conway_block(10, 1, 0xB8, vec![conway_tx_single_cert(
+        [0xB8; 32],
+        consumed,
+        0,
+        DCert::DelegationToStakePoolAndDrep(cred, pool_id, drep),
+    )]);
+
+    state.apply_block(&block).expect(
+        "bootstrap phase should allow dual delegation with unregistered DRep",
+    );
+}
+
+/// AccountRegistrationDelegationToDrep with unregistered DRep during bootstrap.
+#[test]
+fn bootstrap_phase_allows_reg_deleg_to_unregistered_drep() {
+    let mut state = conway_state_pv(9, 0, 2_000_000);
+
+    let cred = StakeCredential::AddrKeyHash([0xB9; 28]);
+    let drep = DRep::KeyHash([0xBA; 28]); // NOT registered
+
+    let key_deposit = 2_000_000u64;
+    let consumed = 10_000_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xBC; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let block = make_conway_block(10, 1, 0xBC, vec![conway_tx_single_cert(
+        [0xBC; 32],
+        consumed - key_deposit,
+        0,
+        DCert::AccountRegistrationDelegationToDrep(cred, drep, key_deposit),
+    )]);
+
+    state.apply_block(&block).expect(
+        "bootstrap phase should allow AccountRegistrationDelegationToDrep with unregistered DRep",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 9. ConwayWdrlNotDelegatedToDRep — upstream `validateWithdrawalsDelegated`
+//    from `Cardano.Ledger.Conway.Rules.Ledger`.
+//    Post-bootstrap only: key-hash withdrawal credentials must have a DRep
+//    delegation in the pre-CERTS stake credential state.
+// ---------------------------------------------------------------------------
+
+fn conway_tx_with_withdrawal(
+    input_hash: [u8; 32],
+    output_coin: u64,
+    fee: u64,
+    withdrawals: std::collections::BTreeMap<RewardAccount, u64>,
+) -> ConwayTxBody {
+    ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x02],
+            amount: Value::Coin(output_coin),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee,
+        ttl: Some(200),
+        certificates: None,
+        validity_interval_start: None,
+        mint: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        script_data_hash: None,
+        withdrawals: Some(withdrawals),
+        voting_procedures: None,
+        proposal_procedures: None,
+        treasury_donation: None,
+        current_treasury_value: None,
+        auxiliary_data_hash: None,
+    }
+}
+
+/// Post-bootstrap: withdrawal from a key-hash credential that is NOT
+/// delegated to a DRep should be rejected.
+#[test]
+fn post_bootstrap_rejects_withdrawal_without_drep_delegation() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    let cred = StakeCredential::AddrKeyHash([0xC1; 28]);
+    let account = RewardAccount { network: 1, credential: cred };
+
+    // Register the stake credential (no DRep delegation).
+    state.stake_credentials_mut().register(cred);
+    state.reward_accounts_mut()
+        .insert(account.clone(), RewardAccountState::new(1_000, None));
+
+    let consumed = 10_000_000u64;
+    let withdrawal_amount = 1_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xC2; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let mut wdrls = std::collections::BTreeMap::new();
+    wdrls.insert(account, withdrawal_amount);
+
+    let block = make_conway_block(10, 1, 0xC2, vec![conway_tx_with_withdrawal(
+        [0xC2; 32],
+        consumed + withdrawal_amount,
+        0,
+        wdrls,
+    )]);
+
+    let err = state.apply_block(&block).unwrap_err();
+    assert!(
+        matches!(err, LedgerError::WithdrawalNotDelegatedToDRep { credential } if credential == [0xC1; 28]),
+        "expected WithdrawalNotDelegatedToDRep, got: {err:?}",
+    );
+}
+
+/// Post-bootstrap: withdrawal from a key-hash credential that IS delegated
+/// to a DRep should succeed.
+#[test]
+fn post_bootstrap_accepts_withdrawal_with_drep_delegation() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    let cred = StakeCredential::AddrKeyHash([0xC3; 28]);
+    let drep = DRep::KeyHash([0xC4; 28]);
+    let account = RewardAccount { network: 1, credential: cred };
+
+    // Register the stake credential WITH a DRep delegation.
+    state.stake_credentials_mut().register(cred);
+    state.stake_credentials_mut().get_mut(&cred).unwrap().set_delegated_drep(Some(drep));
+    state.reward_accounts_mut()
+        .insert(account.clone(), RewardAccountState::new(1_000, None));
+
+    // Register the DRep (required for non-bootstrap).
+    state.drep_state_mut().register(drep, RegisteredDrep::new(0, None));
+
+    let consumed = 10_000_000u64;
+    let withdrawal_amount = 1_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xC5; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let mut wdrls = std::collections::BTreeMap::new();
+    wdrls.insert(account, withdrawal_amount);
+
+    let block = make_conway_block(10, 1, 0xC5, vec![conway_tx_with_withdrawal(
+        [0xC5; 32],
+        consumed + withdrawal_amount,
+        0,
+        wdrls,
+    )]);
+
+    state.apply_block(&block).expect(
+        "post-bootstrap withdrawal with DRep delegation should succeed",
+    );
+}
+
+/// Bootstrap phase (PV 9): withdrawal from a credential without DRep
+/// delegation should succeed (check is skipped during bootstrap).
+#[test]
+fn bootstrap_phase_allows_withdrawal_without_drep_delegation() {
+    let mut state = conway_state_pv(9, 0, 2_000_000);
+
+    let cred = StakeCredential::AddrKeyHash([0xC6; 28]);
+    let account = RewardAccount { network: 1, credential: cred };
+
+    // Register the stake credential (no DRep delegation).
+    state.stake_credentials_mut().register(cred);
+    state.reward_accounts_mut()
+        .insert(account.clone(), RewardAccountState::new(500, None));
+
+    let consumed = 10_000_000u64;
+    let withdrawal_amount = 500u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xC7; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let mut wdrls = std::collections::BTreeMap::new();
+    wdrls.insert(account, withdrawal_amount);
+
+    let block = make_conway_block(10, 1, 0xC7, vec![conway_tx_with_withdrawal(
+        [0xC7; 32],
+        consumed + withdrawal_amount,
+        0,
+        wdrls,
+    )]);
+
+    state.apply_block(&block).expect(
+        "bootstrap phase should skip withdrawal delegation check",
+    );
+}
+
+/// Post-bootstrap: script-hash withdrawal credentials are NOT checked
+/// for DRep delegation (upstream `credKeyHash` filters them out).
+/// The withdrawal will fail with `MissingScriptWitness` because no
+/// script witness is provided, but critically NOT with
+/// `WithdrawalNotDelegatedToDRep`.
+#[test]
+fn post_bootstrap_allows_script_hash_withdrawal_without_drep() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    let cred = StakeCredential::ScriptHash([0xC8; 28]);
+    let account = RewardAccount { network: 1, credential: cred };
+
+    // Register the stake credential (script-hash, no DRep).
+    state.stake_credentials_mut().register(cred);
+    state.reward_accounts_mut()
+        .insert(account.clone(), RewardAccountState::new(800, None));
+
+    let consumed = 10_000_000u64;
+    let withdrawal_amount = 800u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xC9; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let mut wdrls = std::collections::BTreeMap::new();
+    wdrls.insert(account, withdrawal_amount);
+
+    let block = make_conway_block(10, 1, 0xC9, vec![conway_tx_with_withdrawal(
+        [0xC9; 32],
+        consumed + withdrawal_amount,
+        0,
+        wdrls,
+    )]);
+
+    let err = state.apply_block(&block).unwrap_err();
+    // Must NOT be WithdrawalNotDelegatedToDRep — script-hash credentials
+    // are excluded from the DRep delegation check.
+    assert!(
+        !matches!(err, LedgerError::WithdrawalNotDelegatedToDRep { .. }),
+        "script-hash withdrawal should not trigger DRep delegation check, got: {err:?}",
+    );
 }

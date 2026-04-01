@@ -1977,6 +1977,8 @@ mod tests {
             .await
         });
 
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         let mut session = bootstrap(&NodeConfig {
             peer_addr: listen_addr,
             network_magic: 42,

@@ -56,6 +56,15 @@ impl PlutusVersion {
             Self::V3 => 0x03,
         }
     }
+
+    /// CDDL cost-model map key (0 = V1, 1 = V2, 2 = V3).
+    pub fn cost_model_key(self) -> u8 {
+        match self {
+            Self::V1 => 0,
+            Self::V2 => 1,
+            Self::V3 => 2,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -794,6 +803,13 @@ pub fn validate_no_extra_redeemers(
 /// `required_scripts` is the set of script hashes that need either native
 /// or Plutus satisfaction. Scripts already satisfied by native evaluation
 /// should be removed before calling this function.
+///
+/// `cost_models` is the CDDL cost-model map from protocol parameters.
+/// If a required Plutus script uses a language version whose cost model is
+/// absent, a [`LedgerError::NoCostModel`] (Phase-1) error is returned
+/// before any CEK evaluation takes place.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Plutus.Evaluate.collectPlutusScriptsWithContext`.
 pub fn validate_plutus_scripts(
     evaluator: Option<&dyn PlutusEvaluator>,
     witness_bytes: Option<&[u8]>,
@@ -806,6 +822,7 @@ pub fn validate_plutus_scripts(
     sorted_voters: &[Voter],
     proposal_procedures: &[ProposalProcedure],
     tx_ctx: &TxContext,
+    cost_models: Option<&crate::protocol_params::CostModels>,
 ) -> Result<(), LedgerError> {
     let wb = match witness_bytes {
         Some(wb) => wb,
@@ -926,6 +943,33 @@ pub fn validate_plutus_scripts(
 
     if plutus_required.is_empty() {
         return Ok(());
+    }
+
+    // ── NoCostModel check (Phase-1, upstream CollectErrors) ──────────
+    // Every required Plutus script's language version must have a
+    // corresponding cost-model entry in the protocol parameters.  If any
+    // version is missing the tx is rejected *before* CEK evaluation.
+    //
+    // When `cost_models` is `None` (protocol parameters not configured or
+    // cost_models field absent), the check is skipped (soft-skip for sync
+    // without full protocol parameters).
+    //
+    // Reference: Cardano.Ledger.Alonzo.Plutus.Evaluate
+    //            — collectPlutusScriptsWithContext / NoCostModel
+    if let Some(cm) = cost_models {
+        let mut required_versions: std::collections::HashSet<PlutusVersion> =
+            std::collections::HashSet::new();
+        for h in &plutus_required {
+            if let Some((v, _)) = plutus_scripts.get(h.as_slice()) {
+                required_versions.insert(*v);
+            }
+        }
+        for version in &required_versions {
+            let key = version.cost_model_key();
+            if !cm.contains_key(&key) {
+                return Err(LedgerError::NoCostModel { language: key });
+            }
+        }
     }
 
     // If no evaluator is configured, skip Plutus validation.
@@ -1349,6 +1393,7 @@ mod tests {
         let result = validate_plutus_scripts(
             None, Some(&wb), &required, &utxo, &[], &[], &[], &[], &[], &[],
             &TxContext::default(),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -1389,6 +1434,7 @@ mod tests {
             &[],
             &[],
             &TxContext::default(),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -1429,6 +1475,7 @@ mod tests {
             &[],
             &[],
             &TxContext::default(),
+            None,
         );
         assert!(matches!(
             result.unwrap_err(),
@@ -1443,6 +1490,7 @@ mod tests {
         let result = validate_plutus_scripts(
             Some(&AlwaysSucceeds), None, &required, &utxo, &[], &[], &[], &[], &[], &[],
             &TxContext::default(),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -1505,6 +1553,7 @@ mod tests {
             &[],
             &[],
             &TxContext::default(),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1568,6 +1617,7 @@ mod tests {
             &[],
             &[],
             &TxContext::default(),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1629,6 +1679,7 @@ mod tests {
             &[],
             &[],
             &TxContext::default(),
+            None,
         );
 
         assert!(matches!(
@@ -1676,6 +1727,7 @@ mod tests {
             &[],
             &[],
             &TxContext::default(),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1720,6 +1772,7 @@ mod tests {
             &[],
             &[],
             &TxContext::default(),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1761,6 +1814,7 @@ mod tests {
             &voters,
             &[],
             &TxContext::default(),
+            None,
         );
 
         assert!(result.is_ok());

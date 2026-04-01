@@ -419,6 +419,18 @@ pub enum LedgerError {
     #[error("extra redeemer: tag {tag} index {index} does not target a Plutus script purpose")]
     ExtraRedeemer { tag: u8, index: u64 },
 
+    /// A Plutus script uses a language version whose cost model is not present
+    /// in the protocol parameters.  The transaction is rejected before any CEK
+    /// evaluation takes place (Phase-1 rejection).
+    ///
+    /// `language` is the CDDL cost-model key: 0 = PlutusV1, 1 = PlutusV2,
+    /// 2 = PlutusV3.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Plutus.Evaluate.collectPlutusScriptsWithContext`
+    /// — `NoCostModel` variant of `CollectError`.
+    #[error("no cost model for Plutus language {language}")]
+    NoCostModel { language: u8 },
+
     /// A datum in the witness set is not required by any Plutus spending input
     /// and its hash does not appear on any transaction output (or reference-
     /// input UTxO in Babbage+).
@@ -585,6 +597,17 @@ pub enum LedgerError {
     #[error("auxiliary data present but tx body missing auxiliary_data_hash")]
     MissingTxBodyMetadataHash,
 
+    /// Transaction auxiliary data contains out-of-range metadatum values
+    /// (byte strings or text strings exceeding 64 bytes).
+    ///
+    /// Active when protocol version > (2, 0) — i.e. from Allegra onwards.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxow` —
+    /// `validateMetadata` / `InvalidMetadata`;
+    /// `Cardano.Ledger.Metadata` — `validMetadatum`.
+    #[error("auxiliary data contains out-of-range metadatum values (bytes/text > 64)")]
+    InvalidMetadata,
+
     /// Transaction spending inputs contain duplicates.
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `BadInputsUTxO`
@@ -624,6 +647,16 @@ pub enum LedgerError {
     TxRefScriptsSizeTooBig {
         actual: usize,
         max_allowed: usize,
+    },
+
+    /// A withdrawal from a key-hash reward account was attempted but the
+    /// account does not have a DRep delegation (Conway post-bootstrap rule).
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Ledger` —
+    /// `ConwayWdrlNotDelegatedToDRep`.
+    #[error("withdrawal credential {credential:02x?} is not delegated to a DRep")]
+    WithdrawalNotDelegatedToDRep {
+        credential: [u8; 28],
     },
 
     // -- Epoch boundary errors ----------------------------------------------

@@ -94,8 +94,10 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Witness sufficiency | VKey hash + signature count | ✅ | ✅ | Complete | verify_vkey_signatures with Ed25519
 | Native script eval | Timelock constraints | ✅ | ✅ | Complete | validate_native_scripts_if_present
 | Plutus validation | Script execution + budget | ✅ | ✅ | Complete | CEK framework + Phase-2 validation wired in block + submitted-tx paths (Alonzo/Babbage/Conway)
+| Missing cost model rejection | `NoCostModel` collect error by language key | ✅ | ✅ | Complete | validate_plutus_scripts checks `ProtocolParameters.cost_models` for required Plutus V1/V2/V3 keys (0/1/2) before CEK evaluation; soft-skipped when `cost_models` is absent
 | Collateral checks | Alonzo+ collateral UTxO | ✅ | ✅ | Complete | validate_collateral with VKey-locked + mandatory-when-scripts
 | Min UTxO enforcement | Per-output minimum lovelace | ✅ | ✅ | Complete | min_utxo.rs with era-aware calculation
+| Metadata size validation | `InvalidMetadata` / `validMetadatum` soft fork | ✅ | ✅ | Complete | validate_auxiliary_data enforces <= 64-byte bytes/text metadatum values from protocol version > (2, 0), including nested array/map entries
 | Network address validation | WrongNetwork + WrongNetworkWithdrawal + WrongNetworkInTxBody | ✅ | ✅ | Complete | validate_output_network_ids, validate_withdrawal_network_ids, validate_tx_body_network_id across all 6 eras
 | PPUP proposal validation | NonGenesisUpdatePPUP, PPUpdateWrongEpoch, PVCannotFollowPPUP | ✅ | ✅ | Complete | validate_ppup_proposal (Shelley.Rules.Ppup parity): genesis-delegate authorization, epoch voting-period (with optional slot-of-no-return), pvCanFollow protocol-version succession; wired into all 5 block-apply paths (Shelley–Babbage); 18 tests
 | **Epoch Boundary** |
@@ -120,6 +122,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | DRep delegation clearing | clearDRepDelegations on DRep unreg | ✅ | ✅ | Complete | StakeCredentials::clear_drep_delegation in unregister_drep
 | Committee future member | isPotentialFutureMember check | ✅ | ✅ | Complete | is_potential_future_member scans UpdateCommittee proposals for auth/resign
 | ZeroTreasuryWithdrawals gate | Bootstrap phase bypass (PV < 10) | ✅ | ✅ | Complete | past_bootstrap guard on ZeroTreasuryWithdrawals check
+| Bootstrap DRep delegation | preserveIncorrectDelegation (PV < 10) | ✅ | ✅ | Complete | delegate_drep skips checkDRepRegistered during bootstrap phase (upstream Cardano.Ledger.Conway.Rules.Deleg); 4 integration tests
+| Bootstrap DRep expiry | computeDRepExpiryVersioned bootstrap gate | ✅ | ✅ | Complete | apply_conway_votes and touch_drep_activity_for_certs skip dormant epoch subtraction during bootstrap (upstream Cardano.Ledger.Conway.Rules.GovCert)
+| Withdrawal DRep delegation | `ConwayWdrlNotDelegatedToDRep` post-bootstrap gate | ✅ | ✅ | Complete | validate_withdrawals_delegated checks pre-CERTS key-hash withdrawal credentials for existing DRep delegation, skips during bootstrap, and excludes script-hash reward accounts
 
 **Ledger Summary**: ~95% feature complete. Phase-2 Plutus validation wired for both block and submitted-tx paths across all Alonzo+ eras.
 

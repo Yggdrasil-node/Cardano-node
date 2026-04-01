@@ -3268,6 +3268,7 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -3359,6 +3360,7 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -3478,6 +3480,7 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -3605,6 +3608,7 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
@@ -3777,6 +3781,7 @@ impl LedgerState {
                         &staged,
                         &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                         &tx_ctx,
+                        self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
                     )?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
@@ -3822,6 +3827,7 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
@@ -4005,6 +4011,7 @@ impl LedgerState {
                         &staged,
                         &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                         &tx_ctx,
+                        self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
                     )?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
@@ -4050,6 +4057,7 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 crate::plutus_validation::validate_script_data_hash(
@@ -4270,6 +4278,7 @@ impl LedgerState {
                         &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
                         &sorted_voters, proposal_slice,
                         &tx_ctx,
+                        self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
                     )?;
                 }
                 // Conway UTXO rule: validate current_treasury_value declaration.
@@ -4300,6 +4309,14 @@ impl LedgerState {
                     self.current_epoch,
                     drep_activity,
                 );
+
+                // Conway LEDGER rule: withdrawal credentials must be delegated
+                // to a DRep (post-bootstrap only, uses pre-CERTS state).
+                validate_withdrawals_delegated(
+                    tx.body.withdrawals.as_ref(),
+                    &staged_stake_credentials,
+                    cert_ctx.bootstrap_phase,
+                )?;
 
                 // Conway governance validation (voters, proposals, votes).
                 let unregistered_drep_voters = collect_conway_unregistered_drep_voters(
@@ -4390,7 +4407,7 @@ impl LedgerState {
 
                     staged_governance_actions = governance_actions_for_tx;
                     if let Some(voting_procedures) = &tx.body.voting_procedures {
-                        apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch, staged_num_dormant);
+                        apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch, staged_num_dormant, cert_ctx.bootstrap_phase);
                     }
                     remove_conway_drep_votes(
                         &unregistered_drep_voters,
@@ -4417,6 +4434,7 @@ impl LedgerState {
                     &mut staged_drep_state,
                     self.current_epoch,
                     staged_num_dormant,
+                    cert_ctx.bootstrap_phase,
                 );
                 // Conway UTXO rule: totalTxDeposits includes both certificate
                 // deposits and proposal procedure deposits.
@@ -4449,6 +4467,12 @@ impl LedgerState {
     /// current protocol parameters and ledger state.
     fn certificate_validation_context(&self) -> CertificateValidationContext {
         let is_conway = matches!(self.current_era, Era::Conway);
+        let bootstrap_phase = is_conway
+            && conway_bootstrap_phase(
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
+            );
         match &self.protocol_params {
             Some(p) => CertificateValidationContext {
                 key_deposit: p.key_deposit,
@@ -4459,6 +4483,7 @@ impl LedgerState {
                 expected_network_id: self.expected_network_id,
                 drep_deposit: p.drep_deposit,
                 is_conway,
+                bootstrap_phase,
             },
             None => CertificateValidationContext {
                 key_deposit: 0,
@@ -4469,6 +4494,7 @@ impl LedgerState {
                 expected_network_id: self.expected_network_id,
                 drep_deposit: None,
                 is_conway,
+                bootstrap_phase,
             },
         }
     }
@@ -4575,6 +4601,7 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -4685,6 +4712,7 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -4821,6 +4849,7 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -4967,6 +4996,7 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             crate::plutus_validation::validate_script_data_hash(
                 body.script_data_hash,
@@ -5103,6 +5133,7 @@ impl LedgerState {
                     &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                     &tx_ctx,
+                    self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
                 )
             }
             };
@@ -5217,6 +5248,7 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             crate::plutus_validation::validate_script_data_hash(
                 body.script_data_hash,
@@ -5364,6 +5396,7 @@ impl LedgerState {
                     &staged,
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
                     &tx_ctx,
+                    self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
                 )
             }
             };
@@ -5486,6 +5519,7 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             crate::plutus_validation::validate_script_data_hash(
                 body.script_data_hash,
@@ -5659,6 +5693,7 @@ impl LedgerState {
                     &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
                     &sorted_voters, proposal_slice,
                     &tx_ctx,
+                    self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
                 )
             }
             };
@@ -5673,6 +5708,13 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
+            // Conway LEDGER rule: withdrawal credentials must be delegated
+            // to a DRep (post-bootstrap only, uses pre-CERTS state).
+            validate_withdrawals_delegated(
+                body.withdrawals.as_ref(),
+                &staged_stake_credentials,
+                cert_ctx.bootstrap_phase,
+            )?;
             let unregistered_drep_voters = collect_conway_unregistered_drep_voters(
                 body.certificates.as_deref(),
             );
@@ -5771,7 +5813,7 @@ impl LedgerState {
 
                 staged_governance_actions = governance_actions_for_tx;
                 if let Some(voting_procedures) = &body.voting_procedures {
-                    apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch, staged_num_dormant);
+                    apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch, staged_num_dormant, cert_ctx.bootstrap_phase);
                 }
                 remove_conway_drep_votes(
                     &unregistered_drep_voters,
@@ -5797,6 +5839,7 @@ impl LedgerState {
                 &mut staged_drep_state,
                 self.current_epoch,
                 staged_num_dormant,
+                cert_ctx.bootstrap_phase,
             );
             // Conway UTXO rule: totalTxDeposits includes both certificate
             // deposits and proposal procedure deposits.
@@ -6324,6 +6367,7 @@ fn apply_conway_votes(
     drep_state: &mut DrepState,
     current_epoch: EpochNo,
     num_dormant_epochs: u64,
+    bootstrap_phase: bool,
 ) {
     for (voter, votes) in &voting_procedures.procedures {
         for (gov_action_id, voting_procedure) in votes {
@@ -6335,9 +6379,13 @@ fn apply_conway_votes(
         // Upstream `updateVotingDRepExpiries` / `computeDRepExpiry`:
         //   expiry = currentEpoch + drepActivity - numDormantEpochs
         // In our model: last_active_epoch = currentEpoch - numDormantEpochs
+        //
+        // During bootstrap: last_active_epoch = currentEpoch (no dormant).
         if let Some(drep) = voter_to_drep(voter) {
             if let Some(entry) = drep_state.get_mut(&drep) {
-                entry.touch_activity(EpochNo(current_epoch.0.saturating_sub(num_dormant_epochs)));            }
+                let dormant = if bootstrap_phase { 0 } else { num_dormant_epochs };
+                entry.touch_activity(EpochNo(current_epoch.0.saturating_sub(dormant)));
+            }
         }
     }
 }
@@ -6860,6 +6908,46 @@ fn validate_conway_current_treasury_value(
     Ok(())
 }
 
+/// Validates that every key-hash withdrawal credential has a DRep delegation
+/// in the pre-CERTS stake credential state (Conway post-bootstrap rule).
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Rules.Ledger` —
+/// `validateWithdrawalsDelegated`.
+///
+/// This is gated by `!bootstrap_phase`; during bootstrap phase (PV 9) the
+/// check is skipped.
+fn validate_withdrawals_delegated(
+    withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
+    stake_credentials: &StakeCredentials,
+    bootstrap_phase: bool,
+) -> Result<(), LedgerError> {
+    // Upstream: unless (hardforkConwayBootstrapPhase ...) $ runTest $
+    //   validateWithdrawalsDelegated accounts tx
+    if bootstrap_phase {
+        return Ok(());
+    }
+    let wdrls = match withdrawals {
+        Some(w) if !w.is_empty() => w,
+        _ => return Ok(()),
+    };
+    for ra in wdrls.keys() {
+        if let StakeCredential::AddrKeyHash(kh) = &ra.credential {
+            // Upstream: lookupAccountState (KeyHashObj keyHash) accounts >>= dRepDelegationAccountStateL
+            let has_drep = stake_credentials
+                .get(&StakeCredential::AddrKeyHash(*kh))
+                .and_then(|state| state.delegated_drep())
+                .is_some();
+            if !has_drep {
+                return Err(LedgerError::WithdrawalNotDelegatedToDRep {
+                    credential: *kh,
+                });
+            }
+        }
+        // Script-hash credentials are not checked (upstream filters with `credKeyHash`).
+    }
+    Ok(())
+}
+
 /// Context for certificate validation, bundling protocol parameters and
 /// ledger state needed during `apply_certificates_and_withdrawals`.
 struct CertificateValidationContext {
@@ -6873,6 +6961,11 @@ struct CertificateValidationContext {
     drep_deposit: Option<u64>,
     /// `true` when the current era is Conway or later (tag ≥ 7).
     is_conway: bool,
+    /// `true` during Conway bootstrap phase (PV major == 9).
+    ///
+    /// Upstream: `hardforkConwayBootstrapPhase` gates DRep registration
+    /// checks in `Cardano.Ledger.Conway.Rules.Deleg`.
+    bootstrap_phase: bool,
 }
 
 /// Results of certificate and withdrawal processing for the value preservation
@@ -7035,7 +7128,7 @@ fn apply_certificates_and_withdrawals(
                     )?;
                 }
                 DCert::DelegationToDrep(credential, drep) => {
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
                 }
                 DCert::DelegationToStakePoolAndDrep(credential, pool, drep) => {
                     delegate_stake_credential(
@@ -7045,7 +7138,7 @@ fn apply_certificates_and_withdrawals(
                         *credential,
                         *pool,
                     )?;
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
                 }
                 DCert::AccountRegistrationDelegationToDrep(credential, drep, deposit) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
@@ -7058,7 +7151,7 @@ fn apply_certificates_and_withdrawals(
                     register_stake_credential(stake_credentials, *credential)?;
                     deposit_pot.add_key_deposit(*deposit);
                     total_deposits = total_deposits.saturating_add(*deposit);
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
                 }
                 DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, deposit) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
@@ -7078,7 +7171,7 @@ fn apply_certificates_and_withdrawals(
                         *credential,
                         *pool,
                     )?;
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep)?;
+                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
                 }
                 DCert::CommitteeAuthorization(cold_credential, hot_credential) => {
                     authorize_committee_hot_credential(
@@ -7431,12 +7524,19 @@ fn delegate_drep(
     drep_state: &DrepState,
     credential: StakeCredential,
     drep: DRep,
+    bootstrap_phase: bool,
 ) -> Result<(), LedgerError> {
     let Some(state) = stake_credentials.get_mut(&credential) else {
         return Err(LedgerError::StakeCredentialNotRegistered(credential));
     };
 
-    if !is_builtin_drep(drep) && !drep_state.is_registered(&drep) {
+    // Upstream `checkDRepRegistered` in `Cardano.Ledger.Conway.Rules.Deleg`:
+    //   unless (hardforkConwayBootstrapPhase pv) $
+    //     targetDRep `Map.member` dReps ?! DelegateeDRepNotRegisteredDELEG
+    //
+    // During bootstrap phase (PV == 9), delegating to an unregistered DRep
+    // is allowed.
+    if !bootstrap_phase && !is_builtin_drep(drep) && !drep_state.is_registered(&drep) {
         return Err(LedgerError::DelegateeDRepNotRegistered(drep));
     }
 
@@ -7453,11 +7553,17 @@ fn drep_from_credential(credential: StakeCredential) -> DRep {
 
 /// Updates `last_active_epoch` for DReps that were registered or updated
 /// in the current batch of certificates.
+///
+/// Upstream `computeDRepExpiryVersioned`:
+///   - Bootstrap phase (PV == 9): `addEpochInterval currentEpoch drepActivity`
+///     (no dormant subtraction).
+///   - Post-bootstrap (PV >= 10): `computeDRepExpiry` subtracts dormant epochs.
 fn touch_drep_activity_for_certs(
     certificates: Option<&[DCert]>,
     drep_state: &mut DrepState,
     current_epoch: EpochNo,
     num_dormant_epochs: u64,
+    bootstrap_phase: bool,
 ) {
     let Some(certs) = certificates else {
         return;
@@ -7474,7 +7580,10 @@ fn touch_drep_activity_for_certs(
             // `updateDRepExpiry`:
             //   expiry = currentEpoch + drepActivity - dormant
             // In our model: last_active_epoch = currentEpoch - dormant
-            entry.touch_activity(EpochNo(current_epoch.0.saturating_sub(num_dormant_epochs)));
+            //
+            // During bootstrap: last_active_epoch = currentEpoch (no dormant).
+            let dormant = if bootstrap_phase { 0 } else { num_dormant_epochs };
+            entry.touch_activity(EpochNo(current_epoch.0.saturating_sub(dormant)));
         }
     }
 }
@@ -7836,22 +7945,33 @@ fn validate_no_extraneous_script_witnesses_typed(
 /// Blake2b-256 hash must match the declared value. If no hash is declared
 /// the data must be absent.
 ///
-/// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `validateAuxiliaryData`.
+/// When `protocol_version` is `Some((major, minor))` and the version is
+/// greater than (2, 0), the metadata content is additionally validated:
+/// all byte strings and text strings within transaction metadatum entries
+/// must be ≤ 64 bytes (upstream `validMetadatum`).
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxow` — `validateMetadata`.
 fn validate_auxiliary_data(
     declared_hash: Option<&[u8; 32]>,
     auxiliary_data: Option<&[u8]>,
+    protocol_version: Option<(u64, u64)>,
 ) -> Result<(), LedgerError> {
     match (declared_hash, auxiliary_data) {
         (Some(declared), Some(data)) => {
             let computed = yggdrasil_crypto::hash_bytes_256(data).0;
             if *declared != computed {
-                Err(LedgerError::AuxiliaryDataHashMismatch {
+                return Err(LedgerError::AuxiliaryDataHashMismatch {
                     declared: *declared,
                     computed,
-                })
-            } else {
-                Ok(())
+                });
             }
+            // Upstream `SoftForks.validMetadata`: active when pv > ProtVer 2 0.
+            if let Some((major, minor)) = protocol_version {
+                if major > 2 || (major == 2 && minor > 0) {
+                    validate_auxiliary_data_metadata_sizes(data)?;
+                }
+            }
+            Ok(())
         }
         (Some(_), None) => Err(LedgerError::AuxiliaryDataMissing),
         // Upstream `validateMissingTxBodyMetadataHash`: if auxiliary data is
@@ -7859,6 +7979,137 @@ fn validate_auxiliary_data(
         (None, Some(_)) => Err(LedgerError::MissingTxBodyMetadataHash),
         // Neither hash nor data — nothing to validate.
         (None, None) => Ok(()),
+    }
+}
+
+/// Validates that all transaction metadatum values within auxiliary data
+/// conform to CDDL size constraints: byte strings ≤ 64 and text strings
+/// ≤ 64 bytes.
+///
+/// Auxiliary data CBOR layouts:
+/// - Shelley: `metadata` (a map of uint → transaction_metadatum)
+/// - Allegra/Mary: `[metadata, [scripts]]`
+/// - Alonzo+: `#6.259({? 0 => metadata, ? 1 => [native_scripts], ...})`
+///
+/// Reference: `Cardano.Ledger.Metadata` — `validMetadatum`.
+fn validate_auxiliary_data_metadata_sizes(raw: &[u8]) -> Result<(), LedgerError> {
+    use crate::cbor::Decoder;
+    let mut dec = Decoder::new(raw);
+    if dec.is_empty() {
+        return Ok(());
+    }
+    let major = dec.peek_major().unwrap_or(0xff);
+    match major {
+        // Major type 5 (map): Shelley-style metadata — the whole thing is
+        // `{ * uint => transaction_metadatum }`.
+        5 => validate_metadata_map(&mut dec),
+        // Major type 4 (array): Allegra/Mary `[metadata, [scripts]]`.
+        4 => {
+            let len = dec.array().map_err(|_| LedgerError::InvalidMetadata)?;
+            if len == 0 {
+                return Ok(());
+            }
+            // First element is the metadata map.
+            validate_metadata_map(&mut dec)
+            // Remaining elements (scripts) are not checked for metadata sizes.
+        }
+        // Major type 6 (tag): Alonzo+ `#6.259({...})`.
+        6 => {
+            let _tag = dec.tag().map_err(|_| LedgerError::InvalidMetadata)?;
+            // Expect a map inside the tag.
+            let count = dec.map().map_err(|_| LedgerError::InvalidMetadata)?;
+            for _ in 0..count {
+                let key = dec.unsigned().map_err(|_| LedgerError::InvalidMetadata)?;
+                if key == 0 {
+                    // Key 0 is the metadata map.
+                    return validate_metadata_map(&mut dec);
+                }
+                // Skip non-metadata entries (scripts, etc.).
+                dec.skip().map_err(|_| LedgerError::InvalidMetadata)?;
+            }
+            Ok(())
+        }
+        _ => {
+            // Unknown auxiliary data format — skip validation rather than
+            // reject valid blocks with future CBOR layouts.
+            Ok(())
+        }
+    }
+}
+
+/// Validates entries in a `metadata = { * uint => transaction_metadatum }` map.
+fn validate_metadata_map(dec: &mut crate::cbor::Decoder<'_>) -> Result<(), LedgerError> {
+    let count = dec.map().map_err(|_| LedgerError::InvalidMetadata)?;
+    for _ in 0..count {
+        // Key is uint — skip it.
+        dec.skip().map_err(|_| LedgerError::InvalidMetadata)?;
+        // Value is a transaction_metadatum — recursively validate.
+        if !validate_metadatum(dec)? {
+            return Err(LedgerError::InvalidMetadata);
+        }
+    }
+    Ok(())
+}
+
+/// Recursively validates a single `transaction_metadatum` CBOR item.
+///
+/// Returns `Ok(true)` when the metadatum and all sub-items are valid,
+/// `Ok(false)` when a bytes/text item exceeds 64 bytes.
+///
+/// ```text
+/// transaction_metadatum =
+///     int
+///   / bytes .size (0..64)
+///   / text .size (0..64)
+///   / [ * transaction_metadatum ]
+///   / { * transaction_metadatum => transaction_metadatum }
+/// ```
+fn validate_metadatum(dec: &mut crate::cbor::Decoder<'_>) -> Result<bool, LedgerError> {
+    let major = dec.peek_major().map_err(|_| LedgerError::InvalidMetadata)?;
+    match major {
+        // Major type 0 (unsigned) or 1 (negative): integer — always valid.
+        0 | 1 => {
+            dec.skip().map_err(|_| LedgerError::InvalidMetadata)?;
+            Ok(true)
+        }
+        // Major type 2 (bytes): must be ≤ 64 bytes.
+        2 => {
+            let bs = dec.bytes().map_err(|_| LedgerError::InvalidMetadata)?;
+            Ok(bs.len() <= 64)
+        }
+        // Major type 3 (text): UTF-8 bytes must be ≤ 64.
+        3 => {
+            let s = dec.text().map_err(|_| LedgerError::InvalidMetadata)?;
+            Ok(s.len() <= 64)
+        }
+        // Major type 4 (array): recurse into elements.
+        4 => {
+            let count = dec.array().map_err(|_| LedgerError::InvalidMetadata)?;
+            for _ in 0..count {
+                if !validate_metadatum(dec)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        // Major type 5 (map): recurse into keys and values.
+        5 => {
+            let count = dec.map().map_err(|_| LedgerError::InvalidMetadata)?;
+            for _ in 0..count {
+                if !validate_metadatum(dec)? {
+                    return Ok(false);
+                }
+                if !validate_metadatum(dec)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        // Tags or other types — skip (not standard metadatum but tolerate).
+        _ => {
+            dec.skip().map_err(|_| LedgerError::InvalidMetadata)?;
+            Ok(true)
+        }
     }
 }
 
@@ -13805,7 +14056,7 @@ mod tests {
             anchor: None,
         });
         procedures.procedures.insert(voter.clone(), votes);
-        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(5), 0);
+        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(5), 0, false);
         assert_eq!(
             governance_actions[&gov_id].votes.get(&voter),
             Some(&Vote::Yes),
@@ -13819,7 +14070,7 @@ mod tests {
         });
         let mut procedures2 = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
         procedures2.procedures.insert(voter.clone(), votes2);
-        apply_conway_votes(&procedures2, &mut governance_actions, &mut drep_state, EpochNo(5), 0);
+        apply_conway_votes(&procedures2, &mut governance_actions, &mut drep_state, EpochNo(5), 0, false);
         assert_eq!(
             governance_actions[&gov_id].votes.get(&voter),
             Some(&Vote::No),
@@ -13846,7 +14097,7 @@ mod tests {
             anchor: None,
         });
         procedures.procedures.insert(Voter::DRepKeyHash([0xD1; 28]), votes);
-        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(42), 0);
+        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(42), 0, false);
 
         assert_eq!(
             drep_state.get(&drep).unwrap().last_active_epoch(),
@@ -14140,6 +14391,7 @@ mod tests {
             expected_network_id: Some(1),
             drep_deposit: Some(500_000),
             is_conway: false,
+            bootstrap_phase: false,
         }
     }
 
@@ -14155,6 +14407,7 @@ mod tests {
             expected_network_id: Some(1),
             drep_deposit: Some(500_000),
             is_conway: true,
+            bootstrap_phase: false,
         }
     }
 

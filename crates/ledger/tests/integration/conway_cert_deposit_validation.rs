@@ -444,6 +444,7 @@ fn conway_rejects_partial_withdrawal() {
 
     let cred = StakeCredential::AddrKeyHash([0xFC; 28]);
     state.stake_credentials_mut().register(cred);
+    state.stake_credentials_mut().get_mut(&cred).unwrap().set_delegated_drep(Some(DRep::AlwaysAbstain));
     let ra = RewardAccount { network: 1, credential: cred };
     state.reward_accounts_mut().insert(ra, RewardAccountState::new(1_000_000, None));
 
@@ -502,6 +503,7 @@ fn conway_accepts_full_drain_withdrawal() {
 
     let cred = StakeCredential::AddrKeyHash([0x01; 28]);
     state.stake_credentials_mut().register(cred);
+    state.stake_credentials_mut().get_mut(&cred).unwrap().set_delegated_drep(Some(DRep::AlwaysAbstain));
     let ra = RewardAccount { network: 1, credential: cred };
     state.reward_accounts_mut().insert(ra, RewardAccountState::new(1_000_000, None));
 
