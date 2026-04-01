@@ -72,7 +72,7 @@ fn seed_script_utxo(
         MultiEraTxOut::Alonzo(AlonzoTxOut {
             address,
             amount: Value::Coin(coin),
-            datum_hash: Some([0xDD; 32]),
+            datum_hash: Some(yggdrasil_crypto::blake2b::hash_bytes_256(&spending_datum().to_cbor_bytes()).0),
         }),
     );
 }
@@ -99,6 +99,10 @@ fn test_plutus_script_hash(version_tag: u8, script_bytes: &[u8]) -> [u8; 28] {
     yggdrasil_crypto::blake2b::hash_bytes_224(&prefixed).0
 }
 
+fn spending_datum() -> PlutusData {
+    PlutusData::Integer(9)
+}
+
 /// Build an Alonzo block with a single transaction that includes a Plutus
 /// script in the witness set (minting policy pattern — simpler than spending).
 fn alonzo_block_with_plutus_v1_mint(
@@ -107,14 +111,19 @@ fn alonzo_block_with_plutus_v1_mint(
     input_txid: [u8; 32],
     collateral_input: ShelleyTxIn,
 ) -> Block {
-    // Build witness set with the V1 script + a minting redeemer.
+    // Build witness set with the V1 script + spending/minting redeemers.
     let ws = ShelleyWitnessSet {
         vkey_witnesses: vec![],
         native_scripts: vec![],
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![script_bytes],
-        plutus_data: vec![],
+        plutus_data: vec![spending_datum()],
         redeemers: vec![Redeemer {
+            tag: 0, // spending
+            index: 0,
+            data: PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 1000, steps: 2000 },
+        }, Redeemer {
             tag: 1, // minting
             index: 0,
             data: PlutusData::Integer(0.into()),
@@ -191,8 +200,13 @@ fn babbage_block_with_plutus_v2_mint(
         native_scripts: vec![],
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
-        plutus_data: vec![],
+        plutus_data: vec![spending_datum()],
         redeemers: vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 1000, steps: 2000 },
+        }, Redeemer {
             tag: 1,
             index: 0,
             data: PlutusData::Integer(0.into()),
@@ -272,8 +286,13 @@ fn conway_submitted_tx_with_plutus_v3_mint(
         native_scripts: vec![],
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
-        plutus_data: vec![],
+        plutus_data: vec![spending_datum()],
         redeemers: vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 1000, steps: 2000 },
+        }, Redeemer {
             tag: 1,
             index: 0,
             data: PlutusData::Integer(0.into()),
@@ -428,8 +447,13 @@ fn alonzo_submitted_tx_rejects_v1_when_no_cost_model() {
         native_scripts: vec![],
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![script_bytes],
-        plutus_data: vec![],
+        plutus_data: vec![spending_datum()],
         redeemers: vec![Redeemer {
+            tag: 0, // spending
+            index: 0,
+            data: PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 1000, steps: 2000 },
+        }, Redeemer {
             tag: 1, // minting
             index: 0,
             data: PlutusData::Integer(0.into()),
@@ -521,8 +545,13 @@ fn babbage_submitted_tx_rejects_v2_when_no_cost_model() {
         native_scripts: vec![],
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
-        plutus_data: vec![],
+        plutus_data: vec![spending_datum()],
         redeemers: vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 1000, steps: 2000 },
+        }, Redeemer {
             tag: 1,
             index: 0,
             data: PlutusData::Integer(0.into()),
@@ -633,8 +662,13 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
         native_scripts: vec![],
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
-        plutus_data: vec![],
+        plutus_data: vec![spending_datum()],
         redeemers: vec![Redeemer {
+            tag: 0,
+            index: 0,
+            data: PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 1000, steps: 2000 },
+        }, Redeemer {
             tag: 1,
             index: 0,
             data: PlutusData::Integer(0.into()),

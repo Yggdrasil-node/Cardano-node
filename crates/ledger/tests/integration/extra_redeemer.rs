@@ -334,3 +334,318 @@ fn alonzo_block_rejects_extra_minting_redeemer_for_native_policy() {
         "expected ExtraRedeemer for native minting policy, got: {result:?}",
     );
 }
+
+/// An Alonzo block with `is_valid = false` and a spending redeemer targeting a
+/// native-script-locked input must still be rejected with ExtraRedeemer.
+///
+/// Upstream, `hasExactSetOfRedeemers` is a Phase-1 UTXOW check that runs
+/// unconditionally before the UTXOS `is_valid` dispatching.  So even when the
+/// block producer claims scripts failed, malformed redeemer sets are rejected.
+#[test]
+fn alonzo_block_rejects_extra_redeemer_even_when_is_valid_false() {
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(permissive_alonzo_params());
+
+    let native = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&native);
+
+    let input = ShelleyTxIn {
+        transaction_id: [0xB7; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: script_addr(&script_hash),
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }),
+    );
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0xC2; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        collateral_input.clone(),
+        MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(10_000_000),
+            datum_hash: None,
+        }),
+    );
+
+    let body = AlonzoTxBody {
+        inputs: vec![input],
+        outputs: vec![AlonzoTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }],
+        fee: 0,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: Some(vec![collateral_input]),
+        required_signers: None,
+        network_id: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx = Tx {
+        id: compute_tx_id(&body_bytes),
+        body: body_bytes,
+        witnesses: Some(ws.to_cbor_bytes()),
+        auxiliary_data: None,
+        is_valid: Some(false), // block says scripts failed
+    };
+
+    let block = Block {
+        era: Era::Alonzo,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        matches!(result, Err(LedgerError::ExtraRedeemer { tag: 0, index: 0 })),
+        "expected ExtraRedeemer even with is_valid=false, got: {result:?}",
+    );
+}
+
+/// A Babbage block with a spending redeemer targeting a native-script-locked
+/// input must be rejected with ExtraRedeemer.
+#[test]
+fn babbage_block_rejects_extra_redeemer_for_native_script_input() {
+    let mut state = LedgerState::new(Era::Babbage);
+    let mut params = permissive_alonzo_params();
+    params.max_val_size = Some(5000);
+    state.set_protocol_params(params);
+
+    let native = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&native);
+
+    let input = ShelleyTxIn {
+        transaction_id: [0xB8; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: script_addr(&script_hash),
+            amount: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0xC3; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        collateral_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(10_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+
+    let body = BabbageTxBody {
+        inputs: vec![input],
+        outputs: vec![BabbageTxOut {
+            address: script_addr(&script_hash),
+            amount: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: Some(vec![collateral_input]),
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx = Tx {
+        id: compute_tx_id(&body_bytes),
+        body: body_bytes,
+        witnesses: Some(ws.to_cbor_bytes()),
+        auxiliary_data: None,
+        is_valid: Some(true),
+    };
+
+    let block = Block {
+        era: Era::Babbage,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        matches!(result, Err(LedgerError::ExtraRedeemer { tag: 0, index: 0 })),
+        "expected ExtraRedeemer for Babbage block, got: {result:?}",
+    );
+}
+
+/// A Conway block with a minting redeemer targeting a native minting policy
+/// must be rejected with ExtraRedeemer.
+#[test]
+fn conway_block_rejects_extra_minting_redeemer_for_native_policy() {
+    let mut state = LedgerState::new(Era::Conway);
+    let mut params = permissive_alonzo_params();
+    params.max_val_size = Some(5000);
+    params.protocol_version = Some((10, 0));
+    state.set_protocol_params(params);
+
+    let native = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&native);
+
+    let input = ShelleyTxIn {
+        transaction_id: [0xB9; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: script_addr(&script_hash),
+            amount: Value::Coin(10_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0xC4; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        collateral_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(10_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+
+    let policy_id = script_hash;
+    let mut mint = std::collections::BTreeMap::new();
+    let mut assets = std::collections::BTreeMap::new();
+    assets.insert(vec![0xBB], 1i64);
+    mint.insert(policy_id, assets);
+
+    let body = ConwayTxBody {
+        inputs: vec![input],
+        outputs: vec![BabbageTxOut {
+            address: script_addr(&script_hash),
+            amount: Value::Coin(10_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: Some(1000),
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: Some(mint),
+        script_data_hash: None,
+        collateral: Some(vec![collateral_input]),
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 1,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx = Tx {
+        id: compute_tx_id(&body_bytes),
+        body: body_bytes,
+        witnesses: Some(ws.to_cbor_bytes()),
+        auxiliary_data: None,
+        is_valid: Some(true),
+    };
+
+    let block = Block {
+        era: Era::Conway,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        matches!(result, Err(LedgerError::ExtraRedeemer { tag: 1, index: 0 })),
+        "expected ExtraRedeemer for Conway block, got: {result:?}",
+    );
+}

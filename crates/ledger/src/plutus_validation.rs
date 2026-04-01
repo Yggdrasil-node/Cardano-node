@@ -217,6 +217,9 @@ pub fn compute_script_data_hash(
     witness_bytes: Option<&[u8]>,
     protocol_params: Option<&ProtocolParameters>,
     conway_redeemer_format: bool,
+    utxo: Option<&MultiEraUtxo>,
+    reference_inputs: Option<&[ShelleyTxIn]>,
+    required_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Result<[u8; 32], LedgerError> {
     let ws = match witness_bytes {
         Some(wb) => crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?,
@@ -234,7 +237,13 @@ pub fn compute_script_data_hash(
 
     let redeemers_bytes = encode_redeemers_for_script_data_hash(&ws.redeemers, conway_redeemer_format);
     let datums_bytes = encode_datums_for_script_data_hash(&ws.plutus_data);
-    let language_views = encode_language_views_for_script_data_hash(&ws, protocol_params);
+    let language_views = encode_language_views_for_script_data_hash(
+        &ws,
+        protocol_params,
+        utxo,
+        reference_inputs,
+        required_script_hashes,
+    );
 
     let mut preimage = Vec::with_capacity(
         redeemers_bytes.len() + datums_bytes.len() + language_views.len(),
@@ -254,6 +263,9 @@ pub fn validate_script_data_hash(
     witness_bytes: Option<&[u8]>,
     protocol_params: Option<&ProtocolParameters>,
     conway_redeemer_format: bool,
+    utxo: Option<&MultiEraUtxo>,
+    reference_inputs: Option<&[ShelleyTxIn]>,
+    required_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Result<(), LedgerError> {
     let Some(declared_hash) = declared else {
         return Ok(());
@@ -262,6 +274,9 @@ pub fn validate_script_data_hash(
         witness_bytes,
         protocol_params,
         conway_redeemer_format,
+        utxo,
+        reference_inputs,
+        required_script_hashes,
     )?;
     if computed != declared_hash {
         return Err(LedgerError::PPViewHashesDontMatch {
@@ -338,17 +353,23 @@ fn encode_cost_model_values(values: &[i64], indefinite: bool) -> Vec<u8> {
 fn encode_language_views_for_script_data_hash(
     ws: &crate::eras::shelley::ShelleyWitnessSet,
     protocol_params: Option<&ProtocolParameters>,
+    utxo: Option<&MultiEraUtxo>,
+    reference_inputs: Option<&[ShelleyTxIn]>,
+    required_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Vec<u8> {
-    let mut langs: Vec<u8> = Vec::new();
-    if !ws.plutus_v1_scripts.is_empty() {
-        langs.push(0);
-    }
-    if !ws.plutus_v2_scripts.is_empty() {
-        langs.push(1);
-    }
-    if !ws.plutus_v3_scripts.is_empty() {
-        langs.push(2);
-    }
+    let mut langs: Vec<u8> = collect_all_plutus_scripts(
+        ws,
+        utxo.unwrap_or(&MultiEraUtxo::new()),
+        reference_inputs,
+    )
+    .into_iter()
+    .filter(|(hash, _)| {
+        required_script_hashes
+            .map(|required| required.contains(hash))
+            .unwrap_or(true)
+    })
+    .map(|(_, (version, _))| version.cost_model_key())
+    .collect();
     langs.sort_unstable();
     langs.dedup();
 
@@ -717,10 +738,10 @@ pub fn validate_unspendable_utxo_no_datum_hash(
 /// by a Plutus script.
 ///
 /// This is a standalone extraction of the UTXOW `hasExactSetOfRedeemers`
-/// predicate so it can be called from both block-apply and submitted-tx
-/// paths.  The block path also runs this implicitly via
-/// [`validate_plutus_scripts`], but submitted-tx paths skip Phase-2
-/// evaluation and need this check independently.
+/// predicate.  Called from both block-apply and submitted-tx paths as a
+/// Phase-1 UTXOW check, unconditionally before `is_valid` dispatching.
+/// The check also runs redundantly inside [`validate_plutus_scripts`] for
+/// defence-in-depth.
 ///
 /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.hasExactSetOfRedeemers`
 pub fn validate_no_extra_redeemers(
@@ -898,6 +919,34 @@ pub fn validate_plutus_scripts(
         }
     }
 
+    // ── MissingRedeemer check (UTXOW Phase-1) ────────────────────────
+    // Every required Plutus-backed purpose must have a corresponding
+    // redeemer pointer. Reject missing redeemers before CEK evaluation.
+    // Reference: Cardano.Ledger.Alonzo.Rules.Utxow.hasExactSetOfRedeemers
+    let actual_redeemer_ptrs: std::collections::HashSet<(u8, u64)> = ws
+        .redeemers
+        .iter()
+        .map(|redeemer| (redeemer.tag, redeemer.index))
+        .collect();
+    for expected in collect_required_plutus_redeemers(
+        required_script_hashes,
+        &plutus_scripts,
+        spending_utxo,
+        sorted_inputs,
+        sorted_policy_ids,
+        certificates,
+        sorted_reward_accounts,
+        sorted_voters,
+        proposal_procedures,
+    ) {
+        if !actual_redeemer_ptrs.contains(&(expected.tag, expected.index)) {
+            return Err(LedgerError::MissingRedeemer {
+                hash: expected.hash,
+                purpose: expected.purpose,
+            });
+        }
+    }
+
     // Build an augmented TxContext with the fields that require access to the
     // witness set and spending UTxO (inputs, certificates, witness_datums).
     // These are not available at the call-sites in state.rs so we populate
@@ -1038,6 +1087,114 @@ pub fn validate_plutus_scripts(
     }
 
     Ok(())
+}
+
+struct RequiredPlutusRedeemer {
+    tag: u8,
+    index: u64,
+    hash: [u8; 28],
+    purpose: String,
+}
+
+fn collect_required_plutus_redeemers(
+    required_script_hashes: &std::collections::HashSet<[u8; 28]>,
+    plutus_scripts: &HashMap<[u8; 28], (PlutusVersion, Vec<u8>)>,
+    spending_utxo: &MultiEraUtxo,
+    sorted_inputs: &[crate::eras::shelley::ShelleyTxIn],
+    sorted_policy_ids: &[[u8; 28]],
+    certificates: &[DCert],
+    sorted_reward_accounts: &[Vec<u8>],
+    sorted_voters: &[Voter],
+    proposal_procedures: &[ProposalProcedure],
+) -> Vec<RequiredPlutusRedeemer> {
+    let mut required = Vec::new();
+
+    for (index, txin) in sorted_inputs.iter().enumerate() {
+        if let Some(hash) = spending_utxo
+            .get(txin)
+            .and_then(spending_script_hash_from_txout)
+            .filter(|hash| required_script_hashes.contains(hash))
+            .filter(|hash| plutus_scripts.contains_key(hash))
+        {
+            required.push(RequiredPlutusRedeemer {
+                tag: 0,
+                index: index as u64,
+                hash,
+                purpose: format!("spending index {}", index),
+            });
+        }
+    }
+
+    for (index, policy_id) in sorted_policy_ids.iter().enumerate() {
+        if required_script_hashes.contains(policy_id) && plutus_scripts.contains_key(policy_id) {
+            required.push(RequiredPlutusRedeemer {
+                tag: 1,
+                index: index as u64,
+                hash: *policy_id,
+                purpose: format!("minting index {}", index),
+            });
+        }
+    }
+
+    for (index, certificate) in certificates.iter().enumerate() {
+        if let Some(hash) = certifying_script_hash_from_cert(certificate)
+            .filter(|hash| required_script_hashes.contains(hash))
+            .filter(|hash| plutus_scripts.contains_key(hash))
+        {
+            required.push(RequiredPlutusRedeemer {
+                tag: 2,
+                index: index as u64,
+                hash,
+                purpose: format!("certificate index {}", index),
+            });
+        }
+    }
+
+    for (index, reward_account) in sorted_reward_accounts.iter().enumerate() {
+        if let Some(reward_account) = RewardAccount::from_bytes(reward_account) {
+            if let Some(hash) = credential_script_hash(&reward_account.credential)
+                .filter(|hash| required_script_hashes.contains(hash))
+                .filter(|hash| plutus_scripts.contains_key(hash))
+            {
+                required.push(RequiredPlutusRedeemer {
+                    tag: 3,
+                    index: index as u64,
+                    hash,
+                    purpose: format!("reward index {}", index),
+                });
+            }
+        }
+    }
+
+    for (index, voter) in sorted_voters.iter().enumerate() {
+        if let Some(hash) = voting_voter_script_hash(voter)
+            .filter(|hash| required_script_hashes.contains(hash))
+            .filter(|hash| plutus_scripts.contains_key(hash))
+        {
+            required.push(RequiredPlutusRedeemer {
+                tag: 4,
+                index: index as u64,
+                hash,
+                purpose: format!("voting index {}", index),
+            });
+        }
+    }
+
+    for (index, proposal) in proposal_procedures.iter().enumerate() {
+        if let Some(hash) = proposal_script_hash_from_proposal(proposal)
+            .filter(|hash| required_script_hashes.contains(hash))
+            .filter(|hash| plutus_scripts.contains_key(hash))
+        {
+            required.push(RequiredPlutusRedeemer {
+                tag: 5,
+                index: index as u64,
+                hash,
+                purpose: format!("proposal index {}", index),
+            });
+        }
+    }
+
+    required
 }
 
 fn spending_script_hash_from_txout(txout: &MultiEraTxOut) -> Option<[u8; 28]> {
@@ -1480,6 +1637,49 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             LedgerError::PlutusScriptFailed { hash, .. } if hash == policy_hash
+        ));
+    }
+
+    #[test]
+    fn validate_minting_script_missing_redeemer_fails_before_evaluation() {
+        use std::collections::HashSet;
+
+        let script_bytes = vec![0x01, 0x02, 0x03];
+        let policy_hash = plutus_script_hash(PlutusVersion::V1, &script_bytes);
+        let mut required = HashSet::new();
+        required.insert(policy_hash);
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![script_bytes],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let wb = ws.to_cbor_bytes();
+        let utxo = MultiEraUtxo::new();
+
+        let result = validate_plutus_scripts(
+            Some(&AlwaysSucceeds),
+            Some(&wb),
+            &required,
+            &utxo,
+            &[],
+            &[policy_hash],
+            &[],
+            &[],
+            &[],
+            &[],
+            &TxContext::default(),
+            None,
+        );
+
+        assert!(matches!(
+            result,
+            Err(LedgerError::MissingRedeemer { hash, purpose })
+                if hash == policy_hash && purpose == "minting index 0"
         ));
     }
 

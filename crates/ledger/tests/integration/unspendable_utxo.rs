@@ -42,6 +42,14 @@ fn empty_witness_set() -> ShelleyWitnessSet {
     }
 }
 
+fn witness_datum() -> PlutusData {
+    PlutusData::Integer(0)
+}
+
+fn witness_datum_hash() -> [u8; 32] {
+    yggdrasil_crypto::blake2b::hash_bytes_256(&witness_datum().to_cbor_bytes()).0
+}
+
 /// Fake Plutus V1 script bytes used by all tests in this module.
 const FAKE_PLUTUS_V1_SCRIPT: &[u8] = &[0x01];
 
@@ -142,13 +150,25 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         transaction_id: [0xBB; 32],
         index: 0,
     };
-    let datum_hash = [0xCC; 32];
+    let datum_hash = witness_datum_hash();
     state.multi_era_utxo_mut().insert(
         spending_input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
             address: script_addr(&FAKE_PLUTUS_SCRIPT_HASH),
             amount: Value::Coin(10_000_000),
             datum_hash: Some(datum_hash),  // ← HAS DATUM HASH
+        }),
+    );
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0xBC; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        collateral_input.clone(),
+        MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(10_000_000),
+            datum_hash: None,
         }),
     );
 
@@ -168,7 +188,7 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         validity_interval_start: None,
         mint: None,
         script_data_hash: None,
-        collateral: None,
+        collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
     };
@@ -176,6 +196,13 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
     // Witness set with the Plutus V1 script.
     let mut ws = empty_witness_set();
     ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
+    ws.plutus_data.push(witness_datum());
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
@@ -230,6 +257,19 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
             script_ref: None,
         }),
     );
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0xDE; 32],
+        index: 0,
+    };
+    state.multi_era_utxo_mut().insert(
+        collateral_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(10_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
 
     let body = BabbageTxBody {
         inputs: vec![spending_input],
@@ -248,7 +288,7 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         validity_interval_start: None,
         mint: None,
         script_data_hash: None,
-        collateral: None,
+        collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
         reference_inputs: None,
@@ -259,6 +299,12 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
     // Witness set with the Plutus V1 script.
     let mut ws = empty_witness_set();
     ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();

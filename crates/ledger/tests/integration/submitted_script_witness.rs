@@ -27,6 +27,14 @@ fn empty_witness_set() -> ShelleyWitnessSet {
     }
 }
 
+fn spending_datum() -> PlutusData {
+    PlutusData::Bytes(vec![0xCA, 0xFE])
+}
+
+fn spending_datum_hash() -> [u8; 32] {
+    yggdrasil_crypto::blake2b::hash_bytes_256(&spending_datum().to_cbor_bytes()).0
+}
+
 fn permissive_params() -> ProtocolParameters {
     let mut params = ProtocolParameters::default();
     params.min_fee_a = 0;
@@ -113,13 +121,17 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         transaction_id: [0x32; 32],
         index: 0,
     };
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0x33; 32],
+        index: 0,
+    };
 
     state.multi_era_utxo_mut().insert(
         spending_input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: input_addr,
             amount: Value::Coin(5_000_000),
-            datum_option: Some(DatumOption::Hash([0xCC; 32])),
+            datum_option: Some(DatumOption::Hash(spending_datum_hash())),
             script_ref: None,
         }),
     );
@@ -130,6 +142,15 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
             amount: Value::Coin(2_000_000),
             datum_option: None,
             script_ref: Some(ScriptRef(Script::PlutusV2(plutus_bytes))),
+        }),
+    );
+    state.multi_era_utxo_mut().insert(
+        collateral_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: output_addr.clone(),
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: None,
         }),
     );
 
@@ -150,7 +171,7 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         validity_interval_start: None,
         mint: None,
         script_data_hash: None,
-        collateral: None,
+        collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
         collateral_return: None,
@@ -158,9 +179,18 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         reference_inputs: Some(vec![reference_input]),
     };
 
+    let mut ws = empty_witness_set();
+    ws.plutus_data.push(spending_datum());
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
     let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
         body,
-        empty_witness_set(),
+        ws,
         true,
         None,
     ));

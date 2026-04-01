@@ -93,8 +93,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Fee sufficiency | Linear fee + script fee | ✅ | ✅ | Complete | fees.rs with min_fee calculation
 | Witness sufficiency | VKey hash + signature count | ✅ | ✅ | Complete | verify_vkey_signatures with Ed25519
 | Native script eval | Timelock constraints | ✅ | ✅ | Complete | validate_native_scripts_if_present
-| Plutus validation | Script execution + budget | ✅ | ✅ | Complete | CEK framework + Phase-2 validation wired in block + submitted-tx paths (Alonzo/Babbage/Conway)
+| Plutus validation | Script execution + budget | ✅ | ✅ | Complete | CEK framework + Phase-2 validation wired in block + submitted-tx paths (Alonzo/Babbage/Conway); Phase-1 `validate_no_extra_redeemers` unconditionally before `is_valid` dispatching (upstream `hasExactSetOfRedeemers` in UTXOW)
 | Missing cost model rejection | `NoCostModel` collect error by language key | ✅ | ✅ | Complete | validate_plutus_scripts checks `ProtocolParameters.cost_models` for required Plutus V1/V2/V3 keys (0/1/2) before CEK evaluation; soft-skipped when `cost_models` is absent
+| Script integrity hash parity | `PPViewHashesDontMatch`, language views, era-specific redeemer encoding | ✅ | ✅ | Complete | `validate_script_data_hash` now mirrors upstream `mkScriptIntegrity`: language views are derived from the scripts actually needed by the transaction, including Babbage/Conway reference-input script refs when they satisfy `scriptsNeeded`, while preserving the Alonzo/Babbage legacy redeemer-array encoding and Conway map-format redeemers
 | Collateral checks | Alonzo+ collateral UTxO | ✅ | ✅ | Complete | validate_collateral with VKey-locked + mandatory-when-scripts
 | Min UTxO enforcement | Per-output minimum lovelace | ✅ | ✅ | Complete | min_utxo.rs with era-aware calculation
 | Metadata size validation | `InvalidMetadata` / `validMetadatum` soft fork | ✅ | ✅ | Complete | validate_auxiliary_data enforces <= 64-byte bytes/text metadatum values from protocol version > (2, 0), including nested array/map entries
@@ -439,13 +440,14 @@ The Rust Cardano node (Yggdrasil) has achieved:
 
 **What's Missing**:
 - ✅ **Collateral validation** (VKey-locked enforcement, mandatory when redeemers, Babbage return/total checks)
+- ✅ **Exact redeemer set checks** (missing + extra Plutus redeemer pointers now enforced in shared collector; Phase-1 UTXOW unconditional `validate_no_extra_redeemers` call in all 3 block-apply paths — Alonzo/Babbage/Conway — before `is_valid` dispatching, matching upstream `hasExactSetOfRedeemers` in `alonzoUtxowTransition`)
 - ✅ **Reward calculation** (upstream RUPD→SNAP ordering, delta_reserves-only reserves accounting, fee pot not subtracted from reserves)
 - ✅ **Plutus script execution** (CEK machine framework wired; Phase-2 validation in block + submitted-tx paths)
 - ✅ **Ratification tally** (voting functions complete incl. AlwaysNoConfidence auto-yes; epoch-boundary ratification+enactment+deposit lifecycle)
 - ✅ **Deposit refunds** (enacted+expired+lineage-pruned deposits refunded via returnProposalDeposits; unclaimed→treasury)
 - ✅ **Lineage subtree pruning** (proposalsApplyEnactment: remove_lineage_conflicting_proposals with purpose-root chain validation)
 
-**Parity Status**: **~96% complete** — All era types, core rules, Conway governance lifecycle, deposit/refund validation, dormant epoch tracking, and Phase-2 Plutus validation (block + submitted-tx). Remaining work on CEK builtin coverage and edge cases.
+**Parity Status**: **~96% complete** — All era types, core rules, Conway governance lifecycle, deposit/refund validation, dormant epoch tracking, exact redeemer-set checks, and Phase-2 Plutus validation (block + submitted-tx). Remaining work on CEK builtin coverage and edge cases.
 
 ---
 

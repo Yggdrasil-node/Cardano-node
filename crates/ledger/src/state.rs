@@ -3611,11 +3611,31 @@ impl LedgerState {
                     self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &self.multi_era_utxo,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                }
+                if let Some(mint) = &tx.body.mint {
+                    crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+                }
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
                     Some(&witness_bytes),
                     self.protocol_params.as_ref(),
                     false,
+                    None,
+                    None,
+                    Some(&required_scripts),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -3830,11 +3850,35 @@ impl LedgerState {
                     self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
+                if let Some(ref_inputs) = &tx.body.reference_inputs {
+                    self.multi_era_utxo.validate_reference_inputs(ref_inputs)?;
+                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
+                }
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &self.multi_era_utxo,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                }
+                if let Some(mint) = &tx.body.mint {
+                    crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+                }
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
                     Some(&witness_bytes),
                     self.protocol_params.as_ref(),
-                    true,
+                    false,
+                    Some(&self.multi_era_utxo),
+                    tx.body.reference_inputs.as_deref(),
+                    Some(&required_scripts),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -3889,11 +3933,6 @@ impl LedgerState {
                     )?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
-                // Reference input validation (Babbage+ rule)
-                if let Some(ref_inputs) = &tx.body.reference_inputs {
-                    staged.validate_reference_inputs(ref_inputs)?;
-                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
-                }
                 let mut required_scripts = HashSet::new();
                 crate::witnesses::required_script_hashes_from_inputs_multi_era(
                     &tx.body.inputs,
@@ -4060,11 +4099,47 @@ impl LedgerState {
                     self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
+                if let Some(ref_inputs) = &tx.body.reference_inputs {
+                    self.multi_era_utxo.validate_reference_inputs(ref_inputs)?;
+                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
+                }
+                let mut required_scripts = HashSet::new();
+                crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                    &tx.body.inputs,
+                    &self.multi_era_utxo,
+                    &mut required_scripts,
+                );
+                if let Some(certs) = &tx.body.certificates {
+                    for cert in certs {
+                        crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                    }
+                }
+                if let Some(withdrawals) = &tx.body.withdrawals {
+                    crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                }
+                if let Some(mint) = &tx.body.mint {
+                    crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+                }
+                if let Some(voting_procedures) = &tx.body.voting_procedures {
+                    crate::witnesses::required_script_hashes_from_voting_procedures(
+                        voting_procedures,
+                        &mut required_scripts,
+                    );
+                }
+                if let Some(proposal_procedures) = &tx.body.proposal_procedures {
+                    crate::witnesses::required_script_hashes_from_proposal_procedures(
+                        proposal_procedures,
+                        &mut required_scripts,
+                    );
+                }
                 crate::plutus_validation::validate_script_data_hash(
                     tx.body.script_data_hash,
                     Some(&witness_bytes),
                     self.protocol_params.as_ref(),
                     true,
+                    Some(&self.multi_era_utxo),
+                    tx.body.reference_inputs.as_deref(),
+                    Some(&required_scripts),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -4119,11 +4194,6 @@ impl LedgerState {
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                 }
                 let mut staged = self.multi_era_utxo.clone();
-                // Reference input validation (Babbage+ rule)
-                if let Some(ref_inputs) = &tx.body.reference_inputs {
-                    staged.validate_reference_inputs(ref_inputs)?;
-                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
-                }
                 // Conway LEDGER rule: total reference script size limit
                 staged.validate_tx_ref_scripts_size(
                     &tx.body.inputs,
@@ -4239,6 +4309,12 @@ impl LedgerState {
                         tx.body.reference_inputs.as_deref(),
                     )?;
                 }
+                // Conway UTXO rule: validate current_treasury_value declaration.
+                // Phase-1 check — runs BEFORE Plutus evaluation, matching upstream UTXO rule ordering
+                // and block-apply path placement (reference: Cardano.Ledger.Conway.Rules.Utxo).
+                let current_treasury = self.accounting.treasury;
+                validate_conway_current_treasury_value(tx.body.current_treasury_value, current_treasury)?;
+
                 // Phase-2 Plutus script validation (Conway submitted).
                 {
                     let mut sorted_inputs = tx.body.inputs.clone();
@@ -4281,9 +4357,6 @@ impl LedgerState {
                         self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
                     )?;
                 }
-                // Conway UTXO rule: validate current_treasury_value declaration.
-                let current_treasury = self.accounting.treasury;
-                validate_conway_current_treasury_value(tx.body.current_treasury_value, current_treasury)?;
 
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -4998,11 +5071,31 @@ impl LedgerState {
                 aux_data.as_deref(),
                 self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            if let Some(mint) = &body.mint {
+                crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+            }
             crate::plutus_validation::validate_script_data_hash(
                 body.script_data_hash,
                 witness_bytes.as_deref(),
                 self.protocol_params.as_ref(),
                 false,
+                None,
+                None,
+                Some(&required_scripts),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
@@ -5100,6 +5193,31 @@ impl LedgerState {
                     &body.inputs,
                     &tx_outputs,
                     &[], // no reference inputs in Alonzo
+                )?;
+            }
+            // ExtraRedeemer check (Alonzo block — Phase-1 UTXOW).
+            // Upstream: hasExactSetOfRedeemers in alonzoUtxowTransition runs
+            // unconditionally before UTXOS is_valid dispatching.
+            {
+                let mut sorted_inputs = body.inputs.clone();
+                sorted_inputs.sort();
+                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                    .map(|m| m.keys().copied().collect())
+                    .unwrap_or_default();
+                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                    .unwrap_or_default();
+                crate::plutus_validation::validate_no_extra_redeemers(
+                    witness_bytes.as_deref(),
+                    &staged,
+                    &sorted_inputs,
+                    &sorted_policies,
+                    certs_slice,
+                    &sorted_rewards,
+                    &[],
+                    &[],
+                    None,
                 )?;
             }
             // ── is_valid bifurcation (Phase-2 / collateral-only) ──
@@ -5250,16 +5368,36 @@ impl LedgerState {
                 aux_data.as_deref(),
                 self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
-            crate::plutus_validation::validate_script_data_hash(
-                body.script_data_hash,
-                witness_bytes.as_deref(),
-                self.protocol_params.as_ref(),
-                true,
-            )?;
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
                 MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
             }
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            if let Some(mint) = &body.mint {
+                crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+            }
+            crate::plutus_validation::validate_script_data_hash(
+                body.script_data_hash,
+                witness_bytes.as_deref(),
+                self.protocol_params.as_ref(),
+                false,
+                Some(&staged),
+                body.reference_inputs.as_deref(),
+                Some(&required_scripts),
+            )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -5363,6 +5501,31 @@ impl LedgerState {
                     &body.inputs,
                     &tx_outputs,
                     &ref_utxos,
+                )?;
+            }
+            // ExtraRedeemer check (Babbage block — Phase-1 UTXOW).
+            // Upstream: hasExactSetOfRedeemers in alonzoUtxowTransition runs
+            // unconditionally before UTXOS is_valid dispatching.
+            {
+                let mut sorted_inputs = body.inputs.clone();
+                sorted_inputs.sort();
+                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                    .map(|m| m.keys().copied().collect())
+                    .unwrap_or_default();
+                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                    .unwrap_or_default();
+                crate::plutus_validation::validate_no_extra_redeemers(
+                    witness_bytes.as_deref(),
+                    &staged,
+                    &sorted_inputs,
+                    &sorted_policies,
+                    certs_slice,
+                    &sorted_rewards,
+                    &[],
+                    &[],
+                    body.reference_inputs.as_deref(),
                 )?;
             }
             let run_phase2 = || -> Result<(), LedgerError> {
@@ -5521,16 +5684,48 @@ impl LedgerState {
                 aux_data.as_deref(),
                 self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
+            if let Some(ref_inputs) = &body.reference_inputs {
+                staged.validate_reference_inputs(ref_inputs)?;
+                MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
+            }
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_multi_era(
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            if let Some(mint) = &body.mint {
+                crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
+            }
+            if let Some(voting_procedures) = &body.voting_procedures {
+                crate::witnesses::required_script_hashes_from_voting_procedures(
+                    voting_procedures,
+                    &mut required_scripts,
+                );
+            }
+            if let Some(proposal_procedures) = &body.proposal_procedures {
+                crate::witnesses::required_script_hashes_from_proposal_procedures(
+                    proposal_procedures,
+                    &mut required_scripts,
+                );
+            }
             crate::plutus_validation::validate_script_data_hash(
                 body.script_data_hash,
                 witness_bytes.as_deref(),
                 self.protocol_params.as_ref(),
                 true,
+                Some(&staged),
+                body.reference_inputs.as_deref(),
+                Some(&required_scripts),
             )?;
-            if let Some(ref_inputs) = &body.reference_inputs {
-                staged.validate_reference_inputs(ref_inputs)?;
-                MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
-            }
             // Conway LEDGER rule: total reference script size limit
             staged.validate_tx_ref_scripts_size(
                 &body.inputs,
@@ -5651,6 +5846,42 @@ impl LedgerState {
                     &body.inputs,
                     &tx_outputs,
                     &ref_utxos,
+                )?;
+            }
+            // ExtraRedeemer check (Conway block — Phase-1 UTXOW).
+            // Upstream: hasExactSetOfRedeemers in alonzoUtxowTransition runs
+            // unconditionally before UTXOS is_valid dispatching.
+            {
+                let mut sorted_inputs = body.inputs.clone();
+                sorted_inputs.sort();
+                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                    .map(|m| m.keys().copied().collect())
+                    .unwrap_or_default();
+                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                    .unwrap_or_default();
+                let sorted_voters: Vec<crate::eras::conway::Voter> = body.voting_procedures.as_ref()
+                    .map(|vp| {
+                        let mut vs: Vec<_> = vp.procedures.keys().cloned().collect();
+                        vs.sort();
+                        vs
+                    })
+                    .unwrap_or_default();
+                let proposal_slice: Vec<crate::eras::conway::ProposalProcedure> = body.proposal_procedures
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .to_vec();
+                crate::plutus_validation::validate_no_extra_redeemers(
+                    witness_bytes.as_deref(),
+                    &staged,
+                    &sorted_inputs,
+                    &sorted_policies,
+                    certs_slice,
+                    &sorted_rewards,
+                    &sorted_voters,
+                    &proposal_slice,
+                    body.reference_inputs.as_deref(),
                 )?;
             }
             let run_phase2 = || -> Result<(), LedgerError> {

@@ -70,6 +70,7 @@ mod ledger_state_pools_rewards_queries;
 mod ledger_state_stake_and_drep;
 mod mir;
 mod invalid_metadata;
+mod missing_redeemer;
 mod missing_metadata_hash;
 mod multi_era_utxo;
 mod no_cost_model;
