@@ -409,6 +409,27 @@ pub enum LedgerError {
     #[error("extraneous script witness: script hash {hash:02x?} not required by transaction")]
     ExtraneousScriptWitness { hash: [u8; 28] },
 
+    /// A Plutus script in the transaction witness set could not be deserialized
+    /// into valid UPLC.
+    ///
+    /// Reference: `Cardano.Ledger.Babbage.Rules.Utxow` — `MalformedScriptWitnesses`.
+    #[error("malformed Plutus script witness(es): {0:02x?}")]
+    MalformedScriptWitnesses(Vec<[u8; 28]>),
+
+    /// A reference script in a transaction output could not be deserialized
+    /// into valid UPLC.
+    ///
+    /// Reference: `Cardano.Ledger.Babbage.Rules.Utxow` — `MalformedReferenceScripts`.
+    #[error("malformed reference script(s): {0:02x?}")]
+    MalformedReferenceScripts(Vec<[u8; 28]>),
+
+    /// The upper validity bound of a Plutus-bearing transaction exceeds the
+    /// epoch-info forecast horizon (`current_slot + stability_window`).
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `OutsideForecast`.
+    #[error("outside forecast: upper validity bound slot {slot} exceeds forecast limit {limit}")]
+    OutsideForecast { slot: u64, limit: u64 },
+
     #[error("no matching redeemer for script hash {hash:02x?} (purpose {purpose})")]
     MissingRedeemer { hash: [u8; 28], purpose: String },
 
@@ -463,6 +484,21 @@ pub enum LedgerError {
         declared: [u8; 32],
         computed: [u8; 32],
     },
+
+    /// Upstream `PPViewHashesDontMatch` direction: transaction includes Plutus
+    /// redeemers but does not declare a `script_data_hash`.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` —
+    /// `ppViewHashesDontMatch` / `validateScriptsNeedIntegrity`.
+    #[error("script integrity hash required but absent (redeemers present)")]
+    MissingRequiredScriptIntegrityHash,
+
+    /// Upstream `PPViewHashesDontMatch` direction: transaction declares a
+    /// `script_data_hash` but has no Plutus redeemers or scripts.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo`.
+    #[error("unexpected script integrity hash declared (no redeemers)")]
+    UnexpectedScriptIntegrityHash { declared: [u8; 32] },
 
     // -- Collateral validation errors ---------------------------------------
 

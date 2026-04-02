@@ -50,6 +50,27 @@ impl TestSigner {
     }
 }
 
+/// Compute a valid `script_data_hash` from a witness set and optional protocol params.
+///
+/// Convenience helper for tests that include redeemers and need to pass the
+/// bidirectional `ppViewHashesDontMatch` check.
+fn compute_test_script_data_hash(
+    ws: &ShelleyWitnessSet,
+    params: Option<&ProtocolParameters>,
+    conway_redeemer_format: bool,
+) -> [u8; 32] {
+    let ws_bytes = ws.to_cbor_bytes();
+    yggdrasil_ledger::plutus_validation::compute_script_data_hash(
+        Some(&ws_bytes),
+        params,
+        conway_redeemer_format,
+        None,
+        None,
+        None,
+    )
+    .expect("compute test script_data_hash")
+}
+
 mod block_ex_units;
 mod core_cbor;
 mod duplicate_inputs;

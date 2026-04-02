@@ -873,6 +873,43 @@ impl MultiEraUtxo {
 // Free-standing helpers
 // ---------------------------------------------------------------------------
 
+/// Validates the Alonzo+ `OutsideForecast` UTXO rule.
+///
+/// If the transaction carries Plutus scripts (indicated by `has_redeemers`)
+/// and declares an upper validity bound (`ttl`), that bound must not exceed
+/// the epoch-info forecast horizon: `current_slot + stability_window`.
+///
+/// **Upstream parity note:** The Haskell implementation uses
+/// `unsafeLinearExtendEpochInfo` which linearly extrapolates epoch
+/// boundaries from the current slot, making `epochInfoSlotToUTCTime`
+/// always succeed.  As a result, this check is effectively a **no-op**
+/// in the upstream node — no transaction is ever rejected by
+/// `OutsideForecast`.  This function provides a configurable
+/// approximation and the error infrastructure for forward-compat, but
+/// callers should only wire it in when a stability-window limit is
+/// explicitly requested (e.g. local-submit policy).
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `validateOutsideForecast`.
+pub fn validate_outside_forecast(
+    current_slot: u64,
+    stability_window: u64,
+    ttl: Option<u64>,
+    has_redeemers: bool,
+) -> Result<(), LedgerError> {
+    if has_redeemers {
+        if let Some(upper_bound) = ttl {
+            let limit = current_slot.saturating_add(stability_window);
+            if upper_bound > limit {
+                return Err(LedgerError::OutsideForecast {
+                    slot: upper_bound,
+                    limit,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validates that inputs and outputs are non-empty.
 fn validate_nonempty<I, O>(inputs: &[I], outputs: &[O]) -> Result<(), LedgerError> {
     if inputs.is_empty() {
@@ -1590,6 +1627,41 @@ mod tests {
         assert!(matches!(
             validate_no_ada_in_mint(&Some(mint)),
             Err(LedgerError::TriesToForgeADA)
+        ));
+    }
+
+    // ── OutsideForecast (validate_outside_forecast) ────────────────────
+
+    #[test]
+    fn outside_forecast_no_redeemers_always_ok() {
+        // Without redeemers the check is skipped regardless of TTL.
+        assert!(validate_outside_forecast(100, 50, Some(9999), false).is_ok());
+    }
+
+    #[test]
+    fn outside_forecast_no_ttl_always_ok() {
+        // With redeemers but no upper bound, the check is skipped.
+        assert!(validate_outside_forecast(100, 50, None, true).is_ok());
+    }
+
+    #[test]
+    fn outside_forecast_within_horizon() {
+        assert!(validate_outside_forecast(100, 50, Some(150), true).is_ok());
+        assert!(validate_outside_forecast(100, 50, Some(100), true).is_ok());
+    }
+
+    #[test]
+    fn outside_forecast_at_boundary() {
+        // Exactly at the limit should pass.
+        assert!(validate_outside_forecast(100, 50, Some(150), true).is_ok());
+    }
+
+    #[test]
+    fn outside_forecast_beyond_horizon() {
+        let result = validate_outside_forecast(100, 50, Some(151), true);
+        assert!(matches!(
+            result,
+            Err(LedgerError::OutsideForecast { slot: 151, limit: 150 })
         ));
     }
 }

@@ -196,9 +196,16 @@ fn encode_version_data(enc: &mut Encoder, vd: &NodeToNodeVersionData) {
 }
 
 /// Decode a version data value from a CBOR array.
+///
+/// The array length varies by protocol version:
+/// - V7–V10: `[networkMagic, initiatorOnlyDiffusionMode]` (2 elements)
+/// - V11–V12: `[networkMagic, initiatorOnlyDiffusionMode, peerSharing]` (3 elements)
+/// - V13+:    `[networkMagic, initiatorOnlyDiffusionMode, peerSharing, query]` (4 elements)
+///
+/// Missing fields default to `peer_sharing = 0` (disabled) and `query = false`.
 fn decode_version_data(dec: &mut Decoder<'_>) -> Result<NodeToNodeVersionData, LedgerError> {
     let len = dec.array()?;
-    if len != 4 {
+    if !(2..=4).contains(&len) {
         return Err(LedgerError::CborInvalidLength {
             expected: 4,
             actual: len as usize,
@@ -206,8 +213,12 @@ fn decode_version_data(dec: &mut Decoder<'_>) -> Result<NodeToNodeVersionData, L
     }
     let network_magic = dec.unsigned()? as u32;
     let initiator_only_diffusion_mode = dec.bool()?;
-    let peer_sharing = dec.unsigned()? as u8;
-    let query = dec.bool()?;
+    let peer_sharing = if len >= 3 {
+        dec.unsigned()? as u8
+    } else {
+        0
+    };
+    let query = if len >= 4 { dec.bool()? } else { false };
     Ok(NodeToNodeVersionData {
         network_magic,
         initiator_only_diffusion_mode,

@@ -102,6 +102,10 @@ pub mod local_tx_submission_client;
 /// LocalTxMonitor client driver — NtC mempool monitor initiator.
 pub mod local_tx_monitor_client;
 
+/// Node-to-client (NtC) connection lifecycle and handshake.
+#[cfg(unix)]
+pub mod ntc_peer;
+
 // -- Bearer re-exports --------------------------------------------------------
 pub use bearer::{Bearer, BearerError, Sdu, TcpBearer, MAX_SDU_PAYLOAD};
 
@@ -131,6 +135,8 @@ pub use mux::start_unix_configured as start_mux_unix_configured;
 // -- Peer re-exports ----------------------------------------------------------
 pub use peer::{PeerConnection, PeerError, connect as peer_connect, accept as peer_accept};
 pub use listener::{PeerListener, PeerListenerError};
+#[cfg(unix)]
+pub use ntc_peer::{NtcPeerConnection, NtcPeerError, NodeToClientVersionData, ntc_accept};
 pub use peer_registry::{
     PeerRegistry, PeerRegistryEntry, PeerRegistryStatusCounts, PeerSource,
     PeerStatus,

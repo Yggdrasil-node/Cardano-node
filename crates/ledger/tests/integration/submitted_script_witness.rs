@@ -154,6 +154,26 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         }),
     );
 
+    let mut ws = empty_witness_set();
+    ws.plutus_data.push(spending_datum());
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    // Compute sdh including reference-input scripts so language_views contain V2 cost model.
+    let ws_bytes = ws.to_cbor_bytes();
+    let sdh = yggdrasil_ledger::plutus_validation::compute_script_data_hash(
+        Some(&ws_bytes),
+        state.protocol_params(),
+        false,
+        Some(state.multi_era_utxo()),
+        Some(&[reference_input.clone()]),
+        None,
+    )
+    .expect("compute sdh with reference inputs");
     let body = BabbageTxBody {
         inputs: vec![spending_input],
         outputs: vec![BabbageTxOut {
@@ -170,7 +190,7 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
@@ -178,15 +198,6 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         total_collateral: None,
         reference_inputs: Some(vec![reference_input]),
     };
-
-    let mut ws = empty_witness_set();
-    ws.plutus_data.push(spending_datum());
-    ws.redeemers.push(Redeemer {
-        tag: 0,
-        index: 0,
-        data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
         body,

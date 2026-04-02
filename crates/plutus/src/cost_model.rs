@@ -202,6 +202,7 @@ fn data_ex_memory(d: &yggdrasil_ledger::plutus::PlutusData) -> i64 {
 /// A single-dimension cost expression (CPU or memory) for a builtin.
 ///
 /// Each variant mirrors one upstream Haskell `CostingFun` shape.
+/// Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Evaluation/Machine/CostingFun/Core.hs>
 #[derive(Clone, Debug)]
 pub enum CostExpr {
     /// Fixed cost regardless of argument sizes: `intercept`.
@@ -228,10 +229,47 @@ pub enum CostExpr {
     /// boolean padding flag and the two bytestring operands are args 1 and 2.
     MaxSizeYZ { intercept: i64, slope: i64 },
     /// `c00 + c11 * (y * z) + c12 * (y * z²)` where y = size(arg[1]),
-    /// z = size(arg[2]).
+    /// z = size(arg[2]). If size(arg[0]) > size(arg[2]), cost is increased
+    /// by 50% (upstream penalty for unreduced base in `expModInteger`).
     ///
-    /// Upstream `expModInteger` CPU model from the Plutus R benchmarks.
+    /// Upstream `evaluateExpModCostingFunction` from the Plutus CEK cost model.
     ExpModCost { c00: i64, c11: i64, c12: i64 },
+    /// `intercept + slope * (size(arg[0]) * size(arg[1]))`.
+    ///
+    /// Upstream `ModelTwoArgumentsMultipliedSizes`.
+    MultipliedSizes { intercept: i64, slope: i64 },
+    /// If `size(arg[0]) == size(arg[1])` then `intercept + slope * size(arg[0])`,
+    /// else `constant`.
+    ///
+    /// Upstream `ModelTwoArgumentsLinearOnDiagonal` / `ModelConstantOrLinear`.
+    /// Used by `equalsByteString` and `equalsString`.
+    LinearOnDiagonal { constant: i64, intercept: i64, slope: i64 },
+    /// If `size(arg[0]) < size(arg[1])` then `constant`, else
+    /// `inner.evaluate(sizes)`.
+    ///
+    /// Upstream `ModelTwoArgumentsConstAboveDiagonal`.
+    /// Used by division builtins (`divideInteger`, `modInteger`, etc.).
+    ConstAboveDiagonal { constant: i64, inner: Box<CostExpr> },
+    /// `max(minimum, c00 + c10*x + c01*y + c20*x² + c11*x*y + c02*y²)`
+    /// where x = size(arg[0]), y = size(arg[1]).
+    ///
+    /// Upstream `TwoVariableQuadraticFunction`.
+    TwoVarQuadratic { minimum: i64, c00: i64, c10: i64, c01: i64, c20: i64, c11: i64, c02: i64 },
+    /// `c0 + c1 * size(arg[1]) + c2 * size(arg[1])²`.
+    ///
+    /// Upstream `ModelTwoArgumentsQuadraticInY` / `ModelThreeArgumentsQuadraticInZ`
+    /// (one-variable quadratic on the specified argument index).
+    QuadraticInY { c0: i64, c1: i64, c2: i64 },
+    /// `c0 + c1 * size(arg[2]) + c2 * size(arg[2])²`.
+    ///
+    /// Upstream `ModelThreeArgumentsQuadraticInZ`.
+    QuadraticInZ { c0: i64, c1: i64, c2: i64 },
+    /// If `size(arg[1]) == 0` then `intercept + slope * size(arg[2])`,
+    /// else `size(arg[1])` literally.
+    ///
+    /// Upstream `ModelThreeArgumentsLiteralInYOrLinearInZ`.
+    /// Used by `integerToByteString` memory.
+    LiteralInYOrLinearInZ { intercept: i64, slope: i64 },
 }
 
 impl CostExpr {
@@ -260,11 +298,64 @@ impl CostExpr {
             }
             Self::MaxSizeYZ { intercept, slope } => intercept.saturating_add(slope.saturating_mul(sz(1).max(sz(2)))),
             Self::ExpModCost { c00, c11, c12 } => {
+                let aa = sz(0);
+                let ee = sz(1);
+                let mm = sz(2);
+                let em = ee.saturating_mul(mm);
+                let cost0 = c00.saturating_add(c11.saturating_mul(em))
+                    .saturating_add(c12.saturating_mul(em.saturating_mul(mm)));
+                // Upstream penalty: if base size > modulus size, increase by 50%.
+                if aa > mm {
+                    cost0.saturating_add(cost0 / 2)
+                } else {
+                    cost0
+                }
+            }
+            Self::MultipliedSizes { intercept, slope } => {
+                intercept.saturating_add(slope.saturating_mul(sz(0).saturating_mul(sz(1))))
+            }
+            Self::LinearOnDiagonal { constant, intercept, slope } => {
+                if sz(0) == sz(1) {
+                    intercept.saturating_add(slope.saturating_mul(sz(0)))
+                } else {
+                    *constant
+                }
+            }
+            Self::ConstAboveDiagonal { constant, inner } => {
+                if sz(0) < sz(1) {
+                    *constant
+                } else {
+                    inner.evaluate(sizes)
+                }
+            }
+            Self::TwoVarQuadratic { minimum, c00, c10, c01, c20, c11, c02 } => {
+                let x = sz(0);
                 let y = sz(1);
+                let val = c00
+                    .saturating_add(c10.saturating_mul(x))
+                    .saturating_add(c01.saturating_mul(y))
+                    .saturating_add(c20.saturating_mul(x.saturating_mul(x)))
+                    .saturating_add(c11.saturating_mul(x.saturating_mul(y)))
+                    .saturating_add(c02.saturating_mul(y.saturating_mul(y)));
+                val.max(*minimum)
+            }
+            Self::QuadraticInY { c0, c1, c2 } => {
+                let y = sz(1);
+                c0.saturating_add(c1.saturating_mul(y))
+                  .saturating_add(c2.saturating_mul(y.saturating_mul(y)))
+            }
+            Self::QuadraticInZ { c0, c1, c2 } => {
                 let z = sz(2);
-                let yz = y.saturating_mul(z);
-                c00.saturating_add(c11.saturating_mul(yz))
-                   .saturating_add(c12.saturating_mul(yz.saturating_mul(z)))
+                c0.saturating_add(c1.saturating_mul(z))
+                  .saturating_add(c2.saturating_mul(z.saturating_mul(z)))
+            }
+            Self::LiteralInYOrLinearInZ { intercept, slope } => {
+                let y = sz(1);
+                if y == 0 {
+                    intercept.saturating_add(slope.saturating_mul(sz(2)))
+                } else {
+                    y
+                }
             }
         };
         raw.max(0)
@@ -469,7 +560,8 @@ fn build_per_builtin_costs(
         }
     }
 
-    // multiplyInteger: AddedSizes for both dimensions
+    // multiplyInteger: MultipliedSizes for CPU (upstream: multiplied_sizes),
+    // AddedSizes for memory.
     {
         let ci = get("multiplyInteger-cpu-arguments-intercept");
         let cs = get("multiplyInteger-cpu-arguments-slope");
@@ -477,36 +569,71 @@ fn build_per_builtin_costs(
         let ms = get("multiplyInteger-memory-arguments-slope");
         if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
             map.insert(MultiplyInteger, BuiltinCostEntry {
-                cpu: CostExpr::AddedSizes { intercept: ci, slope: cs },
+                cpu: CostExpr::MultipliedSizes { intercept: ci, slope: cs },
                 mem: CostExpr::AddedSizes { intercept: mi, slope: ms },
             });
         }
     }
 
-    // divideInteger / modInteger / quotientInteger / remainderInteger:
-    // cpu = SubtractedSizes (via model-arguments form); mem = SubtractedSizes
+    // divideInteger / quotientInteger:
+    //   CPU = ConstAboveDiagonal wrapping TwoVarQuadratic (upstream: const_above_diagonal + quadratic_in_x_and_y),
+    //   memory = SubtractedSizes (upstream: subtracted_sizes).
+    // modInteger / remainderInteger:
+    //   CPU = same ConstAboveDiagonal shape,
+    //   memory = LinearInY (upstream: linear_in_y).
     for (fun, p) in [
         (DivideInteger,    "divideInteger"),
         (ModInteger,       "modInteger"),
         (QuotientInteger,  "quotientInteger"),
         (RemainderInteger, "remainderInteger"),
     ] {
-        let cpu = if let (Some(ci), Some(cs)) = (
+        // CPU: try ConstAboveDiagonal(TwoVarQuadratic) keys first, then legacy SubtractedSizes, then constant.
+        let cpu = if let Some(c00) = get(&format!("{p}-cpu-arguments-model-arguments-c00")) {
+            let constant = get(&format!("{p}-cpu-arguments-constant")).unwrap_or(0);
+            let c01 = get(&format!("{p}-cpu-arguments-model-arguments-c01")).unwrap_or(0);
+            let c02 = get(&format!("{p}-cpu-arguments-model-arguments-c02")).unwrap_or(0);
+            let c10 = get(&format!("{p}-cpu-arguments-model-arguments-c10")).unwrap_or(0);
+            let c11 = get(&format!("{p}-cpu-arguments-model-arguments-c11")).unwrap_or(0);
+            let c20 = get(&format!("{p}-cpu-arguments-model-arguments-c20")).unwrap_or(0);
+            let minimum = get(&format!("{p}-cpu-arguments-model-arguments-minimum")).unwrap_or(0);
+            Some(CostExpr::ConstAboveDiagonal {
+                constant,
+                inner: Box::new(CostExpr::TwoVarQuadratic { minimum, c00, c10, c01, c20, c11, c02 }),
+            })
+        } else if let (Some(ci), Some(cs)) = (
             get(&format!("{p}-cpu-arguments-model-arguments-intercept")),
             get(&format!("{p}-cpu-arguments-model-arguments-slope")),
         ) {
+            // Legacy SubtractedSizes for older parameter maps.
             Some(CostExpr::SubtractedSizes { intercept: ci, slope: cs, minimum: 0 })
         } else {
             get(&format!("{p}-cpu-arguments-constant")).map(CostExpr::Constant)
         };
-        let mem = if let (Some(mi), Some(ms)) = (
-            get(&format!("{p}-memory-arguments-intercept")),
-            get(&format!("{p}-memory-arguments-slope")),
-        ) {
-            let minimum = get(&format!("{p}-memory-arguments-minimum")).unwrap_or(0);
-            Some(CostExpr::SubtractedSizes { intercept: mi, slope: ms, minimum })
-        } else {
-            get(&format!("{p}-memory-arguments-intercept")).map(CostExpr::Constant)
+        // Memory shape depends on the builtin variant.
+        let mem = match fun {
+            // modInteger and remainderInteger: upstream linear_in_y.
+            ModInteger | RemainderInteger => {
+                if let (Some(mi), Some(ms)) = (
+                    get(&format!("{p}-memory-arguments-intercept")),
+                    get(&format!("{p}-memory-arguments-slope")),
+                ) {
+                    Some(CostExpr::LinearInY { intercept: mi, slope: ms })
+                } else {
+                    get(&format!("{p}-memory-arguments-intercept")).map(CostExpr::Constant)
+                }
+            }
+            // divideInteger and quotientInteger: upstream subtracted_sizes.
+            _ => {
+                if let (Some(mi), Some(ms)) = (
+                    get(&format!("{p}-memory-arguments-intercept")),
+                    get(&format!("{p}-memory-arguments-slope")),
+                ) {
+                    let minimum = get(&format!("{p}-memory-arguments-minimum")).unwrap_or(0);
+                    Some(CostExpr::SubtractedSizes { intercept: mi, slope: ms, minimum })
+                } else {
+                    get(&format!("{p}-memory-arguments-intercept")).map(CostExpr::Constant)
+                }
+            }
         };
         if let (Some(cpu), Some(mem)) = (cpu, mem) {
             map.insert(fun, BuiltinCostEntry { cpu, mem });
@@ -553,7 +680,8 @@ fn build_per_builtin_costs(
         }
     }
 
-    // consByteString: LinearInY (output byte-string length = input + 1)
+    // consByteString: CPU = LinearInY (upstream: linear_in_y),
+    // memory = AddedSizes (upstream: added_sizes).
     {
         let ci = get("consByteString-cpu-arguments-intercept");
         let cs = get("consByteString-cpu-arguments-slope");
@@ -562,7 +690,7 @@ fn build_per_builtin_costs(
         if let (Some(ci), Some(cs), Some(mi), Some(ms)) = (ci, cs, mi, ms) {
             map.insert(ConsByteString, BuiltinCostEntry {
                 cpu: CostExpr::LinearInY { intercept: ci, slope: cs },
-                mem: CostExpr::LinearInY { intercept: mi, slope: ms },
+                mem: CostExpr::AddedSizes { intercept: mi, slope: ms },
             });
         }
     }
@@ -581,40 +709,43 @@ fn build_per_builtin_costs(
         }
     }
 
-    // equalsByteString: LinearInX / constant-mem
+    // equalsByteString: CPU = LinearOnDiagonal (upstream: linear_on_diagonal),
+    // memory = constant.
     {
         let ci = get("equalsByteString-cpu-arguments-intercept");
         let cs = get("equalsByteString-cpu-arguments-slope");
+        let cc = get("equalsByteString-cpu-arguments-constant");
         if let (Some(ci), Some(cs)) = (ci, cs) {
+            let constant = cc.unwrap_or(ci);
             let mem = get("equalsByteString-memory-arguments").unwrap_or(1);
             map.insert(EqualsByteString, BuiltinCostEntry {
-                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                cpu: CostExpr::LinearOnDiagonal { constant, intercept: ci, slope: cs },
                 mem: CostExpr::Constant(mem),
             });
         }
     }
 
-    // lessThanByteString
+    // lessThanByteString: CPU = MinSize (upstream: min_size), memory = constant.
     {
         let ci = get("lessThanByteString-cpu-arguments-intercept");
         let cs = get("lessThanByteString-cpu-arguments-slope");
         if let (Some(ci), Some(cs)) = (ci, cs) {
             let mem = get("lessThanByteString-memory-arguments").unwrap_or(1);
             map.insert(LessThanByteString, BuiltinCostEntry {
-                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                cpu: CostExpr::MinSize { intercept: ci, slope: cs },
                 mem: CostExpr::Constant(mem),
             });
         }
     }
 
-    // lessThanEqualsByteString
+    // lessThanEqualsByteString: CPU = MinSize (upstream: min_size), memory = constant.
     {
         let ci = get("lessThanEqualsByteString-cpu-arguments-intercept");
         let cs = get("lessThanEqualsByteString-cpu-arguments-slope");
         if let (Some(ci), Some(cs)) = (ci, cs) {
             let mem = get("lessThanEqualsByteString-memory-arguments").unwrap_or(1);
             map.insert(LessThanEqualsByteString, BuiltinCostEntry {
-                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                cpu: CostExpr::MinSize { intercept: ci, slope: cs },
                 mem: CostExpr::Constant(mem),
             });
         } else if let Some(entry) = map.get(&LessThanByteString) {
@@ -689,14 +820,17 @@ fn build_per_builtin_costs(
         }
     }
 
-    // equalsString: LinearInX / constant-mem
+    // equalsString: CPU = LinearOnDiagonal (upstream: linear_on_diagonal),
+    // memory = constant.
     {
         let ci = get("equalsString-cpu-arguments-intercept");
         let cs = get("equalsString-cpu-arguments-slope");
+        let cc = get("equalsString-cpu-arguments-constant");
         if let (Some(ci), Some(cs)) = (ci, cs) {
+            let constant = cc.unwrap_or(ci);
             let mem = get("equalsString-memory-arguments").unwrap_or(1);
             map.insert(EqualsString, BuiltinCostEntry {
-                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                cpu: CostExpr::LinearOnDiagonal { constant, intercept: ci, slope: cs },
                 mem: CostExpr::Constant(mem),
             });
         }
@@ -759,14 +893,14 @@ fn build_per_builtin_costs(
     // Data builtins
     // ------------------------------------------------------------------
 
-    // equalsData: LinearInX / constant-mem
+    // equalsData: CPU = MinSize (upstream: min_size), memory = constant.
     {
         let ci = get("equalsData-cpu-arguments-intercept");
         let cs = get("equalsData-cpu-arguments-slope");
         if let (Some(ci), Some(cs)) = (ci, cs) {
             let mem = get("equalsData-memory-arguments").unwrap_or(1);
             map.insert(EqualsData, BuiltinCostEntry {
-                cpu: CostExpr::LinearInX { intercept: ci, slope: cs },
+                cpu: CostExpr::MinSize { intercept: ci, slope: cs },
                 mem: CostExpr::Constant(mem),
             });
         }
@@ -885,10 +1019,8 @@ fn build_per_builtin_costs(
         }
     }
 
-    // Integer / ByteString conversion (Conway V3 array surface)
-    // `integerToByteString` and `byteStringToInteger` expose coefficient-style
-    // CPU models in upstream V3 maps. We treat the first coefficient as an
-    // intercept term and the remaining coefficients as argument-size weights.
+    // integerToByteString: CPU = QuadraticInZ (upstream: quadratic_in_z, c0+c1*z+c2*z²),
+    // memory = LiteralInYOrLinearInZ (upstream: literal_in_y_or_linear_in_z).
     {
         let c0 = get("integerToByteString-cpu-arguments-c0");
         let c1 = get("integerToByteString-cpu-arguments-c1");
@@ -897,12 +1029,14 @@ fn build_per_builtin_costs(
         let ms = get("integerToByteString-memory-arguments-slope");
         if let (Some(c0), Some(c1), Some(c2), Some(mi), Some(ms)) = (c0, c1, c2, mi, ms) {
             map.insert(IntegerToByteString, BuiltinCostEntry {
-                cpu: CostExpr::LinearForm { intercept: c0, x: 0, y: c1, z: c2 },
-                mem: CostExpr::LinearInZ { intercept: mi, slope: ms },
+                cpu: CostExpr::QuadraticInZ { c0, c1, c2 },
+                mem: CostExpr::LiteralInYOrLinearInZ { intercept: mi, slope: ms },
             });
         }
     }
 
+    // byteStringToInteger: CPU = QuadraticInY (upstream: quadratic_in_y, c0+c1*y+c2*y²),
+    // memory = LinearInY.
     {
         let c0 = get("byteStringToInteger-cpu-arguments-c0");
         let c1 = get("byteStringToInteger-cpu-arguments-c1");
@@ -911,7 +1045,7 @@ fn build_per_builtin_costs(
         let ms = get("byteStringToInteger-memory-arguments-slope");
         if let (Some(c0), Some(c1), Some(c2), Some(mi), Some(ms)) = (c0, c1, c2, mi, ms) {
             map.insert(ByteStringToInteger, BuiltinCostEntry {
-                cpu: CostExpr::LinearForm { intercept: c0, x: c1, y: c2, z: 0 },
+                cpu: CostExpr::QuadraticInY { c0, c1, c2 },
                 mem: CostExpr::LinearInY { intercept: mi, slope: ms },
             });
         }
@@ -1106,7 +1240,7 @@ mod tests {
             ("sha2_256-cpu-arguments-intercept".to_owned(), 2_477_736),
             ("sha2_256-cpu-arguments-slope".to_owned(),     29_175),
             ("sha2_256-memory-arguments".to_owned(),        4),
-            // multiplyInteger — AddedSizes
+            // multiplyInteger — MultipliedSizes for CPU, AddedSizes for memory
             ("multiplyInteger-cpu-arguments-intercept".to_owned(), 61_516),
             ("multiplyInteger-cpu-arguments-slope".to_owned(),     11_218),
             ("multiplyInteger-memory-arguments-intercept".to_owned(), 0),
@@ -1340,9 +1474,19 @@ mod tests {
     #[test]
     fn exp_mod_cost_evaluates_polynomial() {
         let expr = CostExpr::ExpModCost { c00: 1000, c11: 10, c12: 2 };
-        // sizes: [base_ignored, y=3, z=4]
-        // c00 + c11 * y * z + c12 * y * z^2 = 1000 + 10*3*4 + 2*3*16 = 1000 + 120 + 96 = 1216
+        // sizes: [base=5, exp=3, mod=4]
+        // cost0 = c00 + c11*exp*mod + c12*exp*mod^2 = 1000 + 10*3*4 + 2*3*16 = 1216
+        // base(5) > mod(4) → 50% penalty: 1216 + 1216/2 = 1824
         let cost = expr.evaluate(&[5, 3, 4]);
+        assert_eq!(cost, 1824);
+    }
+
+    #[test]
+    fn exp_mod_cost_no_penalty_when_base_leq_mod() {
+        let expr = CostExpr::ExpModCost { c00: 1000, c11: 10, c12: 2 };
+        // sizes: [base=3, exp=3, mod=4]
+        // cost0 = 1000 + 10*3*4 + 2*3*16 = 1216; base(3) <= mod(4) → no penalty
+        let cost = expr.evaluate(&[3, 3, 4]);
         assert_eq!(cost, 1216);
     }
 
@@ -1363,5 +1507,224 @@ mod tests {
         // Linear expressions also saturate.
         let lin = CostExpr::LinearInX { intercept: i64::MAX, slope: i64::MAX };
         assert_eq!(lin.evaluate(&[i64::MAX]), i64::MAX);
+    }
+
+    // ---- New CostExpr variant tests ----
+
+    #[test]
+    fn multiplied_sizes_basic() {
+        let expr = CostExpr::MultipliedSizes { intercept: 100, slope: 5 };
+        // 100 + 5 * (3 * 4) = 100 + 60 = 160
+        assert_eq!(expr.evaluate(&[3, 4]), 160);
+    }
+
+    #[test]
+    fn multiplied_sizes_zero_arg() {
+        let expr = CostExpr::MultipliedSizes { intercept: 50, slope: 10 };
+        assert_eq!(expr.evaluate(&[0, 100]), 50);
+        assert_eq!(expr.evaluate(&[100, 0]), 50);
+    }
+
+    #[test]
+    fn linear_on_diagonal_same_sizes() {
+        let expr = CostExpr::LinearOnDiagonal { constant: 999, intercept: 100, slope: 3 };
+        // sizes equal: intercept + slope * size = 100 + 3*10 = 130
+        assert_eq!(expr.evaluate(&[10, 10]), 130);
+    }
+
+    #[test]
+    fn linear_on_diagonal_different_sizes() {
+        let expr = CostExpr::LinearOnDiagonal { constant: 999, intercept: 100, slope: 3 };
+        // sizes differ: returns constant
+        assert_eq!(expr.evaluate(&[10, 20]), 999);
+    }
+
+    #[test]
+    fn const_above_diagonal_below() {
+        let expr = CostExpr::ConstAboveDiagonal {
+            constant: 42,
+            inner: Box::new(CostExpr::Constant(999)),
+        };
+        // size0 < size1 → constant
+        assert_eq!(expr.evaluate(&[3, 5]), 42);
+    }
+
+    #[test]
+    fn const_above_diagonal_at_or_above() {
+        let inner = CostExpr::TwoVarQuadratic {
+            minimum: 0, c00: 100, c10: 2, c01: 3, c20: 0, c11: 0, c02: 0,
+        };
+        let expr = CostExpr::ConstAboveDiagonal {
+            constant: 42,
+            inner: Box::new(inner),
+        };
+        // size0 >= size1 → inner: 100 + 2*5 + 3*3 = 119
+        assert_eq!(expr.evaluate(&[5, 3]), 119);
+        // size0 == size1 → inner: 100 + 2*4 + 3*4 = 120
+        assert_eq!(expr.evaluate(&[4, 4]), 120);
+    }
+
+    #[test]
+    fn two_var_quadratic_with_minimum() {
+        let expr = CostExpr::TwoVarQuadratic {
+            minimum: 1000, c00: 10, c10: 1, c01: 1, c20: 0, c11: 0, c02: 0,
+        };
+        // 10 + 1*2 + 1*3 = 15, but minimum is 1000
+        assert_eq!(expr.evaluate(&[2, 3]), 1000);
+    }
+
+    #[test]
+    fn two_var_quadratic_all_terms() {
+        let expr = CostExpr::TwoVarQuadratic {
+            minimum: 0, c00: 100, c10: 2, c01: 3, c20: 4, c11: 5, c02: 6,
+        };
+        // 100 + 2*10 + 3*20 + 4*100 + 5*200 + 6*400 = 100+20+60+400+1000+2400 = 3980
+        assert_eq!(expr.evaluate(&[10, 20]), 3980);
+    }
+
+    #[test]
+    fn two_var_quadratic_negative_coefficient() {
+        // Upstream divideInteger uses c02 = -900
+        let expr = CostExpr::TwoVarQuadratic {
+            minimum: 85848, c00: 123203, c10: 1716, c01: 7305, c20: 57, c11: 549, c02: -900,
+        };
+        // x=5, y=5: 123203 + 1716*5 + 7305*5 + 57*25 + 549*25 + (-900)*25
+        //         = 123203 + 8580 + 36525 + 1425 + 13725 - 22500 = 160958
+        assert_eq!(expr.evaluate(&[5, 5]), 160958);
+    }
+
+    #[test]
+    fn quadratic_in_y_basic() {
+        let expr = CostExpr::QuadraticInY { c0: 1000, c1: 50, c2: 3 };
+        // c0 + c1*y + c2*y^2 = 1000 + 50*10 + 3*100 = 1000 + 500 + 300 = 1800
+        assert_eq!(expr.evaluate(&[99, 10]), 1800);
+    }
+
+    #[test]
+    fn quadratic_in_z_basic() {
+        let expr = CostExpr::QuadraticInZ { c0: 1000, c1: 50, c2: 3 };
+        // c0 + c1*z + c2*z^2 = 1000 + 50*10 + 3*100 = 1800
+        assert_eq!(expr.evaluate(&[99, 99, 10]), 1800);
+    }
+
+    #[test]
+    fn literal_in_y_or_linear_in_z_when_y_nonzero() {
+        let expr = CostExpr::LiteralInYOrLinearInZ { intercept: 100, slope: 5 };
+        // y != 0 → returns y as literal
+        assert_eq!(expr.evaluate(&[0, 42, 999]), 42);
+    }
+
+    #[test]
+    fn literal_in_y_or_linear_in_z_when_y_zero() {
+        let expr = CostExpr::LiteralInYOrLinearInZ { intercept: 100, slope: 5 };
+        // y == 0 → linear in z: 100 + 5*20 = 200
+        assert_eq!(expr.evaluate(&[0, 0, 20]), 200);
+    }
+
+    #[test]
+    fn division_builtins_use_quadratic_cpu_model() {
+        let mut params = sample_params();
+        // Add divideInteger params matching upstream structure.
+        params.insert("divideInteger-cpu-arguments-constant".to_owned(), 85848);
+        params.insert("divideInteger-cpu-arguments-model-arguments-c00".to_owned(), 123203);
+        params.insert("divideInteger-cpu-arguments-model-arguments-c01".to_owned(), 7305);
+        params.insert("divideInteger-cpu-arguments-model-arguments-c02".to_owned(), -900);
+        params.insert("divideInteger-cpu-arguments-model-arguments-c10".to_owned(), 1716);
+        params.insert("divideInteger-cpu-arguments-model-arguments-c11".to_owned(), 549);
+        params.insert("divideInteger-cpu-arguments-model-arguments-c20".to_owned(), 57);
+        params.insert("divideInteger-cpu-arguments-model-arguments-minimum".to_owned(), 85848);
+        params.insert("divideInteger-memory-arguments-intercept".to_owned(), 0);
+        params.insert("divideInteger-memory-arguments-slope".to_owned(), 1);
+        params.insert("divideInteger-memory-arguments-minimum".to_owned(), 1);
+
+        let model = CostModel::from_alonzo_genesis_params(&params).expect("parse");
+        let entry = model.builtin_costs.get(&DefaultFun::DivideInteger)
+            .expect("DivideInteger must have entry");
+
+        // size0=10, size1=5: size0 >= size1 → use TwoVarQuadratic inner
+        match &entry.cpu {
+            CostExpr::ConstAboveDiagonal { constant, inner } => {
+                assert_eq!(*constant, 85848);
+                // Evaluate inner at (10, 5)
+                let val = inner.evaluate(&[10, 5]);
+                let expected = 123203 + 1716 * 10 + 7305 * 5 + 57 * 100 + 549 * 50 + (-900) * 25;
+                assert_eq!(val, expected.max(85848));
+            }
+            other => panic!("Expected ConstAboveDiagonal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiply_integer_uses_multiplied_sizes_cpu() {
+        let model = CostModel::from_alonzo_genesis_params(&sample_params())
+            .expect("derive cost model");
+        let entry = model.builtin_costs.get(&DefaultFun::MultiplyInteger)
+            .expect("MultiplyInteger must have entry");
+        match &entry.cpu {
+            CostExpr::MultipliedSizes { intercept, slope } => {
+                assert_eq!(*intercept, 61_516);
+                assert_eq!(*slope, 11_218);
+            }
+            other => panic!("Expected MultipliedSizes, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn equals_byte_string_uses_linear_on_diagonal() {
+        let mut params = sample_params();
+        params.insert("equalsByteString-cpu-arguments-intercept".to_owned(), 29498);
+        params.insert("equalsByteString-cpu-arguments-slope".to_owned(), 38);
+        params.insert("equalsByteString-cpu-arguments-constant".to_owned(), 24548);
+        params.insert("equalsByteString-memory-arguments".to_owned(), 1);
+
+        let model = CostModel::from_alonzo_genesis_params(&params).expect("parse");
+        let entry = model.builtin_costs.get(&DefaultFun::EqualsByteString)
+            .expect("EqualsByteString entry");
+        match &entry.cpu {
+            CostExpr::LinearOnDiagonal { constant, intercept, slope } => {
+                assert_eq!(*constant, 24548);
+                assert_eq!(*intercept, 29498);
+                assert_eq!(*slope, 38);
+            }
+            other => panic!("Expected LinearOnDiagonal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn less_than_byte_string_uses_min_size() {
+        let mut params = sample_params();
+        params.insert("lessThanByteString-cpu-arguments-intercept".to_owned(), 28999);
+        params.insert("lessThanByteString-cpu-arguments-slope".to_owned(), 74);
+        params.insert("lessThanByteString-memory-arguments".to_owned(), 1);
+
+        let model = CostModel::from_alonzo_genesis_params(&params).expect("parse");
+        let entry = model.builtin_costs.get(&DefaultFun::LessThanByteString)
+            .expect("LessThanByteString entry");
+        match &entry.cpu {
+            CostExpr::MinSize { intercept, slope } => {
+                assert_eq!(*intercept, 28999);
+                assert_eq!(*slope, 74);
+            }
+            other => panic!("Expected MinSize, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn equals_data_uses_min_size() {
+        let mut params = sample_params();
+        params.insert("equalsData-cpu-arguments-intercept".to_owned(), 1060367);
+        params.insert("equalsData-cpu-arguments-slope".to_owned(), 12586);
+        params.insert("equalsData-memory-arguments".to_owned(), 1);
+
+        let model = CostModel::from_alonzo_genesis_params(&params).expect("parse");
+        let entry = model.builtin_costs.get(&DefaultFun::EqualsData)
+            .expect("EqualsData entry");
+        match &entry.cpu {
+            CostExpr::MinSize { intercept, slope } => {
+                assert_eq!(*intercept, 1060367);
+                assert_eq!(*slope, 12586);
+            }
+            other => panic!("Expected MinSize, got {:?}", other),
+        }
     }
 }

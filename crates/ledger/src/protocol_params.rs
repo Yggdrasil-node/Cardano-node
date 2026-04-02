@@ -17,6 +17,7 @@ use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::alonzo::ExUnits;
 use crate::error::LedgerError;
 use crate::types::UnitInterval;
+use crate::types::Nonce;
 
 /// Cost models for Plutus script languages.
 ///
@@ -252,6 +253,19 @@ pub struct ProtocolParameters {
     /// CDDL key 11 — `tau`.
     pub tau: UnitInterval,
 
+    /// Decentralization parameter (d).  Present in Shelley through Alonzo;
+    /// removed from Babbage onward (always fully decentralized).
+    ///
+    /// CDDL key 12 — `d`.
+    pub d: Option<UnitInterval>,
+
+    /// Extra entropy injected into the epoch nonce evolution at epoch
+    /// boundaries.  Present in Shelley through Alonzo; removed from Babbage
+    /// onward.
+    ///
+    /// CDDL key 13 — `extra_entropy`.
+    pub extra_entropy: Option<Nonce>,
+
     /// Current ledger protocol version `(major, minor)`.
     ///
     /// This tracks the active protocol version carried in protocol parameters
@@ -395,6 +409,8 @@ impl Default for ProtocolParameters {
                 numerator: 2,
                 denominator: 10,
             },
+            d: None,
+            extra_entropy: None,
             protocol_version: Some((2, 0)),
             min_utxo_value: Some(1_000_000),
             min_pool_cost: 340_000_000,
@@ -478,6 +494,12 @@ impl CborEncode for ProtocolParameters {
         // update-proposal encoding.
         // Always-present keys: 0-11 (12) + 16 (1) = 13
         let mut count: u64 = 13;
+        if self.d.is_some() {
+            count += 1;
+        }
+        if self.extra_entropy.is_some() {
+            count += 1;
+        }
         if self.min_utxo_value.is_some() {
             count += 1;
         }
@@ -553,6 +575,15 @@ impl CborEncode for ProtocolParameters {
         self.rho.encode_cbor(enc);
         enc.unsigned(11);
         self.tau.encode_cbor(enc);
+
+        if let Some(ref val) = self.d {
+            enc.unsigned(12);
+            val.encode_cbor(enc);
+        }
+        if let Some(ref val) = self.extra_entropy {
+            enc.unsigned(13);
+            val.encode_cbor(enc);
+        }
 
         if let Some((major, minor)) = self.protocol_version {
             enc.unsigned(14).array(2).unsigned(major).unsigned(minor);
@@ -656,6 +687,8 @@ impl CborDecode for ProtocolParameters {
                 numerator: 0,
                 denominator: 1,
             },
+            d: None,
+            extra_entropy: None,
             protocol_version: None,
             min_utxo_value: None,
             min_pool_cost: 0,
@@ -694,6 +727,8 @@ impl CborDecode for ProtocolParameters {
                 9 => params.a0 = UnitInterval::decode_cbor(dec)?,
                 10 => params.rho = UnitInterval::decode_cbor(dec)?,
                 11 => params.tau = UnitInterval::decode_cbor(dec)?,
+                12 => params.d = Some(UnitInterval::decode_cbor(dec)?),
+                13 => params.extra_entropy = Some(Nonce::decode_cbor(dec)?),
                 14 => {
                     if dec.peek_major()? == 4 {
                         let len = dec.array()?;
@@ -787,6 +822,8 @@ pub struct ProtocolParameterUpdate {
     pub a0: Option<UnitInterval>,
     pub rho: Option<UnitInterval>,
     pub tau: Option<UnitInterval>,
+    pub d: Option<UnitInterval>,
+    pub extra_entropy: Option<Nonce>,
     pub protocol_version: Option<(u64, u64)>,
     pub min_utxo_value: Option<u64>,
     pub min_pool_cost: Option<u64>,
@@ -831,6 +868,8 @@ impl ProtocolParameterUpdate {
         if self.a0.is_some() { count += 1; }
         if self.rho.is_some() { count += 1; }
         if self.tau.is_some() { count += 1; }
+        if self.d.is_some() { count += 1; }
+        if self.extra_entropy.is_some() { count += 1; }
         if self.protocol_version.is_some() { count += 1; }
         if self.min_utxo_value.is_some() { count += 1; }
         if self.min_pool_cost.is_some() { count += 1; }
@@ -894,6 +933,12 @@ impl ProtocolParameters {
         }
         if let Some(ref value) = update.tau {
             self.tau = *value;
+        }
+        if let Some(ref value) = update.d {
+            self.d = Some(*value);
+        }
+        if let Some(ref value) = update.extra_entropy {
+            self.extra_entropy = Some(*value);
         }
         if let Some(value) = update.protocol_version {
             self.protocol_version = Some(value);
@@ -976,6 +1021,8 @@ impl CborEncode for ProtocolParameterUpdate {
         if self.a0.is_some() { count += 1; }
         if self.rho.is_some() { count += 1; }
         if self.tau.is_some() { count += 1; }
+        if self.d.is_some() { count += 1; }
+        if self.extra_entropy.is_some() { count += 1; }
         if self.protocol_version.is_some() { count += 1; }
         if self.min_utxo_value.is_some() { count += 1; }
         if self.min_pool_cost.is_some() { count += 1; }
@@ -1012,6 +1059,8 @@ impl CborEncode for ProtocolParameterUpdate {
         if let Some(ref value) = self.a0 { enc.unsigned(9); value.encode_cbor(enc); }
         if let Some(ref value) = self.rho { enc.unsigned(10); value.encode_cbor(enc); }
         if let Some(ref value) = self.tau { enc.unsigned(11); value.encode_cbor(enc); }
+        if let Some(ref value) = self.d { enc.unsigned(12); value.encode_cbor(enc); }
+        if let Some(ref value) = self.extra_entropy { enc.unsigned(13); value.encode_cbor(enc); }
         if let Some((major, minor)) = self.protocol_version {
             enc.unsigned(14).array(2).unsigned(major).unsigned(minor);
         }
@@ -1070,6 +1119,8 @@ impl CborDecode for ProtocolParameterUpdate {
                 9 => update.a0 = Some(UnitInterval::decode_cbor(dec)?),
                 10 => update.rho = Some(UnitInterval::decode_cbor(dec)?),
                 11 => update.tau = Some(UnitInterval::decode_cbor(dec)?),
+                12 => update.d = Some(UnitInterval::decode_cbor(dec)?),
+                13 => update.extra_entropy = Some(Nonce::decode_cbor(dec)?),
                 14 => {
                     let len = dec.array()?;
                     if len != 2 {

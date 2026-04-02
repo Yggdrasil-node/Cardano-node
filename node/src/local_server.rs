@@ -19,7 +19,7 @@
 //! ```text
 //! UnixListener::bind(path)
 //!   └─ accept() → UnixStream
-//!       └─ start_mux_unix([..., NTC_LOCAL_TX_MONITOR])
+//!       └─ ntc_accept(stream, magic) → handshake + mux
 //!           ├─ LocalTxSubmissionServer ──► run_local_tx_submission_session()
 //!           ├─ LocalStateQueryServer   ──► run_local_state_query_session()
 //!           └─ LocalTxMonitorServer    ──► run_local_tx_monitor_session()
@@ -42,7 +42,6 @@ use yggdrasil_network::{
     LocalTxMonitorAcquiredRequest, LocalTxMonitorIdleRequest,
     LocalTxMonitorServer, LocalTxMonitorServerError,
     LocalTxRequest, LocalTxSubmissionServer, LocalTxSubmissionServerError,
-    MiniProtocolDir,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
@@ -284,17 +283,28 @@ where
 /// The session ends when the client sends `MsgDone` or the protocol errors.
 ///
 /// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Server`.
-pub async fn run_local_tx_monitor_session(
+pub async fn run_local_tx_monitor_session<I, V, L>(
     mut server: LocalTxMonitorServer,
     mempool: SharedMempool,
-) -> Result<(), LocalTxMonitorSessionError> {
+    chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
+) -> Result<(), LocalTxMonitorSessionError>
+where
+    I: ImmutableStore + Send + Sync + 'static,
+    V: VolatileStore + Send + Sync + 'static,
+    L: LedgerStore + Send + Sync + 'static,
+{
     loop {
         match server.recv_idle_request().await? {
             LocalTxMonitorIdleRequest::Done => return Ok(()),
             LocalTxMonitorIdleRequest::Acquire => {
                 // Take a snapshot and enter the acquired loop.
                 let snapshot = mempool.snapshot();
-                let tip_slot = 0u64; // Slot of last applied block; 0 when unknown.
+                let tip_slot = chain_db
+                    .read()
+                    .ok()
+                    .and_then(|db| db.tip().slot())
+                    .map(|s| s.0)
+                    .unwrap_or(0u64);
                 server.acquired(tip_slot).await?;
 
                 let mut tx_iter = snapshot.mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX).into_iter();
@@ -331,8 +341,18 @@ pub async fn run_local_tx_monitor_session(
                         }
                         LocalTxMonitorAcquiredRequest::Release => break,
                         LocalTxMonitorAcquiredRequest::AwaitAcquire => {
-                            // Re-acquire: take a fresh snapshot.
+                            // Block until the mempool contents change, matching
+                            // upstream `MsgAwaitAcquire` blocking semantics.
+                            // Reference: Ouroboros.Network.Protocol.LocalTxMonitor.Server
+                            mempool.wait_for_change().await;
+                            // Re-acquire: take a fresh snapshot and re-read tip.
                             let new_snapshot = mempool.snapshot();
+                            let tip_slot = chain_db
+                                .read()
+                                .ok()
+                                .and_then(|db| db.tip().slot())
+                                .map(|s| s.0)
+                                .unwrap_or(0u64);
                             server.acquired(tip_slot).await?;
                             tx_iter = new_snapshot.mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX).into_iter();
                             // Note: we shadow `snapshot` by rebinding below,
@@ -433,31 +453,38 @@ fn encode_rejection_reason(reason: &str) -> Vec<u8> {
 
 /// Spawn all NtC protocol tasks for a single accepted Unix-socket connection.
 ///
-/// Starts the mux over the provided `stream`, builds all server drivers, and
-/// spawns independent tokio tasks for each mini-protocol.  Returns the
-/// [`yggdrasil_network::MuxHandle`] so the caller can abort on shutdown.
+/// Runs the NtC handshake to negotiate protocol version and network magic,
+/// then builds all server drivers and spawns independent tokio tasks for each
+/// mini-protocol.  Returns the [`yggdrasil_network::MuxHandle`] so the caller
+/// can abort on shutdown, or `None` if the handshake failed.
+///
+/// Reference: `Ouroboros.Network.NodeToClient` — server-side accept path.
 #[cfg(unix)]
 pub async fn run_local_client_session<I, V, L>(
     stream: tokio::net::UnixStream,
+    network_magic: u32,
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
     dispatcher: Arc<dyn LocalQueryDispatcher>,
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
-) -> yggdrasil_network::MuxHandle
+) -> Option<yggdrasil_network::MuxHandle>
 where
     I: ImmutableStore + Send + Sync + 'static,
     V: VolatileStore + Send + Sync + 'static,
     L: LedgerStore + Send + Sync + 'static,
 {
-    use yggdrasil_network::{start_mux_unix, MiniProtocolNum};
+    use yggdrasil_network::{ntc_accept, MiniProtocolNum};
 
-    let protocols = [
-        MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
-        MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
-        MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
-    ];
-    let (mut handles, mux_handle) =
-        start_mux_unix(stream, MiniProtocolDir::Responder, &protocols, 32);
+    let conn = match ntc_accept(stream, network_magic).await {
+        Ok(c) => c,
+        Err(_e) => {
+            // Handshake failed (version mismatch, closed, etc.) — drop connection.
+            return None;
+        }
+    };
+
+    let mut handles = conn.protocols;
+    let mux_handle = conn.mux;
 
     // Extract handles — all are guaranteed to exist because we requested them.
     let tx_handle = handles
@@ -489,11 +516,12 @@ where
     });
 
     // Spawn LocalTxMonitor task.
+    let tm_chain_db = Arc::clone(&chain_db);
     tokio::spawn(async move {
-        let _ = run_local_tx_monitor_session(tm_server, mempool).await;
+        let _ = run_local_tx_monitor_session(tm_server, mempool, tm_chain_db).await;
     });
 
-    mux_handle
+    Some(mux_handle)
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +548,7 @@ where
 #[cfg(unix)]
 pub async fn run_local_accept_loop<I, V, L, F>(
     socket_path: &Path,
+    network_magic: u32,
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
     dispatcher: Arc<dyn LocalQueryDispatcher>,
@@ -555,7 +584,7 @@ where
                 let eval = evaluator.clone();
 
                 tokio::spawn(async move {
-                    let mux = run_local_client_session(stream, db, mp, disp, eval).await;
+                    let mux = run_local_client_session(stream, network_magic, db, mp, disp, eval).await;
                     // Mux runs until either protocol task finishes or the
                     // connection drops; we do not abort here since each task
                     // terminates cleanly on `MsgDone` or socket close.

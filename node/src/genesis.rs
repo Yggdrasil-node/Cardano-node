@@ -230,6 +230,15 @@ pub struct ShelleyGenesisProtocolParams {
     /// Treasury growth rate `τ`.  Key 11.
     #[serde(default = "default_tau")]
     pub tau: GenesisRational,
+    /// Decentralisation parameter `d`.  Key 12.
+    /// Present in Shelley through Alonzo (1 = fully federated, 0 = fully
+    /// decentralised).  Removed from Babbage onward.
+    #[serde(default, rename = "decentralisationParam")]
+    pub decentralisation_param: Option<f64>,
+    /// Extra entropy injected into epoch nonce evolution.  Key 13.
+    /// Normally `NeutralNonce`; may carry a 32-byte hash override.
+    #[serde(default, rename = "extraEntropy")]
+    pub extra_entropy: Option<GenesisExtraEntropy>,
     /// Active ledger protocol version.
     #[serde(default = "default_protocol_version")]
     pub protocol_version: GenesisProtocolVersion,
@@ -258,6 +267,23 @@ pub struct GenesisRational {
 pub struct GenesisProtocolVersion {
     pub major: u64,
     pub minor: u64,
+}
+
+/// Extra entropy injected into epoch nonce evolution (Shelley genesis JSON).
+///
+/// Two upstream variants: `NeutralNonce` (identity element) and `Nonce` with
+/// a 32-byte hex-encoded hash payload.
+///
+/// JSON shape: `{ "tag": "NeutralNonce" }` or `{ "tag": "Nonce", "contents": "<hex64>" }`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "tag")]
+pub enum GenesisExtraEntropy {
+    /// Identity nonce — does not contribute entropy.
+    NeutralNonce,
+    /// A 32-byte hash carrying entropy.
+    Nonce {
+        contents: String,
+    },
 }
 
 impl GenesisRational {
@@ -549,6 +575,24 @@ pub fn build_protocol_parameters(
         a0: pp.a0.to_unit_interval(),
         rho: pp.rho.to_unit_interval(),
         tau: pp.tau.to_unit_interval(),
+        d: pp.decentralisation_param.map(|f| {
+            let denom = 1_000_000u64;
+            UnitInterval {
+                numerator: (f * denom as f64).round() as u64,
+                denominator: denom,
+            }
+        }),
+        extra_entropy: pp.extra_entropy.as_ref().map(|ee| match ee {
+            GenesisExtraEntropy::NeutralNonce => yggdrasil_ledger::Nonce::Neutral,
+            GenesisExtraEntropy::Nonce { contents } => {
+                let mut hash = [0u8; 32];
+                if let Ok(bytes) = hex::decode(contents) {
+                    let len = bytes.len().min(32);
+                    hash[..len].copy_from_slice(&bytes[..len]);
+                }
+                yggdrasil_ledger::Nonce::Hash(hash)
+            }
+        }),
         protocol_version: Some((pp.protocol_version.major, pp.protocol_version.minor)),
         min_utxo_value: Some(pp.min_utxo_value),
         min_pool_cost: pp.min_pool_cost,
@@ -1278,6 +1322,8 @@ mod tests {
                 a0: GenesisRational { numerator: 3, denominator: 10 },
                 rho: GenesisRational { numerator: 3, denominator: 1_000 },
                 tau: GenesisRational { numerator: 2, denominator: 10 },
+                decentralisation_param: Some(1.0),
+                extra_entropy: Some(GenesisExtraEntropy::NeutralNonce),
                 protocol_version: GenesisProtocolVersion { major: 2, minor: 0 },
                 min_utxo_value: 1_000_000,
                 min_pool_cost: 340_000_000,

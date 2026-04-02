@@ -355,9 +355,8 @@ pub struct EpochRewardDistribution {
 /// Computes reward distribution for all pools at an epoch boundary.
 ///
 /// Uses the **go** snapshot for stake data and the accumulated fee pot.
-/// Pool performance is currently passed as a uniform value (simplified;
-/// a full implementation would derive per-pool performance from the
-/// number of blocks produced vs. expected).
+/// Pool performance is a per-pool ratio of blocks produced vs. expected,
+/// typically derived via `derive_pool_performance()` in `epoch_boundary.rs`.
 ///
 /// Reference: `createRUpd` in `Cardano.Ledger.Shelley.Rewards`.
 pub fn compute_epoch_rewards(

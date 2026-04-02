@@ -98,6 +98,35 @@ fn minting_redeemer(steps: u64, mem: u64) -> Redeemer {
     }
 }
 
+/// Compute the script_data_hash for a minting tx with the given Plutus script.
+///
+/// Builds a temporary witness set with just the script + redeemer parts
+/// (no VKey witness) to derive the hash before the body is finalized.
+fn compute_minting_sdh(
+    script_bytes: &[u8],
+    version: PlutusVersion,
+    pp: Option<&ProtocolParameters>,
+    conway: bool,
+) -> [u8; 32] {
+    let redeemer = minting_redeemer(1_000_000, 500_000);
+    let (v1, v2, v3) = match version {
+        PlutusVersion::V1 => (vec![script_bytes.to_vec()], vec![], vec![]),
+        PlutusVersion::V2 => (vec![], vec![script_bytes.to_vec()], vec![]),
+        PlutusVersion::V3 => (vec![], vec![], vec![script_bytes.to_vec()]),
+    };
+    let ws = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: v1,
+        plutus_data: vec![],
+        redeemers: vec![redeemer],
+        plutus_v2_scripts: v2,
+        plutus_v3_scripts: v3,
+    };
+    compute_test_script_data_hash(&ws, pp, conway)
+}
+
 /// Build an Alonzo transaction that mints under a Plutus V1 policy.
 ///
 /// The tx spends a pre-seeded key-hash input and mints 1 token under
@@ -106,6 +135,7 @@ fn build_alonzo_minting_tx(
     prev_tx_id: [u8; 32],
     script_bytes: &[u8],
     version: PlutusVersion,
+    script_data_hash: Option<[u8; 32]>,
 ) -> (AlonzoTxBody, [u8; 28], [u8; 32]) {
     let script_hash = plutus_script_hash(version, script_bytes);
     let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
@@ -135,7 +165,7 @@ fn build_alonzo_minting_tx(
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash,
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -195,7 +225,8 @@ fn seed_alonzo_state(prev_tx_id: [u8; 32]) -> LedgerState {
 #[test]
 fn alonzo_plutus_v1_minting_evaluator_succeeds() {
     let prev_tx_id = [0xAA; 32];
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -220,7 +251,8 @@ fn alonzo_plutus_v1_minting_evaluator_succeeds() {
 #[test]
 fn alonzo_plutus_v1_minting_evaluator_fails() {
     let prev_tx_id = [0xBB; 32];
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -251,7 +283,8 @@ fn alonzo_plutus_v1_minting_evaluator_fails() {
 #[test]
 fn alonzo_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() {
     let prev_tx_id = [0xB0; 32];
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -286,7 +319,8 @@ fn alonzo_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
 #[test]
 fn alonzo_plutus_v1_minting_no_evaluator_skips() {
     let prev_tx_id = [0xCC; 32];
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -315,6 +349,7 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
     let addr = enterprise_keyhash_address(&keyhash);
 
     let script_hash = plutus_script_hash(PlutusVersion::V2, DUMMY_SCRIPT);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V2, None, false);
 
     let mut mint = BTreeMap::new();
     let mut assets = BTreeMap::new();
@@ -341,7 +376,7 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -385,6 +420,7 @@ fn babbage_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
     let addr = enterprise_keyhash_address(&keyhash);
 
     let script_hash = plutus_script_hash(PlutusVersion::V2, DUMMY_SCRIPT);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V2, None, false);
     let mut mint = BTreeMap::new();
     let mut assets = BTreeMap::new();
     assets.insert(b"nft".to_vec(), 1i64);
@@ -410,7 +446,7 @@ fn babbage_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -463,6 +499,7 @@ fn babbage_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch()
     let addr = enterprise_keyhash_address(&keyhash);
 
     let script_hash = plutus_script_hash(PlutusVersion::V2, DUMMY_SCRIPT);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V2, None, false);
     let mut mint = BTreeMap::new();
     let mut assets = BTreeMap::new();
     assets.insert(b"nft".to_vec(), 1i64);
@@ -488,7 +525,7 @@ fn babbage_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch()
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -545,6 +582,7 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
     let addr = enterprise_keyhash_address(&keyhash);
 
     let script_hash = plutus_script_hash(PlutusVersion::V3, DUMMY_SCRIPT);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V3, None, true);
 
     let mut mint = BTreeMap::new();
     let mut assets = BTreeMap::new();
@@ -570,7 +608,7 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -618,6 +656,7 @@ fn conway_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
     let addr = enterprise_keyhash_address(&keyhash);
 
     let script_hash = plutus_script_hash(PlutusVersion::V3, DUMMY_SCRIPT);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V3, None, true);
     let mut mint = BTreeMap::new();
     let mut assets = BTreeMap::new();
     assets.insert(b"gov".to_vec(), 1i64);
@@ -642,7 +681,7 @@ fn conway_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -699,6 +738,7 @@ fn conway_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
     let addr = enterprise_keyhash_address(&keyhash);
 
     let script_hash = plutus_script_hash(PlutusVersion::V3, DUMMY_SCRIPT);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V3, None, true);
     let mut mint = BTreeMap::new();
     let mut assets = BTreeMap::new();
     assets.insert(b"gov".to_vec(), 1i64);
@@ -723,7 +763,7 @@ fn conway_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -798,7 +838,8 @@ impl PlutusEvaluator for AssertEvaluator {
 fn alonzo_evaluator_receives_correct_script_metadata() {
     let prev_tx_id = [0xFF; 32];
     let script_hash = plutus_script_hash(PlutusVersion::V1, DUMMY_SCRIPT);
-    let (body, _, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {

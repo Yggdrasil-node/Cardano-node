@@ -437,6 +437,48 @@ impl Mempool {
         removed_count
     }
 
+    /// Remove mempool entries that conflict with newly consumed UTxO inputs.
+    ///
+    /// When a block is applied, its transactions consume certain UTxO inputs.
+    /// Any mempool transaction that also spends one of those consumed inputs
+    /// is now invalid and must be evicted (double-spend conflict).
+    ///
+    /// This complements `remove_confirmed`, which removes transactions by
+    /// `TxId` that were adopted on-chain.  This method catches the case
+    /// where a *different* transaction in a block consumes an input that a
+    /// mempool transaction also needs.
+    ///
+    /// Returns the number of entries removed.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Update` —
+    /// `revalidateTxsFor` re-applies every mempool tx against the new UTxO
+    /// set, which implicitly rejects txs with missing inputs.
+    pub fn remove_conflicting_inputs(&mut self, consumed_inputs: &[ShelleyTxIn]) -> usize {
+        if consumed_inputs.is_empty() {
+            return 0;
+        }
+        let mut removed_count = 0;
+        let mut i = 0;
+        while i < self.entries.len() {
+            let conflicts = self.entries[i]
+                .entry
+                .inputs
+                .iter()
+                .any(|inp| consumed_inputs.contains(inp));
+            if conflicts {
+                let removed = self.entries.remove(i);
+                self.current_bytes -= removed.entry.size_bytes;
+                for input in &removed.entry.inputs {
+                    self.claimed_inputs.remove(input);
+                }
+                removed_count += 1;
+            } else {
+                i += 1;
+            }
+        }
+        removed_count
+    }
+
     /// Insert an entry with TTL validation against the current slot.
     ///
     /// The transaction is rejected if its TTL has already passed
@@ -632,9 +674,13 @@ impl Mempool {
 /// This is a thin runtime-facing handle that preserves `Mempool` as the queue
 /// policy type while allowing multiple tasks to take snapshots and mutate the
 /// queue safely.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SharedMempool {
     inner: Arc<RwLock<Mempool>>,
+    /// Notified whenever the mempool contents change (insert / remove / purge).
+    /// Used by `LocalTxMonitor` `AwaitAcquire` to block until the mempool
+    /// snapshot has changed, matching upstream behavior.
+    change_notify: Arc<tokio::sync::Notify>,
 }
 
 impl SharedMempool {
@@ -642,6 +688,7 @@ impl SharedMempool {
     pub fn new(mempool: Mempool) -> Self {
         Self {
             inner: Arc::new(RwLock::new(mempool)),
+            change_notify: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -650,9 +697,22 @@ impl SharedMempool {
         Self::new(Mempool::with_capacity(max_bytes))
     }
 
+    /// Wait until the mempool contents change.
+    ///
+    /// Upstream: `Ouroboros.Network.Protocol.LocalTxMonitor.Server` —
+    /// `MsgAwaitAcquire` blocks until the mempool generation counter
+    /// increases.
+    pub async fn wait_for_change(&self) {
+        self.change_notify.notified().await;
+    }
+
     /// Insert an entry if it does not already exist and fits within capacity.
     pub fn insert(&self, entry: MempoolEntry) -> Result<(), MempoolError> {
-        self.inner.write().expect("shared mempool poisoned").insert(entry)
+        let result = self.inner.write().expect("shared mempool poisoned").insert(entry);
+        if result.is_ok() {
+            self.change_notify.notify_waiters();
+        }
+        result
     }
 
     /// Insert an entry with TTL validation against the current slot.
@@ -662,39 +722,71 @@ impl SharedMempool {
         current_slot: SlotNo,
         protocol_params: Option<&ProtocolParameters>,
     ) -> Result<(), MempoolError> {
-        self.inner
+        let result = self.inner
             .write()
             .expect("shared mempool poisoned")
-            .insert_checked(entry, current_slot, protocol_params)
+            .insert_checked(entry, current_slot, protocol_params);
+        if result.is_ok() {
+            self.change_notify.notify_waiters();
+        }
+        result
     }
 
     /// Remove and return the highest-fee entry, if any.
     pub fn pop_best(&self) -> Option<MempoolEntry> {
-        self.inner.write().expect("shared mempool poisoned").pop_best()
+        let result = self.inner.write().expect("shared mempool poisoned").pop_best();
+        if result.is_some() {
+            self.change_notify.notify_waiters();
+        }
+        result
     }
 
     /// Remove a transaction by its identifier. Returns `true` if found.
     pub fn remove_by_id(&self, tx_id: &TxId) -> bool {
-        self.inner
+        let removed = self.inner
             .write()
             .expect("shared mempool poisoned")
-            .remove_by_id(tx_id)
+            .remove_by_id(tx_id);
+        if removed {
+            self.change_notify.notify_waiters();
+        }
+        removed
     }
 
     /// Remove all confirmed transactions and return the number removed.
     pub fn remove_confirmed(&self, confirmed_tx_ids: &[TxId]) -> usize {
-        self.inner
+        let count = self.inner
             .write()
             .expect("shared mempool poisoned")
-            .remove_confirmed(confirmed_tx_ids)
+            .remove_confirmed(confirmed_tx_ids);
+        if count > 0 {
+            self.change_notify.notify_waiters();
+        }
+        count
+    }
+
+    /// Remove mempool entries that conflict with consumed UTxO inputs.
+    pub fn remove_conflicting_inputs(&self, consumed_inputs: &[ShelleyTxIn]) -> usize {
+        let count = self.inner
+            .write()
+            .expect("shared mempool poisoned")
+            .remove_conflicting_inputs(consumed_inputs);
+        if count > 0 {
+            self.change_notify.notify_waiters();
+        }
+        count
     }
 
     /// Remove all expired transactions and return the number removed.
     pub fn purge_expired(&self, current_slot: SlotNo) -> usize {
-        self.inner
+        let count = self.inner
             .write()
             .expect("shared mempool poisoned")
-            .purge_expired(current_slot)
+            .purge_expired(current_slot);
+        if count > 0 {
+            self.change_notify.notify_waiters();
+        }
+        count
     }
 
     /// Re-validate remaining transactions after a block has been applied.
@@ -706,10 +798,14 @@ impl SharedMempool {
         current_slot: SlotNo,
         available_inputs: &std::collections::HashSet<ShelleyTxIn>,
     ) -> usize {
-        self.inner
+        let count = self.inner
             .write()
             .expect("shared mempool poisoned")
-            .revalidate(current_slot, available_inputs)
+            .revalidate(current_slot, available_inputs);
+        if count > 0 {
+            self.change_notify.notify_waiters();
+        }
+        count
     }
 
     /// Re-validate all mempool entries against updated protocol parameters.
@@ -725,10 +821,14 @@ impl SharedMempool {
         current_slot: SlotNo,
         params: &ProtocolParameters,
     ) -> usize {
-        self.inner
+        let count = self.inner
             .write()
             .expect("shared mempool poisoned")
-            .purge_invalid_for_params(current_slot, params)
+            .purge_invalid_for_params(current_slot, params);
+        if count > 0 {
+            self.change_notify.notify_waiters();
+        }
+        count
     }
 
     /// Check whether a transaction with the given id exists in the mempool.
@@ -772,6 +872,12 @@ impl SharedMempool {
         SharedTxSubmissionMempoolReader {
             mempool: self.clone(),
         }
+    }
+}
+
+impl Default for SharedMempool {
+    fn default() -> Self {
+        Self::new(Mempool::default())
     }
 }
 

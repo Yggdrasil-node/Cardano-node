@@ -277,6 +277,79 @@ fn handshake_state_machine_happy_path() {
     assert_eq!(HandshakeState::StDone, HandshakeState::StDone);
 }
 
+#[test]
+fn handshake_propose_with_legacy_v7_two_element_version_data() {
+    // V7 version data: [networkMagic, initiatorOnlyDiffusionMode] — 2 elements
+    use yggdrasil_ledger::cbor::Encoder;
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(0); // ProposeVersions tag
+    enc.map(1); // 1 version entry
+    enc.unsigned(7); // version 7
+    enc.array(2).unsigned(764824073).bool(false); // 2-element vdata
+    let bytes = enc.into_bytes();
+    let msg = HandshakeMessage::from_cbor(&bytes).expect("should decode V7 2-element vdata");
+    match msg {
+        HandshakeMessage::ProposeVersions(versions) => {
+            assert_eq!(versions.len(), 1);
+            assert_eq!(versions[0].0, HandshakeVersion(7));
+            assert_eq!(versions[0].1.network_magic, 764824073);
+            assert!(!versions[0].1.initiator_only_diffusion_mode);
+            assert_eq!(versions[0].1.peer_sharing, 0); // default
+            assert!(!versions[0].1.query); // default
+        }
+        _ => panic!("expected ProposeVersions"),
+    }
+}
+
+#[test]
+fn handshake_propose_with_v11_three_element_version_data() {
+    // V11 version data: [networkMagic, initiatorOnlyDiffusionMode, peerSharing] — 3 elements
+    use yggdrasil_ledger::cbor::Encoder;
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(0); // ProposeVersions tag
+    enc.map(1); // 1 version entry
+    enc.unsigned(11); // version 11
+    enc.array(3).unsigned(764824073).bool(true).unsigned(1); // 3-element vdata
+    let bytes = enc.into_bytes();
+    let msg = HandshakeMessage::from_cbor(&bytes).expect("should decode V11 3-element vdata");
+    match msg {
+        HandshakeMessage::ProposeVersions(versions) => {
+            assert_eq!(versions.len(), 1);
+            assert_eq!(versions[0].0, HandshakeVersion(11));
+            assert_eq!(versions[0].1.network_magic, 764824073);
+            assert!(versions[0].1.initiator_only_diffusion_mode);
+            assert_eq!(versions[0].1.peer_sharing, 1);
+            assert!(!versions[0].1.query); // default
+        }
+        _ => panic!("expected ProposeVersions"),
+    }
+}
+
+#[test]
+fn handshake_propose_with_mixed_legacy_and_modern_versions() {
+    // A peer proposes V10 (2-element) and V14 (4-element) simultaneously
+    use yggdrasil_ledger::cbor::Encoder;
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(0); // ProposeVersions tag
+    enc.map(2); // 2 version entries
+    enc.unsigned(10); // version 10
+    enc.array(2).unsigned(764824073).bool(false); // 2-element
+    enc.unsigned(14); // version 14
+    enc.array(4).unsigned(764824073).bool(false).unsigned(1).bool(false); // 4-element
+    let bytes = enc.into_bytes();
+    let msg = HandshakeMessage::from_cbor(&bytes).expect("should decode mixed version proposal");
+    match msg {
+        HandshakeMessage::ProposeVersions(versions) => {
+            assert_eq!(versions.len(), 2);
+            assert_eq!(versions[0].0, HandshakeVersion(10));
+            assert_eq!(versions[0].1.peer_sharing, 0); // defaulted
+            assert_eq!(versions[1].0, HandshakeVersion(14));
+            assert_eq!(versions[1].1.peer_sharing, 1);
+        }
+        _ => panic!("expected ProposeVersions"),
+    }
+}
+
 // ===========================================================================
 // ChainSync state transitions
 // ===========================================================================

@@ -172,6 +172,18 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         }),
     );
 
+    // Witness set with the Plutus V1 script.
+    let mut ws = empty_witness_set();
+    ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
+    ws.plutus_data.push(witness_datum());
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
     let body = AlonzoTxBody {
         inputs: vec![spending_input],
         outputs: vec![AlonzoTxOut {
@@ -187,22 +199,11 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
     };
-
-    // Witness set with the Plutus V1 script.
-    let mut ws = empty_witness_set();
-    ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
-    ws.plutus_data.push(witness_datum());
-    ws.redeemers.push(Redeemer {
-        tag: 0,
-        index: 0,
-        data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
@@ -271,6 +272,17 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         }),
     );
 
+    // Witness set with the Plutus V1 script.
+    let mut ws = empty_witness_set();
+    ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
     let body = BabbageTxBody {
         inputs: vec![spending_input],
         outputs: vec![BabbageTxOut {
@@ -287,7 +299,7 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
@@ -295,16 +307,6 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         total_collateral: None,
         collateral_return: None,
     };
-
-    // Witness set with the Plutus V1 script.
-    let mut ws = empty_witness_set();
-    ws.plutus_v1_scripts.push(FAKE_PLUTUS_V1_SCRIPT.to_vec());
-    ws.redeemers.push(Redeemer {
-        tag: 0,
-        index: 0,
-        data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();

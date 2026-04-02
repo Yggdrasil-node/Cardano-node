@@ -57,19 +57,17 @@ fn seed_babbage_utxo(state: &mut LedgerState, txin: ShelleyTxIn, addr: &[u8], am
 
 #[test]
 fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
-    let signer = TestSigner::new([0xA1; 32]);
-    let addr = signer.enterprise_addr();
-
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn {
-        transaction_id: [0x11; 32],
+    let mut ws = empty_witness_set();
+    // A redeemer is required for script_data_hash to be valid.
+    ws.redeemers.push(Redeemer {
+        tag: 0,
         index: 0,
-    };
-    seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
-
-    let ws = empty_witness_set();
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
     let ws_bytes = ws.to_cbor_bytes();
     let computed_hash = yggdrasil_ledger::plutus_validation::compute_script_data_hash(
         Some(&ws_bytes),
@@ -81,39 +79,16 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
     )
     .expect("compute script_data_hash");
 
-    let body = AlonzoTxBody {
-        inputs: vec![input],
-        outputs: vec![AlonzoTxOut {
-            address: addr,
-            amount: Value::Coin(5_000_000),
-            datum_hash: None,
-        }],
-        fee: 0,
-        ttl: Some(1_000),
-        certificates: None,
-        withdrawals: None,
-        update: None,
-        auxiliary_data_hash: None,
-        validity_interval_start: None,
-        mint: None,
-        script_data_hash: Some(computed_hash),
-        collateral: None,
-        required_signers: None,
-        network_id: None,
-    };
-
-    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
-    let mut ws2 = empty_witness_set();
-    ws2.vkey_witnesses.push(signer.witness(&tx_body_hash));
-
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws2,
-        true,
+    // Validate directly: matching declared hash should be accepted.
+    let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
+        Some(computed_hash),
+        Some(&ws_bytes),
+        state.protocol_params(),
+        false,
         None,
-    ));
-
-    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+        None,
+        None,
+    );
     assert!(result.is_ok(), "expected success with matching hash: {:?}", result);
 }
 
@@ -131,7 +106,14 @@ fn alonzo_submitted_tx_rejects_mismatched_script_data_hash() {
     };
     seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
 
-    let ws = empty_witness_set();
+    let mut ws = empty_witness_set();
+    // Need redeemers so the hash path is exercised (not UnexpectedScriptIntegrityHash).
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(99),
+        ex_units: ExUnits { mem: 50, steps: 50 },
+    });
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
@@ -467,6 +449,248 @@ fn conway_submitted_tx_rejects_mismatched_script_data_hash_with_reference_script
     assert!(
         matches!(result, Err(LedgerError::PPViewHashesDontMatch { .. })),
         "expected PPViewHashesDontMatch for Conway reference-script hash, got: {:?}",
+        result,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bidirectional script integrity hash tests
+// Reference: upstream `hashScriptIntegrity` / `ppViewHashesDontMatch`
+// ---------------------------------------------------------------------------
+
+/// Both directions absent → OK (no scripts, no hash).
+#[test]
+fn alonzo_no_redeemers_no_hash_accepted() {
+    let signer = TestSigner::new([0xD1; 32]);
+    let addr = signer.enterprise_addr();
+
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn { transaction_id: [0xD0; 32], index: 0 };
+    seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = AlonzoTxBody {
+        inputs: vec![input],
+        outputs: vec![AlonzoTxOut {
+            address: addr.clone(),
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
+    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(result.is_ok(), "no redeemers + no hash should be accepted: {:?}", result);
+}
+
+/// Redeemers present, hash absent → MissingRequiredScriptIntegrityHash.
+#[test]
+fn alonzo_redeemers_without_hash_rejected() {
+    let keyhash = [0xD2; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn { transaction_id: [0xD3; 32], index: 0 };
+    seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = AlonzoTxBody {
+        inputs: vec![input],
+        outputs: vec![AlonzoTxOut {
+            address: addr,
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None, // deliberately absent
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(42),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        matches!(result, Err(LedgerError::MissingRequiredScriptIntegrityHash)),
+        "expected MissingRequiredScriptIntegrityHash, got: {:?}",
+        result,
+    );
+}
+
+/// Hash declared, no redeemers → UnexpectedScriptIntegrityHash.
+#[test]
+fn alonzo_hash_without_redeemers_rejected() {
+    let keyhash = [0xD4; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn { transaction_id: [0xD5; 32], index: 0 };
+    seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = AlonzoTxBody {
+        inputs: vec![input],
+        outputs: vec![AlonzoTxOut {
+            address: addr,
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: Some([0xFF; 32]), // declared but no redeemers
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+
+    let ws = empty_witness_set();
+    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        matches!(result, Err(LedgerError::UnexpectedScriptIntegrityHash { .. })),
+        "expected UnexpectedScriptIntegrityHash, got: {:?}",
+        result,
+    );
+}
+
+/// Babbage: redeemers present, hash absent → MissingRequiredScriptIntegrityHash.
+#[test]
+fn babbage_redeemers_without_hash_rejected() {
+    let keyhash = [0xD6; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Babbage);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn { transaction_id: [0xD7; 32], index: 0 };
+    seed_babbage_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = BabbageTxBody {
+        inputs: vec![input],
+        outputs: vec![BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None, // deliberately absent
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(1),
+        ex_units: ExUnits { mem: 50, steps: 50 },
+    });
+
+    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        matches!(result, Err(LedgerError::MissingRequiredScriptIntegrityHash)),
+        "expected MissingRequiredScriptIntegrityHash for Babbage, got: {:?}",
+        result,
+    );
+}
+
+/// Conway: hash declared, no redeemers → UnexpectedScriptIntegrityHash.
+#[test]
+fn conway_hash_without_redeemers_rejected() {
+    let keyhash = [0xD8; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn { transaction_id: [0xD9; 32], index: 0 };
+    seed_babbage_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = ConwayTxBody {
+        inputs: vec![input],
+        outputs: vec![BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: Some([0xAB; 32]), // declared but no redeemers
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let ws = empty_witness_set();
+    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        matches!(result, Err(LedgerError::UnexpectedScriptIntegrityHash { .. })),
+        "expected UnexpectedScriptIntegrityHash for Conway, got: {:?}",
         result,
     );
 }

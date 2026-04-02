@@ -1687,6 +1687,13 @@ async fn run_node(
         std::sync::RwLock::new(yggdrasil_node::SharedBlockProducerState::default()),
     );
 
+    // Compute issuer pool-key-hash (Blake2b-224) before credentials are
+    // consumed by the block-producer task.  Used by the sync pipeline to
+    // push stake sigma updates to the shared producer state.
+    let bp_pool_key_hash: Option<[u8; 28]> = block_producer_credentials.as_ref().map(|bp| {
+        yggdrasil_crypto::blake2b::hash_bytes_224(&bp.issuer_vkey.0).0
+    });
+
     let block_producer_task =
         if let (Some(block_producer_credentials), Some(block_producer_config)) =
             (block_producer_credentials, block_producer_runtime_config)
@@ -1820,6 +1827,7 @@ async fn run_node(
         let ntc_tracer = tracer.clone();
         let mut ntc_shutdown = shutdown_rx.clone();
         let ntc_evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>> = None;
+        let ntc_network_magic = node_config.network_magic;
 
         tracer.trace_runtime(
             "Net.NtC",
@@ -1843,6 +1851,7 @@ async fn run_node(
             };
             if let Err(err) = yggdrasil_node::run_local_accept_loop(
                 &ntc_path,
+                ntc_network_magic,
                 ntc_chain_db,
                 ntc_mempool,
                 dispatcher,
@@ -1881,7 +1890,11 @@ async fn run_node(
     .with_peer_registry(Some(Arc::clone(&peer_registry)))
     .with_mempool(Some(shared_mempool.clone()))
     .with_tentative_state(shared_tentative_state.clone())
-    .with_tip_notify(Some(chain_tip_notify.clone()));
+    .with_tip_notify(Some(chain_tip_notify.clone()))
+    .with_bp_state(
+        bp_pool_key_hash.map(|_| std::sync::Arc::clone(&shared_bp_state)),
+        bp_pool_key_hash,
+    );
 
     let mut sync_shutdown = shutdown_rx.clone();
     let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(

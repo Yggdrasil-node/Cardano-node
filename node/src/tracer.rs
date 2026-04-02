@@ -357,11 +357,9 @@ impl NodeTracer {
                         }
                         s if s.starts_with("Stdout HumanFormat") => Some(TraceBackend::StdoutHuman),
                         s if s.starts_with("Stdout MachineFormat") => Some(TraceBackend::StdoutMachine),
-                        s if s != "Forwarder" && s.starts_with("Forwarder") => Some(TraceBackend::Forwarder),
+                        "Forwarder" => Some(TraceBackend::Forwarder),
                         // EKGBackend flows through NodeMetrics — no trace-line output.
                         "EKGBackend" => None,
-                        // Forwarder (cardano-tracer socket) recognised for forward compat.
-                        "Forwarder" => None,
                         // PrometheusSimple recognised — metrics served via /metrics endpoint.
                         s if s.starts_with("PrometheusSimple") => None,
                         _ => None,
@@ -1404,7 +1402,7 @@ mod tests {
     }
 
     #[test]
-    fn forwarder_backend_string_yields_no_trace_backend() {
+    fn forwarder_backend_string_yields_forwarder_trace_backend() {
         let mut cfg: NodeConfigFile = default_config();
         cfg.trace_options.insert(
             "".to_owned(),
@@ -1416,7 +1414,7 @@ mod tests {
             },
         );
         let tracer = NodeTracer::from_config(&cfg);
-        assert!(tracer.backends_for("Startup").is_empty());
+        assert_eq!(tracer.backends_for("Startup"), vec![TraceBackend::Forwarder]);
     }
 
     #[test]
@@ -1456,8 +1454,8 @@ mod tests {
         );
         let tracer = NodeTracer::from_config(&cfg);
         let backends = tracer.backends_for("Net");
-        // Only the stdout coloured backend produces trace lines.
-        assert_eq!(backends, vec![TraceBackend::StdoutHumanColoured]);
+        // Forwarder and stdout coloured backends both resolve.
+        assert_eq!(backends, vec![TraceBackend::Forwarder, TraceBackend::StdoutHumanColoured]);
     }
 
     // -----------------------------------------------------------------------

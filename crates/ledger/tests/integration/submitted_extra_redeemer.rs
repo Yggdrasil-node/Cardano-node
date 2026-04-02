@@ -81,6 +81,16 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         }),
     );
 
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,   // Spending
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
@@ -96,20 +106,11 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![coll_input]),
         required_signers: None,
         network_id: None,
     };
-
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 0,   // Spending
-        index: 0,
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let raw_cbor = body.to_cbor_bytes();
     let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx {
@@ -214,6 +215,16 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         }),
     );
 
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
     let body = BabbageTxBody {
         inputs: vec![input],
         outputs: vec![BabbageTxOut {
@@ -230,7 +241,7 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![coll_input]),
         required_signers: None,
         network_id: None,
@@ -238,15 +249,6 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         total_collateral: None,
         reference_inputs: None,
     };
-
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 0,
-        index: 0,
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let raw_cbor = body.to_cbor_bytes();
     let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx {
@@ -300,6 +302,16 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         }),
     );
 
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), true);
     let body = ConwayTxBody {
         inputs: vec![input],
         outputs: vec![BabbageTxOut {
@@ -315,7 +327,7 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![coll_input]),
         required_signers: None,
         network_id: None,
@@ -327,15 +339,6 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         current_treasury_value: None,
         treasury_donation: None,
     };
-
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 0,
-        index: 0,
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let raw_cbor = body.to_cbor_bytes();
     let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx {
@@ -392,6 +395,20 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
         std::collections::BTreeMap::new();
     mint2.insert(native_hash, std::collections::BTreeMap::new());
 
+    // Build redeemer-bearing ws parts first to derive script_data_hash.
+    let redeemer = Redeemer {
+        tag: 1,   // Minting
+        index: 0, // first sorted policy
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    };
+    let sdh_ws = ShelleyWitnessSet {
+        redeemers: vec![redeemer.clone()],
+        native_scripts: vec![native.clone()],
+        ..empty_witness_set()
+    };
+    let sdh = compute_test_script_data_hash(&sdh_ws, state.protocol_params(), true);
+
     let body = ConwayTxBody {
         inputs: vec![input],
         outputs: vec![BabbageTxOut {
@@ -407,7 +424,7 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint2),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![coll_input]),
         required_signers: None,
         network_id: None,
@@ -424,12 +441,7 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
     ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 1,   // Minting
-        index: 0, // first sorted policy
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
+    ws.redeemers.push(redeemer);
 
     let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
         body, ws, true, None,

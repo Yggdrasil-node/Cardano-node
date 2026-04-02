@@ -478,3 +478,90 @@ fn conway_drep_deregistration_refund_balances() {
     state.apply_block(&block).expect("DRep deregistration refund should balance");
     assert!(!state.drep_state().is_registered(&drep));
 }
+
+// -----------------------------------------------------------------------
+// Conway submitted-tx treasury donation accumulates into utxos_donation
+// -----------------------------------------------------------------------
+
+/// Upstream: `Cardano.Ledger.Conway.Rules.Utxos` — `utxosDonationL`
+/// Treasury donations in submitted-tx path must accumulate into
+/// `LedgerState.utxos_donation` just like the block-apply path.
+#[test]
+fn conway_submitted_tx_accumulates_treasury_donation() {
+    use yggdrasil_ledger::tx::MultiEraSubmittedTx;
+    use yggdrasil_ledger::tx::AlonzoCompatibleSubmittedTx;
+
+    let signer = TestSigner::new([0xD0; 32]);
+    let mut state = LedgerState::new(Era::Conway);
+    let mut params = ProtocolParameters::default();
+    params.min_fee_a = 0;
+    params.min_fee_b = 0;
+    state.set_protocol_params(params);
+
+    let donation = 500_000u64;
+    let consumed = 1_000_000 + donation; // output + donation (fee = 0)
+    let input = ShelleyTxIn { transaction_id: [0xDD; 32], index: 0 };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: signer.enterprise_addr(),
+            amount: Value::Coin(consumed),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+
+    let body = ConwayTxBody {
+        inputs: vec![input],
+        outputs: vec![BabbageTxOut {
+            address: signer.enterprise_addr(),
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: Some(100),
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: Some(donation),
+    };
+
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let ws = ShelleyWitnessSet {
+        vkey_witnesses: vec![signer.witness(&tx_body_hash)],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+
+    assert_eq!(state.utxos_donation(), 0);
+
+    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
+        body, ws, true, None,
+    ));
+    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+        .expect("Conway submitted tx with donation should succeed");
+
+    assert_eq!(
+        state.utxos_donation(),
+        donation,
+        "treasury donation should accumulate in utxos_donation",
+    );
+}

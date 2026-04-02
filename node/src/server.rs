@@ -22,7 +22,7 @@ use crate::sync::recover_ledger_state_chaindb;
 use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock,
-    Decoder, MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo,
+    Decoder, MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo, TxId,
 };
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::{
@@ -623,6 +623,12 @@ pub async fn run_txsubmission_server(
         tx_state.register_peer(*peer_addr);
     }
 
+    // Upstream `serverPeer` uses blocking MsgRequestTxIds in its main
+    // collection loop: after processing each batch the server acks the
+    // txids that were successfully downloaded and asks the client to
+    // advertise more, blocking if the client has nothing queued yet.
+    // Reference: `Ouroboros.Network.TxSubmission.Inbound.serverPeer`.
+
     loop {
         match server.request_tx_ids(true, ack, TXSUBMISSION_BATCH_SIZE).await? {
             TxIdsReply::Done => {
@@ -631,8 +637,18 @@ pub async fn run_txsubmission_server(
                 }
                 return Ok(());
             }
+            TxIdsReply::TxIds(txids) if txids.is_empty() => {
+                // Empty reply on blocking request means peer had nothing;
+                // continue the loop and try again.
+                ack = 0;
+                continue;
+            }
             TxIdsReply::TxIds(txids) => {
                 ack = txids.len().min(u16::MAX as usize) as u16;
+
+                // Build lookup of advertised sizes for later verification.
+                let advertised_sizes: std::collections::HashMap<TxId, u32> =
+                    txids.iter().map(|item| (item.txid, item.size)).collect();
 
                 let all_txids: Vec<_> = txids.into_iter().map(|item| item.txid).collect();
 
@@ -673,6 +689,30 @@ pub async fn run_txsubmission_server(
                         }
                     }
                 };
+
+                // Verify advertised body sizes match actual received sizes.
+                // Upstream reference: `txSubmissionInbound` validates each
+                // received tx body against its advertised `TxSizeInBytes`.
+                if txs.len() == to_request.len() {
+                    for (tx_bytes, txid) in txs.iter().zip(to_request.iter()) {
+                        if let Some(&advertised) = advertised_sizes.get(txid) {
+                            let actual = tx_bytes.len() as u32;
+                            if actual != advertised {
+                                if let Some((tx_state, peer_addr)) = &dedup {
+                                    tx_state.unregister_peer(peer_addr);
+                                }
+                                return Err(TxSubmissionServerError::UnexpectedMessage(
+                                    format!(
+                                        "body size mismatch for tx {}: advertised {} vs actual {}",
+                                        hex::encode(txid.0),
+                                        advertised,
+                                        actual,
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                }
 
                 // Track which txids were successfully received.
                 if let Some((tx_state, peer_addr)) = &dedup {

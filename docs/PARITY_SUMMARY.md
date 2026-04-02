@@ -46,6 +46,10 @@
 - `validate_conway_current_treasury_value()` — Conway currentTreasuryValue field validation
 - Conway deposit validation — `IncorrectDepositDELEG`, `IncorrectKeyDepositRefund`, `DrepIncorrectDeposit`, `DrepIncorrectRefund`, `WithdrawalNotFullDrain` (exact-drain semantics)
 - Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
+- `validate_script_witnesses_well_formed()` / `validate_reference_scripts_well_formed()` — Malformed Plutus script detection at admission (upstream `validateScriptsWellFormed`)
+- `validate_outside_forecast()` — OutsideForecast infrastructure (upstream no-op due to `unsafeLinearExtendEpochInfo`)
+- `record_block_producer()` / `take_blocks_made()` — Per-pool block production tracking in LedgerState (upstream `NewEpochState.nesBcur`)
+- `derive_pool_performance()` — Pool performance ratios from internal blocks_made + stake distribution
 - `MultiEraUtxo` — Unified UTxO model for all eras
 
 **Consensus**:
@@ -141,9 +145,6 @@
 ---
 
 ### ❌ Not Started (Can Defer or Externalize)
-
-**Ledger**:
-- Plutus budget shape tuning — Can use upstream cost models
 
 **Network**:
 - Genesis density — Network-layer ChainSync density tracking; future milestone

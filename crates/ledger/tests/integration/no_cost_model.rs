@@ -110,6 +110,7 @@ fn alonzo_block_with_plutus_v1_mint(
     policy_hash: [u8; 28],
     input_txid: [u8; 32],
     collateral_input: ShelleyTxIn,
+    pp: Option<&ProtocolParameters>,
 ) -> Block {
     // Build witness set with the V1 script + spending/minting redeemers.
     let ws = ShelleyWitnessSet {
@@ -132,6 +133,7 @@ fn alonzo_block_with_plutus_v1_mint(
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![],
     };
+    let sdh = compute_test_script_data_hash(&ws, pp, false);
     let witness_bytes = ws.to_cbor_bytes();
 
     let body = AlonzoTxBody {
@@ -161,7 +163,7 @@ fn alonzo_block_with_plutus_v1_mint(
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
     };
     let body_bytes = body.to_cbor_bytes();
     let tx_hash = yggdrasil_crypto::hash_bytes_256(&body_bytes);
@@ -194,6 +196,7 @@ fn babbage_block_with_plutus_v2_mint(
     policy_hash: [u8; 28],
     input_txid: [u8; 32],
     collateral_input: ShelleyTxIn,
+    pp: Option<&ProtocolParameters>,
 ) -> Block {
     let ws = ShelleyWitnessSet {
         vkey_witnesses: vec![],
@@ -215,6 +218,7 @@ fn babbage_block_with_plutus_v2_mint(
         plutus_v2_scripts: vec![script_bytes],
         plutus_v3_scripts: vec![],
     };
+    let sdh = compute_test_script_data_hash(&ws, pp, false);
     let witness_bytes = ws.to_cbor_bytes();
 
     let body = BabbageTxBody {
@@ -245,7 +249,7 @@ fn babbage_block_with_plutus_v2_mint(
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral_return: None,
         total_collateral: None,
         reference_inputs: None,
@@ -280,6 +284,7 @@ fn conway_submitted_tx_with_plutus_v3_mint(
     policy_hash: [u8; 28],
     input_txid: [u8; 32],
     collateral_input: ShelleyTxIn,
+    pp: Option<&ProtocolParameters>,
 ) -> MultiEraSubmittedTx {
     let ws = ShelleyWitnessSet {
         vkey_witnesses: vec![],
@@ -301,6 +306,7 @@ fn conway_submitted_tx_with_plutus_v3_mint(
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![script_bytes],
     };
+    let sdh = compute_test_script_data_hash(&ws, pp, true);
 
     let body = ConwayTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: input_txid, index: 0 }],
@@ -329,7 +335,7 @@ fn conway_submitted_tx_with_plutus_v3_mint(
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral_return: None,
         total_collateral: None,
         reference_inputs: None,
@@ -365,7 +371,7 @@ fn alonzo_block_rejects_v1_when_no_v1_cost_model() {
     seed_script_utxo(&mut state, [0xBB; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xBC; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral);
+    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral, state.protocol_params());
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(
@@ -388,7 +394,7 @@ fn alonzo_block_accepts_v1_when_v1_cost_model_present() {
     seed_script_utxo(&mut state, [0xBB; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xBC; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral);
+    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral, state.protocol_params());
 
     // This should NOT fail with NoCostModel. It may fail with other errors
     // (e.g. script_data_hash mismatch, evaluator errors) but NoCostModel
@@ -415,7 +421,7 @@ fn alonzo_block_rejects_v1_when_cost_models_empty() {
     seed_script_utxo(&mut state, [0xBB; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xBC; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral);
+    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral, state.protocol_params());
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(
@@ -462,6 +468,7 @@ fn alonzo_submitted_tx_rejects_v1_when_no_cost_model() {
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![],
     };
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
 
     let body = AlonzoTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: [0xCC; 32], index: 0 }],
@@ -490,7 +497,7 @@ fn alonzo_submitted_tx_rejects_v1_when_no_cost_model() {
         collateral: Some(vec![collateral]),
         required_signers: None,
         network_id: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
     };
 
     let submitted_tx = AlonzoCompatibleSubmittedTx::new(body, ws, true, None);
@@ -518,7 +525,7 @@ fn babbage_block_rejects_v2_when_only_v1_cost_model() {
     seed_script_utxo(&mut state, [0xB2; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xB4; 32], 2_000_000);
 
-    let block = babbage_block_with_plutus_v2_mint(script_bytes, policy_hash, [0xB2; 32], collateral);
+    let block = babbage_block_with_plutus_v2_mint(script_bytes, policy_hash, [0xB2; 32], collateral, state.protocol_params());
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(
@@ -560,6 +567,7 @@ fn babbage_submitted_tx_rejects_v2_when_no_cost_model() {
         plutus_v2_scripts: vec![script_bytes],
         plutus_v3_scripts: vec![],
     };
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
 
     let body = BabbageTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: [0xB3; 32], index: 0 }],
@@ -589,7 +597,7 @@ fn babbage_submitted_tx_rejects_v2_when_no_cost_model() {
         collateral: Some(vec![collateral]),
         required_signers: None,
         network_id: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral_return: None,
         total_collateral: None,
         reference_inputs: None,
@@ -629,7 +637,7 @@ fn no_cost_model_skipped_when_cost_models_field_absent() {
     seed_script_utxo(&mut state, [0xDD; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xDE; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xDD; 32], collateral);
+    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xDD; 32], collateral, state.protocol_params());
 
     // Should NOT produce NoCostModel when PP has no cost_models at all.
     let result = state.apply_block(&block);
@@ -677,6 +685,7 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![script_bytes],
     };
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), true);
     let witness_bytes = ws.to_cbor_bytes();
 
     let body = ConwayTxBody {
@@ -707,7 +716,7 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
         collateral_return: None,
         total_collateral: None,
         reference_inputs: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         withdrawals: None,
         voting_procedures: None,
         proposal_procedures: None,
@@ -759,7 +768,7 @@ fn conway_submitted_tx_rejects_v3_when_only_v1_v2_cost_models() {
     seed_script_utxo(&mut state, [0xF0; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xF1; 32], 2_000_000);
 
-    let submitted = conway_submitted_tx_with_plutus_v3_mint(script_bytes, policy_hash, [0xF0; 32], collateral);
+    let submitted = conway_submitted_tx_with_plutus_v3_mint(script_bytes, policy_hash, [0xF0; 32], collateral, state.protocol_params());
 
     let err = state.apply_submitted_tx(&submitted, SlotNo(10), None).unwrap_err();
     assert!(

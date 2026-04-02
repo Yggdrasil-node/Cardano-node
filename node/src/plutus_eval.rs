@@ -132,6 +132,10 @@ impl PlutusEvaluator for CekPlutusEvaluator {
             Ok(())
         }
     }
+
+    fn is_script_well_formed(&self, _version: PlutusVersion, script_bytes: &[u8]) -> bool {
+        decode_script_bytes(script_bytes).is_ok()
+    }
 }
 
 // ---------------------------------------------------------------------------

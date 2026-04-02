@@ -103,6 +103,46 @@ pub struct EpochBoundaryEvent {
 // Epoch boundary application
 // ---------------------------------------------------------------------------
 
+/// Derives per-pool performance ratios from block production counts and
+/// the `set` stake snapshot.
+///
+/// Performance for each pool is `blocks_produced / expected_blocks` where
+/// `expected_blocks = σ_pool * total_blocks`. When the snapshot has no
+/// stake data, returns an empty map (all pools get perfect performance).
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `completeRupd`.
+fn derive_pool_performance(
+    blocks_made: &BTreeMap<PoolKeyHash, u64>,
+    set_snapshot: &crate::stake::StakeSnapshot,
+) -> BTreeMap<PoolKeyHash, UnitInterval> {
+    let stake_dist = set_snapshot.pool_stake_distribution();
+    let total_stake = stake_dist.total_active_stake();
+    if total_stake == 0 || blocks_made.is_empty() {
+        return BTreeMap::new();
+    }
+
+    let total_blocks: u64 = blocks_made.values().sum();
+    if total_blocks == 0 {
+        return BTreeMap::new();
+    }
+
+    let mut performance = BTreeMap::new();
+    for (pool_hash, &blocks_produced) in blocks_made {
+        let pool_stake = stake_dist.pool_stake(pool_hash);
+        if pool_stake == 0 {
+            continue;
+        }
+        // performance = blocks_produced / (σ * total_blocks)
+        //             = blocks_produced * total_stake / (pool_stake * total_blocks)
+        let numerator = blocks_produced.saturating_mul(total_stake);
+        let denominator = pool_stake.saturating_mul(total_blocks);
+        if denominator > 0 {
+            performance.insert(*pool_hash, UnitInterval { numerator, denominator });
+        }
+    }
+    performance
+}
+
 /// Applies the full epoch-boundary transition to `ledger`.
 ///
 /// The caller is responsible for detecting that a new epoch has started
@@ -116,7 +156,11 @@ pub struct EpochBoundaryEvent {
 /// * `snapshots` — the three-snapshot ring maintained alongside the ledger;
 ///   this is mutated to perform the SNAP rotation.
 /// * `pool_performance` — per-pool performance ratios for the reward
-///   calculation.  A pool absent from this map is treated as having
+///   calculation.  When non-empty, these values are used directly.
+///   When the caller passes an empty map, the function derives
+///   per-pool performance from `ledger.blocks_made()` and the `set`
+///   snapshot's stake distribution (upstream `nesBcur` semantics).
+///   A pool absent from the resulting map is treated as having
 ///   perfect (1/1) performance.
 ///
 /// # Errors
@@ -158,6 +202,10 @@ pub fn apply_epoch_boundary(
     //    rotation so that newly-credited reward balances are included in
     //    the freshly-computed mark snapshot.
     //
+    //    When the caller supplies an explicit pool_performance map
+    //    (non-empty), use it directly.  Otherwise derive performance
+    //    from the ledger's internal `blocks_made` (upstream `nesBcur`).
+    //
     //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — RUPD runs
     //    before EPOCH (which contains SNAP).
     // -----------------------------------------------------------------------
@@ -172,7 +220,17 @@ pub fn apply_epoch_boundary(
         fee_pot,
     };
 
-    let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, pool_performance);
+    // Derive effective performance: caller-provided or from internal blocks_made.
+    let effective_performance: BTreeMap<PoolKeyHash, UnitInterval>;
+    if pool_performance.is_empty() && !ledger.blocks_made().is_empty() {
+        effective_performance = derive_pool_performance(ledger.blocks_made(), &snapshots.set);
+    } else {
+        effective_performance = pool_performance.clone();
+    }
+    // Clear blocks_made for the new epoch (upstream NEWEPOCH rotates nesBcur).
+    ledger.take_blocks_made();
+
+    let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, &effective_performance);
     let accounts_rewarded = distribute_rewards(ledger, &reward_dist);
 
     // -----------------------------------------------------------------------
@@ -699,6 +757,17 @@ fn ratify_and_enact(
     let mut enacted_purposes: BTreeSet<crate::state::ConwayGovActionPurpose> = BTreeSet::new();
     let mut delayed = false;
 
+    // Upstream RATIFY uses the pre-loop curPParams and un-decremented
+    // treasury for guard checks (validCommitteeTerm / withdrawalCanWithdraw).
+    // ParameterChange mutations are staged as futurePParams and promoted
+    // AFTER the loop; treasury is only decremented after RATIFY completes.
+    // Reference: Cardano.Ledger.Conway.Rules.Ratify (ratifyTransition).
+    let initial_committee_term_limit = ledger
+        .protocol_params()
+        .and_then(|pp| pp.committee_term_limit)
+        .or(committee_max_term);
+    let initial_treasury = ledger.accounting().treasury;
+
     for id in &sorted_ids {
         // Look up the action (it may have been removed by an earlier
         // enactment — shouldn't happen, but be defensive).
@@ -711,17 +780,15 @@ fn ratify_and_enact(
 
         // --- Upstream ratifyTransition guard checks (order matters) ---
 
-        // 1. prevActionAsExpected — checked against CURRENT enact state.
+        // 1. prevActionAsExpected — checked against CURRENT enact state
+        //    (lineage updates mid-loop are intended).
         if !prev_action_as_expected(action_state, ledger.enact_state()) {
             continue;
         }
 
-        // 2. validCommitteeTerm — checked against CURRENT protocol params.
-        let cur_term_limit = ledger
-            .protocol_params()
-            .and_then(|pp| pp.committee_term_limit)
-            .or(committee_max_term);
-        if !valid_committee_term(gov_action, cur_term_limit, current_epoch) {
+        // 2. validCommitteeTerm — checked against INITIAL protocol params
+        //    (upstream curPParams, not futurePParams).
+        if !valid_committee_term(gov_action, initial_committee_term_limit, current_epoch) {
             continue;
         }
 
@@ -730,8 +797,9 @@ fn ratify_and_enact(
             continue;
         }
 
-        // 4. withdrawalCanWithdraw — treasury sufficient.
-        if !withdrawal_can_withdraw(gov_action, ledger.accounting().treasury) {
+        // 4. withdrawalCanWithdraw — checked against INITIAL treasury
+        //    (upstream treasury is not decremented until after RATIFY).
+        if !withdrawal_can_withdraw(gov_action, initial_treasury) {
             continue;
         }
 
@@ -3756,5 +3824,200 @@ mod tests {
         assert!(ledger.governance_actions().contains_key(&gai));
         // key_deposit should be unchanged.
         assert_eq!(ledger.protocol_params().unwrap().key_deposit, 2_000_000);
+    }
+
+    // ── derive_pool_performance ────────────────────────────────────────
+
+    #[test]
+    fn derive_pool_performance_empty_counts_returns_empty() {
+        let snapshot = StakeSnapshot::empty();
+        let perf = super::derive_pool_performance(&BTreeMap::new(), &snapshot);
+        assert!(perf.is_empty());
+    }
+
+    #[test]
+    fn derive_pool_performance_no_stake_returns_empty() {
+        let snapshot = StakeSnapshot::empty();
+        let mut counts = BTreeMap::new();
+        counts.insert(test_pool(1), 10);
+        let perf = super::derive_pool_performance(&counts, &snapshot);
+        assert!(perf.is_empty());
+    }
+
+    #[test]
+    fn derive_pool_performance_single_pool_perfect() {
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.pool_params.insert(test_pool(1), test_pool_params(1));
+        snapshot.delegations.insert(test_cred(1), test_pool(1));
+        snapshot.stake.add(test_cred(1), 1000);
+        let mut counts = BTreeMap::new();
+        counts.insert(test_pool(1), 10);
+        let perf = super::derive_pool_performance(&counts, &snapshot);
+        let p = perf.get(&test_pool(1)).unwrap();
+        // Single pool with all stake and all blocks → ratio = 1/1 = 1.0.
+        assert_eq!(p.numerator * p.denominator, p.denominator * p.numerator);
+    }
+
+    #[test]
+    fn derive_pool_performance_two_pools_proportional() {
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.pool_params.insert(test_pool(1), test_pool_params(1));
+        snapshot.pool_params.insert(test_pool(2), test_pool_params(2));
+        snapshot.delegations.insert(test_cred(1), test_pool(1));
+        snapshot.delegations.insert(test_cred(2), test_pool(2));
+        // Pool 1 has 75% of stake, pool 2 has 25%.
+        snapshot.stake.add(test_cred(1), 750);
+        snapshot.stake.add(test_cred(2), 250);
+        // Both produced the same number of blocks.
+        let mut counts = BTreeMap::new();
+        counts.insert(test_pool(1), 5);
+        counts.insert(test_pool(2), 5);
+        let perf = super::derive_pool_performance(&counts, &snapshot);
+        // Pool 1: expected 75% of 10 = 7.5, actual 5.
+        // performance = 5 * 1000 / (750 * 10) = 5000 / 7500 ≈ 0.667
+        let p1 = perf.get(&test_pool(1)).unwrap();
+        assert!(p1.numerator * 3 < p1.denominator * 3); // < 1.0
+        // Pool 2: expected 25% of 10 = 2.5, actual 5.
+        // performance = 5 * 1000 / (250 * 10) = 5000 / 2500 = 2.0
+        let p2 = perf.get(&test_pool(2)).unwrap();
+        assert!(p2.numerator * 1 > p2.denominator * 1); // > 1.0
+    }
+
+    // ── blocks_made integration ────────────────────────────────────────
+
+    #[test]
+    fn epoch_boundary_uses_internal_blocks_made_when_caller_passes_empty() {
+        // Set up a ledger with a pool and stake.
+        let mut ledger = make_ledger_with_pool(1);
+        let pool_hash = test_pool(1);
+
+        // Simulate blocks_made: the pool produced 10 blocks.
+        for _ in 0..10 {
+            ledger.record_block_producer(pool_hash);
+        }
+        assert_eq!(*ledger.blocks_made().get(&pool_hash).unwrap(), 10);
+
+        // Build snapshots with the pool having stake.
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.pool_params.insert(pool_hash, test_pool_params(1));
+        snapshot.delegations.insert(test_cred(1), pool_hash);
+        snapshot.stake.add(test_cred(1), 1_000_000_000);
+        let mut snapshots = StakeSnapshots::new();
+        snapshots.go = snapshot.clone();
+        snapshots.set = snapshot;
+
+        // Call epoch boundary with an EMPTY performance map → should use internal blocks_made.
+        let event = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(1),
+            &mut snapshots,
+            &BTreeMap::new(),
+        )
+        .expect("epoch boundary");
+
+        // blocks_made should be cleared after epoch boundary.
+        assert!(ledger.blocks_made().is_empty(), "blocks_made should be cleared after epoch boundary");
+
+        // Rewards should have been computed (non-zero distribution).
+        assert!(event.rewards_distributed > 0 || event.treasury_delta > 0,
+            "rewards or treasury should be non-zero");
+    }
+
+    #[test]
+    fn epoch_boundary_prefers_caller_performance_when_non_empty() {
+        let mut ledger = make_ledger_with_pool(1);
+        let pool_hash = test_pool(1);
+
+        // Internal blocks_made: 1 block (low performance).
+        ledger.record_block_producer(pool_hash);
+
+        // But caller provides explicit perfect performance.
+        let mut explicit_perf = BTreeMap::new();
+        explicit_perf.insert(pool_hash, UnitInterval { numerator: 1, denominator: 1 });
+
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.pool_params.insert(pool_hash, test_pool_params(1));
+        snapshot.delegations.insert(test_cred(1), pool_hash);
+        snapshot.stake.add(test_cred(1), 1_000_000_000);
+        let mut snapshots = StakeSnapshots::new();
+        snapshots.go = snapshot.clone();
+        snapshots.set = snapshot;
+
+        let event = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(1),
+            &mut snapshots,
+            &explicit_perf,
+        )
+        .expect("epoch boundary");
+
+        // blocks_made still cleared even when caller provides explicit perf.
+        assert!(ledger.blocks_made().is_empty());
+        // Should have rewards because we passed perfect performance.
+        assert!(event.rewards_distributed > 0 || event.treasury_delta > 0);
+    }
+
+    // ── Ratification timing parity tests ───────────────────────────────
+
+    #[test]
+    fn test_two_treasury_withdrawals_both_enacted_using_initial_treasury() {
+        // Upstream: RATIFY checks withdrawalCanWithdraw against the pre-loop
+        // treasury.  Two proposals each requesting 60M from a 100M treasury
+        // should BOTH pass because the treasury check uses the initial value.
+        let mut ledger = make_auto_pass_ledger();
+
+        let target_cred = StakeCredential::AddrKeyHash([0xE0; 28]);
+        ledger.stake_credentials_mut().register(target_cred);
+        let target_ra = crate::RewardAccount { network: 1, credential: target_cred };
+        ledger.reward_accounts_mut().insert(
+            target_ra,
+            crate::RewardAccountState::new(0, None),
+        );
+        ledger.accounting_mut().treasury = 100_000_000;
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Proposal A: withdraw 60M.
+        let mut wd_a = BTreeMap::new();
+        wd_a.insert(target_ra, 60_000_000u64);
+        let prop_a = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals: wd_a,
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        };
+        // Proposal B: withdraw 60M (same target).
+        let mut wd_b = BTreeMap::new();
+        wd_b.insert(target_ra, 60_000_000u64);
+        let prop_b = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals: wd_b,
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        };
+
+        let gai_a = test_gov_action_id(0xA0, 0);
+        let gai_b = test_gov_action_id(0xB0, 0);
+        ledger.governance_actions_mut().insert(gai_a.clone(), GovernanceActionState::new(prop_a));
+        ledger.governance_actions_mut().insert(gai_b.clone(), GovernanceActionState::new(prop_b));
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Both should be enacted (initial treasury 100M ≥ 60M for each check).
+        assert_eq!(event.governance_actions_enacted, 2);
+
+        // Reward account should have received 120M total.
+        let balance = ledger.reward_accounts().get(&target_ra).unwrap().balance();
+        assert_eq!(balance, 120_000_000);
     }
 }

@@ -84,6 +84,19 @@ fn alonzo_block_rejects_extra_redeemer_for_native_script_input() {
         }),
     );
 
+    // Witness set: native script (satisfies script-witness check) + one
+    // spending redeemer that targets the native-script input.
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,   // Spending
+        index: 0, // first (only) input after sorting
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
+
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
@@ -99,22 +112,11 @@ fn alonzo_block_rejects_extra_redeemer_for_native_script_input() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
     };
-
-    // Witness set: native script (satisfies script-witness check) + one
-    // spending redeemer that targets the native-script input.
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 0,   // Spending
-        index: 0, // first (only) input after sorting
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
@@ -272,6 +274,17 @@ fn alonzo_block_rejects_extra_minting_redeemer_for_native_policy() {
     assets.insert(vec![0xAA], 1i64);
     mint.insert(policy_id, assets);
 
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 1,   // Minting
+        index: 0, // first (only) policy after sorting
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
+
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
@@ -287,21 +300,11 @@ fn alonzo_block_rejects_extra_minting_redeemer_for_native_policy() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
     };
-
-    // Witness set: native script for minting policy + minting redeemer.
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 1,   // Minting
-        index: 0, // first (only) policy after sorting
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
@@ -374,6 +377,17 @@ fn alonzo_block_rejects_extra_redeemer_even_when_is_valid_false() {
         }),
     );
 
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
+
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
@@ -389,20 +403,11 @@ fn alonzo_block_rejects_extra_redeemer_even_when_is_valid_false() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
     };
-
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 0,
-        index: 0,
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let body_bytes = body.to_cbor_bytes();
     let tx = Tx {
@@ -473,6 +478,17 @@ fn babbage_block_rejects_extra_redeemer_for_native_script_input() {
         }),
     );
 
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
+
     let body = BabbageTxBody {
         inputs: vec![input],
         outputs: vec![BabbageTxOut {
@@ -489,7 +505,7 @@ fn babbage_block_rejects_extra_redeemer_for_native_script_input() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
@@ -497,15 +513,6 @@ fn babbage_block_rejects_extra_redeemer_for_native_script_input() {
         total_collateral: None,
         reference_inputs: None,
     };
-
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 0,
-        index: 0,
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let body_bytes = body.to_cbor_bytes();
     let tx = Tx {
@@ -583,6 +590,17 @@ fn conway_block_rejects_extra_minting_redeemer_for_native_policy() {
     assets.insert(vec![0xBB], 1i64);
     mint.insert(policy_id, assets);
 
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.redeemers.push(Redeemer {
+        tag: 1,
+        index: 0,
+        data: PlutusData::Integer(0.into()),
+        ex_units: ExUnits { mem: 100, steps: 100 },
+    });
+
+    let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), true);
+
     let body = ConwayTxBody {
         inputs: vec![input],
         outputs: vec![BabbageTxOut {
@@ -598,7 +616,7 @@ fn conway_block_rejects_extra_minting_redeemer_for_native_policy() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: Some(vec![collateral_input]),
         required_signers: None,
         network_id: None,
@@ -610,15 +628,6 @@ fn conway_block_rejects_extra_minting_redeemer_for_native_policy() {
         current_treasury_value: None,
         treasury_donation: None,
     };
-
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.redeemers.push(Redeemer {
-        tag: 1,
-        index: 0,
-        data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
-    });
 
     let body_bytes = body.to_cbor_bytes();
     let tx = Tx {

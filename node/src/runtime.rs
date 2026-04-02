@@ -21,7 +21,7 @@ use crate::sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
     MultiEraSyncProgress, MultiEraSyncStep, SyncError, VerifiedSyncServiceConfig,
     VrfVerificationContext, apply_verified_progress_to_chaindb,
-    apply_nonce_evolution_to_progress, extract_tx_ids, recover_ledger_state_chaindb,
+    apply_nonce_evolution_to_progress, extract_tx_ids, extract_consumed_inputs, recover_ledger_state_chaindb,
     multi_era_block_to_block, validate_block_body_size,
     validate_block_protocol_version, verify_block_body_hash,
     sync_batch_apply_verified,
@@ -61,7 +61,7 @@ use yggdrasil_network::{
 };
 use yggdrasil_ledger::{
     BlockNo, Decoder, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
-    MultiEraSubmittedTx, Nonce, Point, PoolRelayAccessPoint, SlotNo, TxId,
+    MultiEraSubmittedTx, Nonce, Point, PoolRelayAccessPoint, ShelleyTxIn, SlotNo, TxId,
     plutus_validation::PlutusEvaluator,
 };
 use yggdrasil_mempool::{
@@ -78,12 +78,60 @@ pub type ChainTipNotify = Arc<tokio::sync::Notify>;
 
 /// Shared block-producer state updated by the sync pipeline so the producer
 /// loop reads live epoch nonce and stake sigma values across block forging.
+///
+/// Reference: upstream `forkBlockForging` in `NodeKernel.hs` re-reads the
+/// ledger view's epoch nonce and per-pool relative stake each slot.
 #[derive(Clone, Debug, Default)]
 pub struct SharedBlockProducerState {
     /// Current epoch nonce available to the block producer.
     pub epoch_nonce: Option<Nonce>,
     /// Current delegated stake sigma (numerator / denominator) available to the block producer.
     pub sigma: Option<(u64, u64)>,
+}
+
+/// Update the shared block-producer state with the latest epoch nonce from
+/// the nonce evolution state machine.
+///
+/// Called after each sync batch applies nonce evolution, so the concurrent
+/// block producer loop observes the live nonce without polling the sync
+/// pipeline.
+///
+/// Reference: upstream `forkBlockForging` reads `currentSlot`'s ledger view
+/// epoch nonce on every slot tick.
+fn update_bp_state_nonce(
+    bp_state: &Option<Arc<RwLock<SharedBlockProducerState>>>,
+    nonce_state: Option<&NonceEvolutionState>,
+) {
+    if let (Some(bp), Some(ns)) = (bp_state.as_ref(), nonce_state) {
+        if let Ok(mut st) = bp.write() {
+            st.epoch_nonce = Some(ns.epoch_nonce);
+        }
+    }
+}
+
+/// Update the shared block-producer state with the pool's relative stake
+/// from the active (set) stake snapshot.
+///
+/// `pool_key_hash` is the Blake2b-224 hash of the block producer's cold
+/// verification key (`issuer_vkey`).
+///
+/// The `set` snapshot is the one active for leader election in the current
+/// epoch (upstream: `esNesPd . nesEs`).
+///
+/// Reference: upstream `forkBlockForging` reads `IndividualPoolStake` from
+/// the epoch's stake distribution on every slot tick.
+fn update_bp_state_sigma(
+    bp_state: &Option<Arc<RwLock<SharedBlockProducerState>>>,
+    stake_snapshots: Option<&yggdrasil_ledger::StakeSnapshots>,
+    pool_key_hash: &[u8; 28],
+) {
+    if let (Some(bp), Some(snapshots)) = (bp_state.as_ref(), stake_snapshots) {
+        let dist = snapshots.set.pool_stake_distribution();
+        let sigma = dist.relative_stake(pool_key_hash);
+        if let Ok(mut st) = bp.write() {
+            st.sigma = Some(sigma);
+        }
+    }
 }
 
 /// Runtime governor configuration derived from node configuration.
@@ -610,64 +658,6 @@ impl OutboundPeerManager {
             );
         }
     }
-
-    async fn refresh_peer_share_sources(
-        &mut self,
-        request_amount: u16,
-        peer_registry: &Arc<RwLock<PeerRegistry>>,
-        governor_state: &mut GovernorState,
-        tracer: &NodeTracer,
-    ) {
-        let peers = self.warm_peers.keys().copied().collect::<Vec<_>>();
-        let mut discovered = Vec::new();
-        let mut attempted = false;
-
-        for peer in peers {
-            let Some(session) = self.warm_peers.get_mut(&peer) else {
-                continue;
-            };
-
-            match session.share_peers(request_amount).await {
-                Ok(Some(shared_peers)) => {
-                    attempted = true;
-                    governor_state.record_success(peer);
-                    extend_unique_peers(&mut discovered, shared_peers);
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    attempted = true;
-                    governor_state.record_failure(peer);
-                    tracer.trace_runtime(
-                        "Net.PeerSelection",
-                        "Warning",
-                        "peer sharing request failed",
-                        trace_fields([
-                            ("peer", json!(peer.to_string())),
-                            ("error", json!(err)),
-                        ]),
-                    );
-                }
-            }
-        }
-
-        if !attempted {
-            return;
-        }
-
-        let changed = {
-            let mut registry = peer_registry.write().expect("peer registry lock poisoned");
-            registry.sync_peer_share_peers(discovered.clone())
-        };
-
-        if changed {
-            tracer.trace_runtime(
-                "Net.PeerSelection",
-                "Info",
-                "peer sharing registry refreshed",
-                trace_fields([("peerCount", json!(discovered.len()))]),
-            );
-        }
-    }
 }
 
 fn peer_share_request_amount(targets: &GovernorTargets) -> u16 {
@@ -1179,7 +1169,7 @@ pub async fn run_block_producer_loop<I, V, L, F>(
     mut credentials: BlockProducerCredentials,
     config: RuntimeBlockProducerConfig,
     _tip_notify: Option<ChainTipNotify>,
-    _bp_state: Option<Arc<RwLock<SharedBlockProducerState>>>,
+    bp_state: Option<Arc<RwLock<SharedBlockProducerState>>>,
     tracer: NodeTracer,
     metrics: Option<Arc<NodeMetrics>>,
     shutdown: F,
@@ -1270,12 +1260,33 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                     continue;
                 };
 
+                // Read live epoch nonce and sigma from the shared state
+                // updated by the sync pipeline, falling back to the static
+                // startup values in config when unavailable.
+                //
+                // Reference: upstream `forkBlockForging` re-reads the ledger
+                // view's epoch nonce and per-pool relative stake each slot.
+                let (live_nonce, live_sigma_num, live_sigma_den) = {
+                    let bp_snapshot = bp_state
+                        .as_ref()
+                        .and_then(|bp| bp.read().ok().map(|st| st.clone()));
+                    let nonce = bp_snapshot
+                        .as_ref()
+                        .and_then(|s| s.epoch_nonce)
+                        .unwrap_or(config.epoch_nonce);
+                    let (sn, sd) = bp_snapshot
+                        .as_ref()
+                        .and_then(|s| s.sigma)
+                        .unwrap_or((config.sigma_num, config.sigma_den));
+                    (nonce, sn, sd)
+                };
+
                 let should_forge = check_should_forge(
                     &mut credentials,
                     current_slot,
-                    config.epoch_nonce,
-                    config.sigma_num,
-                    config.sigma_den,
+                    live_nonce,
+                    live_sigma_num,
+                    live_sigma_den,
                     &config.active_slot_coeff,
                 );
 
@@ -1663,14 +1674,8 @@ pub async fn run_governor_loop<I, V, L, F>(
                     .drive_keepalives(config.keepalive_interval, &mut governor_state, &tracer)
                     .await;
 
-                peer_manager
-                    .refresh_peer_share_sources(
-                        peer_share_request_amount(&config.targets),
-                        &peer_registry,
-                        &mut governor_state,
-                        &tracer,
-                    )
-                    .await;
+                // Peer sharing is now governor-driven via ShareRequest actions
+                // dispatched to specific target peers, matching upstream behavior.
 
                 peer_manager
                     .refresh_hot_peer_tips(&peer_registry, &mut governor_state, &tracer)
@@ -2032,12 +2037,61 @@ pub async fn run_governor_loop<I, V, L, F>(
                                     .expect("peer registry lock poisoned");
                                 registry.remove(&peer)
                             }
-                            GovernorAction::ShareRequest(_peer) => {
-                                // Peer sharing request — increment the in-progress
-                                // counter.  Actual PeerSharing mini-protocol dispatch
-                                // will be wired in a future slice.
+                            GovernorAction::ShareRequest(peer) => {
                                 governor_state.mark_peer_share_sent();
-                                false
+                                let amount =
+                                    peer_share_request_amount(&config.targets);
+                                let result = if let Some(session) =
+                                    peer_manager.warm_peers.get_mut(&peer)
+                                {
+                                    session.share_peers(amount).await
+                                } else {
+                                    Ok(None)
+                                };
+                                let changed = match result {
+                                    Ok(Some(shared_peers)) => {
+                                        governor_state.record_success(peer);
+                                        let changed = {
+                                            let mut registry = peer_registry
+                                                .write()
+                                                .expect("peer registry lock poisoned");
+                                            registry.sync_peer_share_peers(
+                                                shared_peers,
+                                            )
+                                        };
+                                        if changed {
+                                            tracer.trace_runtime(
+                                                "Net.PeerSelection",
+                                                "Info",
+                                                "peer sharing response received",
+                                                trace_fields([(
+                                                    "peer",
+                                                    json!(peer.to_string()),
+                                                )]),
+                                            );
+                                        }
+                                        changed
+                                    }
+                                    Ok(None) => false,
+                                    Err(err) => {
+                                        governor_state.record_failure(peer);
+                                        tracer.trace_runtime(
+                                            "Net.PeerSelection",
+                                            "Warning",
+                                            "peer sharing request failed",
+                                            trace_fields([
+                                                (
+                                                    "peer",
+                                                    json!(peer.to_string()),
+                                                ),
+                                                ("error", json!(err)),
+                                            ]),
+                                        );
+                                        false
+                                    }
+                                };
+                                governor_state.clear_peer_share_completed(1);
+                                changed
                             }
                             GovernorAction::RequestPublicRoots => {
                                 governor_state.mark_public_root_request_started();
@@ -2665,6 +2719,16 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     /// application so inbound ChainSync servers can push updates without
     /// busy-looping.
     pub tip_notify: Option<ChainTipNotify>,
+    /// Optional shared block-producer state for live epoch nonce and sigma
+    /// updates.  When present, the sync pipeline pushes updated nonce after
+    /// each batch and updated sigma after epoch boundary events.
+    ///
+    /// Reference: upstream `forkBlockForging` reads the ledger view's
+    /// epoch nonce and per-pool relative stake on every slot.
+    pub bp_state: Option<Arc<RwLock<SharedBlockProducerState>>>,
+    /// Blake2b-224 hash of the block producer's cold verification key,
+    /// used to look up the pool's relative stake in the stake distribution.
+    pub bp_pool_key_hash: Option<[u8; 28]>,
 }
 
 impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
@@ -2689,6 +2753,8 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
             mempool: None,
             tentative_state: None,
             tip_notify: None,
+            bp_state: None,
+            bp_pool_key_hash: None,
         }
     }
 
@@ -2744,6 +2810,17 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
         self.tip_notify = tip_notify;
         self
     }
+
+    /// Attach shared block-producer state for live nonce/sigma updates.
+    pub fn with_bp_state(
+        mut self,
+        bp_state: Option<Arc<RwLock<SharedBlockProducerState>>>,
+        bp_pool_key_hash: Option<[u8; 28]>,
+    ) -> Self {
+        self.bp_state = bp_state;
+        self.bp_pool_key_hash = bp_pool_key_hash;
+        self
+    }
 }
 
 type CheckpointTracking = LedgerCheckpointTracking;
@@ -2764,6 +2841,8 @@ struct ReconnectingVerifiedSyncContext<'a> {
     mempool: Option<SharedMempool>,
     tentative_state: Option<Arc<RwLock<TentativeState>>>,
     tip_notify: Option<ChainTipNotify>,
+    bp_state: Option<Arc<RwLock<SharedBlockProducerState>>>,
+    bp_pool_key_hash: Option<[u8; 28]>,
 }
 
 struct ReconnectingVerifiedSyncState {
@@ -2779,6 +2858,9 @@ struct ReconnectingRunState {
     stable_block_count: usize,
     reconnect_count: usize,
     last_connected_peer_addr: Option<SocketAddr>,
+    /// Consecutive failures without making progress (for exponential backoff).
+    /// Reset to 0 whenever a batch completes successfully.
+    consecutive_failures: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2852,6 +2934,7 @@ impl ReconnectingRunState {
             stable_block_count: 0,
             reconnect_count: 0,
             last_connected_peer_addr: None,
+            consecutive_failures: 0,
         }
     }
 
@@ -2868,6 +2951,29 @@ impl ReconnectingRunState {
         self.total_blocks += progress.fetched_blocks;
         self.total_rollbacks += progress.rollback_count;
         self.batches_completed += 1;
+        // A successful batch resets the failure counter.
+        self.consecutive_failures = 0;
+    }
+
+    /// Called when the inner loop breaks due to an error (reconnect).
+    fn record_reconnect_failure(&mut self) {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+    }
+
+    /// Exponential backoff delay for reconnection attempts.
+    ///
+    /// The first reconnection attempt (consecutive_failures == 1) proceeds
+    /// immediately so that peer rotation is not penalised.  From the second
+    /// consecutive failure onward the delay doubles starting at 1 s, capped
+    /// at 60 s.  Upstream reference: `peerBackerOff` exponential backoff in
+    /// `Ouroboros.Network.PeerSelection.Governor`.
+    fn reconnect_backoff(&self) -> std::time::Duration {
+        if self.consecutive_failures <= 1 {
+            return std::time::Duration::ZERO;
+        }
+        let exp = (self.consecutive_failures - 1).min(6); // cap at 2^6 = 64s
+        let secs = 1u64.checked_shl(exp.saturating_sub(1)).unwrap_or(64).min(60);
+        std::time::Duration::from_secs(secs)
     }
 
     fn finish(
@@ -3386,6 +3492,8 @@ where
         mempool,
         tentative_state,
         tip_notify,
+        bp_state,
+        bp_pool_key_hash,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -3403,6 +3511,25 @@ where
     let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
 
     loop {
+        // Exponential backoff before reattempting after consecutive failures.
+        let backoff = run_state.reconnect_backoff();
+        if !backoff.is_zero() {
+            tracer.trace_runtime(
+                "Net.PeerSelection",
+                "Info",
+                "delaying reconnect attempt",
+                trace_fields([("backoffMs", json!(backoff.as_millis()))]),
+            );
+            tokio::select! {
+                biased;
+                () = &mut shutdown => {
+                    trace_shutdown_before_bootstrap(tracer);
+                    return Ok(run_state.finish(from_point, nonce_state, chain_state));
+                }
+                () = tokio::time::sleep(backoff) => {}
+            }
+        }
+
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
             node_config.peer_addr,
             fallback_peer_addrs,
@@ -3516,6 +3643,16 @@ where
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
 
+                            // Update shared block-producer state with live sigma after
+                            // epoch boundary events (stake snapshot rotation).
+                            if !applied.epoch_boundary_events.is_empty() {
+                                if let Some(ref pkh) = bp_pool_key_hash {
+                                    let snapshots = checkpoint_tracking.as_ref()
+                                        .and_then(|ct| ct.stake_snapshots.as_ref());
+                                    update_bp_state_sigma(&bp_state, snapshots, pkh);
+                                }
+                            }
+
                             // Epoch revalidation: when a new epoch begins, protocol parameters
                             // may have changed.  Re-validate all mempool entries and evict any
                             // that no longer satisfy the new fee / size / ExUnits constraints.
@@ -3588,16 +3725,25 @@ where
                                                 &mut recently_confirmed,
                                             );
                                             let removed = mempool.remove_confirmed(&confirmed_ids);
+                                            // Evict mempool txs whose inputs were consumed by
+                                            // a *different* on-chain tx (double-spend conflict).
+                                            // Reference: syncWithLedger / revalidateTxsFor.
+                                            let consumed: Vec<ShelleyTxIn> = blocks
+                                                .iter()
+                                                .flat_map(extract_consumed_inputs)
+                                                .collect();
+                                            let conflicting = mempool.remove_conflicting_inputs(&consumed);
                                             let tip_slot = tip.slot().unwrap_or(SlotNo(0));
                                             let purged = mempool.purge_expired(tip_slot);
-                                            if removed + purged + cached > 0 {
+                                            if removed + purged + cached + conflicting > 0 {
                                                 tracer.trace_runtime(
                                                     "Mempool.Eviction",
                                                     "Info",
-                                                    "evicted confirmed/expired txs from mempool",
+                                                    "evicted confirmed/expired/conflicting txs from mempool",
                                                     trace_fields([
                                                         ("cachedForRollback", json!(cached)),
                                                         ("confirmed", json!(removed)),
+                                                        ("conflicting", json!(conflicting)),
                                                         ("expired", json!(purged)),
                                                     ]),
                                                 );
@@ -3615,6 +3761,9 @@ where
                                 config.nonce_config.as_ref(),
                                 metrics,
                             );
+
+                            // Push live epoch nonce to the concurrent block producer.
+                            update_bp_state_nonce(&bp_state, nonce_state.as_ref());
 
                             if let Some(ref notify) = tip_notify {
                                 notify.notify_waiters();
@@ -3677,8 +3826,22 @@ where
                             );
                             session.mux.abort();
                             match disposition {
-                                BatchErrorDisposition::Reconnect
-                                | BatchErrorDisposition::ReconnectAndPunish => break,
+                                BatchErrorDisposition::ReconnectAndPunish => {
+                                    // Demote offending peer to Cold so the governor's
+                                    // backoff/forget logic penalizes it (upstream
+                                    // InvalidBlockPunishment closes the connection).
+                                    if let Some(ref registry) = peer_registry {
+                                        if let Ok(mut reg) = registry.write() {
+                                            reg.set_status(session.connected_peer_addr, PeerStatus::PeerCold);
+                                        }
+                                    }
+                                    run_state.record_reconnect_failure();
+                                    break;
+                                }
+                                BatchErrorDisposition::Reconnect => {
+                                    run_state.record_reconnect_failure();
+                                    break;
+                                }
                                 BatchErrorDisposition::Fail => return Err(err),
                             }
                         }
@@ -3713,6 +3876,8 @@ where
         mempool,
         tentative_state,
         tip_notify,
+        bp_state,
+        bp_pool_key_hash,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -3730,6 +3895,25 @@ where
     let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
 
     loop {
+        // Exponential backoff before reattempting after consecutive failures.
+        let backoff = run_state.reconnect_backoff();
+        if !backoff.is_zero() {
+            tracer.trace_runtime(
+                "Net.PeerSelection",
+                "Info",
+                "delaying reconnect attempt",
+                trace_fields([("backoffMs", json!(backoff.as_millis()))]),
+            );
+            tokio::select! {
+                biased;
+                () = &mut shutdown => {
+                    trace_shutdown_before_bootstrap(tracer);
+                    return Ok(run_state.finish(from_point, nonce_state, chain_state));
+                }
+                () = tokio::time::sleep(backoff) => {}
+            }
+        }
+
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
             node_config.peer_addr,
             fallback_peer_addrs,
@@ -3846,6 +4030,15 @@ where
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
 
+                            // Push updated pool sigma to block producer on epoch boundary.
+                            if !applied.epoch_boundary_events.is_empty() {
+                                if let Some(ref pkh) = bp_pool_key_hash {
+                                    let snapshots = checkpoint_tracking.as_ref()
+                                        .and_then(|ct| ct.stake_snapshots.as_ref());
+                                    update_bp_state_sigma(&bp_state, snapshots, pkh);
+                                }
+                            }
+
                             // Epoch revalidation: when a new epoch begins, protocol parameters
                             // may have changed.  Re-validate all mempool entries and evict any
                             // that no longer satisfy the new fee / size / ExUnits constraints.
@@ -3904,7 +4097,6 @@ where
                                 }
                             }
 
-                            // Evict confirmed txs from mempool on roll-forward.
                             if let Some(ref mempool) = mempool {
                                 for step in &progress.steps {
                                     if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
@@ -3919,16 +4111,25 @@ where
                                                 &mut recently_confirmed,
                                             );
                                             let removed = mempool.remove_confirmed(&confirmed_ids);
+                                            // Evict mempool txs whose inputs were consumed by
+                                            // a *different* on-chain tx (double-spend conflict).
+                                            // Reference: syncWithLedger / revalidateTxsFor.
+                                            let consumed: Vec<ShelleyTxIn> = blocks
+                                                .iter()
+                                                .flat_map(extract_consumed_inputs)
+                                                .collect();
+                                            let conflicting = mempool.remove_conflicting_inputs(&consumed);
                                             let tip_slot = tip.slot().unwrap_or(SlotNo(0));
                                             let purged = mempool.purge_expired(tip_slot);
-                                            if removed + purged + cached > 0 {
+                                            if removed + purged + cached + conflicting > 0 {
                                                 tracer.trace_runtime(
                                                     "Mempool.Eviction",
                                                     "Info",
-                                                    "evicted confirmed/expired txs from mempool",
+                                                    "evicted confirmed/expired/conflicting txs from mempool",
                                                     trace_fields([
                                                         ("cachedForRollback", json!(cached)),
                                                         ("confirmed", json!(removed)),
+                                                        ("conflicting", json!(conflicting)),
                                                         ("expired", json!(purged)),
                                                     ]),
                                                 );
@@ -3946,6 +4147,9 @@ where
                                 config.nonce_config.as_ref(),
                                 metrics,
                             );
+
+                            // Push live epoch nonce to the concurrent block producer.
+                            update_bp_state_nonce(&bp_state, nonce_state.as_ref());
 
                             if let Some(ref notify) = tip_notify {
                                 notify.notify_waiters();
@@ -4008,8 +4212,19 @@ where
                             );
                             session.mux.abort();
                             match disposition {
-                                BatchErrorDisposition::Reconnect
-                                | BatchErrorDisposition::ReconnectAndPunish => break,
+                                BatchErrorDisposition::ReconnectAndPunish => {
+                                    if let Some(ref registry) = peer_registry {
+                                        if let Ok(mut reg) = registry.write() {
+                                            reg.set_status(session.connected_peer_addr, PeerStatus::PeerCold);
+                                        }
+                                    }
+                                    run_state.record_reconnect_failure();
+                                    break;
+                                }
+                                BatchErrorDisposition::Reconnect => {
+                                    run_state.record_reconnect_failure();
+                                    break;
+                                }
                                 BatchErrorDisposition::Fail => return Err(err),
                             }
                         }
@@ -4358,14 +4573,28 @@ where
                             );
                             session.mux.abort();
                             match disposition {
-                                BatchErrorDisposition::Reconnect
-                                | BatchErrorDisposition::ReconnectAndPunish => break,
+                                BatchErrorDisposition::ReconnectAndPunish
+                                | BatchErrorDisposition::Reconnect => {
+                                    run_state.record_reconnect_failure();
+                                    break;
+                                }
                                 BatchErrorDisposition::Fail => return Err(err),
                             }
                         }
                     }
                 }
             }
+        }
+
+        // Exponential backoff before next reconnection attempt (upstream
+        // reconnect delay with exponential increase, capped at 60 s).
+        let backoff = run_state.reconnect_backoff();
+        tokio::select! {
+            biased;
+            () = &mut shutdown => {
+                return Ok(run_state.finish(from_point, nonce_state, chain_state));
+            }
+            () = tokio::time::sleep(backoff) => {}
         }
     }
 }
@@ -4397,6 +4626,8 @@ where
         mempool: _,
         tentative_state,
         tip_notify,
+        bp_state: _,
+        bp_pool_key_hash: _,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -4439,6 +4670,8 @@ where
             mempool: None,
             tentative_state,
             tip_notify,
+            bp_state: None,
+            bp_pool_key_hash: None,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -4498,6 +4731,8 @@ where
         mempool,
         tentative_state,
         tip_notify,
+        bp_state,
+        bp_pool_key_hash,
     } = request;
 
     let recovery = {
@@ -4543,6 +4778,8 @@ where
             mempool,
             tentative_state,
             tip_notify,
+            bp_state,
+            bp_pool_key_hash,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -4608,6 +4845,8 @@ where
             mempool: None,
             tentative_state,
             tip_notify: None,
+            bp_state: None,
+            bp_pool_key_hash: None,
         },
         ReconnectingVerifiedSyncState {
             from_point,

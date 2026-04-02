@@ -471,13 +471,17 @@ where
         );
     }
 
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+
     let reader = tokio::spawn(demux_loop(
         read_half,
         ingress_senders,
         ingress_bytes_map,
         ingress_limits,
+        cancel_tx.clone(),
+        cancel_rx.clone(),
     ));
-    let writer = tokio::spawn(mux_loop(write_half, egress_slots, role, notify));
+    let writer = tokio::spawn(mux_loop(write_half, egress_slots, role, notify, cancel_tx, cancel_rx));
 
     (handles, MuxHandle { reader, writer })
 }
@@ -497,17 +501,54 @@ async fn demux_loop<R: tokio::io::AsyncRead + Unpin>(
     ingress: HashMap<MiniProtocolNum, mpsc::Sender<Vec<u8>>>,
     ingress_bytes: HashMap<MiniProtocolNum, Arc<AtomicUsize>>,
     ingress_limits: HashMap<MiniProtocolNum, usize>,
+    cancel_tx: tokio::sync::watch::Sender<bool>,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), MuxError> {
+    let result = demux_loop_inner(
+        &mut reader,
+        &ingress,
+        &ingress_bytes,
+        &ingress_limits,
+        &mut cancel_rx,
+    )
+    .await;
+
+    // Signal the writer to shut down when the reader exits with an error.
+    if result.is_err() {
+        let _ = cancel_tx.send(true);
+    }
+
+    result
+}
+
+/// Inner demux loop, extracted so the outer wrapper can signal on error.
+async fn demux_loop_inner<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    ingress: &HashMap<MiniProtocolNum, mpsc::Sender<Vec<u8>>>,
+    ingress_bytes: &HashMap<MiniProtocolNum, Arc<AtomicUsize>>,
+    ingress_limits: &HashMap<MiniProtocolNum, usize>,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), MuxError> {
     loop {
-        // Read the 8-byte SDU header.
+        // Read the 8-byte SDU header, aborting if the peer task cancelled.
         let mut hdr_buf = [0u8; SDU_HEADER_SIZE];
-        match tokio::time::timeout(SDU_READ_TIMEOUT, reader.read_exact(&mut hdr_buf)).await {
-            Err(_elapsed) => return Err(MuxError::SduTimeout(SDU_READ_TIMEOUT)),
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Err(MuxError::ConnectionClosed);
+        tokio::select! {
+            biased;
+            _ = cancel_rx.changed() => {
+                if *cancel_rx.borrow_and_update() {
+                    return Err(MuxError::ConnectionClosed);
+                }
             }
-            Ok(Err(e)) => return Err(MuxError::Io(e)),
-            Ok(Ok(_)) => {}
+            result = tokio::time::timeout(SDU_READ_TIMEOUT, reader.read_exact(&mut hdr_buf)) => {
+                match result {
+                    Err(_elapsed) => return Err(MuxError::SduTimeout(SDU_READ_TIMEOUT)),
+                    Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        return Err(MuxError::ConnectionClosed);
+                    }
+                    Ok(Err(e)) => return Err(MuxError::Io(e)),
+                    Ok(Ok(_)) => {}
+                }
+            }
         }
 
         // Decode — never fails on an 8-byte buffer.
@@ -587,6 +628,26 @@ async fn mux_loop<W: tokio::io::AsyncWrite + Unpin>(
     mut slots: Vec<EgressSlot>,
     role: MiniProtocolDir,
     notify: Arc<tokio::sync::Notify>,
+    cancel_tx: tokio::sync::watch::Sender<bool>,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), MuxError> {
+    let result = mux_loop_inner(&mut writer, &mut slots, role, &notify, &mut cancel_rx).await;
+
+    // Signal the reader to shut down when the writer exits with an error.
+    if result.is_err() {
+        let _ = cancel_tx.send(true);
+    }
+
+    result
+}
+
+/// Inner mux loop, extracted so the outer wrapper can signal on error.
+async fn mux_loop_inner<W: tokio::io::AsyncWrite + Unpin>(
+    writer: &mut W,
+    slots: &mut Vec<EgressSlot>,
+    role: MiniProtocolDir,
+    notify: &tokio::sync::Notify,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), MuxError> {
     loop {
         // Remove fully-disconnected slots.
@@ -603,7 +664,7 @@ async fn mux_loop<W: tokio::io::AsyncWrite + Unpin>(
                 match slot.receiver.try_recv() {
                     Ok(payload) => {
                         let len = payload.len();
-                        write_sdu(&mut writer, slot.protocol_num, role, &payload).await?;
+                        write_sdu(writer, slot.protocol_num, role, &payload).await?;
                         slot.pending_bytes.fetch_sub(len, Ordering::Relaxed);
                         any_written = true;
                         written += 1;
@@ -623,8 +684,17 @@ async fn mux_loop<W: tokio::io::AsyncWrite + Unpin>(
                 slots.retain(|s| !s.closed);
                 return Ok(());
             }
-            // All channels empty — wait for notification from a sender.
-            notify.notified().await;
+            // All channels empty — wait for notification from a sender,
+            // or cancellation from the peer (demux) task.
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => {
+                    if *cancel_rx.borrow_and_update() {
+                        return Err(MuxError::ConnectionClosed);
+                    }
+                }
+                _ = notify.notified() => {}
+            }
         }
     }
 }

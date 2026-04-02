@@ -25,7 +25,7 @@ use yggdrasil_ledger::{
     CborDecode, CborEncode, ConwayBlock,
     Decoder, Era, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState, Nonce, Point,
     PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
+    ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
     apply_epoch_boundary, compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
@@ -3241,6 +3241,43 @@ pub fn extract_tx_ids(block: &MultiEraBlock) -> Vec<TxId> {
                 .collect(),
             ByronBlock::EpochBoundary { .. } => vec![],
         },
+    }
+}
+
+/// Collect all UTxO inputs consumed by the transactions in a block.
+///
+/// This extracts `ShelleyTxIn` inputs from all Shelley-family era blocks.
+/// Byron blocks are skipped (Byron transactions are not in the mempool).
+///
+/// Used for mempool conflict detection: after applying a block, any mempool
+/// transaction that also spends one of these inputs is invalid and must be
+/// evicted.
+///
+/// Reference: `Ouroboros.Consensus.Mempool.Impl.Update` —
+/// `revalidateTxsFor` implicitly catches consumed inputs via re-apply.
+pub fn extract_consumed_inputs(block: &MultiEraBlock) -> Vec<ShelleyTxIn> {
+    match block {
+        MultiEraBlock::Shelley(shelley) => shelley
+            .transaction_bodies
+            .iter()
+            .flat_map(|body| body.inputs.iter().cloned())
+            .collect(),
+        MultiEraBlock::Alonzo(alonzo) => alonzo
+            .transaction_bodies
+            .iter()
+            .flat_map(|body| body.inputs.iter().cloned())
+            .collect(),
+        MultiEraBlock::Babbage(babbage) => babbage
+            .transaction_bodies
+            .iter()
+            .flat_map(|body| body.inputs.iter().cloned())
+            .collect(),
+        MultiEraBlock::Conway(conway) => conway
+            .transaction_bodies
+            .iter()
+            .flat_map(|body| body.inputs.iter().cloned())
+            .collect(),
+        MultiEraBlock::Byron { .. } => vec![],
     }
 }
 

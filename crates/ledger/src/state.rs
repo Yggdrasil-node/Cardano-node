@@ -2234,6 +2234,17 @@ pub struct LedgerState {
     /// `Cardano.Ledger.Conway.Rules.Epoch` — `updateNumDormantEpochs`;
     /// `Cardano.Ledger.Conway.Rules.Certs` — `updateDormantDRepExpiry`.
     pub(crate) num_dormant_epochs: u64,
+    /// Per-pool block production counts for the current epoch.
+    ///
+    /// Each non-Byron block applied via [`apply_block_validated`]
+    /// increments the count for the block's issuer pool (identified by
+    /// `Blake2b-224(issuer_vkey)`).  At the epoch boundary, these
+    /// counts are used to derive per-pool performance ratios which
+    /// modulate the reward calculation, then cleared for the new epoch.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `NewEpochState.nesBcur`;
+    /// `BlocksMade (EraCrypto era)`.
+    blocks_made: BTreeMap<PoolKeyHash, u64>,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -2249,7 +2260,7 @@ pub struct LedgerStateCheckpoint {
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(22);
+        enc.array(23);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
         match self.expected_network_id {
@@ -2307,16 +2318,23 @@ impl CborEncode for LedgerState {
         enc.unsigned(self.genesis_update_quorum);
         // num_dormant_epochs: consecutive dormant epoch count (Conway).
         enc.unsigned(self.num_dormant_epochs);
+        // blocks_made: per-pool block production counts (current epoch).
+        // Reference: NewEpochState.nesBcur.
+        enc.map(self.blocks_made.len() as u64);
+        for (pool_hash, &count) in &self.blocks_made {
+            enc.bytes(pool_hash);
+            enc.unsigned(count);
+        }
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept legacy 9/10-element arrays and current 12-22-element arrays.
-        if len != 9 && len != 10 && !(12..=22).contains(&len) {
+        // Accept legacy 9/10-element arrays and current 12-23-element arrays.
+        if len != 9 && len != 10 && !(12..=23).contains(&len) {
             return Err(LedgerError::CborInvalidLength {
-                expected: 22,
+                expected: 23,
                 actual: len as usize,
             });
         }
@@ -2472,6 +2490,21 @@ impl CborDecode for LedgerState {
             0
         };
 
+        let blocks_made = if len >= 23 {
+            let map_len = dec.map()?;
+            let mut bm = BTreeMap::new();
+            for _ in 0..map_len {
+                let bytes = dec.bytes()?;
+                let mut arr = [0u8; 28];
+                arr.copy_from_slice(bytes);
+                let count = dec.unsigned()?;
+                bm.insert(arr, count);
+            }
+            bm
+        } else {
+            BTreeMap::new()
+        };
+
         Ok(Self {
             current_era,
             tip,
@@ -2495,6 +2528,7 @@ impl CborDecode for LedgerState {
             instantaneous_rewards,
             genesis_update_quorum,
             num_dormant_epochs,
+            blocks_made,
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
@@ -2572,6 +2606,7 @@ impl LedgerState {
             instantaneous_rewards: InstantaneousRewards::default(),
             genesis_update_quorum: 5,
             num_dormant_epochs: 0,
+            blocks_made: BTreeMap::new(),
         }
     }
 
@@ -2997,6 +3032,30 @@ impl LedgerState {
         self.num_dormant_epochs
     }
 
+    /// Returns a reference to the per-pool block production counts for the
+    /// current epoch.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `nesBcur`.
+    pub fn blocks_made(&self) -> &BTreeMap<PoolKeyHash, u64> {
+        &self.blocks_made
+    }
+
+    /// Records that the pool identified by `pool_hash` produced a block
+    /// in the current epoch.
+    ///
+    /// This should be called once per non-Byron block during block application.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `nesBcur`.
+    pub fn record_block_producer(&mut self, pool_hash: PoolKeyHash) {
+        *self.blocks_made.entry(pool_hash).or_insert(0) += 1;
+    }
+
+    /// Takes the current-epoch block production counts and replaces them
+    /// with an empty map.  Intended for epoch-boundary rotation.
+    pub fn take_blocks_made(&mut self) -> BTreeMap<PoolKeyHash, u64> {
+        std::mem::take(&mut self.blocks_made)
+    }
+
     /// Sets the current epoch carried by the ledger state.
     pub fn set_current_epoch(&mut self, current_epoch: EpochNo) {
         self.current_epoch = current_epoch;
@@ -3246,6 +3305,16 @@ impl LedgerState {
             Era::Conway => self.apply_conway_block(block, slot, evaluator)?,
         }
 
+        // Track block producer for per-pool performance accounting.
+        // Byron blocks are excluded because they predate the Shelley
+        // reward system and have no meaningful issuer-pool identity.
+        //
+        // Reference: `Cardano.Ledger.Shelley.LedgerState` — `nesBcur`.
+        if block.era != Era::Byron {
+            let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&block.header.issuer_vkey).0;
+            self.record_block_producer(pool_hash);
+        }
+
         self.current_era = block.era;
         self.tip = Point::BlockPoint(block.header.slot_no, block.header.hash);
         Ok(())
@@ -3355,6 +3424,11 @@ impl LedgerState {
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
                 );
+                // PPUP validation + collection (Shelley submitted).
+                if let Some(ref update) = tx.body.update {
+                    self.validate_ppup_proposal(update, None)?;
+                    self.collect_pparam_proposals(update);
+                }
             }
             crate::tx::MultiEraSubmittedTx::Allegra(tx) => {
                 validate_auxiliary_data(
@@ -3475,6 +3549,11 @@ impl LedgerState {
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
                 );
+                // PPUP validation + collection (Allegra submitted).
+                if let Some(ref update) = tx.body.update {
+                    self.validate_ppup_proposal(update, None)?;
+                    self.collect_pparam_proposals(update);
+                }
             }
             crate::tx::MultiEraSubmittedTx::Mary(tx) => {
                 validate_auxiliary_data(
@@ -3598,6 +3677,11 @@ impl LedgerState {
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
                 );
+                // PPUP validation + collection (Mary submitted).
+                if let Some(ref update) = tx.body.update {
+                    self.validate_ppup_proposal(update, None)?;
+                    self.collect_pparam_proposals(update);
+                }
             }
             crate::tx::MultiEraSubmittedTx::Alonzo(tx) => {
                 // Reject submitted transactions with is_valid = false.
@@ -3647,7 +3731,7 @@ impl LedgerState {
                         params, &self.multi_era_utxo,
                         tx.raw_cbor.len(), tx.body.fee, &outputs,
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
-                        None, None, has_redeemers,
+                        None, None, has_redeemers, 0,
                     )?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
@@ -3838,6 +3922,11 @@ impl LedgerState {
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
                 );
+                // PPUP validation + collection (Alonzo submitted).
+                if let Some(ref update) = tx.body.update {
+                    self.validate_ppup_proposal(update, None)?;
+                    self.collect_pparam_proposals(update);
+                }
             }
             crate::tx::MultiEraSubmittedTx::Babbage(tx) => {
                 // Reject submitted transactions with is_valid = false.
@@ -3849,6 +3938,15 @@ impl LedgerState {
                     tx.auxiliary_data.as_deref(),
                     self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
+                // Babbage UTXOW: validateScriptsWellFormed.
+                if let Some(eval) = evaluator {
+                    crate::witnesses::validate_script_witnesses_well_formed(&tx.witness_set, eval)?;
+                    crate::witnesses::validate_reference_scripts_well_formed(
+                        &tx.body.outputs,
+                        tx.body.collateral_return.as_ref(),
+                        eval,
+                    )?;
+                }
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 if let Some(ref_inputs) = &tx.body.reference_inputs {
                     self.multi_era_utxo.validate_reference_inputs(ref_inputs)?;
@@ -3891,7 +3989,7 @@ impl LedgerState {
                         params, &self.multi_era_utxo,
                         tx.raw_cbor.len(), tx.body.fee, &outputs,
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
-                        coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
+                        coll_ret.as_ref(), tx.body.total_collateral, has_redeemers, 0,
                     )?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
@@ -4087,6 +4185,11 @@ impl LedgerState {
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
                 );
+                // PPUP validation + collection (Babbage submitted).
+                if let Some(ref update) = tx.body.update {
+                    self.validate_ppup_proposal(update, None)?;
+                    self.collect_pparam_proposals(update);
+                }
             }
             crate::tx::MultiEraSubmittedTx::Conway(tx) => {
                 // Reject submitted transactions with is_valid = false.
@@ -4098,6 +4201,15 @@ impl LedgerState {
                     tx.auxiliary_data.as_deref(),
                     self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
+                // Conway UTXOW: validateScriptsWellFormed.
+                if let Some(eval) = evaluator {
+                    crate::witnesses::validate_script_witnesses_well_formed(&tx.witness_set, eval)?;
+                    crate::witnesses::validate_reference_scripts_well_formed(
+                        &tx.body.outputs,
+                        tx.body.collateral_return.as_ref(),
+                        eval,
+                    )?;
+                }
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 if let Some(ref_inputs) = &tx.body.reference_inputs {
                     self.multi_era_utxo.validate_reference_inputs(ref_inputs)?;
@@ -4148,11 +4260,16 @@ impl LedgerState {
                     let total_eu = sum_redeemer_ex_units(&tx.witness_set);
                     let has_redeemers = !tx.witness_set.redeemers.is_empty();
                     let coll_ret = tx.body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
+                    let ref_scripts_size = self.multi_era_utxo.total_ref_scripts_size(
+                        &tx.body.inputs,
+                        tx.body.reference_inputs.as_deref(),
+                    );
                     validate_alonzo_plus_tx(
                         params, &self.multi_era_utxo,
                         tx.raw_cbor.len(), tx.body.fee, &outputs,
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
                         coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
+                        ref_scripts_size,
                     )?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
@@ -4518,6 +4635,13 @@ impl LedgerState {
                     .unwrap_or(0);
                 let total_deposits = cert_adj.total_deposits.saturating_add(proposal_deposits);
                 staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, total_deposits, cert_adj.total_refunds)?;
+                // Accumulate treasury donation (Conway UTXOS rule).
+                // Reference: Cardano.Ledger.Conway.Rules.Utxos — utxosDonationL.
+                if let Some(donation) = tx.body.treasury_donation {
+                    if donation > 0 {
+                        self.utxos_donation = self.utxos_donation.saturating_add(donation);
+                    }
+                }
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -5105,7 +5229,7 @@ impl LedgerState {
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
                     body.collateral.as_deref(), total_eu.as_ref(),
-                    None, None, total_eu.is_some(),
+                    None, None, total_eu.is_some(), 0,
                 )?;
             }
             // Network validation (Alonzo UTXO rule: WrongNetwork + WrongNetworkInTxBody)
@@ -5368,6 +5492,18 @@ impl LedgerState {
                 aux_data.as_deref(),
                 self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
+            // Babbage UTXOW: validateScriptsWellFormed.
+            if let Some(eval) = evaluator {
+                if let Some(wb) = witness_bytes.as_deref() {
+                    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
+                    crate::witnesses::validate_script_witnesses_well_formed(&ws, eval)?;
+                }
+                crate::witnesses::validate_reference_scripts_well_formed(
+                    &body.outputs,
+                    body.collateral_return.as_ref(),
+                    eval,
+                )?;
+            }
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
                 MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
@@ -5407,7 +5543,7 @@ impl LedgerState {
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
                     body.collateral.as_deref(), total_eu.as_ref(),
-                    coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
+                    coll_ret.as_ref(), body.total_collateral, total_eu.is_some(), 0,
                 )?;
             }
             // Network validation (Babbage UTXO rule: WrongNetwork + WrongNetworkInTxBody)
@@ -5684,6 +5820,18 @@ impl LedgerState {
                 aux_data.as_deref(),
                 self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
+            // Conway UTXOW: validateScriptsWellFormed.
+            if let Some(eval) = evaluator {
+                if let Some(wb) = witness_bytes.as_deref() {
+                    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
+                    crate::witnesses::validate_script_witnesses_well_formed(&ws, eval)?;
+                }
+                crate::witnesses::validate_reference_scripts_well_formed(
+                    &body.outputs,
+                    body.collateral_return.as_ref(),
+                    eval,
+                )?;
+            }
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
                 MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
@@ -5737,10 +5885,15 @@ impl LedgerState {
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
                 let coll_ret = body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
+                let ref_scripts_size = staged.total_ref_scripts_size(
+                    &body.inputs,
+                    body.reference_inputs.as_deref(),
+                );
                 validate_alonzo_plus_tx(
                     params, &staged, *tx_size, body.fee, &outputs,
                     body.collateral.as_deref(), total_eu.as_ref(),
                     coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
+                    ref_scripts_size,
                 )?;
             }
             // Network validation (Conway UTXO rule: WrongNetwork + WrongNetworkInTxBody)
@@ -6312,13 +6465,17 @@ fn conway_modified_pparam_groups(
 ) -> ConwayModifiedPParamGroups {
     let mut groups = ConwayModifiedPParamGroups::default();
 
-    // Economic + Security
-    if update.min_fee_a.is_some() || update.min_fee_b.is_some() {
+    // Economic + Security (upstream: EconomicGroup + SecurityGroup)
+    if update.min_fee_a.is_some()
+        || update.min_fee_b.is_some()
+        || update.coins_per_utxo_byte.is_some()
+        || update.min_fee_ref_script_cost_per_byte.is_some()
+    {
         groups.economic = true;
         groups.security = true;
     }
 
-    // Network + Security
+    // Network + Security (upstream: NetworkGroup + SecurityGroup)
     if update.max_block_body_size.is_some()
         || update.max_tx_size.is_some()
         || update.max_block_header_size.is_some()
@@ -6329,13 +6486,17 @@ fn conway_modified_pparam_groups(
         groups.security = true;
     }
 
-    // Economic (no SPO)
+    // Network (no SPO) (upstream: NetworkGroup + NoStakePoolGroup)
+    if update.max_tx_ex_units.is_some() || update.max_collateral_inputs.is_some() {
+        groups.network = true;
+    }
+
+    // Economic (no SPO) (upstream: EconomicGroup + NoStakePoolGroup)
     if update.key_deposit.is_some()
         || update.pool_deposit.is_some()
         || update.rho.is_some()
         || update.tau.is_some()
         || update.min_pool_cost.is_some()
-        || update.coins_per_utxo_byte.is_some()
         || update.price_mem.is_some()
         || update.price_step.is_some()
         || update.min_utxo_value.is_some()
@@ -6343,13 +6504,12 @@ fn conway_modified_pparam_groups(
         groups.economic = true;
     }
 
-    // Technical (no SPO)
+    // Technical (no SPO) (upstream: TechnicalGroup + NoStakePoolGroup)
     if update.e_max.is_some()
         || update.n_opt.is_some()
         || update.a0.is_some()
-        || update.max_tx_ex_units.is_some()
         || update.collateral_percentage.is_some()
-        || update.max_collateral_inputs.is_some()
+        || update.cost_models.is_some()
     {
         groups.technical = true;
     }
@@ -7866,9 +8026,15 @@ fn validate_alonzo_plus_tx(
     collateral_return: Option<&MultiEraTxOut>,
     total_collateral: Option<u64>,
     has_redeemers: bool,
+    ref_scripts_size: usize,
 ) -> Result<(), LedgerError> {
     crate::fees::validate_tx_size(params, tx_body_size)?;
-    crate::fees::validate_fee(params, tx_body_size, total_ex_units, declared_fee)?;
+    // Conway adds the tiered reference-script fee to the minimum.
+    // For pre-Conway eras, ref_scripts_size is 0 so this is equivalent
+    // to the standard `validate_fee`.
+    crate::fees::validate_conway_fee(
+        params, tx_body_size, total_ex_units, ref_scripts_size, declared_fee,
+    )?;
     if let Some(eu) = total_ex_units {
         crate::fees::validate_tx_ex_units(params, eu)?;
     }
@@ -11717,6 +11883,123 @@ mod tests {
         assert!(!g.gov);
     }
 
+    #[test]
+    fn pparam_groups_coins_per_utxo_byte_is_economic_plus_security() {
+        // Upstream: PPGroups 'EconomicGroup 'SecurityGroup
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            coins_per_utxo_byte: Some(4310),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(g.security);
+        assert!(!g.network);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_min_fee_ref_script_cost_per_byte_is_economic_plus_security() {
+        // Upstream: PPGroups 'EconomicGroup 'SecurityGroup
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            min_fee_ref_script_cost_per_byte: Some(UnitInterval {
+                numerator: 15,
+                denominator: 1,
+            }),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(g.security);
+        assert!(!g.network);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_max_tx_ex_units_is_network_only() {
+        // Upstream: PPGroups 'NetworkGroup 'NoStakePoolGroup
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            max_tx_ex_units: Some(crate::eras::alonzo::ExUnits { mem: 14_000_000, steps: 10_000_000 }),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.network);
+        assert!(!g.security);
+        assert!(!g.economic);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_max_collateral_inputs_is_network_only() {
+        // Upstream: PPGroups 'NetworkGroup 'NoStakePoolGroup
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            max_collateral_inputs: Some(3),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.network);
+        assert!(!g.security);
+        assert!(!g.economic);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_cost_models_is_technical_only() {
+        // Upstream: PPGroups 'TechnicalGroup 'NoStakePoolGroup
+        use std::collections::BTreeMap;
+        let mut models = BTreeMap::new();
+        models.insert(0, vec![0i64; 166]); // PlutusV1
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            cost_models: Some(models),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.technical);
+        assert!(!g.security);
+        assert!(!g.economic);
+        assert!(!g.network);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_a0_is_technical_only() {
+        // Upstream: PPGroups 'TechnicalGroup 'NoStakePoolGroup
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            a0: Some(UnitInterval {
+                numerator: 3,
+                denominator: 10,
+            }),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.technical);
+        assert!(!g.security);
+        assert!(!g.economic);
+        assert!(!g.network);
+        assert!(!g.gov);
+    }
+
+    #[test]
+    fn pparam_groups_price_mem_is_economic_only() {
+        // Upstream: PPGroups 'EconomicGroup 'NoStakePoolGroup (via Prices)
+        let update = crate::protocol_params::ProtocolParameterUpdate {
+            price_mem: Some(UnitInterval {
+                numerator: 577,
+                denominator: 10_000,
+            }),
+            ..Default::default()
+        };
+        let g = conway_modified_pparam_groups(&update);
+        assert!(g.economic);
+        assert!(!g.security);
+        assert!(!g.network);
+        assert!(!g.technical);
+        assert!(!g.gov);
+    }
+
     // -- Threshold dispatch ---
 
     #[test]
@@ -15388,7 +15671,7 @@ mod tests {
         // has_redeemers = true, collateral_inputs = None → must fail
         let result = validate_alonzo_plus_tx(
             &params, &utxo, 200, 200_000, &outputs,
-            None, None, None, None, true,
+            None, None, None, None, true, 0,
         );
         assert!(matches!(result, Err(LedgerError::MissingCollateralForScripts)));
     }
@@ -15401,7 +15684,7 @@ mod tests {
         // has_redeemers = true, collateral_inputs = Some(&[]) → must fail
         let result = validate_alonzo_plus_tx(
             &params, &utxo, 200, 200_000, &outputs,
-            Some(&[]), None, None, None, true,
+            Some(&[]), None, None, None, true, 0,
         );
         assert!(matches!(result, Err(LedgerError::MissingCollateralForScripts)));
     }
@@ -15414,7 +15697,7 @@ mod tests {
         // has_redeemers = false, collateral_inputs = None → ok (no scripts)
         let result = validate_alonzo_plus_tx(
             &params, &utxo, 200, 200_000, &outputs,
-            None, None, None, None, false,
+            None, None, None, None, false, 0,
         );
         assert!(result.is_ok());
     }

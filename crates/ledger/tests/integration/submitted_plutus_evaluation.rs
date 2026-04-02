@@ -80,11 +80,38 @@ fn minting_redeemer(steps: u64, mem: u64) -> Redeemer {
     }
 }
 
+/// Compute the script_data_hash for a minting tx with the given Plutus script.
+fn compute_minting_sdh(
+    script_bytes: &[u8],
+    version: PlutusVersion,
+    pp: Option<&ProtocolParameters>,
+    conway: bool,
+) -> [u8; 32] {
+    let redeemer = minting_redeemer(1_000_000, 500_000);
+    let (v1, v2, v3) = match version {
+        PlutusVersion::V1 => (vec![script_bytes.to_vec()], vec![], vec![]),
+        PlutusVersion::V2 => (vec![], vec![script_bytes.to_vec()], vec![]),
+        PlutusVersion::V3 => (vec![], vec![], vec![script_bytes.to_vec()]),
+    };
+    let ws = ShelleyWitnessSet {
+        vkey_witnesses: vec![],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: v1,
+        plutus_data: vec![],
+        redeemers: vec![redeemer],
+        plutus_v2_scripts: v2,
+        plutus_v3_scripts: v3,
+    };
+    compute_test_script_data_hash(&ws, pp, conway)
+}
+
 /// Build a minting `AlonzoTxBody` + script_hash + tx_id.
 fn build_alonzo_minting_body(
     prev_tx_id: [u8; 32],
     script_bytes: &[u8],
     version: PlutusVersion,
+    script_data_hash: Option<[u8; 32]>,
 ) -> (AlonzoTxBody, [u8; 28], [u8; 32]) {
     let script_hash = plutus_script_hash(version, script_bytes);
     let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
@@ -114,7 +141,7 @@ fn build_alonzo_minting_body(
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash,
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -183,7 +210,8 @@ fn seed_babbage_utxo(state: &mut LedgerState, prev_tx_id: [u8; 32]) {
 #[test]
 fn alonzo_submitted_plutus_v1_evaluator_succeeds() {
     let prev_tx_id = [0xE1; 32];
-    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
@@ -205,7 +233,8 @@ fn alonzo_submitted_plutus_v1_evaluator_succeeds() {
 #[test]
 fn alonzo_submitted_plutus_v1_evaluator_fails() {
     let prev_tx_id = [0xE2; 32];
-    let (body, script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
@@ -234,7 +263,8 @@ fn alonzo_submitted_plutus_v1_evaluator_fails() {
 #[test]
 fn alonzo_submitted_plutus_no_evaluator_soft_skip() {
     let prev_tx_id = [0xE3; 32];
-    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
@@ -269,6 +299,7 @@ fn babbage_submitted_plutus_v2_evaluator_succeeds() {
     output_policy_assets.insert(b"nft".to_vec(), 1u64);
     output_assets.insert(script_hash, output_policy_assets);
 
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V2, None, false);
     let body = BabbageTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
         outputs: vec![BabbageTxOut {
@@ -285,7 +316,7 @@ fn babbage_submitted_plutus_v2_evaluator_succeeds() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -330,6 +361,7 @@ fn babbage_submitted_plutus_v2_evaluator_fails() {
     output_policy_assets.insert(b"nft".to_vec(), 1u64);
     output_assets.insert(script_hash, output_policy_assets);
 
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V2, None, false);
     let body = BabbageTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
         outputs: vec![BabbageTxOut {
@@ -346,7 +378,7 @@ fn babbage_submitted_plutus_v2_evaluator_fails() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -398,6 +430,7 @@ fn conway_submitted_plutus_v3_evaluator_succeeds() {
     output_policy_assets.insert(b"nft".to_vec(), 1u64);
     output_assets.insert(script_hash, output_policy_assets);
 
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V3, None, true);
     let body = ConwayTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
         outputs: vec![BabbageTxOut {
@@ -413,7 +446,7 @@ fn conway_submitted_plutus_v3_evaluator_succeeds() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -462,6 +495,7 @@ fn conway_submitted_plutus_v3_evaluator_fails() {
     output_policy_assets.insert(b"nft".to_vec(), 1u64);
     output_assets.insert(script_hash, output_policy_assets);
 
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V3, None, true);
     let body = ConwayTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
         outputs: vec![BabbageTxOut {
@@ -477,7 +511,7 @@ fn conway_submitted_plutus_v3_evaluator_fails() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: Some(mint),
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -520,7 +554,8 @@ fn conway_submitted_plutus_v3_evaluator_fails() {
 #[test]
 fn submitted_tx_is_valid_false_rejected_before_plutus() {
     let prev_tx_id = [0xE8; 32];
-    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1);
+    let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
+    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     // is_valid = false — should be rejected immediately

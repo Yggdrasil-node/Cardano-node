@@ -472,6 +472,113 @@ pub fn gen_delg_hash_set(
     gen_delegs.values().map(|d| d.delegate).collect()
 }
 
+// ---------------------------------------------------------------------------
+// validateScriptsWellFormed (Babbage+ UTXOW rule)
+// ---------------------------------------------------------------------------
+
+/// Checks whether a Plutus script's bytes can be decoded into valid UPLC
+/// using the provided evaluator's `is_script_well_formed` method.
+///
+/// Native scripts are always well-formed (returns `true`).
+fn is_plutus_script_well_formed(
+    script: &crate::plutus::Script,
+    evaluator: &dyn crate::plutus_validation::PlutusEvaluator,
+) -> bool {
+    use crate::plutus_validation::PlutusVersion;
+    match script {
+        crate::plutus::Script::Native(_) => true,
+        crate::plutus::Script::PlutusV1(bytes) => {
+            evaluator.is_script_well_formed(PlutusVersion::V1, bytes)
+        }
+        crate::plutus::Script::PlutusV2(bytes) => {
+            evaluator.is_script_well_formed(PlutusVersion::V2, bytes)
+        }
+        crate::plutus::Script::PlutusV3(bytes) => {
+            evaluator.is_script_well_formed(PlutusVersion::V3, bytes)
+        }
+    }
+}
+
+/// Computes the script hash for a `Script` enum value.
+fn script_hash(script: &crate::plutus::Script) -> [u8; 28] {
+    use crate::plutus_validation::PlutusVersion;
+    match script {
+        crate::plutus::Script::Native(ns) => crate::native_script::native_script_hash(ns),
+        crate::plutus::Script::PlutusV1(bytes) => {
+            crate::plutus_validation::plutus_script_hash(PlutusVersion::V1, bytes)
+        }
+        crate::plutus::Script::PlutusV2(bytes) => {
+            crate::plutus_validation::plutus_script_hash(PlutusVersion::V2, bytes)
+        }
+        crate::plutus::Script::PlutusV3(bytes) => {
+            crate::plutus_validation::plutus_script_hash(PlutusVersion::V3, bytes)
+        }
+    }
+}
+
+/// Validates that all Plutus script witnesses are well-formed (deserializable).
+///
+/// Checks PlutusV1 (key 3), PlutusV2 (key 6), and PlutusV3 (key 7) scripts
+/// in the witness set. Collects script hashes of any that fail deserialization
+/// and returns `MalformedScriptWitnesses` if the set is non-empty.
+///
+/// Reference: `Cardano.Ledger.Babbage.Rules.Utxow` — `validateScriptsWellFormed`.
+pub fn validate_script_witnesses_well_formed(
+    witness_set: &crate::eras::shelley::ShelleyWitnessSet,
+    evaluator: &dyn crate::plutus_validation::PlutusEvaluator,
+) -> Result<(), LedgerError> {
+    use crate::plutus_validation::PlutusVersion;
+
+    let mut malformed: Vec<[u8; 28]> = Vec::new();
+
+    for bytes in &witness_set.plutus_v1_scripts {
+        if !evaluator.is_script_well_formed(PlutusVersion::V1, bytes) {
+            malformed.push(crate::plutus_validation::plutus_script_hash(PlutusVersion::V1, bytes));
+        }
+    }
+    for bytes in &witness_set.plutus_v2_scripts {
+        if !evaluator.is_script_well_formed(PlutusVersion::V2, bytes) {
+            malformed.push(crate::plutus_validation::plutus_script_hash(PlutusVersion::V2, bytes));
+        }
+    }
+    for bytes in &witness_set.plutus_v3_scripts {
+        if !evaluator.is_script_well_formed(PlutusVersion::V3, bytes) {
+            malformed.push(crate::plutus_validation::plutus_script_hash(PlutusVersion::V3, bytes));
+        }
+    }
+    if !malformed.is_empty() {
+        return Err(LedgerError::MalformedScriptWitnesses(malformed));
+    }
+    Ok(())
+}
+
+/// Validates that all reference scripts in transaction outputs are well-formed.
+///
+/// Inspects `script_ref` on each output and on the collateral return output.
+/// Collects hashes of malformed Plutus scripts.
+///
+/// Reference: `Cardano.Ledger.Babbage.Rules.Utxow` — `MalformedReferenceScripts`.
+pub fn validate_reference_scripts_well_formed(
+    outputs: &[crate::eras::babbage::BabbageTxOut],
+    collateral_return: Option<&crate::eras::babbage::BabbageTxOut>,
+    evaluator: &dyn crate::plutus_validation::PlutusEvaluator,
+) -> Result<(), LedgerError> {
+    let mut malformed: Vec<[u8; 28]> = Vec::new();
+
+    let iter = outputs.iter().chain(collateral_return.into_iter());
+    for txout in iter {
+        if let Some(sref) = &txout.script_ref {
+            if !is_plutus_script_well_formed(&sref.0, evaluator) {
+                malformed.push(script_hash(&sref.0));
+            }
+        }
+    }
+    if !malformed.is_empty() {
+        return Err(LedgerError::MalformedReferenceScripts(malformed));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
