@@ -83,6 +83,11 @@ pub enum LedgerError {
     #[error("pool owner not registered as stake credential: {owner:02x?}")]
     PoolOwnerNotRegistered { owner: AddrKeyHash },
 
+    /// CDDL `pool_owners = set<addr_keyhash>` — duplicate owner entries in
+    /// a pool registration certificate.
+    #[error("duplicate pool owner: {owner:02x?}")]
+    DuplicatePoolOwner { owner: AddrKeyHash },
+
     #[error("pool retirement epoch {retirement_epoch} exceeds maximum {max_epoch} (current {current_epoch} + eMax {e_max})")]
     PoolRetirementTooFar {
         retirement_epoch: u64,
@@ -97,6 +102,24 @@ pub enum LedgerError {
         retirement_epoch: u64,
         current_epoch: u64,
     },
+
+    /// Upstream: `GenesisKeyNotInMappingDELEG` — the genesis key hash in a
+    /// `GenesisDelegation` certificate must exist in the current genesis
+    /// delegates mapping.
+    #[error("genesis key not in delegate mapping: {genesis_hash:02x?}")]
+    GenesisKeyNotInMapping { genesis_hash: [u8; 28] },
+
+    /// Upstream: `DuplicateGenesisDelegateDELEG` — the delegate key hash in
+    /// a `GenesisDelegation` certificate must not already be delegated to by
+    /// another genesis key.
+    #[error("duplicate genesis delegate: {delegate_hash:02x?}")]
+    DuplicateGenesisDelegate { delegate_hash: [u8; 28] },
+
+    /// Upstream: `DuplicateGenesisVRFDELEG` — the VRF key hash in a
+    /// `GenesisDelegation` certificate must not already be delegated to by
+    /// another genesis key.
+    #[error("duplicate genesis VRF key: {vrf_hash:02x?}")]
+    DuplicateGenesisVrf { vrf_hash: [u8; 32] },
 
     #[error("stake credential already registered: {0:?}")]
     StakeCredentialAlreadyRegistered(StakeCredential),
@@ -315,6 +338,9 @@ pub enum LedgerError {
 
     #[error("unsupported certificate kind in this ledger slice: {0}")]
     UnsupportedCertificate(&'static str),
+
+    #[error("update field (key 6) not allowed in Conway era")]
+    UpdateNotAllowedConway,
 
     #[error("unsupported plutus purpose in this context: {0}")]
     UnsupportedPlutusPurpose(&'static str),

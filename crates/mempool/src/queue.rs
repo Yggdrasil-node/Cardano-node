@@ -667,6 +667,45 @@ impl Mempool {
         }
         removed_count
     }
+
+    /// Re-validate all remaining mempool entries using a caller-provided
+    /// validation callback.
+    ///
+    /// This is the core of upstream `syncWithLedger` / `revalidateTxsFor`:
+    /// after a block has been applied, the caller clones the post-block
+    /// ledger state and folds it through remaining entries, accumulating
+    /// effects.  Entries for which the closure returns `false` are evicted.
+    ///
+    /// The closure is called in fee-descending order (the existing entry
+    /// order).  A typical runtime invocation will capture a mutable
+    /// `LedgerState` so that successfully-validated transactions advance the
+    /// virtual tip — later entries whose inputs depend on earlier mempool
+    /// entries remain valid.
+    ///
+    /// Returns the number of entries removed.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` —
+    /// `revalidateTxsFor`.
+    pub fn revalidate_with_ledger<F>(&mut self, mut validate: F) -> usize
+    where
+        F: FnMut(&MempoolEntry) -> bool,
+    {
+        let mut removed_count = 0;
+        let mut i = 0;
+        while i < self.entries.len() {
+            if validate(&self.entries[i].entry) {
+                i += 1;
+            } else {
+                let removed = self.entries.remove(i);
+                self.current_bytes -= removed.entry.size_bytes;
+                for input in &removed.entry.inputs {
+                    self.claimed_inputs.remove(input);
+                }
+                removed_count += 1;
+            }
+        }
+        removed_count
+    }
 }
 
 /// Shared wrapper for concurrent mempool access.
@@ -825,6 +864,32 @@ impl SharedMempool {
             .write()
             .expect("shared mempool poisoned")
             .purge_invalid_for_params(current_slot, params);
+        if count > 0 {
+            self.change_notify.notify_waiters();
+        }
+        count
+    }
+
+    /// Re-validate remaining mempool entries using a caller-provided
+    /// ledger validation callback.
+    ///
+    /// Upstream `syncWithLedger` re-applies every remaining mempool tx
+    /// against the post-block ledger state to evict stale transactions.
+    /// The closure should capture a mutable reference to a scratch ledger
+    /// state so that effects accumulate across entries.
+    ///
+    /// Returns the number of entries evicted.
+    ///
+    /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` —
+    /// `revalidateTxsFor`.
+    pub fn revalidate_with_ledger<F>(&self, validate: F) -> usize
+    where
+        F: FnMut(&MempoolEntry) -> bool,
+    {
+        let count = self.inner
+            .write()
+            .expect("shared mempool poisoned")
+            .revalidate_with_ledger(validate);
         if count > 0 {
             self.change_notify.notify_waiters();
         }

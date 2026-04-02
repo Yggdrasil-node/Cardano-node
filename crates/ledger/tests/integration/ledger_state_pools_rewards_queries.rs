@@ -51,6 +51,12 @@ fn ledger_state_applies_pool_registration_certificate() {
 
     let params = sample_pool_params();
     let operator = params.operator;
+    // Pre-register pool owners so StakePoolOwnerNotRegisteredPOOL passes.
+    for owner in &params.pool_owners {
+        state
+            .stake_credentials_mut()
+            .register(StakeCredential::AddrKeyHash(*owner));
+    }
     let block = make_shelley_block_with_txs(
         12,
         1,

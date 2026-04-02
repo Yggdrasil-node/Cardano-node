@@ -1204,6 +1204,12 @@ impl CborDecode for ConwayTxBody {
                 22 => {
                     treasury_donation = Some(dec.unsigned()?);
                 }
+                // Conway removes the Shelley `update` field (CDDL key 6).
+                // Upstream: `UpdateNotAllowed` from
+                // `Cardano.Ledger.Conway.Rules.Utxos`.
+                6 => {
+                    return Err(LedgerError::UpdateNotAllowedConway);
+                }
                 _ => {
                     dec.skip()?;
                 }
@@ -1734,5 +1740,50 @@ mod tests {
             ..base.clone()
         };
         assert_ne!(base.to_cbor_bytes(), with_gov.to_cbor_bytes());
+    }
+
+    /// Upstream: `UpdateNotAllowed` — Conway removes the Shelley
+    /// `update` field (CDDL key 6).  A valid-looking map that
+    /// includes key 6 must be rejected at decode time.
+    #[test]
+    fn conway_tx_body_rejects_key_6_update() {
+        // Build a minimal ConwayTxBody and encode it.
+        let good = mk_conway_body();
+        let good_bytes = good.to_cbor_bytes();
+        // The good encoding is a CBOR map.  We now manually create a
+        // map with one extra entry: key 6 → integer 0.
+        let mut enc = Encoder::new();
+        let mut dec = Decoder::new(&good_bytes);
+        let original_count = dec.map().expect("map header");
+        enc.map(original_count + 1);
+        // Copy existing entries and inject key 6.
+        let mut injected = false;
+        for _ in 0..original_count {
+            let key = dec.unsigned().expect("key");
+            if !injected && key > 6 {
+                enc.unsigned(6);
+                enc.unsigned(0); // dummy value
+                injected = true;
+            }
+            enc.unsigned(key);
+            // copy the value verbatim
+            let val_start = dec.position();
+            dec.skip().expect("skip value");
+            let val_end = dec.position();
+            enc.raw(&good_bytes[val_start..val_end]);
+        }
+        if !injected {
+            enc.unsigned(6);
+            enc.unsigned(0);
+        }
+
+        let bad_bytes = enc.into_bytes();
+        let result = ConwayTxBody::from_cbor_bytes(&bad_bytes);
+        assert!(result.is_err(), "key 6 should be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, LedgerError::UpdateNotAllowedConway),
+            "expected UpdateNotAllowedConway, got: {err:?}"
+        );
     }
 }

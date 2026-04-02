@@ -1,5 +1,73 @@
 use super::*;
-use super::ledger_state_basic::make_shelley_block_with_txs;
+
+/// Helper: build a Conway-era block from Conway tx bodies.
+fn make_conway_committee_block(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<ConwayTxBody>,
+) -> Block {
+    let tx_list: Vec<Tx> = txs
+        .iter()
+        .map(|body| {
+            let raw = body.to_cbor_bytes();
+            let id_hash = yggdrasil_crypto::hash_bytes_256(&raw);
+            Tx {
+                id: TxId(id_hash.0),
+                body: raw,
+                witnesses: None,
+                auxiliary_data: None,
+                is_valid: None,
+            }
+        })
+        .collect();
+
+    Block {
+        era: Era::Conway,
+        header: BlockHeader {
+            hash: HeaderHash([hash_seed; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(slot),
+            block_no: BlockNo(block_no),
+            issuer_vkey: [0x11; 32],
+        },
+        transactions: tx_list,
+        raw_cbor: None,
+        header_cbor_size: None,
+    }
+}
+
+/// Helper: build a minimal ConwayTxBody with given inputs, outputs, fee,
+/// and optional certificates (mirrors the Shelley helper shape).
+fn conway_tx(
+    inputs: Vec<ShelleyTxIn>,
+    outputs: Vec<BabbageTxOut>,
+    fee: u64,
+    certificates: Option<Vec<DCert>>,
+) -> ConwayTxBody {
+    ConwayTxBody {
+        inputs,
+        outputs,
+        fee,
+        ttl: None,
+        certificates,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    }
+}
 
 #[test]
 fn ledger_state_authorizes_known_committee_member_hot_key() {
@@ -7,7 +75,7 @@ fn ledger_state_authorizes_known_committee_member_hot_key() {
     let cold_credential = StakeCredential::AddrKeyHash([0x68; 28]);
     let hot_credential = StakeCredential::ScriptHash([0x69; 28]);
     state.committee_state_mut().register(cold_credential);
-    state.utxo_mut().insert(
+    state.multi_era_utxo_mut().insert_shelley(
         ShelleyTxIn {
             transaction_id: [0xAA; 32],
             index: 0,
@@ -18,29 +86,21 @@ fn ledger_state_authorizes_known_committee_member_hot_key() {
         },
     );
 
-    let block = make_shelley_block_with_txs(
+    let block = make_conway_committee_block(
         12,
         1,
         0xAB,
-        vec![ShelleyTxBody {
-            inputs: vec![ShelleyTxIn {
-                transaction_id: [0xAA; 32],
-                index: 0,
-            }],
-            outputs: vec![ShelleyTxOut {
+        vec![conway_tx(
+            vec![ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 }],
+            vec![BabbageTxOut {
                 address: vec![0x02],
-                amount: 1_000_000,
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
             }],
-            fee: 100_000,
-            ttl: 20,
-            certificates: Some(vec![DCert::CommitteeAuthorization(
-                cold_credential,
-                hot_credential,
-            )]),
-            withdrawals: None,
-            update: None,
-            auxiliary_data_hash: None,
-        }],
+            100_000,
+            Some(vec![DCert::CommitteeAuthorization(cold_credential, hot_credential)]),
+        )],
     );
 
     state.apply_block(&block).expect("committee authorization block");
@@ -63,79 +123,51 @@ fn ledger_state_resigns_known_committee_member() {
         data_hash: [0x6C; 32],
     };
     state.committee_state_mut().register(cold_credential);
-    state.utxo_mut().insert(
-        ShelleyTxIn {
-            transaction_id: [0xAC; 32],
-            index: 0,
-        },
-        ShelleyTxOut {
-            address: vec![0x01],
-            amount: 1_100_000,
-        },
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xAC; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: 1_100_000 },
     );
-    state.utxo_mut().insert(
-        ShelleyTxIn {
-            transaction_id: [0xAD; 32],
-            index: 0,
-        },
-        ShelleyTxOut {
-            address: vec![0x01],
-            amount: 1_100_000,
-        },
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xAD; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: 1_100_000 },
     );
 
-    let authorization_block = make_shelley_block_with_txs(
+    let authorization_block = make_conway_committee_block(
         12,
         1,
         0xAE,
-        vec![ShelleyTxBody {
-            inputs: vec![ShelleyTxIn {
-                transaction_id: [0xAC; 32],
-                index: 0,
-            }],
-            outputs: vec![ShelleyTxOut {
+        vec![conway_tx(
+            vec![ShelleyTxIn { transaction_id: [0xAC; 32], index: 0 }],
+            vec![BabbageTxOut {
                 address: vec![0x02],
-                amount: 1_000_000,
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
             }],
-            fee: 100_000,
-            ttl: 20,
-            certificates: Some(vec![DCert::CommitteeAuthorization(
-                cold_credential,
-                hot_credential,
-            )]),
-            withdrawals: None,
-            update: None,
-            auxiliary_data_hash: None,
-        }],
+            100_000,
+            Some(vec![DCert::CommitteeAuthorization(cold_credential, hot_credential)]),
+        )],
     );
 
     state
         .apply_block(&authorization_block)
         .expect("committee authorization block");
 
-    let block = make_shelley_block_with_txs(
+    let block = make_conway_committee_block(
         13,
-        1,
+        2,
         0xAF,
-        vec![ShelleyTxBody {
-            inputs: vec![ShelleyTxIn {
-                transaction_id: [0xAD; 32],
-                index: 0,
-            }],
-            outputs: vec![ShelleyTxOut {
+        vec![conway_tx(
+            vec![ShelleyTxIn { transaction_id: [0xAD; 32], index: 0 }],
+            vec![BabbageTxOut {
                 address: vec![0x02],
-                amount: 1_000_000,
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
             }],
-            fee: 100_000,
-            ttl: 20,
-            certificates: Some(vec![DCert::CommitteeResignation(
-                cold_credential,
-                Some(anchor.clone()),
-            )]),
-            withdrawals: None,
-            update: None,
-            auxiliary_data_hash: None,
-        }],
+            100_000,
+            Some(vec![DCert::CommitteeResignation(cold_credential, Some(anchor.clone()))]),
+        )],
     );
 
     state.apply_block(&block).expect("committee resignation block");
@@ -153,40 +185,26 @@ fn ledger_state_rejects_unknown_committee_member_authorization() {
     let mut state = LedgerState::new(Era::Conway);
     let cold_credential = StakeCredential::AddrKeyHash([0x6D; 28]);
     let hot_credential = StakeCredential::ScriptHash([0x6E; 28]);
-    state.utxo_mut().insert(
-        ShelleyTxIn {
-            transaction_id: [0xAE; 32],
-            index: 0,
-        },
-        ShelleyTxOut {
-            address: vec![0x01],
-            amount: 1_100_000,
-        },
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xAE; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: 1_100_000 },
     );
 
-    let block = make_shelley_block_with_txs(
+    let block = make_conway_committee_block(
         12,
         1,
         0xAF,
-        vec![ShelleyTxBody {
-            inputs: vec![ShelleyTxIn {
-                transaction_id: [0xAE; 32],
-                index: 0,
-            }],
-            outputs: vec![ShelleyTxOut {
+        vec![conway_tx(
+            vec![ShelleyTxIn { transaction_id: [0xAE; 32], index: 0 }],
+            vec![BabbageTxOut {
                 address: vec![0x02],
-                amount: 1_000_000,
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
             }],
-            fee: 100_000,
-            ttl: 20,
-            certificates: Some(vec![DCert::CommitteeAuthorization(
-                cold_credential,
-                hot_credential,
-            )]),
-            withdrawals: None,
-            update: None,
-            auxiliary_data_hash: None,
-        }],
+            100_000,
+            Some(vec![DCert::CommitteeAuthorization(cold_credential, hot_credential)]),
+        )],
     );
 
     let err = state.apply_block(&block).expect_err("unknown committee member");
@@ -199,76 +217,51 @@ fn ledger_state_rejects_reauthorizing_resigned_committee_member() {
     let cold_credential = StakeCredential::AddrKeyHash([0x70; 28]);
     let hot_credential = StakeCredential::ScriptHash([0x71; 28]);
     state.committee_state_mut().register(cold_credential);
-    state.utxo_mut().insert(
-        ShelleyTxIn {
-            transaction_id: [0xB0; 32],
-            index: 0,
-        },
-        ShelleyTxOut {
-            address: vec![0x01],
-            amount: 1_100_000,
-        },
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xB0; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: 1_100_000 },
     );
-    state.utxo_mut().insert(
-        ShelleyTxIn {
-            transaction_id: [0xB1; 32],
-            index: 0,
-        },
-        ShelleyTxOut {
-            address: vec![0x01],
-            amount: 1_100_000,
-        },
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xB1; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: 1_100_000 },
     );
 
-    let resignation_block = make_shelley_block_with_txs(
+    let resignation_block = make_conway_committee_block(
         12,
         1,
         0xB2,
-        vec![ShelleyTxBody {
-            inputs: vec![ShelleyTxIn {
-                transaction_id: [0xB0; 32],
-                index: 0,
-            }],
-            outputs: vec![ShelleyTxOut {
+        vec![conway_tx(
+            vec![ShelleyTxIn { transaction_id: [0xB0; 32], index: 0 }],
+            vec![BabbageTxOut {
                 address: vec![0x02],
-                amount: 1_000_000,
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
             }],
-            fee: 100_000,
-            ttl: 20,
-            certificates: Some(vec![DCert::CommitteeResignation(cold_credential, None)]),
-            withdrawals: None,
-            update: None,
-            auxiliary_data_hash: None,
-        }],
+            100_000,
+            Some(vec![DCert::CommitteeResignation(cold_credential, None)]),
+        )],
     );
 
     state
         .apply_block(&resignation_block)
         .expect("committee resignation block");
 
-    let block = make_shelley_block_with_txs(
+    let block = make_conway_committee_block(
         13,
-        1,
+        2,
         0xB3,
-        vec![ShelleyTxBody {
-            inputs: vec![ShelleyTxIn {
-                transaction_id: [0xB1; 32],
-                index: 0,
-            }],
-            outputs: vec![ShelleyTxOut {
+        vec![conway_tx(
+            vec![ShelleyTxIn { transaction_id: [0xB1; 32], index: 0 }],
+            vec![BabbageTxOut {
                 address: vec![0x02],
-                amount: 1_000_000,
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
             }],
-            fee: 100_000,
-            ttl: 20,
-            certificates: Some(vec![DCert::CommitteeAuthorization(
-                cold_credential,
-                hot_credential,
-            )]),
-            withdrawals: None,
-            update: None,
-            auxiliary_data_hash: None,
-        }],
+            100_000,
+            Some(vec![DCert::CommitteeAuthorization(cold_credential, hot_credential)]),
+        )],
     );
 
     let err = state

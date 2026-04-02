@@ -93,6 +93,13 @@ pub struct ShelleyCompatibleSubmittedTx<TxBody> {
     /// Exact CBOR bytes of the submitted transaction when built via the
     /// provided constructors or decoder.
     pub raw_cbor: Vec<u8>,
+    /// Original wire CBOR bytes of the transaction body.
+    ///
+    /// Upstream `Cardano.Ledger.Core.txIdTxBody` hashes the on-wire body
+    /// bytes, not a re-serialized representation.  Preserving the original
+    /// bytes ensures that TxId computation is correct even for
+    /// non-canonically encoded transactions.
+    pub raw_body: Vec<u8>,
 }
 
 impl<TxBody> ShelleyCompatibleSubmittedTx<TxBody>
@@ -101,18 +108,24 @@ where
 {
     /// Build a Shelley-family submitted transaction from typed parts.
     pub fn new(body: TxBody, witness_set: ShelleyWitnessSet, auxiliary_data: Option<Vec<u8>>) -> Self {
+        let raw_body = body.to_cbor_bytes();
         let raw_cbor = encode_shelley_family_tx(&body, &witness_set, &auxiliary_data);
         Self {
             body,
             witness_set,
             auxiliary_data,
             raw_cbor,
+            raw_body,
         }
     }
 
-    /// Return the canonical transaction identifier derived from the CBOR body.
+    /// Return the canonical transaction identifier derived from the
+    /// original on-wire CBOR body bytes.
+    ///
+    /// Reference: upstream `Cardano.Ledger.Core` — `txIdTxBody` uses
+    /// `originalBytes` of the body, not a re-serialized form.
     pub fn tx_id(&self) -> TxId {
-        compute_tx_id(&self.body.to_cbor_bytes())
+        compute_tx_id(&self.raw_body)
     }
 }
 
@@ -143,7 +156,11 @@ where
             });
         }
 
+        let body_start = dec.position();
         let body = TxBody::decode_cbor(dec)?;
+        let body_end = dec.position();
+        let raw_body = dec.slice(body_start, body_end)?.to_vec();
+
         let witness_set = ShelleyWitnessSet::decode_cbor(dec)?;
         let auxiliary_data = decode_optional_raw_cbor(dec)?;
         let end = dec.position();
@@ -153,6 +170,7 @@ where
             witness_set,
             auxiliary_data,
             raw_cbor: dec.slice(start, end)?.to_vec(),
+            raw_body,
         })
     }
 }
@@ -174,6 +192,13 @@ pub struct AlonzoCompatibleSubmittedTx<TxBody> {
     /// Exact CBOR bytes of the submitted transaction when built via the
     /// provided constructors or decoder.
     pub raw_cbor: Vec<u8>,
+    /// Original wire CBOR bytes of the transaction body.
+    ///
+    /// Upstream `Cardano.Ledger.Core.txIdTxBody` hashes the on-wire body
+    /// bytes, not a re-serialized representation.  Preserving the original
+    /// bytes ensures that TxId computation is correct even for
+    /// non-canonically encoded transactions.
+    pub raw_body: Vec<u8>,
 }
 
 impl<TxBody> AlonzoCompatibleSubmittedTx<TxBody>
@@ -187,6 +212,7 @@ where
         is_valid: bool,
         auxiliary_data: Option<Vec<u8>>,
     ) -> Self {
+        let raw_body = body.to_cbor_bytes();
         let raw_cbor = encode_alonzo_family_tx(&body, &witness_set, is_valid, &auxiliary_data);
         Self {
             body,
@@ -194,12 +220,17 @@ where
             is_valid,
             auxiliary_data,
             raw_cbor,
+            raw_body,
         }
     }
 
-    /// Return the canonical transaction identifier derived from the CBOR body.
+    /// Return the canonical transaction identifier derived from the
+    /// original on-wire CBOR body bytes.
+    ///
+    /// Reference: upstream `Cardano.Ledger.Core` — `txIdTxBody` uses
+    /// `originalBytes` of the body, not a re-serialized form.
     pub fn tx_id(&self) -> TxId {
-        compute_tx_id(&self.body.to_cbor_bytes())
+        compute_tx_id(&self.raw_body)
     }
 }
 
@@ -231,7 +262,11 @@ where
             });
         }
 
+        let body_start = dec.position();
         let body = TxBody::decode_cbor(dec)?;
+        let body_end = dec.position();
+        let raw_body = dec.slice(body_start, body_end)?.to_vec();
+
         let witness_set = ShelleyWitnessSet::decode_cbor(dec)?;
         let is_valid = dec.bool()?;
         let auxiliary_data = decode_optional_raw_cbor(dec)?;
@@ -243,6 +278,7 @@ where
             is_valid,
             auxiliary_data,
             raw_cbor: dec.slice(start, end)?.to_vec(),
+            raw_body,
         })
     }
 }

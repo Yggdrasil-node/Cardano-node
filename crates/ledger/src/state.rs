@@ -712,17 +712,32 @@ impl StakeCredentials {
     }
 
     /// Registers a stake credential with no delegation target and zero deposit.
+    ///
+    /// Returns `true` when the credential was freshly registered.
+    /// Returns `false` (already registered) **without** modifying the
+    /// existing entry — upstream never overwrites an existing
+    /// `StakeCredentialState` on duplicate registration.
     pub fn register(&mut self, credential: StakeCredential) -> bool {
+        if self.entries.contains_key(&credential) {
+            return false;
+        }
         self.entries
-            .insert(credential, StakeCredentialState::new(None, None))
-            .is_none()
+            .insert(credential, StakeCredentialState::new(None, None));
+        true
     }
 
     /// Registers a stake credential with no delegation target and the given deposit.
+    ///
+    /// Returns `true` when the credential was freshly registered.
+    /// Returns `false` (already registered) **without** overwriting the
+    /// existing entry's delegation or deposit state.
     pub fn register_with_deposit(&mut self, credential: StakeCredential, deposit: u64) -> bool {
+        if self.entries.contains_key(&credential) {
+            return false;
+        }
         self.entries
-            .insert(credential, StakeCredentialState::new_with_deposit(None, None, deposit))
-            .is_none()
+            .insert(credential, StakeCredentialState::new_with_deposit(None, None, deposit));
+        true
     }
 
     /// Removes a registered stake credential.
@@ -903,8 +918,17 @@ impl DrepState {
     }
 
     /// Registers a DRep.
+    ///
+    /// Returns `true` when the DRep was freshly registered.
+    /// Returns `false` (already registered) **without** overwriting the
+    /// existing `RegisteredDrep` entry — upstream never destroys the
+    /// existing deposit / anchor / activity state on duplicate registration.
     pub fn register(&mut self, drep: DRep, state: RegisteredDrep) -> bool {
-        self.entries.insert(drep, state).is_none()
+        if self.entries.contains_key(&drep) {
+            return false;
+        }
+        self.entries.insert(drep, state);
+        true
     }
 
     /// Unregisters a DRep.
@@ -4137,7 +4161,8 @@ impl LedgerState {
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 if let Some(ref_inputs) = &tx.body.reference_inputs {
                     self.multi_era_utxo.validate_reference_inputs(ref_inputs)?;
-                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
+                    // Babbage allows overlapping spending and reference inputs;
+                    // disjointness is enforced only in Conway.
                 }
                 let mut required_scripts = HashSet::new();
                 crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -5741,7 +5766,8 @@ impl LedgerState {
             }
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
-                MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
+                // Babbage allows overlapping spending and reference inputs;
+                // disjointness is enforced only in Conway.
             }
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -7710,6 +7736,40 @@ fn apply_certificates_and_withdrawals(
     let mut total_refunds: u64 = 0;
     if let Some(certs) = certificates {
         for cert in certs {
+            // -- Era-gate: Conway-only certs (CDDL tags 7–18) must be
+            // rejected in Shelley–Babbage, and Shelley-only certs (tags 5–6:
+            // GenesisDelegation, MoveInstantaneousReward) must be rejected
+            // in Conway.
+            // Reference: Conway CDDL `certificate` removes tags 5–6 and
+            // adds tags 7–18; Shelley–Babbage CDDL only includes tags 0–6.
+            match cert {
+                DCert::AccountRegistrationDeposit(..)
+                | DCert::AccountUnregistrationDeposit(..)
+                | DCert::DelegationToDrep(..)
+                | DCert::DelegationToStakePoolAndDrep(..)
+                | DCert::AccountRegistrationDelegationToStakePool(..)
+                | DCert::AccountRegistrationDelegationToDrep(..)
+                | DCert::AccountRegistrationDelegationToStakePoolAndDrep(..)
+                | DCert::CommitteeAuthorization(..)
+                | DCert::CommitteeResignation(..)
+                | DCert::DrepRegistration(..)
+                | DCert::DrepUnregistration(..)
+                | DCert::DrepUpdate(..)
+                    if !ctx.is_conway =>
+                {
+                    return Err(LedgerError::UnsupportedCertificate(
+                        "Conway certificate in pre-Conway era",
+                    ));
+                }
+                DCert::GenesisDelegation(..) | DCert::MoveInstantaneousReward(..)
+                    if ctx.is_conway =>
+                {
+                    return Err(LedgerError::UnsupportedCertificate(
+                        "pre-Conway certificate in Conway era",
+                    ));
+                }
+                _ => {}
+            }
             match cert {
                 DCert::AccountRegistration(credential) => {
                     register_stake_credential(stake_credentials, *credential, key_deposit)?;
@@ -7897,6 +7957,15 @@ fn apply_certificates_and_withdrawals(
                             });
                         }
                     }
+                    // CDDL: pool_owners = set<addr_keyhash> — no duplicates.
+                    {
+                        let mut seen = std::collections::HashSet::new();
+                        for owner in &params.pool_owners {
+                            if !seen.insert(*owner) {
+                                return Err(LedgerError::DuplicatePoolOwner { owner: *owner });
+                            }
+                        }
+                    }
                     // POOL rule: all pool owners must be registered stake
                     // credentials (upstream `StakePoolOwnerNotRegisteredPOOL`).
                     for owner in &params.pool_owners {
@@ -7915,11 +7984,10 @@ fn apply_certificates_and_withdrawals(
                     }
                 }
                 DCert::PoolRetirement(pool, epoch) => {
-                    if !pool_state.retire(*pool, *epoch) {
-                        return Err(LedgerError::PoolNotRegistered(*pool));
-                    }
                     // POOL rule: retirement epoch must satisfy cEpoch < e <= cEpoch + eMax.
                     // Reference: `StakePoolRetirementWrongEpochPOOL`.
+                    // Validate BEFORE mutating pool state to avoid corrupting
+                    // `retiring_epoch` on validation failure.
                     if epoch.0 <= ctx.current_epoch.0 {
                         return Err(LedgerError::PoolRetirementTooEarly {
                             retirement_epoch: epoch.0,
@@ -7934,6 +8002,9 @@ fn apply_certificates_and_withdrawals(
                             e_max: ctx.e_max,
                             max_epoch,
                         });
+                    }
+                    if !pool_state.retire(*pool, *epoch) {
+                        return Err(LedgerError::PoolNotRegistered(*pool));
                     }
                 }
                 DCert::DrepRegistration(credential, deposit, anchor) => {
@@ -7959,6 +8030,33 @@ fn apply_certificates_and_withdrawals(
                     update_drep(drep_state, *credential, anchor.clone())?;
                 }
                 DCert::GenesisDelegation(genesis_hash, delegate_hash, vrf_hash) => {
+                    // DELEG rule: genesis key must be in current mapping.
+                    // Upstream: `GenesisKeyNotInMappingDELEG`.
+                    if !gen_delegs.contains_key(genesis_hash) {
+                        return Err(LedgerError::GenesisKeyNotInMapping {
+                            genesis_hash: *genesis_hash,
+                        });
+                    }
+                    // DELEG rule: delegate key must not be used by another
+                    // genesis key.
+                    // Upstream: `DuplicateGenesisDelegateDELEG`.
+                    for (other_gk, other_ds) in gen_delegs.iter() {
+                        if other_gk != genesis_hash && other_ds.delegate == *delegate_hash {
+                            return Err(LedgerError::DuplicateGenesisDelegate {
+                                delegate_hash: *delegate_hash,
+                            });
+                        }
+                    }
+                    // DELEG rule: VRF key must not be used by another genesis
+                    // key.
+                    // Upstream: `DuplicateGenesisVRFDELEG`.
+                    for (other_gk, other_ds) in gen_delegs.iter() {
+                        if other_gk != genesis_hash && other_ds.vrf == *vrf_hash {
+                            return Err(LedgerError::DuplicateGenesisVrf {
+                                vrf_hash: *vrf_hash,
+                            });
+                        }
+                    }
                     gen_delegs.insert(*genesis_hash, GenesisDelegationState {
                         delegate: *delegate_hash,
                         vrf: *vrf_hash,
@@ -15299,17 +15397,17 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xC1; 28]);
 
-        let certs = vec![DCert::AccountRegistrationDeposit(cred, 5_000_000)];
+        let certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
         ).unwrap();
         assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
-        assert_eq!(dp.key_deposits, 5_000_000);
+        assert_eq!(dp.key_deposits, 2_000_000);
     }
 
     #[test]
@@ -15321,11 +15419,11 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 5_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
-        let certs = vec![DCert::AccountUnregistrationDeposit(cred, 5_000_000)];
+        let certs = vec![DCert::AccountUnregistrationDeposit(cred, 2_000_000)];
         let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
@@ -15362,7 +15460,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::DelegationToStakePoolAndDrep(cred, operator, drep)];
         let cert_adj = apply_certificates_and_withdrawals(
@@ -15396,7 +15494,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
 
         let certs = vec![DCert::AccountRegistrationDelegationToStakePool(cred, operator, 2_000_000)];
@@ -15420,7 +15518,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
 
         let certs = vec![DCert::AccountRegistrationDelegationToDrep(cred, drep, 2_000_000)];
@@ -15456,10 +15554,10 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xF2; 28]);
 
-        let certs = vec![DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, operator, drep, 3_000_000)];
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, operator, drep, 2_000_000)];
         let cert_adj = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
@@ -15468,7 +15566,7 @@ mod tests {
         assert!(sc.is_registered(&cred));
         assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(operator));
         assert_eq!(sc.get(&cred).unwrap().delegated_drep(), Some(drep));
-        assert_eq!(dp.key_deposits, 3_000_000);
+        assert_eq!(dp.key_deposits, 2_000_000);
     }
 
     #[test]
@@ -15480,7 +15578,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
 
         // Register DRep.
@@ -15512,7 +15610,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
 
         // Register first.
@@ -15544,6 +15642,10 @@ mod tests {
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
+        // Pre-register the pool owner as a stake credential (upstream
+        // StakePoolOwnerNotRegisteredPOOL requires all owners registered).
+        sc.register(StakeCredential::AddrKeyHash([0xAA; 28]));
+
         let params = PoolParams {
             operator: [0xAA; 28],
             vrf_keyhash: [0xAA; 32],
@@ -15562,6 +15664,38 @@ mod tests {
         ).unwrap();
         assert!(pool.is_registered(&[0xAA; 28]));
         assert_eq!(dp.pool_deposits, 500_000_000);
+    }
+
+    #[test]
+    fn test_cert_pool_registration_duplicate_owner() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        sc.register(StakeCredential::AddrKeyHash([0xAA; 28]));
+
+        let params = PoolParams {
+            operator: [0xAA; 28],
+            vrf_keyhash: [0xAA; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 1, denominator: 10 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xAA; 28]) },
+            pool_owners: vec![[0xAA; 28], [0xAA; 28]], // duplicate owner
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let certs = vec![DCert::PoolRegistration(params)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::DuplicatePoolOwner { .. }));
     }
 
     #[test]
@@ -15802,6 +15936,211 @@ mod tests {
     }
 
     #[test]
+    fn test_cert_genesis_delegation_valid() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        // Pre-populate genesis delegate mapping.
+        gd.insert([0xA0; 28], GenesisDelegationState {
+            delegate: [0xB0; 28],
+            vrf: [0xC0; 32],
+        });
+        let ctx = sample_cert_ctx();
+
+        let certs = vec![DCert::GenesisDelegation([0xA0; 28], [0xB1; 28], [0xC1; 32])];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap();
+        assert_eq!(gd[&[0xA0; 28]].delegate, [0xB1; 28]);
+        assert_eq!(gd[&[0xA0; 28]].vrf, [0xC1; 32]);
+    }
+
+    #[test]
+    fn test_cert_genesis_delegation_unknown_genesis_key() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        // Genesis key [0xA1..] is NOT in the delegate mapping.
+        let certs = vec![DCert::GenesisDelegation([0xA1; 28], [0xB1; 28], [0xC1; 32])];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::GenesisKeyNotInMapping { .. }));
+    }
+
+    #[test]
+    fn test_cert_genesis_delegation_duplicate_delegate() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        gd.insert([0xA0; 28], GenesisDelegationState {
+            delegate: [0xB0; 28],
+            vrf: [0xC0; 32],
+        });
+        gd.insert([0xA1; 28], GenesisDelegationState {
+            delegate: [0xB1; 28],
+            vrf: [0xC1; 32],
+        });
+        let ctx = sample_cert_ctx();
+
+        // Try to delegate [0xA1..] to [0xB0..] which is already used by [0xA0..].
+        let certs = vec![DCert::GenesisDelegation([0xA1; 28], [0xB0; 28], [0xC9; 32])];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::DuplicateGenesisDelegate { .. }));
+    }
+
+    #[test]
+    fn test_cert_genesis_delegation_duplicate_vrf() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        gd.insert([0xA0; 28], GenesisDelegationState {
+            delegate: [0xB0; 28],
+            vrf: [0xC0; 32],
+        });
+        gd.insert([0xA1; 28], GenesisDelegationState {
+            delegate: [0xB1; 28],
+            vrf: [0xC1; 32],
+        });
+        let ctx = sample_cert_ctx();
+
+        // Try to delegate [0xA1..] with VRF [0xC0..] which is already used by [0xA0..].
+        let certs = vec![DCert::GenesisDelegation([0xA1; 28], [0xB9; 28], [0xC0; 32])];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::DuplicateGenesisVrf { .. }));
+    }
+
+    #[test]
+    fn test_conway_cert_rejected_in_pre_conway_era() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // is_conway = false
+
+        // All Conway-only cert variants (CDDL tags 7–18) must be rejected.
+        let conway_certs: Vec<DCert> = vec![
+            DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash([0x01; 28]), 2_000_000),
+            DCert::AccountUnregistrationDeposit(StakeCredential::AddrKeyHash([0x02; 28]), 2_000_000),
+            DCert::DelegationToDrep(StakeCredential::AddrKeyHash([0x03; 28]), DRep::AlwaysAbstain),
+            DCert::DelegationToStakePoolAndDrep(StakeCredential::AddrKeyHash([0x04; 28]), [0x00; 28], DRep::AlwaysAbstain),
+            DCert::AccountRegistrationDelegationToStakePool(StakeCredential::AddrKeyHash([0x05; 28]), [0x00; 28], 2_000_000),
+            DCert::AccountRegistrationDelegationToDrep(StakeCredential::AddrKeyHash([0x06; 28]), DRep::AlwaysAbstain, 2_000_000),
+            DCert::AccountRegistrationDelegationToStakePoolAndDrep(StakeCredential::AddrKeyHash([0x07; 28]), [0x00; 28], DRep::AlwaysAbstain, 2_000_000),
+            DCert::CommitteeAuthorization(StakeCredential::AddrKeyHash([0x08; 28]), StakeCredential::AddrKeyHash([0x09; 28])),
+            DCert::CommitteeResignation(StakeCredential::AddrKeyHash([0x0A; 28]), None),
+            DCert::DrepRegistration(StakeCredential::AddrKeyHash([0x0B; 28]), 500_000, None),
+            DCert::DrepUnregistration(StakeCredential::AddrKeyHash([0x0C; 28]), 500_000),
+            DCert::DrepUpdate(StakeCredential::AddrKeyHash([0x0D; 28]), None),
+        ];
+
+        for cert in &conway_certs {
+            let single = vec![cert.clone()];
+            let err = apply_certificates_and_withdrawals(
+                &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+                &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&single), None,
+            ).unwrap_err();
+            assert!(
+                matches!(err, LedgerError::UnsupportedCertificate(msg) if msg.contains("Conway")),
+                "Expected UnsupportedCertificate for {:?}, got {:?}",
+                cert, err,
+            );
+        }
+    }
+
+    #[test]
+    fn test_pre_conway_cert_rejected_in_conway_era() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx(); // is_conway = true
+
+        // GenesisDelegation (tag 5) must be rejected in Conway.
+        let certs = vec![DCert::GenesisDelegation([0xA0; 28], [0xB0; 28], [0xC0; 32])];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(
+            matches!(err, LedgerError::UnsupportedCertificate(msg) if msg.contains("pre-Conway")),
+        );
+
+        // MoveInstantaneousReward (tag 6) must be rejected in Conway.
+        let certs2 = vec![DCert::MoveInstantaneousReward(
+            crate::types::MirPot::Reserves,
+            crate::types::MirTarget::StakeCredentials(std::collections::BTreeMap::new()),
+        )];
+        let err2 = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs2), None,
+        ).unwrap_err();
+        assert!(
+            matches!(err2, LedgerError::UnsupportedCertificate(msg) if msg.contains("pre-Conway")),
+        );
+    }
+
+    #[test]
+    fn test_universal_certs_accepted_in_both_eras() {
+        // Tags 0–4 (AccountRegistration, AccountUnregistration,
+        // DelegationToStakePool, PoolRegistration, PoolRetirement)
+        // must be accepted in both Shelley and Conway contexts.
+        let pre_conway = sample_cert_ctx();
+        let conway = sample_conway_cert_ctx();
+
+        for ctx in [&pre_conway, &conway] {
+            let mut pool = PoolState::new();
+            let mut sc = StakeCredentials::new();
+            let mut cs = CommitteeState::new();
+            let mut ds = DrepState::new();
+            let mut ra = RewardAccounts::new();
+            let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+            let mut gd = std::collections::BTreeMap::new();
+
+            // Tag 0: AccountRegistration.
+            let cred = StakeCredential::AddrKeyHash([0x01; 28]);
+            let certs = vec![DCert::AccountRegistration(cred)];
+            apply_certificates_and_withdrawals(
+                &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+                &mut gd, &std::collections::BTreeMap::new(), ctx, Some(&certs), None,
+            ).unwrap();
+            assert!(sc.is_registered(&cred));
+        }
+    }
+
+    #[test]
     fn test_cert_committee_authorization() {
         let mut pool = PoolState::new();
         let mut sc = StakeCredentials::new();
@@ -15813,7 +16152,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         apply_certificates_and_withdrawals(
@@ -15835,7 +16174,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         let err = apply_certificates_and_withdrawals(
@@ -15856,7 +16195,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeResignation(cold, None)];
         apply_certificates_and_withdrawals(
@@ -15877,7 +16216,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
         // First resign.
         let certs1 = vec![DCert::CommitteeResignation(cold, None)];
@@ -15969,7 +16308,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::DrepRegistration(cred, 500_000, None)];
         let err = apply_certificates_and_withdrawals(
@@ -15990,7 +16329,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_conway_cert_ctx();
 
         // Delegate to a DRep that is NOT registered and NOT a built-in.
         let drep = DRep::KeyHash([0x99; 28]);
@@ -16556,5 +16895,115 @@ mod tests {
         // But delegation must have occurred.
         assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(pool_hash));
         assert_eq!(dp.key_deposits, 2_000_000); // unchanged
+    }
+
+    // ── Atomicity bug regression tests ────────────────────────────────
+
+    /// `StakeCredentials::register` must not overwrite an existing entry
+    /// when the credential is already registered.
+    ///
+    /// Upstream: duplicate `AccountRegistration` in Shelley returns
+    /// `StakeKeyAlreadyRegisteredDELEG` without mutating the registry.
+    #[test]
+    fn stake_register_does_not_overwrite_existing_entry() {
+        let mut sc = StakeCredentials::new();
+        let cred = StakeCredential::AddrKeyHash([0xAA; 28]);
+        assert!(sc.register(cred));
+        // Set a delegation target on the existing entry.
+        sc.get_mut(&cred).unwrap().set_delegated_pool(Some([0x11; 28]));
+        // Attempt duplicate registration — must return false AND preserve
+        // the existing delegation target.
+        assert!(!sc.register(cred));
+        assert_eq!(
+            sc.get(&cred).unwrap().delegated_pool(),
+            Some([0x11; 28]),
+            "existing entry must not be overwritten by duplicate register",
+        );
+    }
+
+    /// `StakeCredentials::register_with_deposit` must not overwrite deposit
+    /// or delegation state on a duplicate registration.
+    #[test]
+    fn stake_register_with_deposit_does_not_overwrite_existing_entry() {
+        let mut sc = StakeCredentials::new();
+        let cred = StakeCredential::AddrKeyHash([0xBB; 28]);
+        assert!(sc.register_with_deposit(cred, 2_000_000));
+        sc.get_mut(&cred).unwrap().set_delegated_pool(Some([0x22; 28]));
+        // Attempt duplicate registration with a different deposit.
+        assert!(!sc.register_with_deposit(cred, 5_000_000));
+        // Original deposit and delegation must be preserved.
+        assert_eq!(
+            sc.get(&cred).unwrap().deposit(),
+            2_000_000,
+            "original deposit must not be overwritten",
+        );
+        assert_eq!(
+            sc.get(&cred).unwrap().delegated_pool(),
+            Some([0x22; 28]),
+            "existing delegation must not be overwritten",
+        );
+    }
+
+    /// `DrepState::register` must not overwrite an existing entry when the
+    /// DRep is already registered.
+    ///
+    /// Upstream: Conway `DRepAlreadyRegisteredForEpoch` does not mutate
+    /// the DRep registry on failure.
+    #[test]
+    fn drep_register_does_not_overwrite_existing_entry() {
+        let mut ds = DrepState::new();
+        let drep = DRep::KeyHash([0xCC; 28]);
+        let state1 = RegisteredDrep::new(7_000_000, None);
+        assert!(ds.register(drep, state1));
+        // Attempt duplicate registration with a different deposit.
+        let state2 = RegisteredDrep::new(9_000_000, None);
+        assert!(!ds.register(drep, state2));
+        // Original deposit must be preserved.
+        assert_eq!(
+            ds.get(&drep).unwrap().deposit(),
+            7_000_000,
+            "existing DRep deposit must not be overwritten by duplicate register",
+        );
+    }
+
+    /// Pool retirement epoch bounds must be checked BEFORE mutating pool
+    /// state.  A too-early retirement epoch must not corrupt the pool's
+    /// `retiring_epoch`.
+    #[test]
+    fn pool_retirement_too_early_does_not_mutate_state() {
+        let operator: [u8; 28] = [0xDD; 28];
+        let mut pool = PoolState::new();
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xDD; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xDD; 28]) },
+            pool_owners: vec![[0xDD; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        // The pool should have no retiring_epoch initially.
+        assert!(pool.get(&operator).unwrap().retiring_epoch.is_none());
+        // Attempt retirement at current epoch (100) — must fail.
+        let certs = vec![DCert::PoolRetirement(operator, EpochNo(100))];
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
+        let result = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        );
+        assert!(result.is_err(), "retirement at current epoch must fail");
+        // Crucially: the pool's retiring_epoch must NOT have been mutated.
+        assert!(
+            pool.get(&operator).unwrap().retiring_epoch.is_none(),
+            "pool retiring_epoch must not be set when epoch validation fails",
+        );
     }
 }

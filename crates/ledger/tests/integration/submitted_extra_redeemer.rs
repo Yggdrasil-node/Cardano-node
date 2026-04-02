@@ -114,6 +114,7 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
 
     let raw_cbor = body.to_cbor_bytes();
     let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx {
+        raw_body: body.to_cbor_bytes(),
         body,
         witness_set: ws,
         is_valid: true,
@@ -252,6 +253,7 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
 
     let raw_cbor = body.to_cbor_bytes();
     let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx {
+        raw_body: body.to_cbor_bytes(),
         body,
         witness_set: ws,
         is_valid: true,
@@ -342,6 +344,7 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
 
     let raw_cbor = body.to_cbor_bytes();
     let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx {
+        raw_body: body.to_cbor_bytes(),
         body,
         witness_set: ws,
         is_valid: true,

@@ -1,8 +1,10 @@
-//! Integration tests for Babbage+ reference input contention (disjointness)
-//! rule: spending inputs and reference inputs must have no overlap.
+//! Integration tests for reference input contention (disjointness) rule.
 //!
-//! Upstream reference: `Cardano.Ledger.Babbage.Rules.Utxo` —
+//! Upstream Conway reference: `Cardano.Ledger.Conway.Rules.Utxo` —
 //! `disjoint (inputs txb) (referenceInputs txb)`.
+//!
+//! Babbage allows overlapping spending and reference inputs; only Conway
+//! introduced the disjointness requirement.
 
 use super::*;
 
@@ -128,14 +130,14 @@ fn conway_body_with_ref_inputs(
 // ===========================================================================
 
 #[test]
-fn babbage_submitted_tx_rejects_overlapping_reference_inputs() {
+fn babbage_submitted_tx_accepts_overlapping_reference_inputs() {
     let signer = TestSigner::new([0xB1; 32]);
     let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     seed_babbage_utxo(&mut state, &addr);
 
-    // Spend input [0x01..] and also reference it — overlap
+    // Spend input [0x01..] and also reference it — Babbage allows overlap.
     let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
     let body = babbage_body_with_ref_inputs(
         vec![overlap_input.clone()],
@@ -151,8 +153,8 @@ fn babbage_submitted_tx_rejects_overlapping_reference_inputs() {
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::ReferenceInputContention)),
-        "expected ReferenceInputContention, got: {:?}",
+        result.is_ok(),
+        "Babbage should allow overlapping spending and reference inputs, got: {:?}",
         result,
     );
 }
@@ -300,13 +302,14 @@ fn make_conway_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil
 }
 
 #[test]
-fn babbage_block_rejects_overlapping_reference_inputs() {
+fn babbage_block_accepts_overlapping_reference_inputs() {
     let keyhash = [0xAA; 28];
     let addr = enterprise_addr(1, &keyhash);
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     seed_babbage_utxo(&mut state, &addr);
 
+    // Babbage allows overlapping spending and reference inputs.
     let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
     let body = babbage_body_with_ref_inputs(
         vec![overlap_input.clone()],
@@ -328,8 +331,8 @@ fn babbage_block_rejects_overlapping_reference_inputs() {
 
     let result = state.apply_block_validated(&block, None);
     assert!(
-        matches!(result, Err(LedgerError::ReferenceInputContention)),
-        "expected ReferenceInputContention in block path, got: {:?}",
+        result.is_ok(),
+        "Babbage block should allow overlapping spending and reference inputs, got: {:?}",
         result,
     );
 }

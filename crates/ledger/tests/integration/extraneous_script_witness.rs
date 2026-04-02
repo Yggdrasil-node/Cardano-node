@@ -82,6 +82,7 @@ fn allegra_submitted_tx_rejects_extraneous_native_script() {
     ws.native_scripts.push(unrequired_script);
 
     let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx {
+        raw_body: body.to_cbor_bytes(),
         body,
         witness_set: ws,
         auxiliary_data: None,
@@ -145,6 +146,7 @@ fn allegra_submitted_tx_accepts_required_native_script() {
     ws.native_scripts.push(required_script);
 
     let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx {
+        raw_body: body.to_cbor_bytes(),
         body,
         witness_set: ws,
         auxiliary_data: None,

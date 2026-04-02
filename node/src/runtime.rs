@@ -2925,6 +2925,61 @@ fn re_admit_rolled_back_tx_ids(
     stats
 }
 
+/// Evict confirmed, conflicting, expired, and ledger-invalid mempool
+/// entries after a roll-forward batch.
+///
+/// This implements the upstream `syncWithLedger` / `revalidateTxsFor` flow:
+/// after structural eviction (confirmed, double-spend, TTL), remaining
+/// entries are fully re-applied against a scratch copy of the post-block
+/// ledger state.  Entries that fail re-application are evicted.
+///
+/// Returns a tuple of `(cached, confirmed, conflicting, expired, revalidated)`.
+fn evict_mempool_after_roll_forward(
+    mempool: &SharedMempool,
+    blocks: &[crate::sync::MultiEraBlock],
+    tip: &Point,
+    recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
+    checkpoint_tracking: Option<&LedgerCheckpointTracking>,
+) -> (usize, usize, usize, usize, usize) {
+    let confirmed_ids: Vec<TxId> = blocks
+        .iter()
+        .flat_map(extract_tx_ids)
+        .collect();
+    if confirmed_ids.is_empty() {
+        return (0, 0, 0, 0, 0);
+    }
+    let cached = cache_confirmed_entries(mempool, &confirmed_ids, recently_confirmed);
+    let removed = mempool.remove_confirmed(&confirmed_ids);
+    // Evict mempool txs whose inputs were consumed by
+    // a *different* on-chain tx (double-spend conflict).
+    // Reference: syncWithLedger / revalidateTxsFor.
+    let consumed: Vec<ShelleyTxIn> = blocks
+        .iter()
+        .flat_map(extract_consumed_inputs)
+        .collect();
+    let conflicting = mempool.remove_conflicting_inputs(&consumed);
+    let tip_slot = tip.slot().unwrap_or(SlotNo(0));
+    let purged = mempool.purge_expired(tip_slot);
+    // Full ledger re-validation: upstream `syncWithLedger` /
+    // `revalidateTxsFor` re-applies every remaining tx
+    // against the post-block ledger state.
+    let revalidated = if let Some(tracking) = checkpoint_tracking {
+        let mut scratch = tracking.ledger_state.clone();
+        let eval = tracking.plutus_evaluator.clone();
+        mempool.revalidate_with_ledger(|entry| {
+            match entry.to_multi_era_submitted_tx() {
+                Ok(tx) => scratch.apply_submitted_tx(
+                    &tx, tip_slot, Some(&eval),
+                ).is_ok(),
+                Err(_) => false,
+            }
+        })
+    } else {
+        0
+    };
+    (cached, removed, conflicting, purged, revalidated)
+}
+
 impl ReconnectingRunState {
     fn new() -> Self {
         Self {
@@ -3716,40 +3771,25 @@ where
                             if let Some(ref mempool) = mempool {
                                 for step in &progress.steps {
                                     if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
-                                        let confirmed_ids: Vec<TxId> = blocks
-                                            .iter()
-                                            .flat_map(extract_tx_ids)
-                                            .collect();
-                                        if !confirmed_ids.is_empty() {
-                                            let cached = cache_confirmed_entries(
-                                                mempool,
-                                                &confirmed_ids,
+                                        let (cached, removed, conflicting, purged, revalidated) =
+                                            evict_mempool_after_roll_forward(
+                                                mempool, blocks, tip,
                                                 &mut recently_confirmed,
+                                                checkpoint_tracking.as_ref(),
                                             );
-                                            let removed = mempool.remove_confirmed(&confirmed_ids);
-                                            // Evict mempool txs whose inputs were consumed by
-                                            // a *different* on-chain tx (double-spend conflict).
-                                            // Reference: syncWithLedger / revalidateTxsFor.
-                                            let consumed: Vec<ShelleyTxIn> = blocks
-                                                .iter()
-                                                .flat_map(extract_consumed_inputs)
-                                                .collect();
-                                            let conflicting = mempool.remove_conflicting_inputs(&consumed);
-                                            let tip_slot = tip.slot().unwrap_or(SlotNo(0));
-                                            let purged = mempool.purge_expired(tip_slot);
-                                            if removed + purged + cached + conflicting > 0 {
-                                                tracer.trace_runtime(
-                                                    "Mempool.Eviction",
-                                                    "Info",
-                                                    "evicted confirmed/expired/conflicting txs from mempool",
-                                                    trace_fields([
-                                                        ("cachedForRollback", json!(cached)),
-                                                        ("confirmed", json!(removed)),
-                                                        ("conflicting", json!(conflicting)),
-                                                        ("expired", json!(purged)),
-                                                    ]),
-                                                );
-                                            }
+                                        if cached + removed + conflicting + purged + revalidated > 0 {
+                                            tracer.trace_runtime(
+                                                "Mempool.Eviction",
+                                                "Info",
+                                                "evicted confirmed/expired/conflicting txs from mempool",
+                                                trace_fields([
+                                                    ("cachedForRollback", json!(cached)),
+                                                    ("confirmed", json!(removed)),
+                                                    ("conflicting", json!(conflicting)),
+                                                    ("expired", json!(purged)),
+                                                    ("ledgerRevalidated", json!(revalidated)),
+                                                ]),
+                                            );
                                         }
                                     }
                                 }
@@ -4102,40 +4142,25 @@ where
                             if let Some(ref mempool) = mempool {
                                 for step in &progress.steps {
                                     if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
-                                        let confirmed_ids: Vec<TxId> = blocks
-                                            .iter()
-                                            .flat_map(extract_tx_ids)
-                                            .collect();
-                                        if !confirmed_ids.is_empty() {
-                                            let cached = cache_confirmed_entries(
-                                                mempool,
-                                                &confirmed_ids,
+                                        let (cached, removed, conflicting, purged, revalidated) =
+                                            evict_mempool_after_roll_forward(
+                                                mempool, blocks, tip,
                                                 &mut recently_confirmed,
+                                                checkpoint_tracking.as_ref(),
                                             );
-                                            let removed = mempool.remove_confirmed(&confirmed_ids);
-                                            // Evict mempool txs whose inputs were consumed by
-                                            // a *different* on-chain tx (double-spend conflict).
-                                            // Reference: syncWithLedger / revalidateTxsFor.
-                                            let consumed: Vec<ShelleyTxIn> = blocks
-                                                .iter()
-                                                .flat_map(extract_consumed_inputs)
-                                                .collect();
-                                            let conflicting = mempool.remove_conflicting_inputs(&consumed);
-                                            let tip_slot = tip.slot().unwrap_or(SlotNo(0));
-                                            let purged = mempool.purge_expired(tip_slot);
-                                            if removed + purged + cached + conflicting > 0 {
-                                                tracer.trace_runtime(
-                                                    "Mempool.Eviction",
-                                                    "Info",
-                                                    "evicted confirmed/expired/conflicting txs from mempool",
-                                                    trace_fields([
-                                                        ("cachedForRollback", json!(cached)),
-                                                        ("confirmed", json!(removed)),
-                                                        ("conflicting", json!(conflicting)),
-                                                        ("expired", json!(purged)),
-                                                    ]),
-                                                );
-                                            }
+                                        if cached + removed + conflicting + purged + revalidated > 0 {
+                                            tracer.trace_runtime(
+                                                "Mempool.Eviction",
+                                                "Info",
+                                                "evicted confirmed/expired/conflicting txs from mempool",
+                                                trace_fields([
+                                                    ("cachedForRollback", json!(cached)),
+                                                    ("confirmed", json!(removed)),
+                                                    ("conflicting", json!(conflicting)),
+                                                    ("expired", json!(purged)),
+                                                    ("ledgerRevalidated", json!(revalidated)),
+                                                ]),
+                                            );
                                         }
                                     }
                                 }

@@ -259,6 +259,11 @@ fn shelley_pool_registration_deposit_balances() {
         ShelleyTxOut { address: vec![0x01], amount: consumed },
     );
 
+    // Pre-register pool owner (upstream StakePoolOwnerNotRegisteredPOOL).
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0x40; 28]));
+
     let params = PoolParams {
         operator: [0x40; 28],
         vrf_keyhash: [0x40; 32],
