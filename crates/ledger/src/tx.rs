@@ -53,6 +53,31 @@ pub struct Tx {
     pub is_valid: Option<bool>,
 }
 
+impl Tx {
+    /// Compute the full serialized transaction size matching the on-wire CBOR
+    /// array encoding.
+    ///
+    /// Pre-Alonzo (Shelley/Allegra/Mary): `[body, witnesses, auxiliary_data / null]` (3 elements).
+    /// Alonzo+: `[body, witnesses, is_valid, auxiliary_data / null]` (4 elements).
+    ///
+    /// Upstream `validateMaxTxSizeUTxO` and the linear fee formula both use this
+    /// full serialized size, not just the body bytes.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `validateMaxTxSizeUTxO`.
+    pub fn serialized_size(&self) -> usize {
+        let alonzo_plus = self.is_valid.is_some();
+        let n_elems: u8 = if alonzo_plus { 4 } else { 3 };
+        // CBOR array header: 1 byte for array(3) or array(4) (both < 24)
+        let header_size: usize = 1;
+        let body_size = self.body.len();
+        let witness_size = self.witnesses.as_ref().map_or(1, |w| w.len()); // null = 1 byte
+        let is_valid_size: usize = if alonzo_plus { 1 } else { 0 }; // CBOR bool = 1 byte
+        let aux_data_size = self.auxiliary_data.as_ref().map_or(1, |a| a.len()); // null = 1 byte
+        let _ = n_elems; // used conceptually for documentation
+        header_size + body_size + witness_size + is_valid_size + aux_data_size
+    }
+}
+
 /// A submitted transaction using the 3-element Shelley-family wire shape:
 /// body, witness set, and optional auxiliary data.
 ///
@@ -553,6 +578,56 @@ mod tests {
         };
         assert!(tx.witnesses.is_some());
         assert!(tx.auxiliary_data.is_some());
+    }
+
+    #[test]
+    fn serialized_size_pre_alonzo() {
+        // Pre-Alonzo: [body, witnesses, aux_data/null] — 3-element array
+        let body = vec![0xa2, 0x00, 0x01, 0x01, 0x02]; // 5 bytes body
+        let witnesses = vec![0xa0]; // 1 byte empty map
+        let tx = Tx {
+            id: compute_tx_id(&body),
+            body: body.clone(),
+            witnesses: Some(witnesses.clone()),
+            auxiliary_data: None,
+            is_valid: None, // pre-Alonzo: no is_valid
+        };
+        // 1 (array header) + 5 (body) + 1 (witnesses) + 1 (null for aux_data) = 8
+        assert_eq!(tx.serialized_size(), 8);
+    }
+
+    #[test]
+    fn serialized_size_alonzo_plus() {
+        // Alonzo+: [body, witnesses, is_valid, aux_data/null] — 4-element array
+        let body = vec![0xa2, 0x00, 0x01, 0x01, 0x02]; // 5 bytes
+        let witnesses = vec![0xa0]; // 1 byte
+        let aux_data = vec![0xa1, 0x00, 0x01]; // 3 bytes
+        let tx = Tx {
+            id: compute_tx_id(&body),
+            body: body.clone(),
+            witnesses: Some(witnesses.clone()),
+            auxiliary_data: Some(aux_data.clone()),
+            is_valid: Some(true), // Alonzo+ has is_valid
+        };
+        // 1 (header) + 5 (body) + 1 (witnesses) + 1 (is_valid bool) + 3 (aux_data) = 11
+        assert_eq!(tx.serialized_size(), 11);
+    }
+
+    #[test]
+    fn serialized_size_larger_than_body_only() {
+        let body = vec![0xa2, 0x00, 0x01]; // 3 bytes body
+        let witnesses = vec![0xa2, 0x00, 0x81, 0x01, 0x01, 0x02]; // 6 bytes
+        let tx = Tx {
+            id: compute_tx_id(&body),
+            body: body.clone(),
+            witnesses: Some(witnesses.clone()),
+            auxiliary_data: None,
+            is_valid: Some(true),
+        };
+        // Full size should be strictly larger than body-only
+        assert!(tx.serialized_size() > body.len());
+        // 1 (header) + 3 (body) + 6 (witnesses) + 1 (is_valid) + 1 (null) = 12
+        assert_eq!(tx.serialized_size(), 12);
     }
 
     // ── ShelleyCompatibleSubmittedTx ───────────────────────────────────

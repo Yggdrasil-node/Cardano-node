@@ -172,6 +172,7 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         Some(state.multi_era_utxo()),
         Some(&[reference_input.clone()]),
         None,
+        None,
     )
     .expect("compute sdh with reference inputs");
     let body = BabbageTxBody {

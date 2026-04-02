@@ -13,6 +13,7 @@ curve25519-elligator2.workspace = true
 ed25519-dalek.workspace = true
 k256.workspace = true
 sha2.workspace = true
+sha3.workspace = true
 # bls12_381 0.8's hash-to-curve needs digest 0.9-compatible SHA-256.
 sha2_09 = { package = "sha2", version = "0.9" }
 subtle.workspace = true

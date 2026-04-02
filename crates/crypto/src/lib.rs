@@ -16,6 +16,8 @@ pub mod sum_kes;
 pub mod test_vectors;
 /// secp256k1 ECDSA and Schnorr (BIP-340) signature verification.
 pub mod secp256k1;
+/// SHA3-256 hashing for Byron address root reconstruction.
+pub mod sha3_hash;
 /// Verifiable random function key, proof, and output helpers.
 pub mod vrf;
 
@@ -27,6 +29,8 @@ pub use bls12_381::{G1Element, G2Element, MlResult};
 pub use ed25519::{Signature, SigningKey, VerificationKey};
 /// Errors surfaced by the crypto crate.
 pub use error::CryptoError;
+/// SHA3-256 hashing for Byron address root reconstruction.
+pub use sha3_hash::{Sha3_256Hash, sha3_256};
 /// Key-evolving signature period, key, and signature wrappers.
 pub use kes::{
 	CompactKesSignature, KesPeriod, KesSignature, KesSigningKey, KesVerificationKey,

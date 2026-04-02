@@ -250,6 +250,30 @@ pub fn validate_tx_ex_units(
     Ok(())
 }
 
+/// Validates that **each individual redeemer's** execution units do not
+/// exceed the per-transaction limit (point-wise `<=`).
+///
+/// Upstream: `Cardano.Ledger.Alonzo.Rules.Utxo` — `validateExUnitsTooBigUTxO`
+/// checks `all pointWiseExUnits (<=) (snd <$> rdmrs) maxTxExUnits`.
+pub fn validate_per_redeemer_ex_units(
+    params: &ProtocolParameters,
+    redeemers: &[crate::eras::alonzo::Redeemer],
+) -> Result<(), LedgerError> {
+    if let Some(ref max) = params.max_tx_ex_units {
+        for r in redeemers {
+            if r.ex_units.mem > max.mem || r.ex_units.steps > max.steps {
+                return Err(LedgerError::ExUnitsExceedTxLimit {
+                    tx_mem: r.ex_units.mem,
+                    tx_steps: r.ex_units.steps,
+                    max_mem: max.mem,
+                    max_steps: max.steps,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validates that the declared transaction size does not exceed the maximum.
 ///
 /// Returns `Err(LedgerError::TxTooLarge)` on violation.
@@ -465,5 +489,48 @@ mod tests {
         assert_eq!(gcd_u128(12, 8), 4);
         assert_eq!(gcd_u128(17, 13), 1);
         assert_eq!(gcd_u128(100, 100), 100);
+    }
+
+    // ── Per-redeemer ExUnits validation (upstream validateExUnitsTooBigUTxO) ──
+
+    #[test]
+    fn per_redeemer_ex_units_pass() {
+        let params = ProtocolParameters::alonzo_defaults();
+        let r = crate::eras::alonzo::Redeemer {
+            tag: 0,
+            index: 0,
+            data: crate::plutus::PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 100, steps: 200 },
+        };
+        assert!(validate_per_redeemer_ex_units(&params, &[r]).is_ok());
+    }
+
+    #[test]
+    fn per_redeemer_ex_units_one_exceeds_mem() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.max_tx_ex_units = Some(ExUnits { mem: 1000, steps: 1_000_000 });
+
+        let good = crate::eras::alonzo::Redeemer {
+            tag: 0, index: 0,
+            data: crate::plutus::PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 100, steps: 100 },
+        };
+        let bad = crate::eras::alonzo::Redeemer {
+            tag: 1, index: 0,
+            data: crate::plutus::PlutusData::Integer(0.into()),
+            ex_units: ExUnits { mem: 1001, steps: 100 }, // exceeds mem limit
+        };
+        // Total mem = 1101 > 1000, but the per-redeemer check catches the
+        // single redeemer with mem=1001 > max.mem=1000.
+        assert!(matches!(
+            validate_per_redeemer_ex_units(&params, &[good, bad]),
+            Err(LedgerError::ExUnitsExceedTxLimit { .. })
+        ));
+    }
+
+    #[test]
+    fn per_redeemer_ex_units_empty_redeemers_ok() {
+        let params = ProtocolParameters::alonzo_defaults();
+        assert!(validate_per_redeemer_ex_units(&params, &[]).is_ok());
     }
 }

@@ -961,6 +961,39 @@ fn validate_byron_address_bytes(raw: &[u8]) -> Result<(), LedgerError> {
     Ok(())
 }
 
+/// Extracts the 28-byte address root from raw Byron address bytes.
+///
+/// Byron address CBOR: `[tag 24 CBOR([address_root, attributes, type]), CRC32]`
+/// The `address_root` is the first element of the inner CBOR array and is
+/// a 28-byte Blake2b-224(SHA3-256(...)) hash.
+///
+/// Reference: `Cardano.Ledger.Address` — `bootstrapKeyHash` extracts
+/// `Byron.addrRoot byronAddress` and reinterprets the 28 raw bytes as a
+/// `KeyHash`.
+pub fn byron_address_root(raw: &[u8]) -> Option<[u8; 28]> {
+    let mut dec = Decoder::new(raw);
+    // Outer array of length 2: [tag-24-payload, checksum]
+    if dec.array().ok()? != 2 {
+        return None;
+    }
+    if dec.tag().ok()? != 24 {
+        return None;
+    }
+    let payload = dec.bytes().ok()?;
+    // Inner array of length 3: [address_root, attributes, type]
+    let mut inner = Decoder::new(payload);
+    if inner.array().ok()? != 3 {
+        return None;
+    }
+    let root = inner.bytes().ok()?;
+    if root.len() != 28 {
+        return None;
+    }
+    let mut result = [0u8; 28];
+    result.copy_from_slice(root);
+    Some(result)
+}
+
 fn crc32_ieee(bytes: &[u8]) -> u32 {
     let mut crc = 0xffff_ffffu32;
     for &byte in bytes {

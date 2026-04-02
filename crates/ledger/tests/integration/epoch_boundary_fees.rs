@@ -57,6 +57,8 @@ fn fee_pot_feeds_epoch_reward_computation() {
         min_pool_cost: 340_000_000,
         reserves,
         fee_pot,
+        max_lovelace_supply: 0,
+        eta: UnitInterval { numerator: 1, denominator: 1 },
     };
 
     // Empty snapshot — no pools, no delegations
@@ -67,22 +69,27 @@ fn fee_pot_feeds_epoch_reward_computation() {
 
     // delta_reserves = reserves * rho = 1T * 0.003 = 3B
     // rewards_pot = fee_pot + delta_reserves - treasury_cut
-    // With no pools the entire pot goes to treasury_delta.
-    // The key assertion: fee_pot contributes to total_distributed or treasury_delta.
+    // With no pools the entire pot is unclaimed → returned to reserves.
+    // The treasury_cut is only the τ portion.
     assert!(
         dist.delta_reserves > 0 || fee_pot > 0,
         "reward calculation should incorporate fee_pot"
     );
-    // Total distributed + treasury_delta should account for fee_pot + delta_reserves.
-    // (With no pools, all goes to treasury.)
+    // Total distributed + treasury_cut + unclaimed should account for
+    // fee_pot + delta_reserves.
     let expected_delta = (reserves as u128 * 3 / 1000) as u64;
     assert_eq!(dist.delta_reserves, expected_delta);
-    // fee_pot is part of the reward pot; with no pools it all goes to treasury
-    assert!(
-        dist.treasury_delta >= fee_pot,
-        "treasury_delta ({}) should include fee_pot ({})",
-        dist.treasury_delta,
-        fee_pot
+    // With tau=0, treasury_cut is 0.  All goes to unclaimed → reserves.
+    // fee_pot winds up in unclaimed (returned to reserves), not treasury.
+    let total_pot = dist.delta_reserves.saturating_add(fee_pot);
+    assert_eq!(
+        dist.treasury_cut + dist.unclaimed + dist.distributed,
+        total_pot,
+        "treasury_cut ({}) + unclaimed ({}) + distributed ({}) should equal total pot ({})",
+        dist.treasury_cut,
+        dist.unclaimed,
+        dist.distributed,
+        total_pot,
     );
 }
 
@@ -98,6 +105,8 @@ fn zero_fee_pot_produces_smaller_treasury_delta() {
         min_pool_cost: 340_000_000,
         reserves,
         fee_pot: 50_000_000,
+        max_lovelace_supply: 0,
+        eta: UnitInterval { numerator: 1, denominator: 1 },
     };
 
     let without_fees = RewardParams {
@@ -108,6 +117,8 @@ fn zero_fee_pot_produces_smaller_treasury_delta() {
         min_pool_cost: 340_000_000,
         reserves,
         fee_pot: 0,
+        max_lovelace_supply: 0,
+        eta: UnitInterval { numerator: 1, denominator: 1 },
     };
 
     let go_snapshot = StakeSnapshot::default();
@@ -116,15 +127,17 @@ fn zero_fee_pot_produces_smaller_treasury_delta() {
     let dist_with = compute_epoch_rewards(&with_fees, &go_snapshot, &pool_performance);
     let dist_without = compute_epoch_rewards(&without_fees, &go_snapshot, &pool_performance);
 
-    // With no pools, all rewards go to treasury.  The difference in
-    // treasury_delta should be exactly the fee_pot (50M).
+    // With no pools, all rewards_pot is unclaimed → returned to reserves.
+    // The difference in treasury_cut should be τ × fee_pot (since τ takes
+    // a cut of the total pot including fees).
+    // tau = 0.2, fee_pot_diff = 50M → treasury_cut_diff = floor(0.2 * 50M) = 10M
     assert!(
-        dist_with.treasury_delta > dist_without.treasury_delta,
-        "non-zero fee_pot should produce larger treasury_delta"
+        dist_with.treasury_cut > dist_without.treasury_cut,
+        "non-zero fee_pot should produce larger treasury_cut"
     );
-    let delta_diff = dist_with.treasury_delta - dist_without.treasury_delta;
+    let delta_diff = dist_with.treasury_cut - dist_without.treasury_cut;
     assert_eq!(
-        delta_diff, 50_000_000,
-        "treasury_delta difference should equal the fee_pot"
+        delta_diff, 10_000_000,
+        "treasury_cut difference should equal tau * fee_pot = 0.2 * 50M = 10M"
     );
 }

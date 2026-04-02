@@ -67,6 +67,7 @@ fn compute_test_script_data_hash(
         None,
         None,
         None,
+        None,
     )
     .expect("compute test script_data_hash")
 }

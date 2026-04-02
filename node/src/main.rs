@@ -960,6 +960,12 @@ fn strict_base_ledger_state(
                 .collect(),
         );
         state.set_genesis_update_quorum(bootstrap.update_quorum);
+        state.set_max_lovelace_supply(bootstrap.max_lovelace_supply);
+        state.set_slots_per_epoch(bootstrap.epoch_length);
+        state.set_active_slot_coeff(yggdrasil_ledger::UnitInterval {
+            numerator: bootstrap.active_slots_coeff.0,
+            denominator: bootstrap.active_slots_coeff.1,
+        });
         }
     if let Some(params) = file_cfg
         .load_genesis_protocol_params(config_base_dir)

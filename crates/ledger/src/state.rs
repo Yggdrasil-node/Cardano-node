@@ -162,12 +162,19 @@ fn decode_optional_gov_action_id(
 
 /// Registered stake-pool state carried by the ledger.
 ///
-/// This is a narrow container for pool registration data plus an optional
-/// retirement epoch.
+/// Mirrors upstream `StakePoolState` which carries `spsParams`,
+/// `spsDeposit`, and optional retirement epoch.
+///
+/// Reference: `Cardano.Ledger.State.PoolState` — `spsDeposit`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisteredPool {
     params: PoolParams,
     retiring_epoch: Option<EpochNo>,
+    /// The deposit paid at registration time (upstream `spsDeposit`).
+    ///
+    /// Used at retirement to refund the *correct* amount even if
+    /// `pp_poolDeposit` changed since registration.
+    deposit: u64,
 }
 
 /// A directly dialable access point extracted from stake-pool relay data.
@@ -184,25 +191,33 @@ pub struct PoolRelayAccessPoint {
 
 impl CborEncode for RegisteredPool {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(2);
+        enc.array(3);
         self.params.encode_cbor(enc);
         encode_optional_epoch_no(self.retiring_epoch, enc);
+        enc.unsigned(self.deposit);
     }
 }
 
 impl CborDecode for RegisteredPool {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 2 {
+        // Backward-compatible: accept legacy 2-element (no deposit) or
+        // new 3-element format.
+        if len != 2 && len != 3 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 2,
+                expected: 3,
                 actual: len as usize,
             });
         }
 
+        let params = PoolParams::decode_cbor(dec)?;
+        let retiring_epoch = decode_optional_epoch_no(dec)?;
+        let deposit = if len >= 3 { dec.unsigned()? } else { 0 };
+
         Ok(Self {
-            params: PoolParams::decode_cbor(dec)?,
-            retiring_epoch: decode_optional_epoch_no(dec)?,
+            params,
+            retiring_epoch,
+            deposit,
         })
     }
 }
@@ -216,6 +231,13 @@ impl RegisteredPool {
     /// Returns the scheduled retirement epoch, if any.
     pub fn retiring_epoch(&self) -> Option<EpochNo> {
         self.retiring_epoch
+    }
+
+    /// Returns the deposit paid at registration time.
+    ///
+    /// Reference: upstream `spsDeposit` in `StakePoolState`.
+    pub fn deposit(&self) -> u64 {
+        self.deposit
     }
 
     /// Returns directly dialable relay access points for the pool.
@@ -298,15 +320,34 @@ impl PoolState {
     }
 
     /// Inserts or replaces the registration for a pool operator.
-    pub fn register(&mut self, params: PoolParams) {
+    ///
+    /// `deposit` is the deposit paid at registration time (upstream
+    /// `pp_poolDeposit` at the registering epoch).  On re-registration,
+    /// upstream carries forward the original deposit amount via
+    /// `spsDeposit currentState` in `mkStakePoolState`.
+    pub fn register_with_deposit(&mut self, params: PoolParams, deposit: u64) {
         let operator = params.operator;
+        // On re-registration, preserve the original deposit (upstream
+        // behavior: `mkStakePoolState (currentState ^. spsDepositL)`).
+        let existing_deposit = self
+            .entries
+            .get(&operator)
+            .map(|e| e.deposit)
+            .unwrap_or(deposit);
         self.entries.insert(
             operator,
             RegisteredPool {
                 params,
                 retiring_epoch: None,
+                deposit: existing_deposit,
             },
         );
+    }
+
+    /// Inserts or replaces the registration for a pool operator
+    /// (legacy convenience overload — deposit defaults to 0).
+    pub fn register(&mut self, params: PoolParams) {
+        self.register_with_deposit(params, 0);
     }
 
     /// Marks a registered pool as retiring at `epoch`.
@@ -479,6 +520,33 @@ impl RewardAccounts {
             .map(RewardAccountState::balance)
             .unwrap_or(0)
     }
+
+    /// Looks up the first registered reward account matching `credential`
+    /// (any network byte).
+    ///
+    /// Upstream keys member rewards by `Credential Staking` and resolves
+    /// the `RewardAccount` (including network byte) from the DState at
+    /// application time.  This method provides the same lookup.
+    pub fn find_account_by_credential(
+        &self,
+        cred: &StakeCredential,
+    ) -> Option<&RewardAccount> {
+        self.entries.keys().find(|acct| acct.credential == *cred)
+    }
+
+    /// Credits `amount` to the registered reward account matching
+    /// `credential`.  Returns `true` if the account was found and
+    /// credited, `false` if no matching account is registered.
+    pub fn credit_by_credential(&mut self, cred: &StakeCredential, amount: u64) -> bool {
+        // Find the matching RewardAccount key.
+        if let Some(key) = self.entries.keys().find(|a| a.credential == *cred).copied() {
+            if let Some(state) = self.entries.get_mut(&key) {
+                state.set_balance(state.balance().saturating_add(amount));
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Genesis delegation entry: maps a genesis key to a delegate key and VRF
@@ -497,40 +565,65 @@ pub struct GenesisDelegationState {
 pub struct StakeCredentialState {
     delegated_pool: Option<PoolKeyHash>,
     delegated_drep: Option<DRep>,
+    /// The deposit paid at registration time (upstream `rdDeposit` in UMap).
+    /// Used to compute the correct refund on unregistration, since the
+    /// protocol parameter `keyDeposit` may have changed since registration.
+    deposit: u64,
 }
 
 impl CborEncode for StakeCredentialState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(2);
+        enc.array(3);
         encode_optional_pool_key_hash(self.delegated_pool, enc);
         encode_optional_drep(self.delegated_drep.as_ref(), enc);
+        enc.unsigned(self.deposit);
     }
 }
 
 impl CborDecode for StakeCredentialState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 2 {
+        if len != 2 && len != 3 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 2,
+                expected: 3,
                 actual: len as usize,
             });
         }
 
+        let delegated_pool = decode_optional_pool_key_hash(dec)?;
+        let delegated_drep = decode_optional_drep(dec)?;
+        let deposit = if len >= 3 { dec.unsigned()? } else { 0 };
+
         Ok(Self {
-            delegated_pool: decode_optional_pool_key_hash(dec)?,
-            delegated_drep: decode_optional_drep(dec)?,
+            delegated_pool,
+            delegated_drep,
+            deposit,
         })
     }
 }
 
 impl StakeCredentialState {
-    /// Creates stake-credential state with the given delegation targets.
+    /// Creates stake-credential state with the given delegation targets and zero deposit.
     pub fn new(delegated_pool: Option<PoolKeyHash>, delegated_drep: Option<DRep>) -> Self {
         Self {
             delegated_pool,
             delegated_drep,
+            deposit: 0,
         }
+    }
+
+    /// Creates stake-credential state with the given delegation targets and deposit.
+    pub fn new_with_deposit(delegated_pool: Option<PoolKeyHash>, delegated_drep: Option<DRep>, deposit: u64) -> Self {
+        Self {
+            delegated_pool,
+            delegated_drep,
+            deposit,
+        }
+    }
+
+    /// Returns the deposit paid at registration time (upstream `rdDeposit`).
+    pub fn deposit(&self) -> u64 {
+        self.deposit
     }
 
     /// Returns the delegated pool, if any.
@@ -618,10 +711,17 @@ impl StakeCredentials {
         self.entries.contains_key(credential)
     }
 
-    /// Registers a stake credential with no delegation target.
+    /// Registers a stake credential with no delegation target and zero deposit.
     pub fn register(&mut self, credential: StakeCredential) -> bool {
         self.entries
             .insert(credential, StakeCredentialState::new(None, None))
+            .is_none()
+    }
+
+    /// Registers a stake credential with no delegation target and the given deposit.
+    pub fn register_with_deposit(&mut self, credential: StakeCredential, deposit: u64) -> bool {
+        self.entries
+            .insert(credential, StakeCredentialState::new_with_deposit(None, None, deposit))
             .is_none()
     }
 
@@ -2245,6 +2345,32 @@ pub struct LedgerState {
     /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `NewEpochState.nesBcur`;
     /// `BlocksMade (EraCrypto era)`.
     blocks_made: BTreeMap<PoolKeyHash, u64>,
+
+    /// Maximum lovelace supply from genesis (mainnet: 45 000 000 000 000 000).
+    ///
+    /// Used to compute `circulation = max_lovelace_supply - reserves` for the
+    /// upstream `maxPool` sigma/pledge denominator.  Not CBOR-serialized —
+    /// re-set from genesis loading on every node startup.  When zero, the
+    /// reward formula falls back to total active stake.
+    ///
+    /// Reference: `ShelleyGenesis.sgMaxLovelaceSupply`.
+    max_lovelace_supply: u64,
+
+    /// Slots per epoch from genesis (mainnet Shelley: 432000).
+    ///
+    /// Used to compute `eta` (monetary expansion efficiency factor) at
+    /// epoch boundaries.  Not CBOR-serialized — set from genesis.
+    ///
+    /// Reference: `ShelleyGenesis.sgEpochLength`.
+    slots_per_epoch: u64,
+
+    /// Active slot coefficient from genesis (mainnet: 0.05, as numerator/denominator).
+    ///
+    /// Used to compute `expectedBlocks` for the `eta` monetary expansion
+    /// factor.  Not CBOR-serialized — set from genesis.
+    ///
+    /// Reference: `ShelleyGenesis.sgActiveSlotsCoeff`.
+    active_slot_coeff: UnitInterval,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -2532,6 +2658,10 @@ impl CborDecode for LedgerState {
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
+            // Runtime-only fields — not serialized, re-set from genesis.
+            max_lovelace_supply: 0,
+            slots_per_epoch: 0,
+            active_slot_coeff: UnitInterval { numerator: 0, denominator: 1 },
         })
     }
 }
@@ -2607,6 +2737,9 @@ impl LedgerState {
             genesis_update_quorum: 5,
             num_dormant_epochs: 0,
             blocks_made: BTreeMap::new(),
+            max_lovelace_supply: 0,
+            slots_per_epoch: 0,
+            active_slot_coeff: UnitInterval { numerator: 0, denominator: 1 },
         }
     }
 
@@ -3056,6 +3189,36 @@ impl LedgerState {
         std::mem::take(&mut self.blocks_made)
     }
 
+    /// Returns the maximum lovelace supply (genesis constant).
+    pub fn max_lovelace_supply(&self) -> u64 {
+        self.max_lovelace_supply
+    }
+
+    /// Sets the maximum lovelace supply from genesis configuration.
+    pub fn set_max_lovelace_supply(&mut self, supply: u64) {
+        self.max_lovelace_supply = supply;
+    }
+
+    /// Returns the slots-per-epoch genesis constant.
+    pub fn slots_per_epoch(&self) -> u64 {
+        self.slots_per_epoch
+    }
+
+    /// Sets the slots-per-epoch from genesis configuration.
+    pub fn set_slots_per_epoch(&mut self, spe: u64) {
+        self.slots_per_epoch = spe;
+    }
+
+    /// Returns the active slot coefficient genesis constant.
+    pub fn active_slot_coeff(&self) -> UnitInterval {
+        self.active_slot_coeff
+    }
+
+    /// Sets the active slot coefficient from genesis configuration.
+    pub fn set_active_slot_coeff(&mut self, asc: UnitInterval) {
+        self.active_slot_coeff = asc;
+    }
+
     /// Sets the current epoch carried by the ledger state.
     pub fn set_current_epoch(&mut self, current_epoch: EpochNo) {
         self.current_epoch = current_epoch;
@@ -3372,6 +3535,10 @@ impl LedgerState {
                     if let Some(withdrawals) = &tx.body.withdrawals {
                         crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
                     }
+                    // Upstream propWits: proposer genesis key hashes.
+                    if let Some(update) = &tx.body.update {
+                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                    }
                     let tx_body_hash = crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0;
                     validate_witnesses_typed(&tx.witness_set, &required, &tx_body_hash)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
@@ -3468,6 +3635,10 @@ impl LedgerState {
                     if let Some(withdrawals) = &tx.body.withdrawals {
                         crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
                     }
+                    // Upstream propWits: proposer genesis key hashes.
+                    if let Some(update) = &tx.body.update {
+                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                    }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
                         tx.body.certificates.as_deref(),
@@ -3509,6 +3680,7 @@ impl LedgerState {
                     &required_scripts,
                     &native_satisfied,
                     &staged,
+                    None,
                     None,
                 )?;
                 validate_no_extraneous_script_witnesses_typed(
@@ -3593,6 +3765,10 @@ impl LedgerState {
                     if let Some(withdrawals) = &tx.body.withdrawals {
                         crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
                     }
+                    // Upstream propWits: proposer genesis key hashes.
+                    if let Some(update) = &tx.body.update {
+                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                    }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
                         tx.body.certificates.as_deref(),
@@ -3637,6 +3813,7 @@ impl LedgerState {
                     &required_scripts,
                     &native_satisfied,
                     &staged,
+                    None,
                     None,
                 )?;
                 validate_no_extraneous_script_witnesses_typed(
@@ -3719,6 +3896,7 @@ impl LedgerState {
                     false,
                     None,
                     None,
+                    None,
                     Some(&required_scripts),
                 )?;
                 if let Some(params) = &self.protocol_params {
@@ -3732,6 +3910,10 @@ impl LedgerState {
                         tx.raw_cbor.len(), tx.body.fee, &outputs,
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
                         None, None, has_redeemers, 0,
+                    )?;
+                    // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
+                    validate_per_redeemer_ex_units_from_witness_set(
+                        &tx.witness_set, params,
                     )?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
@@ -3763,6 +3945,10 @@ impl LedgerState {
                         for signer in signers {
                             required.insert(*signer);
                         }
+                    }
+                    // Upstream propWits: proposer genesis key hashes.
+                    if let Some(update) = &tx.body.update {
+                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
@@ -3806,6 +3992,7 @@ impl LedgerState {
                     &required_scripts,
                     &native_satisfied,
                     &staged,
+                    None,
                     None,
                 )?;
                 validate_no_extraneous_script_witnesses_typed(
@@ -3976,6 +4163,7 @@ impl LedgerState {
                     false,
                     Some(&self.multi_era_utxo),
                     tx.body.reference_inputs.as_deref(),
+                    Some(&tx.body.inputs),
                     Some(&required_scripts),
                 )?;
                 if let Some(params) = &self.protocol_params {
@@ -3991,12 +4179,20 @@ impl LedgerState {
                         tx.body.collateral.as_deref(), total_eu.as_ref(),
                         coll_ret.as_ref(), tx.body.total_collateral, has_redeemers, 0,
                     )?;
+                    // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
+                    validate_per_redeemer_ex_units_from_witness_set(
+                        &tx.witness_set, params,
+                    )?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
                 if let Some(expected_net) = self.expected_network_id {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let mut outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
+                    // Upstream allSizedOutputsTxBodyF includes collateral_return.
+                    if let Some(cr) = &tx.body.collateral_return {
+                        outputs.push(MultiEraTxOut::Babbage(cr.clone()));
+                    }
                     validate_output_network_ids(expected_net, &outputs)?;
                     if let Some(withdrawals) = &tx.body.withdrawals {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
@@ -4021,6 +4217,10 @@ impl LedgerState {
                         for signer in signers {
                             required.insert(*signer);
                         }
+                    }
+                    // Upstream propWits: proposer genesis key hashes.
+                    if let Some(update) = &tx.body.update {
+                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
@@ -4065,6 +4265,7 @@ impl LedgerState {
                     &native_satisfied,
                     &staged,
                     tx.body.reference_inputs.as_deref(),
+                    Some(&tx.body.inputs),
                 )?;
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
@@ -4251,6 +4452,7 @@ impl LedgerState {
                     true,
                     Some(&self.multi_era_utxo),
                     tx.body.reference_inputs.as_deref(),
+                    Some(&tx.body.inputs),
                     Some(&required_scripts),
                 )?;
                 if let Some(params) = &self.protocol_params {
@@ -4271,12 +4473,20 @@ impl LedgerState {
                         coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
                         ref_scripts_size,
                     )?;
+                    // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
+                    validate_per_redeemer_ex_units_from_witness_set(
+                        &tx.witness_set, params,
+                    )?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
                 if let Some(expected_net) = self.expected_network_id {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let mut outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
+                    // Upstream allSizedOutputsTxBodyF includes collateral_return.
+                    if let Some(cr) = &tx.body.collateral_return {
+                        outputs.push(MultiEraTxOut::Babbage(cr.clone()));
+                    }
                     validate_output_network_ids(expected_net, &outputs)?;
                     if let Some(withdrawals) = &tx.body.withdrawals {
                         validate_withdrawal_network_ids(expected_net, withdrawals)?;
@@ -4362,6 +4572,7 @@ impl LedgerState {
                     &native_satisfied,
                     &staged,
                     tx.body.reference_inputs.as_deref(),
+                    Some(&tx.body.inputs),
                 )?;
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
@@ -4722,7 +4933,7 @@ impl LedgerState {
                     None => {
                         self.stake_credentials
                             .entries
-                            .insert(credential, StakeCredentialState::new(Some(pool), None));
+                            .insert(credential, StakeCredentialState::new_with_deposit(Some(pool), None, 0));
                     }
                 }
             }
@@ -4774,7 +4985,7 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = ShelleyTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -4828,6 +5039,10 @@ impl LedgerState {
             }
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+            }
+            // Upstream propWits: proposer genesis key hashes.
+            if let Some(update) = &body.update {
+                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -4890,7 +5105,7 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = AllegraTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -4939,6 +5154,10 @@ impl LedgerState {
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
             }
+            // Upstream propWits: proposer genesis key hashes.
+            if let Some(update) = &body.update {
+                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+            }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
             crate::witnesses::validate_mir_genesis_quorum_if_present(
@@ -4970,6 +5189,7 @@ impl LedgerState {
                 &required_scripts,
                 &native_satisfied,
                 &staged,
+                None,
                 None,
             )?;
             validate_no_extraneous_script_witnesses(
@@ -5028,7 +5248,7 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = crate::eras::mary::MaryTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -5076,6 +5296,10 @@ impl LedgerState {
             if let Some(withdrawals) = &body.withdrawals {
                 crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
             }
+            // Upstream propWits: proposer genesis key hashes.
+            if let Some(update) = &body.update {
+                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+            }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
             crate::witnesses::validate_mir_genesis_quorum_if_present(
@@ -5107,6 +5331,7 @@ impl LedgerState {
                 &required_scripts,
                 &native_satisfied,
                 &staged,
+                None,
                 None,
             )?;
             validate_no_extraneous_script_witnesses(
@@ -5166,7 +5391,7 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = AlonzoTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
+                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -5219,6 +5444,7 @@ impl LedgerState {
                 false,
                 None,
                 None,
+                None,
                 Some(&required_scripts),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
@@ -5230,6 +5456,10 @@ impl LedgerState {
                     params, &staged, *tx_size, body.fee, &outputs,
                     body.collateral.as_deref(), total_eu.as_ref(),
                     None, None, total_eu.is_some(), 0,
+                )?;
+                // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
+                validate_per_redeemer_ex_units_from_bytes(
+                    witness_bytes.as_deref(), params,
                 )?;
             }
             // Network validation (Alonzo UTXO rule: WrongNetwork + WrongNetworkInTxBody)
@@ -5259,6 +5489,10 @@ impl LedgerState {
                 for signer in signers {
                     required.insert(*signer);
                 }
+            }
+            // Upstream propWits: proposer genesis key hashes.
+            if let Some(update) = &body.update {
+                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -5294,6 +5528,7 @@ impl LedgerState {
                 &required_scripts,
                 &native_satisfied,
                 &staged,
+                None,
                 None,
             )?;
             validate_no_extraneous_script_witnesses(
@@ -5463,7 +5698,7 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = BabbageTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
+                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -5532,6 +5767,7 @@ impl LedgerState {
                 false,
                 Some(&staged),
                 body.reference_inputs.as_deref(),
+                Some(&body.inputs),
                 Some(&required_scripts),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
@@ -5545,12 +5781,20 @@ impl LedgerState {
                     body.collateral.as_deref(), total_eu.as_ref(),
                     coll_ret.as_ref(), body.total_collateral, total_eu.is_some(), 0,
                 )?;
+                // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
+                validate_per_redeemer_ex_units_from_bytes(
+                    witness_bytes.as_deref(), params,
+                )?;
             }
             // Network validation (Babbage UTXO rule: WrongNetwork + WrongNetworkInTxBody)
             if let Some(expected_net) = self.expected_network_id {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let mut outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
+                // Upstream allSizedOutputsTxBodyF includes collateral_return.
+                if let Some(cr) = &body.collateral_return {
+                    outputs.push(MultiEraTxOut::Babbage(cr.clone()));
+                }
                 validate_output_network_ids(expected_net, &outputs)?;
                 if let Some(withdrawals) = &body.withdrawals {
                     validate_withdrawal_network_ids(expected_net, withdrawals)?;
@@ -5573,6 +5817,10 @@ impl LedgerState {
                 for signer in signers {
                     required.insert(*signer);
                 }
+            }
+            // Upstream propWits: proposer genesis key hashes.
+            if let Some(update) = &body.update {
+                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -5609,6 +5857,7 @@ impl LedgerState {
                 &native_satisfied,
                 &staged,
                 body.reference_inputs.as_deref(),
+                Some(&body.inputs),
             )?;
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
@@ -5784,7 +6033,7 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = ConwayTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.body.len(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
+                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -5872,6 +6121,7 @@ impl LedgerState {
                 true,
                 Some(&staged),
                 body.reference_inputs.as_deref(),
+                Some(&body.inputs),
                 Some(&required_scripts),
             )?;
             // Conway LEDGER rule: total reference script size limit
@@ -5895,12 +6145,20 @@ impl LedgerState {
                     coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
                     ref_scripts_size,
                 )?;
+                // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
+                validate_per_redeemer_ex_units_from_bytes(
+                    witness_bytes.as_deref(), params,
+                )?;
             }
             // Network validation (Conway UTXO rule: WrongNetwork + WrongNetworkInTxBody)
             if let Some(expected_net) = self.expected_network_id {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let mut outputs: Vec<MultiEraTxOut> = body.outputs.iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
+                // Upstream allSizedOutputsTxBodyF includes collateral_return.
+                if let Some(cr) = &body.collateral_return {
+                    outputs.push(MultiEraTxOut::Babbage(cr.clone()));
+                }
                 validate_output_network_ids(expected_net, &outputs)?;
                 if let Some(withdrawals) = &body.withdrawals {
                     validate_withdrawal_network_ids(expected_net, withdrawals)?;
@@ -5971,6 +6229,7 @@ impl LedgerState {
                 &native_satisfied,
                 &staged,
                 body.reference_inputs.as_deref(),
+                Some(&body.inputs),
             )?;
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
@@ -7453,7 +7712,7 @@ fn apply_certificates_and_withdrawals(
         for cert in certs {
             match cert {
                 DCert::AccountRegistration(credential) => {
-                    register_stake_credential(stake_credentials, *credential)?;
+                    register_stake_credential(stake_credentials, *credential, key_deposit)?;
                     deposit_pot.add_key_deposit(key_deposit);
                     total_deposits = total_deposits.saturating_add(key_deposit);
                 }
@@ -7465,9 +7724,13 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    register_stake_credential(stake_credentials, *credential)?;
-                    deposit_pot.add_key_deposit(*deposit);
-                    total_deposits = total_deposits.saturating_add(*deposit);
+                    // Conway DELEG rule: `when (not exists) $ do ...`
+                    // Already-registered credentials are a silent no-op.
+                    if !stake_credentials.is_registered(credential) {
+                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        deposit_pot.add_key_deposit(*deposit);
+                        total_deposits = total_deposits.saturating_add(*deposit);
+                    }
                 }
                 DCert::AccountUnregistration(credential) => {
                     unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
@@ -7475,13 +7738,24 @@ fn apply_certificates_and_withdrawals(
                     total_refunds = total_refunds.saturating_add(key_deposit);
                 }
                 DCert::AccountUnregistrationDeposit(credential, refund) => {
-                    // Conway DELEG rule: refund must match the stored key deposit.
-                    // Upstream `RefundIncorrectDELEG` / `IncorrectDepositDELEG`.
-                    if ctx.is_conway && *refund != key_deposit {
-                        return Err(LedgerError::IncorrectKeyDepositRefund {
-                            supplied: *refund,
-                            expected: key_deposit,
-                        });
+                    // Conway DELEG rule: refund must match the stored per-credential
+                    // deposit (upstream `lookupDeposit umap cred` / `checkInvalidRefund`).
+                    // When stored deposit is 0 (legacy state from before deposit
+                    // tracking was introduced), fall back to current `key_deposit`
+                    // which matches upstream Shelley-era `shelleyKeyDepositsRefunds`
+                    // behavior.
+                    if ctx.is_conway {
+                        let raw_stored = stake_credentials
+                            .get(credential)
+                            .map(|s| s.deposit())
+                            .unwrap_or(0);
+                        let expected_deposit = if raw_stored > 0 { raw_stored } else { key_deposit };
+                        if *refund != expected_deposit {
+                            return Err(LedgerError::IncorrectKeyDepositRefund {
+                                supplied: *refund,
+                                expected: expected_deposit,
+                            });
+                        }
                     }
                     // Upstream `ConwayUnRegCert` also enforces
                     // `StakeKeyHasNonZeroAccountBalanceDELEG` — reward balance
@@ -7507,9 +7781,12 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    register_stake_credential(stake_credentials, *credential)?;
-                    deposit_pot.add_key_deposit(*deposit);
-                    total_deposits = total_deposits.saturating_add(*deposit);
+                    // Conway DELEG rule: `when (not exists) $ do ...`
+                    if !stake_credentials.is_registered(credential) {
+                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        deposit_pot.add_key_deposit(*deposit);
+                        total_deposits = total_deposits.saturating_add(*deposit);
+                    }
                     delegate_stake_credential(
                         pool_state,
                         stake_credentials,
@@ -7539,9 +7816,12 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    register_stake_credential(stake_credentials, *credential)?;
-                    deposit_pot.add_key_deposit(*deposit);
-                    total_deposits = total_deposits.saturating_add(*deposit);
+                    // Conway DELEG rule: `when (not exists) $ do ...`
+                    if !stake_credentials.is_registered(credential) {
+                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        deposit_pot.add_key_deposit(*deposit);
+                        total_deposits = total_deposits.saturating_add(*deposit);
+                    }
                     delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
                 }
                 DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, deposit) => {
@@ -7552,9 +7832,12 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    register_stake_credential(stake_credentials, *credential)?;
-                    deposit_pot.add_key_deposit(*deposit);
-                    total_deposits = total_deposits.saturating_add(*deposit);
+                    // Conway DELEG rule: `when (not exists) $ do ...`
+                    if !stake_credentials.is_registered(credential) {
+                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        deposit_pot.add_key_deposit(*deposit);
+                        total_deposits = total_deposits.saturating_add(*deposit);
+                    }
                     delegate_stake_credential(
                         pool_state,
                         stake_credentials,
@@ -7614,8 +7897,18 @@ fn apply_certificates_and_withdrawals(
                             });
                         }
                     }
+                    // POOL rule: all pool owners must be registered stake
+                    // credentials (upstream `StakePoolOwnerNotRegisteredPOOL`).
+                    for owner in &params.pool_owners {
+                        let cred = StakeCredential::AddrKeyHash(*owner);
+                        if !stake_credentials.is_registered(&cred) {
+                            return Err(LedgerError::PoolOwnerNotRegistered {
+                                owner: *owner,
+                            });
+                        }
+                    }
                     let is_new = !pool_state.is_registered(&params.operator);
-                    pool_state.register(params.clone());
+                    pool_state.register_with_deposit(params.clone(), pool_deposit);
                     if is_new {
                         deposit_pot.add_pool_deposit(pool_deposit);
                         total_deposits = total_deposits.saturating_add(pool_deposit);
@@ -7625,7 +7918,14 @@ fn apply_certificates_and_withdrawals(
                     if !pool_state.retire(*pool, *epoch) {
                         return Err(LedgerError::PoolNotRegistered(*pool));
                     }
-                    // POOL rule: retirement epoch must be within eMax of current epoch.
+                    // POOL rule: retirement epoch must satisfy cEpoch < e <= cEpoch + eMax.
+                    // Reference: `StakePoolRetirementWrongEpochPOOL`.
+                    if epoch.0 <= ctx.current_epoch.0 {
+                        return Err(LedgerError::PoolRetirementTooEarly {
+                            retirement_epoch: epoch.0,
+                            current_epoch: ctx.current_epoch.0,
+                        });
+                    }
                     let max_epoch = ctx.current_epoch.0.saturating_add(ctx.e_max);
                     if epoch.0 > max_epoch {
                         return Err(LedgerError::PoolRetirementTooFar {
@@ -7690,11 +7990,13 @@ fn apply_certificates_and_withdrawals(
                 });
             }
 
-            // Conway CERTS rule: withdrawals must drain the full reward
-            // account balance (no partial withdrawals).
-            // Upstream: `WithdrawalsNotInRewardsCERTS` in
+            // Formal spec: wdrls ⊆ rewards — withdrawal amount must
+            // exactly match the reward account balance for all Shelley+
+            // eras. Upstream: `validateWithdrawals` enforces equal-value
+            // map subset in Shelley through Conway.
+            // Reference: `Cardano.Ledger.Shelley.Rules.Utxo`,
             // `Cardano.Ledger.Conway.Rules.Certs`.
-            if ctx.is_conway && *requested != available {
+            if *requested != available {
                 return Err(LedgerError::WithdrawalNotFullDrain {
                     account: *account,
                     requested: *requested,
@@ -7713,8 +8015,9 @@ fn apply_certificates_and_withdrawals(
 fn register_stake_credential(
     stake_credentials: &mut StakeCredentials,
     credential: StakeCredential,
+    deposit: u64,
 ) -> Result<(), LedgerError> {
-    if !stake_credentials.register(credential) {
+    if !stake_credentials.register_with_deposit(credential, deposit) {
         return Err(LedgerError::StakeCredentialAlreadyRegistered(credential));
     }
 
@@ -7999,6 +8302,14 @@ fn validate_pre_alonzo_tx(
     crate::fees::validate_tx_size(params, tx_body_size)?;
     crate::fees::validate_fee(params, tx_body_size, None, declared_fee)?;
     crate::min_utxo::validate_all_outputs_min_utxo(params, outputs)?;
+    // Mary+ can carry multi-asset output values; enforce max_val_size
+    // when the protocol parameter is set (no-op for Shelley/Allegra
+    // where max_val_size is None).
+    // Reference: `Cardano.Ledger.Mary.Rules.Utxo` — `validateOutputTooBigUTxO`.
+    crate::min_utxo::validate_output_not_too_big(params, outputs)?;
+    // Mary+ disallows zero-valued multi-asset entries in outputs.
+    // Reference: `Cardano.Ledger.Mary.Value` — non-zero invariant.
+    crate::min_utxo::validate_no_zero_valued_multi_asset(outputs)?;
     crate::min_utxo::validate_output_boot_addr_attrs(outputs)?;
     Ok(())
 }
@@ -8038,9 +8349,21 @@ fn validate_alonzo_plus_tx(
     if let Some(eu) = total_ex_units {
         crate::fees::validate_tx_ex_units(params, eu)?;
     }
-    crate::min_utxo::validate_all_outputs_min_utxo(params, outputs)?;
-    crate::min_utxo::validate_output_not_too_big(params, outputs)?;
-    crate::min_utxo::validate_output_boot_addr_attrs(outputs)?;
+    // Upstream uses `allSizedOutputsTxBodyF` which includes collateral_return.
+    // Reference: Cardano.Ledger.Babbage.TxBody — allSizedOutputsTxBodyF.
+    let mut all_outputs_buf: Vec<MultiEraTxOut>;
+    let all_outputs: &[MultiEraTxOut] = if let Some(cr) = collateral_return {
+        all_outputs_buf = Vec::with_capacity(outputs.len() + 1);
+        all_outputs_buf.extend_from_slice(outputs);
+        all_outputs_buf.push(cr.clone());
+        &all_outputs_buf
+    } else {
+        outputs
+    };
+    crate::min_utxo::validate_all_outputs_min_utxo(params, all_outputs)?;
+    crate::min_utxo::validate_output_not_too_big(params, all_outputs)?;
+    crate::min_utxo::validate_no_zero_valued_multi_asset(all_outputs)?;
+    crate::min_utxo::validate_output_boot_addr_attrs(all_outputs)?;
 
     // When the transaction carries phase-2 scripts (redeemers ≠ ∅),
     // collateral is mandatory.
@@ -8118,6 +8441,35 @@ fn sum_redeemer_ex_units(
     Some(total)
 }
 
+/// Validates each individual redeemer's ExUnits against `maxTxExUnits`.
+///
+/// Upstream: `validateExUnitsTooBigUTxO` checks `all pointWiseExUnits (<=)`.
+fn validate_per_redeemer_ex_units_from_witness_set(
+    witness_set: &crate::eras::shelley::ShelleyWitnessSet,
+    params: &crate::protocol_params::ProtocolParameters,
+) -> Result<(), LedgerError> {
+    if witness_set.redeemers.is_empty() {
+        return Ok(());
+    }
+    crate::fees::validate_per_redeemer_ex_units(params, &witness_set.redeemers)
+}
+
+/// Validates each individual redeemer's ExUnits from raw witness bytes.
+fn validate_per_redeemer_ex_units_from_bytes(
+    witness_bytes: Option<&[u8]>,
+    params: &crate::protocol_params::ProtocolParameters,
+) -> Result<(), LedgerError> {
+    let wb = match witness_bytes {
+        Some(wb) => wb,
+        None => return Ok(()),
+    };
+    let ws = match crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb) {
+        Ok(ws) => ws,
+        Err(_) => return Ok(()), // malformed witness handled elsewhere
+    };
+    validate_per_redeemer_ex_units_from_witness_set(&ws, params)
+}
+
 /// Extracts total redeemer execution units from raw witness bytes.
 ///
 /// Returns `None` when witness bytes are absent, malformed, or carry no
@@ -8148,8 +8500,14 @@ fn validate_witnesses_if_present(
         None => return Ok(()),
     };
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
-    let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
-    crate::witnesses::validate_vkey_witnesses(required, &vkey_hashes)?;
+    // Merge VKey hashes + bootstrap witness address-root hashes into the
+    // provided set.  Reference: `keyHashWitnessesTxWits` in
+    // `Cardano.Ledger.Core` combines `witVKeyHash` and `bootstrapWitKeyHash`.
+    let mut provided = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
+    for bw_hash in crate::witnesses::bootstrap_witness_key_hash_set(&ws.bootstrap_witnesses) {
+        provided.insert(bw_hash);
+    }
+    crate::witnesses::validate_vkey_witnesses(required, &provided)?;
     crate::witnesses::verify_vkey_signatures(tx_body_hash, &ws.vkey_witnesses)?;
     crate::witnesses::verify_bootstrap_witnesses(tx_body_hash, &ws.bootstrap_witnesses)
 }
@@ -8162,8 +8520,12 @@ fn validate_witnesses_typed(
     required: &HashSet<[u8; 28]>,
     tx_body_hash: &[u8; 32],
 ) -> Result<(), LedgerError> {
-    let vkey_hashes = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
-    crate::witnesses::validate_vkey_witnesses(required, &vkey_hashes)?;
+    // Merge VKey hashes + bootstrap witness address-root hashes.
+    let mut provided = crate::witnesses::witness_vkey_hash_set(&ws.vkey_witnesses);
+    for bw_hash in crate::witnesses::bootstrap_witness_key_hash_set(&ws.bootstrap_witnesses) {
+        provided.insert(bw_hash);
+    }
+    crate::witnesses::validate_vkey_witnesses(required, &provided)?;
     crate::witnesses::verify_vkey_signatures(tx_body_hash, &ws.vkey_witnesses)?;
     crate::witnesses::verify_bootstrap_witnesses(tx_body_hash, &ws.bootstrap_witnesses)
 }
@@ -8226,6 +8588,7 @@ fn validate_required_script_witnesses(
     native_satisfied: &HashSet<[u8; 28]>,
     spending_utxo: &MultiEraUtxo,
     reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+    spending_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
 ) -> Result<(), LedgerError> {
     if required_script_hashes.is_empty() {
         return Ok(());
@@ -8250,6 +8613,7 @@ fn validate_required_script_witnesses(
         &ws,
         spending_utxo,
         reference_inputs,
+        spending_inputs,
     );
 
     for required_hash in required_script_hashes {
@@ -9096,6 +9460,7 @@ mod tests {
                 1,
             ),
             retiring_epoch: None,
+            deposit: 0,
         };
 
         assert_eq!(
@@ -15405,6 +15770,38 @@ mod tests {
     }
 
     #[test]
+    fn test_cert_pool_retirement_epoch_too_early() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xCF; 28];
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xCF; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xCF; 28]) },
+            pool_owners: vec![[0xCF; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // current_epoch=100
+
+        // Retire at current epoch (100) — upstream requires cEpoch < e (strictly future).
+        let certs = vec![DCert::PoolRetirement(operator, EpochNo(100))];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolRetirementTooEarly { .. }));
+    }
+
+    #[test]
     fn test_cert_committee_authorization() {
         let mut pool = PoolState::new();
         let mut sc = StakeCredentials::new();
@@ -15702,6 +16099,39 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn collateral_return_checked_for_output_too_big() {
+        // Upstream `allSizedOutputsTxBodyF` includes collateral_return in
+        // output-size validation. A collateral_return whose value exceeds
+        // max_val_size must trigger OutputTooBig.
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.max_val_size = Some(10); // very small limit
+        let utxo = MultiEraUtxo::new();
+        let outputs = vec![]; // regular outputs are fine (empty)
+        // Build a collateral_return with a multi-asset value that
+        // serializes to more than 10 bytes.
+        let mut ma = std::collections::BTreeMap::new();
+        let policy_id = [0xAA; 28];
+        let mut assets = std::collections::BTreeMap::new();
+        assets.insert(b"longtokenname".to_vec(), 100);
+        ma.insert(policy_id, assets);
+        let big_value = crate::eras::mary::Value::CoinAndAssets(5_000_000, ma);
+        let cr = MultiEraTxOut::Babbage(crate::eras::babbage::BabbageTxOut {
+            address: vec![0x01; 57], // base address
+            amount: big_value,
+            datum_option: None,
+            script_ref: None,
+        });
+        let result = validate_alonzo_plus_tx(
+            &params, &utxo, 200, 200_000, &outputs,
+            None, None, Some(&cr), None, false, 0,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::OutputTooBig { .. })),
+            "collateral_return must be validated for max_val_size"
+        );
+    }
+
     // ── Network validation tests ───────────────────────────────────────
 
     #[test]
@@ -15910,5 +16340,221 @@ mod tests {
         assert!(!member.is_expired(EpochNo(9)));   // before term end
         assert!(!member.is_expired(EpochNo(10)));  // at boundary (inclusive)
         assert!(member.is_expired(EpochNo(11)));   // past expiry
+    }
+
+    // ----- Per-credential deposit tracking (upstream rdDeposit) -----
+
+    #[test]
+    fn test_credential_stores_deposit_at_registration() {
+        // Register a stake credential — the stored deposit should match
+        // the key_deposit at registration time.
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xE0; 28]);
+        sc.register_with_deposit(cred, 2_000_000);
+        let state = sc.get(&cred).unwrap();
+        assert_eq!(state.deposit(), 2_000_000);
+    }
+
+    #[test]
+    fn test_credential_deposit_round_trips_through_cbor() {
+        // StakeCredentialState with deposit survives CBOR encode/decode.
+        let original = StakeCredentialState::new_with_deposit(None, None, 5_000_000);
+        let mut enc = crate::cbor::Encoder::new();
+        original.encode_cbor(&mut enc);
+        let bytes = enc.into_bytes();
+        let mut dec = crate::cbor::Decoder::new(&bytes);
+        let decoded = StakeCredentialState::decode_cbor(&mut dec).unwrap();
+        assert_eq!(decoded.deposit(), 5_000_000);
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_credential_deposit_backward_compat_2_element_decode() {
+        // Legacy 2-element CBOR (no deposit) decodes with deposit=0.
+        let mut enc = crate::cbor::Encoder::new();
+        enc.array(2);
+        enc.null(); // no delegated_pool
+        enc.null(); // no delegated_drep
+        let bytes = enc.into_bytes();
+        let mut dec = crate::cbor::Decoder::new(&bytes);
+        let decoded = StakeCredentialState::decode_cbor(&mut dec).unwrap();
+        assert_eq!(decoded.deposit(), 0);
+    }
+
+    #[test]
+    fn test_conway_unreg_validates_against_stored_deposit_not_current_param() {
+        // Register a credential with deposit 2M. Then change key_deposit
+        // to 3M and attempt Conway unregistration with refund=3M (current
+        // param). Should FAIL because the stored deposit is 2M.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+
+        let cred = crate::StakeCredential::AddrKeyHash([0xE1; 28]);
+
+        // Step 1: Register with deposit=2M (matches key_deposit at the time).
+        let reg_ctx = sample_conway_cert_ctx(); // key_deposit = 2_000_000
+        let reg_certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(),
+            &reg_ctx, Some(&reg_certs), None,
+        ).unwrap();
+        assert_eq!(sc.get(&cred).unwrap().deposit(), 2_000_000);
+
+        // Step 2: Simulate key_deposit changing to 3M.
+        let mut unreg_ctx = sample_conway_cert_ctx();
+        unreg_ctx.key_deposit = 3_000_000;
+
+        // Step 3: Attempt unregistration with refund=3M (current param).
+        // Should fail: stored deposit is 2M.
+        let unreg_certs = vec![DCert::AccountUnregistrationDeposit(cred, 3_000_000)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(),
+            &unreg_ctx, Some(&unreg_certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::IncorrectKeyDepositRefund {
+            supplied: 3_000_000,
+            expected: 2_000_000,
+        }));
+    }
+
+    #[test]
+    fn test_conway_unreg_succeeds_with_stored_deposit() {
+        // Register with deposit=2M, change key_deposit to 3M, then
+        // unregister with refund=2M (matching stored deposit). Should succeed.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+
+        let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
+
+        // Register with deposit=2M.
+        let reg_ctx = sample_conway_cert_ctx();
+        let reg_certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(),
+            &reg_ctx, Some(&reg_certs), None,
+        ).unwrap();
+
+        // Change key_deposit to 3M — should not matter.
+        let mut unreg_ctx = sample_conway_cert_ctx();
+        unreg_ctx.key_deposit = 3_000_000;
+
+        // Unregister with refund=2M (stored deposit). Should succeed.
+        let unreg_certs = vec![DCert::AccountUnregistrationDeposit(cred, 2_000_000)];
+        let adj = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(),
+            &unreg_ctx, Some(&unreg_certs), None,
+        ).unwrap();
+        assert_eq!(adj.total_refunds, 2_000_000);
+        assert!(!sc.is_registered(&cred));
+    }
+
+    // ------------------------------------------------------------------
+    // Conway re-registration silent no-op tests
+    // Reference: Cardano.Ledger.Conway.Rules.Deleg — `when (not exists) $ do …`
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn conway_tag7_re_registration_is_silent_noop() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
+        // Pre-register with the specific deposit amount.
+        sc.register_with_deposit(cred, 2_000_000);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        // Conway tag 7: AccountRegistrationDeposit on already-registered cred.
+        let certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
+        let adj = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap();
+
+        // Must succeed as a no-op: no additional deposit charged.
+        assert_eq!(adj.total_deposits, 0);
+        assert!(sc.is_registered(&cred));
+        assert_eq!(dp.key_deposits, 2_000_000); // unchanged
+    }
+
+    #[test]
+    fn shelley_tag0_re_registration_still_errors() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA2; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // is_conway = false
+
+        // Shelley tag 0: AccountRegistration on already-registered cred.
+        let certs = vec![DCert::AccountRegistration(cred)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
+    }
+
+    #[test]
+    fn conway_tag11_re_registration_delegates_without_double_deposit() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA3; 28]);
+        let pool_hash: [u8; 28] = [0xBB; 28];
+        // Pre-register credential and register pool.
+        sc.register_with_deposit(cred, 2_000_000);
+        pool.register(PoolParams {
+            operator: pool_hash,
+            vrf_keyhash: [0xBB; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]) },
+            pool_owners: vec![pool_hash],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        // Conway tag 11: AccountRegistrationDelegationToStakePool.
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePool(
+            cred, pool_hash, 2_000_000,
+        )];
+        let adj = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap();
+
+        // No additional deposit charged (registration was no-op).
+        assert_eq!(adj.total_deposits, 0);
+        // But delegation must have occurred.
+        assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(pool_hash));
+        assert_eq!(dp.key_deposits, 2_000_000); // unchanged
     }
 }

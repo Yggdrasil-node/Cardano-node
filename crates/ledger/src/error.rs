@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::types::{DRep, EpochNo, PoolKeyHash, RewardAccount, StakeCredential};
+use crate::types::{AddrKeyHash, DRep, EpochNo, PoolKeyHash, RewardAccount, StakeCredential};
 
 /// Errors returned by ledger-facing helpers.
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -78,12 +78,24 @@ pub enum LedgerError {
     #[error("pool metadata URL too long: {length} bytes (max 64)")]
     PoolMetadataUrlTooLong { length: usize },
 
+    /// Upstream: `StakePoolOwnerNotRegisteredPOOL` — all pool owners must be
+    /// registered stake credentials at registration time.
+    #[error("pool owner not registered as stake credential: {owner:02x?}")]
+    PoolOwnerNotRegistered { owner: AddrKeyHash },
+
     #[error("pool retirement epoch {retirement_epoch} exceeds maximum {max_epoch} (current {current_epoch} + eMax {e_max})")]
     PoolRetirementTooFar {
         retirement_epoch: u64,
         current_epoch: u64,
         e_max: u64,
         max_epoch: u64,
+    },
+
+    /// Upstream: `StakePoolRetirementWrongEpochPOOL` — `cEpoch < e` not satisfied.
+    #[error("pool retirement epoch {retirement_epoch} must be strictly after current epoch {current_epoch}")]
+    PoolRetirementTooEarly {
+        retirement_epoch: u64,
+        current_epoch: u64,
     },
 
     #[error("stake credential already registered: {0:?}")]
@@ -356,6 +368,16 @@ pub enum LedgerError {
     /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `OutputBootAddrAttrsTooBig`.
     #[error("Byron bootstrap address attributes too big: {size} bytes (max 64)")]
     OutputBootAddrAttrsTooBig { size: usize },
+
+    /// A transaction output contains a multi-asset entry with zero quantity.
+    ///
+    /// Zero-valued tokens are disallowed from Mary onward.
+    /// Reference: `Cardano.Ledger.Mary.Value` — non-zero invariant.
+    #[error("zero-valued multi-asset output: policy {policy_id:?} asset {asset_name:?}")]
+    ZeroValuedMultiAssetOutput {
+        policy_id: [u8; 28],
+        asset_name: Vec<u8>,
+    },
 
     // -- Network validation errors ------------------------------------------
 

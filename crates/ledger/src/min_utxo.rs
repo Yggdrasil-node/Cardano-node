@@ -72,6 +72,39 @@ pub fn validate_output_not_too_big(
     Ok(())
 }
 
+/// Validates that no transaction output carries a multi-asset entry with
+/// a zero quantity.
+///
+/// Zero-valued tokens waste UTxO space and are disallowed by the formal
+/// spec from Mary onward. Upstream `nonAdaValue` filtering ensures zero
+/// entries are rejected.
+///
+/// Reference: `Cardano.Ledger.Mary.Value` — non-zero invariant on `MaryValue`.
+pub fn validate_no_zero_valued_multi_asset(
+    outputs: &[MultiEraTxOut],
+) -> Result<(), LedgerError> {
+    use crate::eras::mary::Value;
+    for output in outputs {
+        let val = output.value();
+        match &val {
+            Value::CoinAndAssets(_, ma) => {
+                for (policy_id, assets) in ma {
+                    for (asset_name, &quantity) in assets {
+                        if quantity == 0 {
+                            return Err(LedgerError::ZeroValuedMultiAssetOutput {
+                                policy_id: *policy_id,
+                                asset_name: asset_name.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            Value::Coin(_) => {}
+        }
+    }
+    Ok(())
+}
+
 /// Maximum allowed size of serialized attributes in a Byron bootstrap
 /// address appearing in a Shelley+ transaction output.
 ///
@@ -227,5 +260,46 @@ mod tests {
         ];
         let result = validate_all_outputs_min_utxo(&params, &outputs);
         assert!(matches!(result, Err(LedgerError::OutputTooSmall { .. })));
+    }
+
+    // ----- Zero-valued multi-asset output tests -----
+
+    fn make_mary_output_with_assets(lovelace: u64, assets: Vec<([u8; 28], Vec<u8>, u64)>) -> MultiEraTxOut {
+        use crate::eras::mary::{MaryTxOut, Value, MultiAsset};
+        use std::collections::BTreeMap;
+
+        let mut ma: MultiAsset = BTreeMap::new();
+        for (policy, asset_name, qty) in assets {
+            ma.entry(policy).or_default().insert(asset_name, qty);
+        }
+        MultiEraTxOut::Mary(MaryTxOut {
+            address: vec![0u8; 57],
+            amount: Value::CoinAndAssets(lovelace, ma),
+        })
+    }
+
+    #[test]
+    fn zero_valued_multi_asset_rejected() {
+        let output = make_mary_output_with_assets(
+            2_000_000,
+            vec![([0xAA; 28], vec![0x01], 0)], // zero quantity
+        );
+        let result = validate_no_zero_valued_multi_asset(&[output]);
+        assert!(matches!(result, Err(LedgerError::ZeroValuedMultiAssetOutput { .. })));
+    }
+
+    #[test]
+    fn nonzero_multi_asset_accepted() {
+        let output = make_mary_output_with_assets(
+            2_000_000,
+            vec![([0xAA; 28], vec![0x01], 100)],
+        );
+        assert!(validate_no_zero_valued_multi_asset(&[output]).is_ok());
+    }
+
+    #[test]
+    fn pure_coin_output_no_multi_asset_check() {
+        let output = make_shelley_output(2_000_000);
+        assert!(validate_no_zero_valued_multi_asset(&[output]).is_ok());
     }
 }

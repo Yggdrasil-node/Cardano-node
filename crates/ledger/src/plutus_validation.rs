@@ -229,6 +229,7 @@ pub fn compute_script_data_hash(
     conway_redeemer_format: bool,
     utxo: Option<&MultiEraUtxo>,
     reference_inputs: Option<&[ShelleyTxIn]>,
+    spending_inputs: Option<&[ShelleyTxIn]>,
     required_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Result<[u8; 32], LedgerError> {
     let ws = match witness_bytes {
@@ -252,6 +253,7 @@ pub fn compute_script_data_hash(
         protocol_params,
         utxo,
         reference_inputs,
+        spending_inputs,
         required_script_hashes,
     );
 
@@ -280,6 +282,7 @@ pub fn validate_script_data_hash(
     conway_redeemer_format: bool,
     utxo: Option<&MultiEraUtxo>,
     reference_inputs: Option<&[ShelleyTxIn]>,
+    spending_inputs: Option<&[ShelleyTxIn]>,
     required_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Result<(), LedgerError> {
     // Determine whether the transaction includes Plutus redeemers.
@@ -304,6 +307,7 @@ pub fn validate_script_data_hash(
                 conway_redeemer_format,
                 utxo,
                 reference_inputs,
+                spending_inputs,
                 required_script_hashes,
             )?;
             if computed != declared_hash {
@@ -404,12 +408,14 @@ fn encode_language_views_for_script_data_hash(
     protocol_params: Option<&ProtocolParameters>,
     utxo: Option<&MultiEraUtxo>,
     reference_inputs: Option<&[ShelleyTxIn]>,
+    spending_inputs: Option<&[ShelleyTxIn]>,
     required_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Vec<u8> {
     let mut langs: Vec<u8> = collect_all_plutus_scripts(
         ws,
         utxo.unwrap_or(&MultiEraUtxo::new()),
         reference_inputs,
+        spending_inputs,
     )
     .into_iter()
     .filter(|(hash, _)| {
@@ -424,19 +430,63 @@ fn encode_language_views_for_script_data_hash(
 
     let cost_models = protocol_params.and_then(|p| p.cost_models.as_ref());
 
-    let mut enc = crate::cbor::Encoder::new();
-    // Local canonical map by integer language tag.
-    enc.map(langs.len() as u64);
+    // Build (tag_bytes, value_bytes) pairs per language, matching upstream
+    // `getLanguageView` in `Cardano.Ledger.Alonzo.PParams`.
+    let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for lang in langs {
-        enc.unsigned(lang as u64);
+        // --- Key encoding ---
+        // PlutusV1: double-serialized language tag = byte string wrapping
+        //   `serialize' (serialize' lang)` = 0x41 0x00
+        // PlutusV2+: single-serialized = CBOR unsigned integer (1 or 2).
+        let tag_bytes = if lang == 0 {
+            vec![0x41, 0x00]
+        } else {
+            let mut te = crate::cbor::Encoder::new();
+            te.unsigned(lang as u64);
+            te.into_bytes()
+        };
+
+        // --- Value encoding ---
         let cm_bytes = if let Some(cm) = cost_models.and_then(|m| m.get(&lang)) {
-            // V1 uses the historical indefinite-array quirk.
+            // V1 uses the historical indefinite-length array quirk.
             encode_cost_model_values(cm, lang == 0)
         } else {
-            // Missing cost model -> null
+            // Missing cost model -> CBOR null
             vec![0xf6]
         };
-        enc.bytes(&cm_bytes);
+        let value_bytes = if lang == 0 {
+            // PlutusV1: cost model array is wrapped in a CBOR byte string
+            // (double-encoded).
+            // Reference: `getLanguageView` — `serialize' version costModelEncoding` for V1.
+            let mut ve = crate::cbor::Encoder::new();
+            ve.bytes(&cm_bytes);
+            ve.into_bytes()
+        } else {
+            // PlutusV2+: cost model is the raw CBOR array, NOT wrapped.
+            // Reference: `getLanguageView` — `costModelEncoding` for V2+.
+            cm_bytes
+        };
+
+        pairs.push((tag_bytes, value_bytes));
+    }
+
+    // Sort by upstream `shortLex`: shorter tags first, then lexicographic.
+    // Reference: `encodeLangViews` in `Cardano.Ledger.Alonzo.PParams`.
+    pairs.sort_by(|a, b| {
+        let la = a.0.len();
+        let lb = b.0.len();
+        if la != lb {
+            la.cmp(&lb)
+        } else {
+            a.0.cmp(&b.0)
+        }
+    });
+
+    let mut enc = crate::cbor::Encoder::new();
+    enc.map(pairs.len() as u64);
+    for (tag_bytes, value_bytes) in pairs {
+        enc.raw(&tag_bytes);
+        enc.raw(&value_bytes);
     }
     enc.into_bytes()
 }
@@ -594,11 +644,19 @@ pub fn resolve_script_purpose(
 // Orchestrated Plutus validation
 // ---------------------------------------------------------------------------
 
-/// Collects all Plutus scripts from a witness set and from reference input UTxOs.
+/// Collects all Plutus scripts from a witness set and from UTxO entries
+/// pointed to by both spending and reference inputs.
+///
+/// Upstream `getBabbageScriptsProvided` uses
+/// `ins = referenceInputsTxBodyL ∪ inputsTxBodyL` — i.e. reference scripts
+/// from *all* transaction inputs (spending + reference) are "provided".
+///
+/// Reference: `Cardano.Ledger.Babbage.UTxO.getBabbageScriptsProvided`.
 pub(crate) fn collect_all_plutus_scripts(
     ws: &crate::eras::shelley::ShelleyWitnessSet,
     utxo: &crate::utxo::MultiEraUtxo,
     reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+    spending_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
 ) -> HashMap<[u8; 28], (PlutusVersion, Vec<u8>)> {
     let mut scripts = HashMap::new();
     // Collect from witness set
@@ -614,26 +672,28 @@ pub(crate) fn collect_all_plutus_scripts(
         let hash = plutus_script_hash(PlutusVersion::V3, s);
         scripts.insert(hash, (PlutusVersion::V3, s.clone()));
     }
-    // Collect from reference inputs' UTxO entries
-    if let Some(ref_inputs) = reference_inputs {
-        for txin in ref_inputs {
-            if let Some(txout) = utxo.get(txin) {
-                if let Some(sref) = txout.script_ref() {
-                    match &sref.0 {
-                        crate::plutus::Script::PlutusV1(bytes) => {
-                            let hash = plutus_script_hash(PlutusVersion::V1, bytes);
-                            scripts.insert(hash, (PlutusVersion::V1, bytes.clone()));
-                        }
-                        crate::plutus::Script::PlutusV2(bytes) => {
-                            let hash = plutus_script_hash(PlutusVersion::V2, bytes);
-                            scripts.insert(hash, (PlutusVersion::V2, bytes.clone()));
-                        }
-                        crate::plutus::Script::PlutusV3(bytes) => {
-                            let hash = plutus_script_hash(PlutusVersion::V3, bytes);
-                            scripts.insert(hash, (PlutusVersion::V3, bytes.clone()));
-                        }
-                        _ => {}
+    // Collect Plutus reference scripts from spending + reference input UTxOs.
+    // Upstream iterates `referenceInputsTxBodyL ∪ inputsTxBodyL`.
+    let empty: &[crate::eras::shelley::ShelleyTxIn] = &[];
+    let all_inputs = reference_inputs.unwrap_or(empty).iter()
+        .chain(spending_inputs.unwrap_or(empty).iter());
+    for txin in all_inputs {
+        if let Some(txout) = utxo.get(txin) {
+            if let Some(sref) = txout.script_ref() {
+                match &sref.0 {
+                    crate::plutus::Script::PlutusV1(bytes) => {
+                        let hash = plutus_script_hash(PlutusVersion::V1, bytes);
+                        scripts.insert(hash, (PlutusVersion::V1, bytes.clone()));
                     }
+                    crate::plutus::Script::PlutusV2(bytes) => {
+                        let hash = plutus_script_hash(PlutusVersion::V2, bytes);
+                        scripts.insert(hash, (PlutusVersion::V2, bytes.clone()));
+                    }
+                    crate::plutus::Script::PlutusV3(bytes) => {
+                        let hash = plutus_script_hash(PlutusVersion::V3, bytes);
+                        scripts.insert(hash, (PlutusVersion::V3, bytes.clone()));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -683,12 +743,13 @@ pub fn validate_supplemental_datums(
         return Ok(());
     }
 
-    // Collect Plutus scripts (witness + reference) to identify Plutus-locked inputs.
+    // Collect Plutus scripts (witness + reference + spending) to identify Plutus-locked inputs.
     let ref_txins: Vec<_> = reference_input_utxos.iter().map(|(txin, _)| txin.clone()).collect();
     let plutus_scripts = collect_all_plutus_scripts(
         &ws,
         spending_utxo,
         if ref_txins.is_empty() { None } else { Some(&ref_txins) },
+        Some(spending_inputs),
     );
 
     // input_hashes: datum hashes from Plutus-locked spending-input UTxOs.
@@ -814,7 +875,7 @@ pub fn validate_no_extra_redeemers(
         return Ok(());
     }
 
-    let plutus_scripts = collect_all_plutus_scripts(&ws, spending_utxo, reference_inputs);
+    let plutus_scripts = collect_all_plutus_scripts(&ws, spending_utxo, reference_inputs, Some(sorted_inputs));
 
     for redeemer in &ws.redeemers {
         let purpose = resolve_script_purpose(
@@ -910,6 +971,7 @@ pub fn validate_plutus_scripts(
         } else {
             Some(&tx_ctx.reference_inputs)
         },
+        Some(sorted_inputs),
     );
     let datum_map = collect_datum_map(&ws);
     let resolved_redeemers: Vec<(ScriptPurpose, PlutusData)> = ws
@@ -2067,5 +2129,221 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Language view encoding parity tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: produce language-views encoding for a witness set containing
+    /// one dummy Plutus script of the given version, with protocol params
+    /// carrying the given cost model values for that language.
+    fn encode_views_for_single_lang(version: PlutusVersion, cm_values: &[i64]) -> Vec<u8> {
+        let script = vec![0xDE, 0xAD]; // dummy script bytes
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: if version == PlutusVersion::V1 { vec![script.clone()] } else { vec![] },
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: if version == PlutusVersion::V2 { vec![script.clone()] } else { vec![] },
+            plutus_v3_scripts: if version == PlutusVersion::V3 { vec![script] } else { vec![] },
+        };
+        let mut pp = ProtocolParameters::default();
+        let mut cm_map = std::collections::BTreeMap::new();
+        cm_map.insert(version.cost_model_key(), cm_values.to_vec());
+        pp.cost_models = Some(cm_map);
+        encode_language_views_for_script_data_hash(&ws, Some(&pp), None, None, None, None)
+    }
+
+    #[test]
+    fn v1_language_view_key_is_byte_string() {
+        let cm = vec![1i64, 2, 3];
+        let bytes = encode_views_for_single_lang(PlutusVersion::V1, &cm);
+        // Map(1) { bytes(1, [0x00]) => bytes(...) }
+        // 0xa1 = map(1)
+        assert_eq!(bytes[0], 0xa1);
+        // Key: 0x41 0x00 = byte string of length 1 containing [0x00]
+        assert_eq!(bytes[1], 0x41);
+        assert_eq!(bytes[2], 0x00);
+        // Value starts with a byte string header (major type 2)
+        assert!((bytes[3] & 0xe0) == 0x40, "V1 value should be a CBOR byte string");
+    }
+
+    #[test]
+    fn v2_language_view_key_is_unsigned_int() {
+        let cm = vec![10i64, 20, 30];
+        let bytes = encode_views_for_single_lang(PlutusVersion::V2, &cm);
+        // Map(1) { unsigned(1) => array(...) }
+        assert_eq!(bytes[0], 0xa1);
+        // Key: 0x01 = CBOR unsigned integer 1
+        assert_eq!(bytes[1], 0x01);
+        // Value starts with an array header (major type 4), NOT byte string
+        assert!((bytes[2] & 0xe0) == 0x80, "V2 value should be a CBOR array, not byte string");
+    }
+
+    #[test]
+    fn v3_language_view_key_is_unsigned_int() {
+        let cm = vec![100i64];
+        let bytes = encode_views_for_single_lang(PlutusVersion::V3, &cm);
+        // Map(1) { unsigned(2) => array(...) }
+        assert_eq!(bytes[0], 0xa1);
+        // Key: 0x02 = CBOR unsigned integer 2
+        assert_eq!(bytes[1], 0x02);
+        // Value starts with an array header (major type 4)
+        assert!((bytes[2] & 0xe0) == 0x80, "V3 value should be a CBOR array");
+    }
+
+    #[test]
+    fn v1_cost_model_uses_indefinite_array() {
+        let cm = vec![5i64, 10];
+        let bytes = encode_views_for_single_lang(PlutusVersion::V1, &cm);
+        // After map header (0xa1) + key (0x41, 0x00) + byte-string header,
+        // the byte-string payload should start with 0x9f (indefinite array)
+        // and end with 0xff (break).
+        // Map(1) = 0xa1, key = 0x41 0x00, value = bytes(N, payload)
+        // Skip to byte-string payload:
+        let value_start = 3; // after map header + key
+        // Decode byte string header to find payload start
+        let major = bytes[value_start] >> 5;
+        assert_eq!(major, 2, "value should be byte string");
+        // Additional info tells length
+        let info = bytes[value_start] & 0x1f;
+        let (payload_start, _payload_len) = if info < 24 {
+            (value_start + 1, info as usize)
+        } else if info == 24 {
+            (value_start + 2, bytes[value_start + 1] as usize)
+        } else {
+            panic!("unexpected byte string length encoding");
+        };
+        // First byte of payload should be indefinite array start
+        assert_eq!(bytes[payload_start], 0x9f, "V1 cost model should use indefinite array");
+        // Last byte should be break
+        assert_eq!(*bytes.last().unwrap(), 0xff, "V1 cost model should end with break");
+    }
+
+    #[test]
+    fn v2_cost_model_uses_definite_array() {
+        let cm = vec![7i64, 8, 9];
+        let bytes = encode_views_for_single_lang(PlutusVersion::V2, &cm);
+        // After map header (0xa1) + key (0x01), value starts directly
+        let value_start = 2;
+        let major = bytes[value_start] >> 5;
+        assert_eq!(major, 4, "V2 cost model should be a definite array");
+    }
+
+    #[test]
+    fn mixed_v1_v2_ordering_follows_shortlex() {
+        // When both V1 and V2 are present, V2 key (0x01, 1 byte) should
+        // come BEFORE V1 key (0x41 0x00, 2 bytes) per upstream shortLex.
+        let script = vec![0xDE, 0xAD];
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![script.clone()],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![script],
+            plutus_v3_scripts: vec![],
+        };
+        let mut pp = ProtocolParameters::default();
+        let mut cm_map = std::collections::BTreeMap::new();
+        cm_map.insert(0u8, vec![1i64, 2]);
+        cm_map.insert(1u8, vec![3i64, 4]);
+        pp.cost_models = Some(cm_map);
+
+        let bytes = encode_language_views_for_script_data_hash(&ws, Some(&pp), None, None, None, None);
+        // Map(2) = 0xa2
+        assert_eq!(bytes[0], 0xa2);
+        // First key: V2 = 0x01 (unsigned int 1, 1 byte) — shorter
+        assert_eq!(bytes[1], 0x01);
+        // Scan past V2 value (definite array) to find second key
+        // Second key should be V1 = 0x41 0x00 (byte string, 2 bytes)
+        let mut pos = 2;
+        // Skip V2 value: definite array of 2 elements
+        // 0x82 = array(2), then two integers
+        assert_eq!(bytes[pos] >> 5, 4, "V2 value should be array");
+        let arr_len = (bytes[pos] & 0x1f) as usize;
+        pos += 1;
+        for _ in 0..arr_len {
+            // Skip each integer (could be 1 byte for small values)
+            if bytes[pos] < 24 {
+                pos += 1;
+            } else if bytes[pos] == 24 {
+                pos += 2;
+            } else {
+                panic!("test values should be small");
+            }
+        }
+        // Now we should be at V1 key
+        assert_eq!(bytes[pos], 0x41, "second key should be V1 byte string");
+        assert_eq!(bytes[pos + 1], 0x00, "second key payload should be 0x00");
+    }
+
+    #[test]
+    fn collect_scripts_includes_spending_input_reference_scripts() {
+        // Upstream `getBabbageScriptsProvided` uses
+        // `referenceInputsTxBodyL ∪ inputsTxBodyL` — scripts from
+        // spending-input UTxOs should be collected, not just reference inputs.
+        use crate::utxo::MultiEraUtxo;
+        use crate::eras::shelley::ShelleyTxIn;
+        use crate::utxo::MultiEraTxOut;
+        use crate::eras::babbage::BabbageTxOut;
+        use crate::eras::mary::Value;
+        use crate::plutus::{Script, ScriptRef};
+
+        let script_bytes = vec![0xAA, 0xBB, 0xCC];
+        let script_hash = plutus_script_hash(PlutusVersion::V2, &script_bytes);
+
+        let spending_input = ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        };
+
+        let mut utxo = MultiEraUtxo::new();
+        utxo.insert(
+            spending_input.clone(),
+            MultiEraTxOut::Babbage(BabbageTxOut {
+                address: vec![0x61; 29],
+                amount: Value::Coin(2_000_000),
+                datum_option: None,
+                script_ref: Some(ScriptRef(Script::PlutusV2(script_bytes.clone()))),
+            }),
+        );
+
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+
+        // Without spending_inputs — script should NOT be found
+        let scripts_without = collect_all_plutus_scripts(&ws, &utxo, None, None);
+        assert!(
+            !scripts_without.contains_key(&script_hash),
+            "should not find spending-input ref script when spending_inputs=None",
+        );
+
+        // With spending_inputs — script should be found
+        let scripts_with = collect_all_plutus_scripts(
+            &ws,
+            &utxo,
+            None,
+            Some(&[spending_input]),
+        );
+        assert!(
+            scripts_with.contains_key(&script_hash),
+            "should find spending-input reference script when spending_inputs provided",
+        );
+        let (version, bytes) = scripts_with.get(&script_hash).unwrap();
+        assert_eq!(*version, PlutusVersion::V2);
+        assert_eq!(bytes, &script_bytes);
     }
 }

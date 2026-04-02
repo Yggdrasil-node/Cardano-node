@@ -527,11 +527,14 @@ pub fn compute_stake_snapshot(
         }
     }
 
-    // 4. Snapshot pool parameters (non-retiring pools only).
+    // 4. Snapshot pool parameters — include ALL registered pools, even those
+    //    that have announced future retirement.  Upstream `stakeDistr` does
+    //    not filter by retirement epoch; pools participate in leader election
+    //    and earn rewards until actually retired by `process_retirements()`
+    //    at the epoch boundary.  Reference: `Cardano.Ledger.Shelley.
+    //    LedgerState.stakeDistr`.
     for (pool_hash, registered_pool) in pool_state.iter() {
-        if registered_pool.retiring_epoch().is_none() {
-            pool_params_map.insert(*pool_hash, registered_pool.params().clone());
-        }
+        pool_params_map.insert(*pool_hash, registered_pool.params().clone());
     }
 
     StakeSnapshot {

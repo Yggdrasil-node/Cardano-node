@@ -107,6 +107,57 @@ pub fn verify_bootstrap_witnesses(
     Ok(())
 }
 
+/// Reconstructs the Byron address root from a bootstrap witness.
+///
+/// The address root is `Blake2b_224(SHA3_256(prefix ++ vkey(32) ++ chain_code(32) ++ attributes))`
+/// where `prefix = [0x83, 0x00, 0x82, 0x00, 0x58, 0x40]` encodes:
+///   - `0x83` → CBOR array of length 3
+///   - `0x00` → address type (public key spending, tag 0)
+///   - `0x82` → CBOR array of length 2 (spending data)
+///   - `0x00` → spending data type (VerKeyASD, tag 0)
+///   - `0x58, 0x40` → CBOR byte string of length 64 (XPub = vkey ++ chain_code)
+///
+/// Reference: `Cardano.Ledger.Keys.Bootstrap` — `bootstrapWitKeyHash`.
+pub fn bootstrap_witness_key_hash(
+    witness: &crate::eras::shelley::BootstrapWitness,
+) -> [u8; 28] {
+    const PREFIX: &[u8] = &[0x83, 0x00, 0x82, 0x00, 0x58, 0x40];
+    let mut bytes = Vec::with_capacity(PREFIX.len() + 32 + witness.chain_code.len() + witness.attributes.len());
+    bytes.extend_from_slice(PREFIX);
+    bytes.extend_from_slice(&witness.public_key);
+    bytes.extend_from_slice(&witness.chain_code);
+    bytes.extend_from_slice(&witness.attributes);
+    let sha3 = yggdrasil_crypto::sha3_256(&bytes);
+    yggdrasil_crypto::hash_bytes_224(&sha3.0).0
+}
+
+/// Extracts the set of address-root key hashes from bootstrap witnesses.
+///
+/// This is the bootstrap counterpart of `witness_vkey_hash_set` and
+/// mirrors upstream `Set.map bootstrapWitKeyHash` in `keyHashWitnessesTxWits`.
+pub fn bootstrap_witness_key_hash_set(
+    witnesses: &[crate::eras::shelley::BootstrapWitness],
+) -> HashSet<[u8; 28]> {
+    witnesses.iter().map(bootstrap_witness_key_hash).collect()
+}
+
+/// Collects the genesis key hashes required to authorize a PPUP update proposal.
+///
+/// Upstream `propWits` in `Cardano.Ledger.Shelley.UTxO` — restricts the
+/// `genDelegs` key-set to proposers that appear in the update map and
+/// inserts those genesis key hashes into the required witness set.
+pub fn required_vkey_hashes_from_ppup(
+    update: &crate::eras::shelley::ShelleyUpdate,
+    gen_delegs: &std::collections::BTreeMap<[u8; 28], crate::state::GenesisDelegationState>,
+    out: &mut HashSet<[u8; 28]>,
+) {
+    for proposer_hash in update.proposed_protocol_parameter_updates.keys() {
+        if gen_delegs.contains_key(proposer_hash) {
+            out.insert(*proposer_hash);
+        }
+    }
+}
+
 /// Collects the VKey hashes required to authorize a certificate.
 ///
 /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `witsVKeyNeeded`.
@@ -195,6 +246,11 @@ pub fn required_vkey_hashes_from_withdrawals(
 ///
 /// For each input, looks up the corresponding UTxO output, parses the
 /// address, and if the payment credential is a key hash, adds it to `out`.
+/// Byron bootstrap addresses contribute their address root (28-byte hash)
+/// instead of a credential key hash.
+///
+/// Reference: `Cardano.Ledger.Shelley.UTxO` — `getShelleyWitsVKeyNeededNoGov`
+/// handles `AddrBootstrap bootAddr -> Set.insert (asWitness (bootstrapKeyHash bootAddr)) ans`.
 pub fn required_vkey_hashes_from_inputs_shelley(
     inputs: &[crate::eras::shelley::ShelleyTxIn],
     utxo: &crate::eras::shelley::ShelleyUtxo,
@@ -206,12 +262,21 @@ pub fn required_vkey_hashes_from_inputs_shelley(
                 if let Some(crate::types::StakeCredential::AddrKeyHash(h)) = addr.payment_credential() {
                     out.insert(*h);
                 }
+                // Byron addresses: extract the address root
+                if let crate::types::Address::Byron(raw) = &addr {
+                    if let Some(root) = crate::types::byron_address_root(raw) {
+                        out.insert(root);
+                    }
+                }
             }
         }
     }
 }
 
 /// Collects VKey hashes from spending input payment credentials (multi-era).
+/// Byron bootstrap addresses contribute their address root.
+///
+/// Reference: `Cardano.Ledger.Shelley.UTxO` — `getShelleyWitsVKeyNeededNoGov`.
 pub fn required_vkey_hashes_from_inputs_multi_era(
     inputs: &[crate::eras::shelley::ShelleyTxIn],
     utxo: &crate::utxo::MultiEraUtxo,
@@ -222,6 +287,12 @@ pub fn required_vkey_hashes_from_inputs_multi_era(
             if let Some(addr) = crate::types::Address::from_bytes(txout.address()) {
                 if let Some(crate::types::StakeCredential::AddrKeyHash(h)) = addr.payment_credential() {
                     out.insert(*h);
+                }
+                // Byron addresses: extract the address root
+                if let crate::types::Address::Byron(raw) = &addr {
+                    if let Some(root) = crate::types::byron_address_root(raw) {
+                        out.insert(root);
+                    }
                 }
             }
         }
@@ -882,5 +953,256 @@ mod tests {
             // The genesis owner keys are NOT in the set.
             assert!(!set.contains(&[0xAAu8; 28]));
             assert!(!set.contains(&[0xBBu8; 28]));
+        }
+
+        // ── Bootstrap witness key hash (upstream bootstrapWitKeyHash) ────
+
+        /// Builds a minimal Byron address with the given 28-byte address root.
+        ///
+        /// Byron CBOR: `[tag 24 CBOR([root, attributes={}, type=0]), CRC32]`
+        fn make_byron_address(address_root: &[u8; 28]) -> Vec<u8> {
+            // Inner payload: CBOR array(3) [bstr(28), map(0), uint(0)]
+            let mut inner = crate::cbor::Encoder::new();
+            inner.array(3);
+            inner.bytes(address_root);
+            inner.map(0);
+            inner.unsigned(0);
+            let inner_bytes = inner.into_bytes();
+
+            // Outer: array(2) [tag 24 bstr(inner), CRC32]
+            let mut outer = crate::cbor::Encoder::new();
+            outer.array(2);
+            outer.tag(24);
+            outer.bytes(&inner_bytes);
+            let crc = test_crc32_ieee(&inner_bytes);
+            outer.unsigned(u64::from(crc));
+            outer.into_bytes()
+        }
+
+        fn test_crc32_ieee(bytes: &[u8]) -> u32 {
+            let mut crc = 0xffff_ffffu32;
+            for &byte in bytes {
+                crc ^= u32::from(byte);
+                for _ in 0..8 {
+                    let mask = (crc & 1).wrapping_neg() & 0xedb8_8320;
+                    crc = (crc >> 1) ^ mask;
+                }
+            }
+            !crc
+        }
+
+        /// Computes the Byron address root from (vkey, chain_code, attributes)
+        /// using the same formula as upstream `bootstrapWitKeyHash`.
+        fn compute_address_root(vkey: &[u8; 32], chain_code: &[u8], attributes: &[u8]) -> [u8; 28] {
+            const PREFIX: &[u8] = &[0x83, 0x00, 0x82, 0x00, 0x58, 0x40];
+            let mut bytes = Vec::with_capacity(PREFIX.len() + 32 + chain_code.len() + attributes.len());
+            bytes.extend_from_slice(PREFIX);
+            bytes.extend_from_slice(vkey);
+            bytes.extend_from_slice(chain_code);
+            bytes.extend_from_slice(attributes);
+            let sha3 = yggdrasil_crypto::sha3_256(&bytes);
+            yggdrasil_crypto::hash_bytes_224(&sha3.0).0
+        }
+
+        #[test]
+        fn bootstrap_witness_key_hash_matches_address_root() {
+            // Build a bootstrap witness with known vkey + chain_code + attributes.
+            let vkey = [0x42u8; 32];
+            let chain_code = [0xAAu8; 32];
+            let attributes_enc = {
+                let mut enc = crate::cbor::Encoder::new();
+                enc.map(0);
+                enc.into_bytes()
+            };
+
+            let witness = crate::eras::shelley::BootstrapWitness {
+                public_key: vkey,
+                signature: [0u8; 64],
+                chain_code,
+                attributes: attributes_enc.clone(),
+            };
+
+            let computed_hash = bootstrap_witness_key_hash(&witness);
+            let expected = compute_address_root(&vkey, &chain_code, &attributes_enc);
+            assert_eq!(computed_hash, expected);
+        }
+
+        #[test]
+        fn bootstrap_witness_key_hash_set_collects_all() {
+            let bw1 = crate::eras::shelley::BootstrapWitness {
+                public_key: [0x01u8; 32],
+                signature: [0u8; 64],
+                chain_code: [0u8; 32],
+                attributes: vec![0xA0], // CBOR map(0)
+            };
+            let bw2 = crate::eras::shelley::BootstrapWitness {
+                public_key: [0x02u8; 32],
+                signature: [0u8; 64],
+                chain_code: [0u8; 32],
+                attributes: vec![0xA0],
+            };
+            let set = bootstrap_witness_key_hash_set(&[bw1.clone(), bw2.clone()]);
+            assert_eq!(set.len(), 2);
+            assert!(set.contains(&bootstrap_witness_key_hash(&bw1)));
+            assert!(set.contains(&bootstrap_witness_key_hash(&bw2)));
+        }
+
+        #[test]
+        fn byron_address_root_extraction_matches_witness_key_hash() {
+            // This is the critical parity test: the address root extracted
+            // from a Byron address must equal the key hash reconstructed
+            // from the corresponding bootstrap witness.
+            let vkey = [0x55u8; 32];
+            let chain_code = [0xBBu8; 32];
+            let attributes = {
+                let mut enc = crate::cbor::Encoder::new();
+                enc.map(0);
+                enc.into_bytes()
+            };
+
+            // Compute the expected address root
+            let expected_root = compute_address_root(&vkey, &chain_code, &attributes);
+
+            // Build a Byron address with that root
+            let byron_addr_bytes = make_byron_address(&expected_root);
+            let extracted_root = crate::types::byron_address_root(&byron_addr_bytes);
+            assert_eq!(extracted_root, Some(expected_root));
+
+            // Build the matching bootstrap witness
+            let witness = crate::eras::shelley::BootstrapWitness {
+                public_key: vkey,
+                signature: [0u8; 64],
+                chain_code,
+                attributes: attributes.clone(),
+            };
+            let witness_root = bootstrap_witness_key_hash(&witness);
+            assert_eq!(witness_root, expected_root);
+
+            // Key parity assertion: address root == witness key hash
+            assert_eq!(extracted_root.expect("extraction succeeded"), witness_root);
+        }
+
+        #[test]
+        fn byron_input_generates_witness_obligation() {
+            // Create a Byron address and wire it through the witness
+            // requirement flow to verify it generates a needed hash.
+            let vkey = [0x77u8; 32];
+            let chain_code = [0xCCu8; 32];
+            let attributes = vec![0xA0]; // CBOR map(0)
+            let root = compute_address_root(&vkey, &chain_code, &attributes);
+            let byron_addr_bytes = make_byron_address(&root);
+
+            // Create a Shelley UTxO with a Byron address
+            let txin = crate::eras::shelley::ShelleyTxIn {
+                transaction_id: [0xAA; 32],
+                index: 0,
+            };
+            let txout = crate::eras::shelley::ShelleyTxOut {
+                address: byron_addr_bytes,
+                amount: 1_000_000,
+            };
+            let mut utxo = crate::eras::shelley::ShelleyUtxo::new();
+            utxo.insert(txin.clone(), txout);
+
+            let mut required = HashSet::new();
+            required_vkey_hashes_from_inputs_shelley(&[txin], &utxo, &mut required);
+
+            // The required set must include the Byron address root
+            assert!(required.contains(&root),
+                "Byron input must generate witness obligation (address root)");
+            assert_eq!(required.len(), 1);
+        }
+
+        // ------------------------------------------------------------------
+        // PPUP proposer witness requirement tests
+        // Reference: `Cardano.Ledger.Shelley.UTxO` — `propWits`
+        // ------------------------------------------------------------------
+
+        #[test]
+        fn ppup_proposer_in_gen_delegs_is_required() {
+            use crate::eras::shelley::ShelleyUpdate;
+            use crate::protocol_params::ProtocolParameterUpdate;
+            use crate::state::GenesisDelegationState;
+            use std::collections::BTreeMap;
+
+            let proposer: [u8; 28] = [0x01; 28];
+            let non_proposer: [u8; 28] = [0x02; 28];
+
+            let mut gen_delegs = BTreeMap::new();
+            gen_delegs.insert(proposer, GenesisDelegationState {
+                delegate: [0xAA; 28],
+                vrf: [0xBB; 32],
+            });
+            gen_delegs.insert(non_proposer, GenesisDelegationState {
+                delegate: [0xCC; 28],
+                vrf: [0xDD; 32],
+            });
+
+            let mut updates = BTreeMap::new();
+            updates.insert(proposer, ProtocolParameterUpdate::default());
+
+            let update = ShelleyUpdate {
+                proposed_protocol_parameter_updates: updates,
+                epoch: 100,
+            };
+
+            let mut required = HashSet::new();
+            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+            // proposer that IS in gen_delegs must be required
+            assert!(required.contains(&proposer));
+            // non_proposer not in the update — must NOT appear
+            assert!(!required.contains(&non_proposer));
+            assert_eq!(required.len(), 1);
+        }
+
+        #[test]
+        fn ppup_proposer_not_in_gen_delegs_excluded() {
+            use crate::eras::shelley::ShelleyUpdate;
+            use crate::protocol_params::ProtocolParameterUpdate;
+            use crate::state::GenesisDelegationState;
+            use std::collections::BTreeMap;
+
+            let outsider: [u8; 28] = [0xFF; 28];
+
+            // gen_delegs does NOT contain the outsider
+            let gen_delegs = BTreeMap::new();
+
+            let mut updates = BTreeMap::new();
+            updates.insert(outsider, ProtocolParameterUpdate::default());
+
+            let update = ShelleyUpdate {
+                proposed_protocol_parameter_updates: updates,
+                epoch: 100,
+            };
+
+            let mut required = HashSet::new();
+            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+            // proposer NOT in gen_delegs → excluded
+            assert!(required.is_empty());
+        }
+
+        #[test]
+        fn ppup_empty_update_produces_no_required() {
+            use crate::eras::shelley::ShelleyUpdate;
+            use crate::state::GenesisDelegationState;
+            use std::collections::BTreeMap;
+
+            let gen_key: [u8; 28] = [0x01; 28];
+            let mut gen_delegs = BTreeMap::new();
+            gen_delegs.insert(gen_key, GenesisDelegationState {
+                delegate: [0xAA; 28],
+                vrf: [0xBB; 32],
+            });
+
+            let update = ShelleyUpdate {
+                proposed_protocol_parameter_updates: BTreeMap::new(),
+                epoch: 100,
+            };
+
+            let mut required = HashSet::new();
+            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+            assert!(required.is_empty());
         }
     }

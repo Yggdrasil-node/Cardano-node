@@ -76,6 +76,7 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
         None,
         None,
         None,
+        None,
     )
     .expect("compute script_data_hash");
 
@@ -85,6 +86,7 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
         Some(&ws_bytes),
         state.protocol_params(),
         false,
+        None,
         None,
         None,
         None,
@@ -202,6 +204,7 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_reference_script(
         false,
         Some(state.multi_era_utxo()),
         Some(&[reference_input.clone()]),
+        None,
         Some(&required_scripts([policy_hash])),
     )
     .expect("compute script_data_hash with reference script");
@@ -305,6 +308,7 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_unused_reference_
         false,
         Some(state.multi_era_utxo()),
         Some(&[reference_input.clone()]),
+        None,
         Some(&required),
     )
     .expect("compute script_data_hash with unused reference script excluded");

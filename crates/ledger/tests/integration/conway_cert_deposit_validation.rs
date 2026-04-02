@@ -549,8 +549,10 @@ fn conway_accepts_full_drain_withdrawal() {
 }
 
 #[test]
-fn shelley_allows_partial_withdrawal() {
-    // Shelley does NOT enforce exact-drain semantics.
+fn shelley_rejects_partial_withdrawal() {
+    // Formal spec: wdrls ⊆ rewards — withdrawal amount must exactly
+    // match reward balance for ALL Shelley+ eras, not just Conway.
+    // Reference: Cardano.Ledger.Shelley.Rules.Utxo.
     let mut state = LedgerState::new(Era::Shelley);
     let mut pp = ProtocolParameters::default();
     pp.min_fee_a = 0;
@@ -569,7 +571,7 @@ fn shelley_allows_partial_withdrawal() {
     );
 
     let mut withdrawals = std::collections::BTreeMap::new();
-    withdrawals.insert(ra, 500_000); // partial — allowed in Shelley
+    withdrawals.insert(ra, 500_000); // partial — rejected in all eras
 
     let block = super::ledger_state_basic::make_shelley_block_with_txs(5, 1, 0x06, vec![ShelleyTxBody {
         inputs: vec![ShelleyTxIn { transaction_id: [0x05; 32], index: 0 }],
@@ -582,6 +584,13 @@ fn shelley_allows_partial_withdrawal() {
         auxiliary_data_hash: None,
     }]);
 
-    state.apply_block(&block).expect("Shelley allows partial withdrawal");
-    assert_eq!(state.reward_accounts().get(&ra).unwrap().balance(), 500_000);
+    let err = state.apply_block(&block).unwrap_err();
+    match err {
+        LedgerError::WithdrawalNotFullDrain { account, requested, balance } => {
+            assert_eq!(account, ra);
+            assert_eq!(requested, 500_000);
+            assert_eq!(balance, 1_000_000);
+        }
+        other => panic!("expected WithdrawalNotFullDrain, got {other:?}"),
+    }
 }

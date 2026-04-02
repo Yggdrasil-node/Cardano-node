@@ -51,11 +51,20 @@ pub struct EpochBoundaryEvent {
     pub retired_pool_keys: Vec<PoolKeyHash>,
     /// Pool deposits refunded to reward accounts (lovelace).
     pub pool_deposit_refunds: u64,
+    /// Pool deposits that could not be refunded because the reward
+    /// account was no longer registered — sent to treasury.
+    ///
+    /// Reference: `poolReapTransition` — `casTreasury += unclaimed`.
+    pub unclaimed_pool_deposits: u64,
     /// Total rewards distributed to delegators & operators.
     pub rewards_distributed: u64,
-    /// Treasury delta (treasury cut + unclaimed rewards).
+    /// Treasury delta (τ cut + unregistered rewards to treasury).
+    ///
+    /// Does NOT include unclaimed (`deltaR2`) — those go back to reserves.
     pub treasury_delta: u64,
-    /// Monetary expansion drawn from reserves (ΔR).
+    /// Unclaimed rewards returned to reserves (`deltaR2`).
+    pub unclaimed_rewards: u64,
+    /// Monetary expansion drawn from reserves (ΔR1).
     pub delta_reserves: u64,
     /// Number of reward accounts that received non-zero rewards.
     pub accounts_rewarded: usize,
@@ -102,6 +111,65 @@ pub struct EpochBoundaryEvent {
 // ---------------------------------------------------------------------------
 // Epoch boundary application
 // ---------------------------------------------------------------------------
+
+/// Computes the monetary expansion efficiency factor η.
+///
+/// When `d >= 0.8`: η = 1 (no adjustment).
+/// When `d < 0.8` (post-Shelley: d = 0):
+///   `expected_blocks = ⌊(1 - d) × asc × slots_per_epoch⌋`
+///   `η = blocks_made / expected_blocks` (capped at 1).
+///
+/// Returns `(1, 1)` when genesis data is unavailable (`slots_per_epoch == 0`
+/// or `asc == 0`) so the reward formula behaves conservatively.
+///
+/// Reference: `startStep` in
+/// `Cardano.Ledger.Shelley.LedgerState.PulsingReward`.
+fn compute_eta(
+    d_param: UnitInterval,
+    asc: UnitInterval,
+    slots_per_epoch: u64,
+    blocks_made: &std::collections::BTreeMap<PoolKeyHash, u64>,
+) -> UnitInterval {
+    let one = UnitInterval { numerator: 1, denominator: 1 };
+
+    // d >= 0.8 → η = 1
+    if d_param.denominator > 0 && d_param.numerator * 10 >= d_param.denominator * 8 {
+        return one;
+    }
+
+    if slots_per_epoch == 0 || asc.denominator == 0 || asc.numerator == 0 {
+        return one;
+    }
+
+    // (1 - d) as a ratio
+    let one_minus_d_num = d_param.denominator.saturating_sub(d_param.numerator) as u128;
+    let one_minus_d_den = d_param.denominator as u128;
+
+    // expectedBlocks = floor((1 - d) × asc × slots_per_epoch)
+    let expected = one_minus_d_num
+        * (asc.numerator as u128)
+        * (slots_per_epoch as u128)
+        / (one_minus_d_den * asc.denominator as u128);
+
+    if expected == 0 {
+        return one;
+    }
+
+    let total_blocks: u64 = blocks_made.values().sum();
+    let blocks = total_blocks as u128;
+
+    // η = min(1, blocks / expected)
+    if blocks >= expected {
+        one
+    } else {
+        // Reduce to u64 — safe because blocks < expected and expected
+        // fits u128 comfortably.
+        UnitInterval {
+            numerator: total_blocks,
+            denominator: expected as u64,
+        }
+    }
+}
 
 /// Derives per-pool performance ratios from block production counts and
 /// the `set` stake snapshot.
@@ -176,18 +244,20 @@ pub fn apply_epoch_boundary(
     ledger.set_current_epoch(new_epoch);
 
     // -----------------------------------------------------------------------
-    // 0. PPUP — apply any pending Shelley-era protocol parameter update
-    //    proposals whose target epoch matches the new epoch.
-    //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — PPUP tick.
+    // Capture the *previous* epoch's protocol parameters BEFORE any
+    // PPUP/UPEC update.  Upstream `startStep` reads `prevPParams` for
+    // the reward calculation.  PPUP is applied later, inside EPOCH,
+    // after SNAP and POOLREAP (UPEC rule).
+    //
+    // Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward`
+    //   — `startStep … (pr = es ^. prevPParamsEpochStateL)`.
     // -----------------------------------------------------------------------
-    let pparam_updates_applied = ledger.apply_pending_pparam_updates(new_epoch);
 
     let params = ledger
         .protocol_params()
         .ok_or(LedgerError::MissingProtocolParameters)?;
 
     // Extract values from params before any mutable borrows.
-    let pool_deposit = params.pool_deposit;
     let rho = params.rho;
     let tau = params.tau;
     let a0 = params.a0;
@@ -210,6 +280,24 @@ pub fn apply_epoch_boundary(
     //    before EPOCH (which contains SNAP).
     // -----------------------------------------------------------------------
     let fee_pot = std::mem::take(&mut snapshots.fee_pot);
+
+    // Compute eta — monetary expansion efficiency factor.
+    //
+    // When d < 0.8 (post-Shelley: d = 0): eta = blocksMade / expectedBlocks,
+    // capped at 1.  When d >= 0.8: eta = 1.
+    //
+    // expectedBlocks = (1 - d) × active_slot_coeff × slots_per_epoch
+    //
+    // Reference: `startStep` in
+    // `Cardano.Ledger.Shelley.LedgerState.PulsingReward`.
+    let d_param = params.d.unwrap_or(UnitInterval { numerator: 0, denominator: 1 });
+    let eta = compute_eta(
+        d_param,
+        ledger.active_slot_coeff(),
+        ledger.slots_per_epoch(),
+        ledger.blocks_made(),
+    );
+
     let reward_params = RewardParams {
         rho,
         tau,
@@ -218,6 +306,8 @@ pub fn apply_epoch_boundary(
         min_pool_cost,
         reserves: ledger.accounting().reserves,
         fee_pot,
+        max_lovelace_supply: ledger.max_lovelace_supply(),
+        eta,
     };
 
     // Derive effective performance: caller-provided or from internal blocks_made.
@@ -231,7 +321,7 @@ pub fn apply_epoch_boundary(
     ledger.take_blocks_made();
 
     let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, &effective_performance);
-    let accounts_rewarded = distribute_rewards(ledger, &reward_dist);
+    let (accounts_rewarded, unregistered_rewards) = distribute_rewards(ledger, &reward_dist);
 
     // -----------------------------------------------------------------------
     // 1b. MIR — apply accumulated Move Instantaneous Rewards.
@@ -267,9 +357,23 @@ pub fn apply_epoch_boundary(
     // -----------------------------------------------------------------------
     // 3. Pool retirement — remove pools and refund deposits.
     // -----------------------------------------------------------------------
-    let (retired_pool_keys, pool_deposit_refunds) =
-        retire_pools_with_refunds(ledger, new_epoch, pool_deposit);
+    let (retired_pool_keys, pool_deposit_refunds, unclaimed_pool_deposits) =
+        retire_pools_with_refunds(ledger, new_epoch);
     let pools_retired = retired_pool_keys.len();
+
+    // -----------------------------------------------------------------------
+    // 3b. UPEC — apply any pending Shelley-era protocol parameter
+    //     update proposals whose target epoch matches the new epoch.
+    //
+    //     Upstream order: NEWEPOCH → RUPD → MIR → EPOCH(SNAP → POOLREAP → UPEC).
+    //     Applying UPEC here (after SNAP and POOLREAP) ensures that
+    //     reward calculations and deposit refunds use the *previous*
+    //     epoch's protocol parameters, matching upstream `prevPParams`.
+    //
+    //     Reference: `Cardano.Ledger.Shelley.Rules.Epoch` — UPEC
+    //     is the last sub-rule inside EPOCH.
+    // -----------------------------------------------------------------------
+    let pparam_updates_applied = ledger.apply_pending_pparam_updates(new_epoch);
 
     // -----------------------------------------------------------------------
     // 4. Accounting — update treasury and reserves.
@@ -288,15 +392,37 @@ pub fn apply_epoch_boundary(
     let donations_transferred = ledger.flush_donations_to_treasury();
     {
         let acct = ledger.accounting_mut();
-        acct.reserves = acct.reserves.saturating_sub(reward_dist.delta_reserves);
-        acct.treasury = acct.treasury.saturating_add(reward_dist.treasury_delta);
+        // Upstream reserves change: deltaR = -deltaR1 + deltaR2
+        //   = -(delta_reserves) + unclaimed
+        // So net reserves decrease = delta_reserves - unclaimed.
+        acct.reserves = acct
+            .reserves
+            .saturating_sub(reward_dist.delta_reserves)
+            .saturating_add(reward_dist.unclaimed);
+        // Upstream treasury change: deltaT = deltaT1 + frTotalUnregistered
+        //   (only the tau cut + unregistered rewards).
+        // Unclaimed (deltaR2) is returned to reserves, NOT added to treasury.
+        //
+        // Additionally, unclaimed pool deposit refunds (pools whose reward
+        // account was no longer registered at retirement) go to treasury.
+        //
+        // Reference: `applyRUpdFiltered` in
+        // `Cardano.Ledger.Shelley.LedgerState.IncrementalStake`:
+        //   casTreasury += deltaT + frTotalUnregistered
+        //   casReserves += deltaR  (where deltaR includes +deltaR2)
+        // `poolReapTransition`: casTreasury += unclaimed pool deposits
+        acct.treasury = acct
+            .treasury
+            .saturating_add(reward_dist.treasury_cut)
+            .saturating_add(unregistered_rewards)
+            .saturating_add(unclaimed_pool_deposits);
     }
 
     // -----------------------------------------------------------------------
     // 5. Governance action expiry — remove expired proposals and refund
     //    deposits to their return accounts (Conway+ EPOCH rule).
     // -----------------------------------------------------------------------
-    let (expired_gov_action_ids, governance_deposit_refunds) =
+    let (expired_gov_action_ids, governance_deposit_refunds, expired_unclaimed_deposits) =
         remove_expired_governance_actions(ledger, new_epoch);
     let governance_actions_expired = expired_gov_action_ids.len();
 
@@ -309,10 +435,15 @@ pub fn apply_epoch_boundary(
     let ratify_result = ratify_and_enact(ledger, new_epoch, snapshots, drep_activity);
     let governance_actions_enacted = ratify_result.enacted_ids.len();
 
-    // Credit unclaimed governance deposits to treasury.
-    if ratify_result.unclaimed_deposits > 0 {
+    // Credit unclaimed governance deposits to treasury — both from
+    // expired proposals with unregistered return accounts AND from
+    // enacted actions with unregistered return accounts.
+    // Upstream: `returnProposalDeposits` in `Cardano.Ledger.Conway.Rules.Epoch`.
+    let total_unclaimed = expired_unclaimed_deposits
+        .saturating_add(ratify_result.unclaimed_deposits);
+    if total_unclaimed > 0 {
         let acct = ledger.accounting_mut();
-        acct.treasury = acct.treasury.saturating_add(ratify_result.unclaimed_deposits);
+        acct.treasury = acct.treasury.saturating_add(total_unclaimed);
     }
 
     // -----------------------------------------------------------------------
@@ -344,8 +475,10 @@ pub fn apply_epoch_boundary(
         pools_retired,
         retired_pool_keys,
         pool_deposit_refunds,
+        unclaimed_pool_deposits,
         rewards_distributed: reward_dist.distributed,
-        treasury_delta: reward_dist.treasury_delta,
+        treasury_delta: reward_dist.treasury_cut.saturating_add(unregistered_rewards),
+        unclaimed_rewards: reward_dist.unclaimed,
         delta_reserves: reward_dist.delta_reserves,
         accounts_rewarded,
         governance_actions_expired,
@@ -358,7 +491,8 @@ pub fn apply_epoch_boundary(
         enacted_deposit_refunds: ratify_result.enacted_deposit_refunds,
         removed_due_to_enactment: ratify_result.removed_due_to_enactment,
         removed_due_to_enactment_deposit_refunds: ratify_result.removed_due_to_enactment_deposit_refunds,
-        unclaimed_governance_deposits: ratify_result.unclaimed_deposits,
+        unclaimed_governance_deposits: ratify_result.unclaimed_deposits
+            .saturating_add(expired_unclaimed_deposits),
         donations_transferred,
         mir_accounts_credited: mir_result.accounts_credited,
         mir_from_reserves: mir_result.from_reserves,
@@ -375,26 +509,57 @@ pub fn apply_epoch_boundary(
 
 /// Credits reward accounts from the epoch distribution.
 ///
-/// Returns the number of accounts that received non-zero rewards.
+/// Leader rewards are keyed by `RewardAccount` (pool's declared account).
+/// Member rewards are keyed by `StakeCredential` and resolved to the
+/// member's own registered reward account at application time.
+///
+/// Returns `(accounts_rewarded, unregistered_rewards)` where the second
+/// element is the total lovelace that could not be delivered because the
+/// reward account is no longer registered.
+///
+/// Reference: `applyRUpdFiltered` in
+/// `Cardano.Ledger.Shelley.LedgerState.IncrementalStake` — adds
+/// `frTotalUnregistered` to the treasury after filtering.
 fn distribute_rewards(
     ledger: &mut LedgerState,
     dist: &EpochRewardDistribution,
-) -> usize {
+) -> (usize, u64) {
     let mut count = 0usize;
-    let ra = ledger.reward_accounts_mut();
-    for (account, &amount) in &dist.reward_deltas {
-        if amount == 0 {
-            continue;
+    let mut unregistered_total = 0u64;
+
+    // 1. Leader rewards — keyed by pool's declared RewardAccount.
+    {
+        let ra = ledger.reward_accounts_mut();
+        for (account, &amount) in &dist.leader_deltas {
+            if amount == 0 {
+                continue;
+            }
+            if let Some(state) = ra.get_mut(account) {
+                state.set_balance(state.balance().saturating_add(amount));
+                count += 1;
+            } else {
+                unregistered_total = unregistered_total.saturating_add(amount);
+            }
         }
-        if let Some(state) = ra.get_mut(account) {
-            state.set_balance(state.balance().saturating_add(amount));
-            count += 1;
-        }
-        // If the reward account is not registered, the reward is
-        // effectively unclaimed and rolls into the treasury at the
-        // next epoch boundary (upstream behavior).
     }
-    count
+
+    // 2. Member rewards — keyed by StakeCredential, resolved to the
+    //    member's own registered RewardAccount matching that credential.
+    {
+        let ra = ledger.reward_accounts_mut();
+        for (cred, &amount) in &dist.reward_deltas {
+            if amount == 0 {
+                continue;
+            }
+            if ra.credit_by_credential(cred, amount) {
+                count += 1;
+            } else {
+                unregistered_total = unregistered_total.saturating_add(amount);
+            }
+        }
+    }
+
+    (count, unregistered_total)
 }
 
 // ---------------------------------------------------------------------------
@@ -566,7 +731,7 @@ fn apply_signed_delta(pot: &mut u64, delta: i64) {
 fn remove_expired_governance_actions(
     ledger: &mut LedgerState,
     epoch: EpochNo,
-) -> (Vec<GovActionId>, u64) {
+) -> (Vec<GovActionId>, u64, u64) {
     // 1. Identify expired governance action IDs.
     let expired_ids: Vec<GovActionId> = ledger
         .governance_actions()
@@ -580,7 +745,7 @@ fn remove_expired_governance_actions(
         .collect();
 
     if expired_ids.is_empty() {
-        return (Vec::new(), 0);
+        return (Vec::new(), 0, 0);
     }
 
     // 2. Remove expired actions and collect their deposit + return address.
@@ -594,21 +759,28 @@ fn remove_expired_governance_actions(
         }
     }
 
-    // 3. Credit refunds to reward accounts.
+    // 3. Credit refunds to reward accounts.  Track unclaimed deposits
+    //    whose return accounts are no longer registered — upstream
+    //    `returnProposalDeposits` sends these to the treasury.
     let mut total_refunded: u64 = 0;
+    let mut unclaimed: u64 = 0;
     for (raw_account, deposit) in &refund_targets {
         if let Some(reward_account) = RewardAccount::from_bytes(raw_account) {
             if let Some(ra_state) = ledger.reward_accounts_mut().get_mut(&reward_account) {
                 ra_state.set_balance(ra_state.balance().saturating_add(*deposit));
                 total_refunded = total_refunded.saturating_add(*deposit);
+            } else {
+                // Return account no longer registered — deposit accrues to
+                // treasury (upstream `returnProposalDeposits`).
+                unclaimed = unclaimed.saturating_add(*deposit);
             }
-            // If the reward account is no longer registered, the deposit
-            // is effectively lost — matching upstream behavior where
-            // unclaimed refunds accrue to the treasury.
+        } else {
+            // Malformed reward account — treat as unclaimed.
+            unclaimed = unclaimed.saturating_add(*deposit);
         }
     }
 
-    (expired_ids, total_refunded)
+    (expired_ids, total_refunded, unclaimed)
 }
 
 /// Returns `true` if enacting the given action type prevents further
@@ -1059,44 +1231,60 @@ fn remove_lineage_conflicting_proposals(
     stale_ids
 }
 
-/// Retires pools whose `retiring_epoch` ≤ `epoch`, refunds their deposits,
-/// and returns the list of retired pool operator keys and total refund.
+/// Retires pools whose `retiring_epoch` ≤ `epoch`, refunds their per-pool
+/// deposits, and returns the list of keys, total refunded, and unclaimed.
 ///
-/// This is the preferred helper that captures reward accounts *before*
-/// removing pools, avoiding the ordering problem in the two-step approach.
+/// This is the preferred helper that captures reward accounts and deposits
+/// *before* removing pools, avoiding the ordering problem.
+///
+/// Unclaimed deposits (reward account no longer registered) are returned
+/// separately so the caller can route them to the treasury, matching
+/// upstream `poolReapTransition` behavior.
+///
+/// Reference: `poolReapTransition` in
+/// `Cardano.Ledger.Shelley.Rules.PoolReap` — refund uses `spsDeposit`,
+/// unclaimed deposits go to `casTreasury`.
 pub fn retire_pools_with_refunds(
     ledger: &mut LedgerState,
     epoch: EpochNo,
-    pool_deposit: u64,
-) -> (Vec<PoolKeyHash>, u64) {
-    // 1. Identify pools scheduled to retire and capture their reward accounts.
-    let retiring: Vec<(PoolKeyHash, RewardAccount)> = ledger
+) -> (Vec<PoolKeyHash>, u64, u64) {
+    // 1. Identify pools scheduled to retire and capture their reward
+    //    accounts and per-pool deposit amounts.
+    let retiring: Vec<(PoolKeyHash, RewardAccount, u64)> = ledger
         .pool_state()
         .iter()
         .filter(|(_, pool)| {
             pool.retiring_epoch().is_some_and(|e| e <= epoch)
         })
-        .map(|(k, pool)| (*k, pool.params().reward_account))
+        .map(|(k, pool)| (*k, pool.params().reward_account, pool.deposit()))
         .collect();
 
     if retiring.is_empty() {
-        return (Vec::new(), 0);
+        return (Vec::new(), 0, 0);
     }
 
     // 2. Remove the retiring pools from the registry.
     let retired_keys = ledger.pool_state_mut().process_retirements(epoch);
 
-    // 3. Credit refunds to reward accounts and update deposit pot.
+    // 3. Credit refunds to reward accounts; track unclaimed deposits.
     let mut total_refunded: u64 = 0;
-    for (_, reward_account) in &retiring {
-        if let Some(state) = ledger.reward_accounts_mut().get_mut(reward_account) {
-            state.set_balance(state.balance().saturating_add(pool_deposit));
-            total_refunded = total_refunded.saturating_add(pool_deposit);
+    let mut total_unclaimed: u64 = 0;
+    for (_, reward_account, deposit) in &retiring {
+        if *deposit == 0 {
+            continue;
         }
-        ledger.deposit_pot_mut().return_pool_deposit(pool_deposit);
+        if let Some(state) = ledger.reward_accounts_mut().get_mut(reward_account) {
+            state.set_balance(state.balance().saturating_add(*deposit));
+            total_refunded = total_refunded.saturating_add(*deposit);
+        } else {
+            // Reward account no longer registered — upstream sends
+            // unclaimed pool deposit refunds to treasury.
+            total_unclaimed = total_unclaimed.saturating_add(*deposit);
+        }
+        ledger.deposit_pot_mut().return_pool_deposit(*deposit);
     }
 
-    (retired_keys, total_refunded)
+    (retired_keys, total_refunded, total_unclaimed)
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,9 +1362,10 @@ mod tests {
         let mut ledger = LedgerState::new(Era::Shelley);
         ledger.set_protocol_params(test_protocol_params());
 
-        // Register a pool.
+        // Register a pool with the current pool_deposit recorded.
         let params = test_pool_params(pool_id);
-        ledger.pool_state_mut().register(params);
+        let pp_pool_deposit = test_protocol_params().pool_deposit;
+        ledger.pool_state_mut().register_with_deposit(params, pp_pool_deposit);
 
         // Register the pool operator as a stake credential + delegation.
         let cred = test_cred(pool_id);
@@ -1318,12 +1507,13 @@ mod tests {
         let ra = test_reward_account(3);
         let balance_before = ledger.reward_accounts().balance(&ra);
 
-        let (retired, refunded) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(5), pool_deposit);
+        let (retired, refunded, unclaimed) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(5));
 
         assert_eq!(retired.len(), 1);
         assert_eq!(retired[0], test_pool(3));
         assert_eq!(refunded, pool_deposit);
+        assert_eq!(unclaimed, 0);
 
         // Reward account should have been credited.
         let balance_after = ledger.reward_accounts().balance(&ra);
@@ -1346,8 +1536,8 @@ mod tests {
             .retire(test_pool(4), EpochNo(10));
 
         // Try retiring at epoch 5 — pool should NOT be retired.
-        let (retired, refunded) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(5), 500_000_000);
+        let (retired, refunded, _unclaimed) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(5));
 
         assert!(retired.is_empty());
         assert_eq!(refunded, 0);
@@ -1355,7 +1545,157 @@ mod tests {
         assert!(ledger.pool_state().get(&test_pool(4)).is_some());
     }
 
+    // -- Per-pool deposit: refund uses recorded deposit, not current param
+
+    #[test]
+    fn test_pool_retirement_refunds_recorded_deposit_not_current_param() {
+        // Upstream `poolReapTransition` refunds `spsDeposit`, the deposit
+        // stored at registration time.  If `pp_poolDeposit` changes
+        // between registration and retirement, the original amount is used.
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        // Register a pool with the OLD deposit (200_000_000).
+        let params = test_pool_params(7);
+        let old_deposit = 200_000_000u64;
+        ledger.pool_state_mut().register_with_deposit(params, old_deposit);
+        ledger.deposit_pot_mut().add_pool_deposit(old_deposit);
+
+        let pool_cred = test_cred(7);
+        ledger.stake_credentials_mut().register(pool_cred);
+        let ra = test_reward_account(7);
+        ledger.reward_accounts_mut().insert(
+            ra,
+            RewardAccountState::new(0, None),
+        );
+
+        // Now the current pp_poolDeposit changes to 500_000_000.
+        // (This simulates a protocol parameter update.)
+        let mut pp = test_protocol_params();
+        pp.pool_deposit = 500_000_000;
+        ledger.set_protocol_params(pp);
+
+        // Schedule retirement.
+        ledger.pool_state_mut().retire(test_pool(7), EpochNo(5));
+
+        let (retired, refunded, unclaimed) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(5));
+
+        assert_eq!(retired.len(), 1);
+        // Must refund the ORIGINAL deposit (200M), not current param (500M).
+        assert_eq!(refunded, old_deposit);
+        assert_eq!(unclaimed, 0);
+        assert_eq!(ledger.reward_accounts().balance(&ra), old_deposit);
+    }
+
+    // -- Unclaimed pool deposits go to treasury ---------------------------
+
+    #[test]
+    fn test_unclaimed_pool_deposit_when_reward_account_unregistered() {
+        // Upstream `poolReapTransition`: if the pool's reward account is
+        // no longer registered at retirement, the deposit goes to treasury
+        // via `casTreasury += unclaimed`.
+        let mut ledger = LedgerState::new(Era::Shelley);
+        ledger.set_protocol_params(test_protocol_params());
+
+        let params = test_pool_params(8);
+        let deposit = 500_000_000u64;
+        ledger.pool_state_mut().register_with_deposit(params, deposit);
+        ledger.deposit_pot_mut().add_pool_deposit(deposit);
+
+        // Register stake credential but do NOT create a reward account.
+        let pool_cred = test_cred(8);
+        ledger.stake_credentials_mut().register(pool_cred);
+        // (reward account intentionally not inserted)
+
+        // Schedule retirement.
+        ledger.pool_state_mut().retire(test_pool(8), EpochNo(5));
+
+        let (_retired, refunded, unclaimed) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(5));
+
+        // Refunded = 0 (no registered account to credit).
+        assert_eq!(refunded, 0);
+        // Unclaimed = deposit amount → caller routes to treasury.
+        assert_eq!(unclaimed, deposit);
+    }
+
     // -- Accounting update (treasury/reserves) ----------------------------
+
+    // -- PPUP ordering: rewards use previous epoch's params ---------------
+
+    #[test]
+    fn test_ppup_ordering_rewards_use_old_params() {
+        // Upstream UPEC runs LAST inside EPOCH (after SNAP, POOLREAP),
+        // so reward calculation uses `prevPParams`.
+        //
+        // This test submits a PPUP proposal that doubles tau (0.2 → 0.4)
+        // for the upcoming epoch, then verifies that the epoch boundary
+        // reward calculation still uses the OLD tau.
+        let mut ledger = make_ledger_with_pool(9);
+
+        // Set up a genesis delegate so the PPUP proposal can reach quorum.
+        let genesis_hash: [u8; 28] = [0xAA; 28];
+        ledger.gen_delegs_mut().insert(
+            genesis_hash,
+            GenesisDelegationState {
+                delegate: [0xBB; 28],
+                vrf: [0xCC; 32],
+            },
+        );
+
+        // Old tau = 0.2.  Submit proposal to change tau to 0.4 at epoch 1.
+        let mut update = ProtocolParameterUpdate::default();
+        update.tau = Some(UnitInterval { numerator: 4, denominator: 10 });
+        let mut proposals = BTreeMap::new();
+        proposals.insert(genesis_hash, update);
+        let shelley_update = ShelleyUpdate {
+            proposed_protocol_parameter_updates: proposals,
+            epoch: 1, // target epoch
+        };
+        ledger.collect_pparam_proposals(&shelley_update);
+
+        // Verify the old tau is still 0.2.
+        assert_eq!(
+            ledger.protocol_params().unwrap().tau,
+            UnitInterval { numerator: 2, denominator: 10 },
+        );
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Apply epoch boundary for epoch 1.
+        let event = apply_epoch_boundary(
+            &mut ledger,
+            EpochNo(1),
+            &mut snapshots,
+            &perf,
+        )
+        .expect("epoch 1 boundary should succeed");
+
+        // PPUP should have been applied (tau changed).
+        assert!(event.pparam_updates_applied > 0);
+
+        // NEW tau should now be 0.4.
+        assert_eq!(
+            ledger.protocol_params().unwrap().tau,
+            UnitInterval { numerator: 4, denominator: 10 },
+        );
+
+        // The treasury_delta should correspond to OLD tau (0.2), not new (0.4).
+        // With empty go snapshot, only the tau cut from the reward pot
+        // contributes.  The reward pot = fees + floor(rho * reserves).
+        // What matters: treasury_delta was computed with tau=0.2, not 0.4.
+        // delta_reserves = floor(rho * reserves) = floor(0.003 * 14_000_000_000_000_000)
+        //                = 42_000_000_000_000
+        // reward_pot = 0 (fees) + 42_000_000_000_000 = 42_000_000_000_000
+        // treasury_cut = floor(0.2 * 42_000_000_000_000) = 8_400_000_000_000
+        // If tau=0.4 were used: treasury_cut = 16_800_000_000_000
+        assert_eq!(event.delta_reserves, 42_000_000_000_000);
+        // Treasury delta = treasury_cut + unregistered_rewards.
+        // With empty go snapshot, no pools, so distributed=0, unregistered=0.
+        assert_eq!(event.treasury_delta, 8_400_000_000_000);
+    }
 
     #[test]
     fn test_accounting_update_after_epoch_boundary() {
@@ -1449,8 +1789,8 @@ mod tests {
     #[test]
     fn test_retire_no_pools() {
         let mut ledger = LedgerState::new(Era::Shelley);
-        let (retired, refunded) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(1), 500_000_000);
+        let (retired, refunded, _unclaimed) =
+            retire_pools_with_refunds(&mut ledger, EpochNo(1));
         assert!(retired.is_empty());
         assert_eq!(refunded, 0);
     }
@@ -3419,6 +3759,23 @@ mod tests {
         // Pool operator: pool_id 30.
         let mut ledger = make_ledger_with_pool(30);
 
+        // The pool operator must have UTxO stake ≥ declared pledge for the
+        // upstream pledge satisfaction check to pass.
+        let op_cred = test_cred(30);
+        let op_addr = Address::Base(BaseAddress {
+            network: 1,
+            payment: StakeCredential::AddrKeyHash([0xDD; 28]),
+            staking: op_cred,
+        });
+        let op_txin = ShelleyTxIn { transaction_id: [30u8; 32], index: 99 };
+        ledger.multi_era_utxo_mut().insert_shelley(
+            op_txin,
+            ShelleyTxOut {
+                address: op_addr.to_bytes(),
+                amount: 200_000_000, // 200 ADA, above pledge of 100 ADA
+            },
+        );
+
         // Member delegator: credential 31, NOT the pool operator.
         let member_cred = test_cred(31);
         let member_ra = RewardAccount {
@@ -3464,7 +3821,10 @@ mod tests {
         snapshots.go = go_snapshot;
         snapshots.accumulate_fees(1_000_000_000); // 1000 ADA
 
-        let perf = BTreeMap::new();
+        let perf = BTreeMap::from([(
+            test_pool(30),
+            UnitInterval { numerator: 1, denominator: 1 },
+        )]);
         let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1");
 
@@ -3538,9 +3898,11 @@ mod tests {
         let reserves_after = ledger.accounting().reserves;
         let actual_deduction = reserves_before_epoch2.saturating_sub(reserves_after);
 
-        // delta_reserves should be reserves × rho (monetary expansion only),
-        // NOT delta_reserves + fee_pot.
-        assert_eq!(actual_deduction, event.delta_reserves);
+        // Net reserves deduction = delta_reserves - unclaimed.
+        // Upstream: deltaR = -deltaR1 + deltaR2.
+        // unclaimed (deltaR2) is returned to reserves.
+        let expected_net = event.delta_reserves.saturating_sub(event.unclaimed_rewards);
+        assert_eq!(actual_deduction, expected_net);
 
         // The fee pot (10k ADA) should NOT have been deducted from reserves.
         // rho = 3/1000, so delta_reserves ≈ reserves × 0.003.
@@ -3548,7 +3910,8 @@ mod tests {
         assert_eq!(event.delta_reserves, expected_delta);
 
         // Verify that reserves were NOT over-decremented by the fee pot.
-        assert_eq!(reserves_after, reserves_before_epoch2 - expected_delta);
+        // reserves_after = reserves_before - delta_reserves + unclaimed
+        assert_eq!(reserves_after, reserves_before_epoch2 - expected_delta + event.unclaimed_rewards);
     }
 
     // -- Fee pot does not affect reserves --
@@ -3570,8 +3933,20 @@ mod tests {
         let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1");
 
-        // Reserves should still be 0 (fees don't come from reserves).
-        assert_eq!(ledger.accounting().reserves, 0);
+        // -- Fee pot does not affect reserves via monetary expansion --
+        // With zero reserves, delta_reserves = 0.  The fee pot feeds the
+        // reward pot.  With no pools, all rewards_pot is unclaimed → returned
+        // to reserves (upstream deltaR2).  Treasury gets only the τ-cut.
+        // So reserves = 0 - 0 + unclaimed (from fee pot - tau cut).
+        // But the fee pot does increase reserves via unclaimed return.
+        let expected_unclaimed = {
+            // rPot = fees + 0 = 5000 ADA, tau = 0.2 → treasury = 1000 ADA
+            // rewards_pot = 4000 ADA → all unclaimed → returned to reserves.
+            let r_pot = 5_000_000_000u64;
+            let tau_cut = r_pot * 2 / 10; // 1B (1000 ADA)
+            r_pot - tau_cut // 4B (4000 ADA)
+        };
+        assert_eq!(ledger.accounting().reserves, expected_unclaimed);
         // Treasury should have received the treasury cut of the fees.
         assert!(ledger.accounting().treasury > 0);
     }
@@ -4019,5 +4394,168 @@ mod tests {
         // Reward account should have received 120M total.
         let balance = ledger.reward_accounts().get(&target_ra).unwrap().balance();
         assert_eq!(balance, 120_000_000);
+    }
+
+    // ---------------------------------------------------------------
+    // Credential-based member reward distribution
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn distribute_rewards_credits_member_by_credential_not_pool_account() {
+        // Upstream `applyRUpdFiltered` resolves member rewards from
+        // `StakeCredential` → the member's *own* registered
+        // `RewardAccount`, NOT the pool operator's declared account.
+        //
+        // This test sets up a pool whose reward account uses network
+        // byte 1, and a member whose registered account uses network
+        // byte 0 (different network).  The member reward must be
+        // credited to the member's own account.
+        let mut ledger = LedgerState::new(Era::Shelley);
+
+        // Pool operator credential + reward account (network=1).
+        let pool_cred = test_cred(0x01);
+        let pool_ra = RewardAccount { network: 1, credential: pool_cred };
+        ledger.stake_credentials_mut().register(pool_cred);
+        ledger.reward_accounts_mut().insert(
+            pool_ra,
+            RewardAccountState::new(0, None),
+        );
+
+        // Member credential + reward account (network=0, different!).
+        let member_cred = test_cred(0x02);
+        let member_ra = RewardAccount { network: 0, credential: member_cred };
+        ledger.stake_credentials_mut().register(member_cred);
+        ledger.reward_accounts_mut().insert(
+            member_ra,
+            RewardAccountState::new(0, None),
+        );
+
+        // Build a distribution: leader on pool_ra, member keyed by
+        // member_cred.
+        let dist = EpochRewardDistribution {
+            leader_deltas: {
+                let mut m = BTreeMap::new();
+                m.insert(pool_ra, 100_000);
+                m
+            },
+            reward_deltas: {
+                let mut m = BTreeMap::new();
+                m.insert(member_cred, 50_000);
+                m
+            },
+            treasury_cut: 0,
+            distributed: 150_000,
+            unclaimed: 0,
+            delta_reserves: 0,
+        };
+
+        let (count, unreg) = distribute_rewards(&mut ledger, &dist);
+
+        assert_eq!(count, 2, "both leader and member should be credited");
+        assert_eq!(unreg, 0, "no unregistered rewards");
+
+        // Leader rewarded on pool's own account.
+        assert_eq!(
+            ledger.reward_accounts().get(&pool_ra).unwrap().balance(),
+            100_000,
+        );
+        // Member rewarded on *member's own* account (network=0), NOT
+        // the pool's account (network=1).
+        assert_eq!(
+            ledger.reward_accounts().get(&member_ra).unwrap().balance(),
+            50_000,
+        );
+    }
+
+    #[test]
+    fn distribute_rewards_unregistered_member_goes_to_treasury_path() {
+        // When a member credential has no registered RewardAccount,
+        // the amount should appear in the unregistered total (upstream
+        // routes this to treasury via `frTotalUnregistered`).
+        let mut ledger = LedgerState::new(Era::Shelley);
+
+        let pool_cred = test_cred(0x10);
+        let pool_ra = RewardAccount { network: 1, credential: pool_cred };
+        ledger.stake_credentials_mut().register(pool_cred);
+        ledger.reward_accounts_mut().insert(
+            pool_ra,
+            RewardAccountState::new(0, None),
+        );
+
+        // Member credential is NOT registered.
+        let ghost_cred = test_cred(0x20);
+
+        let dist = EpochRewardDistribution {
+            leader_deltas: {
+                let mut m = BTreeMap::new();
+                m.insert(pool_ra, 100_000);
+                m
+            },
+            reward_deltas: {
+                let mut m = BTreeMap::new();
+                m.insert(ghost_cred, 75_000);
+                m
+            },
+            treasury_cut: 0,
+            distributed: 175_000,
+            unclaimed: 0,
+            delta_reserves: 0,
+        };
+
+        let (count, unreg) = distribute_rewards(&mut ledger, &dist);
+
+        assert_eq!(count, 1, "only leader credited");
+        assert_eq!(unreg, 75_000, "member reward is unregistered");
+
+        assert_eq!(
+            ledger.reward_accounts().get(&pool_ra).unwrap().balance(),
+            100_000,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Expired governance deposit → treasury when return account is gone
+    // Reference: Cardano.Ledger.Conway.Rules.Epoch — `returnProposalDeposits`
+    // ------------------------------------------------------------------
+    #[test]
+    fn expired_governance_deposit_goes_to_treasury_when_return_account_unregistered() {
+        let mut ledger = make_ledger_with_pool(12);
+        require_committee_vote_for_ratification(&mut ledger, 0xC1, 0xC2);
+        let deposit_amount = 500_000_000u64;
+
+        // Reward account byte 99 is NOT registered in the ledger.
+        // The proposal uses it as return address.
+        let proposal = test_proposal(deposit_amount, 99);
+        let gas = GovernanceActionState::new_with_lifetime(
+            proposal,
+            EpochNo(1),
+            Some(2), // expires_after = epoch 3
+        );
+        let gai = test_gov_action_id(0xDD, 0);
+        ledger.governance_actions_mut().insert(gai.clone(), gas);
+        assert_eq!(ledger.governance_actions().len(), 1);
+
+        let treasury_before = ledger.accounting().treasury;
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 4 — action IS expired (expires_after 3 < 4).
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(4), &mut snapshots, &perf)
+            .expect("epoch 4 boundary should succeed");
+        assert_eq!(event.governance_actions_expired, 1);
+
+        // Deposit must be reported as unclaimed (return account not registered).
+        assert_eq!(
+            event.unclaimed_governance_deposits, deposit_amount,
+            "expired deposit with unregistered return account must be unclaimed"
+        );
+
+        // Treasury must have increased by at least the unclaimed deposit.
+        let treasury_after = ledger.accounting().treasury;
+        assert!(
+            treasury_after >= treasury_before + deposit_amount,
+            "treasury must include unclaimed expired governance deposit"
+        );
     }
 }

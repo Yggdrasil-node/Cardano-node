@@ -153,6 +153,15 @@ pub struct ShelleyGenesis {
     /// Reference: `Cardano.Ledger.Shelley.Genesis` — `sgSystemStart`.
     #[serde(default, rename = "systemStart")]
     pub system_start: Option<String>,
+
+    /// Maximum lovelace supply (mainnet: 45 000 000 000 000 000).
+    ///
+    /// Used to compute `circulation = maxLovelaceSupply - reserves`
+    /// for the upstream `maxPool` reward formula.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Genesis` — `sgMaxLovelaceSupply`.
+    #[serde(default = "default_max_lovelace_supply")]
+    pub max_lovelace_supply: u64,
 }
 
 /// Genesis delegation entry from `genDelegs`.
@@ -181,6 +190,12 @@ pub struct ShelleyGenesisBootstrap {
     pub staking: BTreeMap<AddrKeyHash, PoolKeyHash>,
     /// Number of genesis key signatures required for MIR certs or update proposals.
     pub update_quorum: u64,
+    /// Maximum lovelace supply (mainnet: 45 000 000 000 000 000).
+    pub max_lovelace_supply: u64,
+    /// Slots per epoch (mainnet Shelley: 432 000).
+    pub epoch_length: u64,
+    /// Active slot coefficient (as rational).
+    pub active_slots_coeff: (u64, u64),
 }
 
 /// Parsed genesis delegation entry with fixed-width hashes.
@@ -736,6 +751,9 @@ pub fn build_shelley_genesis_bootstrap(
         gen_delegs,
         staking,
         update_quorum: shelley.update_quorum,
+        max_lovelace_supply: shelley.max_lovelace_supply,
+        epoch_length: shelley.epoch_length,
+        active_slots_coeff: f64_to_rational(shelley.active_slots_coeff),
     })
 }
 
@@ -1210,6 +1228,7 @@ fn default_max_kes_evolutions() -> u64 { 62 }
 fn default_security_param() -> u64 { 2_160 }
 fn default_update_quorum() -> u64 { 5 }
 fn default_slot_length() -> f64 { 1.0 }
+fn default_max_lovelace_supply() -> u64 { 45_000_000_000_000_000 }
 fn default_min_fee_a() -> u64 { 44 }
 fn default_min_fee_b() -> u64 { 155_381 }
 fn default_max_block_body_size() -> u32 { 65_536 }
@@ -1287,6 +1306,19 @@ pub fn initial_funds_pseudo_txin(address: &[u8]) -> ShelleyTxIn {
     }
 }
 
+/// Convert an f64 in `(0, 1]` to a `(numerator, denominator)` rational.
+///
+/// Uses a denominator of 10^9 for sufficient precision.  Returns `(0, 1)`
+/// for non-finite or out-of-range inputs.
+fn f64_to_rational(f: f64) -> (u64, u64) {
+    if !f.is_finite() || f <= 0.0 || f > 1.0 {
+        return (0, 1);
+    }
+    let denom = 1_000_000_000u64;
+    let numer = (f * denom as f64).round() as u64;
+    (numer, denom)
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -1329,6 +1361,7 @@ mod tests {
                 min_pool_cost: 340_000_000,
             },
             update_quorum: 5,
+            max_lovelace_supply: 45_000_000_000_000_000,
             }
     }
 
