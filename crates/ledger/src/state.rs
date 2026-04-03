@@ -3707,6 +3707,45 @@ impl LedgerState {
                         &tx.witness_set,
                     )?;
                 }
+                // Native (MultiSig) script witness validation (Shelley submitted).
+                {
+                    let mut required_scripts = HashSet::new();
+                    crate::witnesses::required_script_hashes_from_inputs_shelley(
+                        &tx.body.inputs, &self.shelley_utxo, &mut required_scripts,
+                    );
+                    if let Some(certs) = &tx.body.certificates {
+                        for cert in certs {
+                            crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                        }
+                    }
+                    if let Some(withdrawals) = &tx.body.withdrawals {
+                        crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                    }
+                    if !required_scripts.is_empty() {
+                        let ws_bytes = tx.witness_set.to_cbor_bytes();
+                        let native_satisfied = validate_native_scripts_if_present(
+                            Some(&ws_bytes),
+                            &required_scripts,
+                            current_slot.0,
+                        )?;
+                        // Shelley has no Plutus and no reference inputs; an
+                        // empty MultiEraUtxo is sufficient.
+                        let empty_utxo = MultiEraUtxo::new();
+                        validate_required_script_witnesses(
+                            Some(&ws_bytes),
+                            &required_scripts,
+                            &native_satisfied,
+                            &empty_utxo,
+                            None,
+                            None,
+                        )?;
+                    }
+                    validate_no_extraneous_script_witnesses_typed(
+                        &tx.witness_set,
+                        &required_scripts,
+                        None, // Shelley: no reference inputs
+                    )?;
+                }
                 let mut staged = self.shelley_utxo.clone();
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -3845,6 +3884,7 @@ impl LedgerState {
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
+                    None, // Shelley: no reference inputs
                 )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -3978,6 +4018,7 @@ impl LedgerState {
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
+                    None, // Allegra: no reference inputs
                 )?;
                 let mut staged_pool_state = self.pool_state.clone();
                 let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -4157,6 +4198,7 @@ impl LedgerState {
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
+                    None, // Alonzo: no reference inputs
                 )?;
                 // Unspendable UTxO check (Alonzo — no datum on Plutus-locked input).
                 crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -4427,9 +4469,11 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                 )?;
+                let babbage_ref_scripts = collect_reference_script_hashes(&staged, tx.body.reference_inputs.as_deref());
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
+                    if babbage_ref_scripts.is_empty() { None } else { Some(&babbage_ref_scripts) },
                 )?;
                 // Unspendable UTxO check (Babbage — no datum on Plutus-locked input).
                 crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -4734,9 +4778,11 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                 )?;
+                let conway_ref_scripts = collect_reference_script_hashes(&staged, tx.body.reference_inputs.as_deref());
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
+                    if conway_ref_scripts.is_empty() { None } else { Some(&conway_ref_scripts) },
                 )?;
                 // Unspendable UTxO check (Conway — no datum on Plutus-locked input).
                 crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -5212,6 +5258,42 @@ impl LedgerState {
                 self.genesis_update_quorum,
                 witness_bytes.as_deref(),
             )?;
+            // Native (MultiSig) script validation (Shelley UTXOW —
+            // validateFailedNativeScripts / validateMissingScripts /
+            // extraneousScriptWitnessesUTXOW).
+            let mut required_scripts = HashSet::new();
+            crate::witnesses::required_script_hashes_from_inputs_shelley(
+                &body.inputs, &staged, &mut required_scripts,
+            );
+            if let Some(certs) = &body.certificates {
+                for cert in certs {
+                    crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                }
+            }
+            if let Some(withdrawals) = &body.withdrawals {
+                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+            }
+            let native_satisfied = validate_native_scripts_if_present(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                slot,
+            )?;
+            // Shelley has no reference inputs and no Plutus; an empty
+            // MultiEraUtxo is sufficient for required-witness collection.
+            let empty_utxo = MultiEraUtxo::new();
+            validate_required_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                &native_satisfied,
+                &empty_utxo,
+                None,
+                None,
+            )?;
+            validate_no_extraneous_script_witnesses(
+                witness_bytes.as_deref(),
+                &required_scripts,
+                None, // Shelley: no reference inputs
+            )?;
             let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
@@ -5355,6 +5437,7 @@ impl LedgerState {
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
+                None, // Allegra: no reference inputs
             )?;
             let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
@@ -5497,6 +5580,7 @@ impl LedgerState {
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
+                None, // Mary: no reference inputs
             )?;
             let cert_adj = apply_certificates_and_withdrawals(
                 &mut staged_pool_state,
@@ -5694,6 +5778,7 @@ impl LedgerState {
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
+                None, // Alonzo block: no reference inputs
             )?;
             // Unspendable UTxO check (Alonzo block — no datum on Plutus-locked input).
             crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -6020,9 +6105,11 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
             )?;
+            let babbage_blk_ref_scripts = collect_reference_script_hashes(&staged, body.reference_inputs.as_deref());
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
+                if babbage_blk_ref_scripts.is_empty() { None } else { Some(&babbage_blk_ref_scripts) },
             )?;
             // Unspendable UTxO check (Babbage block — no datum on Plutus-locked input).
             crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -6413,9 +6500,11 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
             )?;
+            let conway_blk_ref_scripts = collect_reference_script_hashes(&staged, body.reference_inputs.as_deref());
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
+                if conway_blk_ref_scripts.is_empty() { None } else { Some(&conway_blk_ref_scripts) },
             )?;
             // Unspendable UTxO check (Conway block — no datum on Plutus-locked input).
             crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -7681,9 +7770,21 @@ fn validate_conway_proposals(
         if let GovAction::UpdateCommittee {
             members_to_remove,
             members_to_add,
+            quorum,
             ..
         } = &proposal.gov_action
         {
+            // Upstream: `WellFormedUnitIntervalRatification` — quorum must be
+            // a valid unit interval (denominator > 0, numerator <= denominator).
+            // Reference: `Cardano.Ledger.Conway.Rules.Gov` —
+            // `checkWellFormedUnitIntervalRatification`.
+            if quorum.denominator == 0 || quorum.numerator > quorum.denominator {
+                return Err(LedgerError::WellFormedUnitIntervalRatification {
+                    numerator: quorum.numerator,
+                    denominator: quorum.denominator,
+                });
+            }
+
             let conflicting_members: Vec<_> = members_to_add
                 .keys()
                 .copied()
@@ -7940,8 +8041,13 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    // Conway DELEG rule: `when (not exists) $ do ...`
-                    // Already-registered credentials are a silent no-op.
+                    // Conway DELEG rule: `checkStakeKeyNotRegistered` —
+                    // already-registered credentials are rejected.
+                    // Reference: `Cardano.Ledger.Conway.Rules.Deleg` —
+                    // `StakeKeyRegisteredDELEG`.
+                    if ctx.is_conway && stake_credentials.is_registered(credential) {
+                        return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
+                    }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
                         deposit_pot.add_key_deposit(*deposit);
@@ -8002,7 +8108,11 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    // Conway DELEG rule: `when (not exists) $ do ...`
+                    // Conway DELEG rule: `checkStakeKeyNotRegistered` —
+                    // already-registered credentials are rejected.
+                    if ctx.is_conway && stake_credentials.is_registered(credential) {
+                        return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
+                    }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
                         deposit_pot.add_key_deposit(*deposit);
@@ -8039,7 +8149,11 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    // Conway DELEG rule: `when (not exists) $ do ...`
+                    // Conway DELEG rule: `checkStakeKeyNotRegistered` —
+                    // already-registered credentials are rejected.
+                    if ctx.is_conway && stake_credentials.is_registered(credential) {
+                        return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
+                    }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
                         deposit_pot.add_key_deposit(*deposit);
@@ -8055,7 +8169,11 @@ fn apply_certificates_and_withdrawals(
                             expected: key_deposit,
                         });
                     }
-                    // Conway DELEG rule: `when (not exists) $ do ...`
+                    // Conway DELEG rule: `checkStakeKeyNotRegistered` —
+                    // already-registered credentials are rejected.
+                    if ctx.is_conway && stake_credentials.is_registered(credential) {
+                        return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
+                    }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
                         deposit_pot.add_key_deposit(*deposit);
@@ -8942,6 +9060,30 @@ fn provided_script_hashes_from_witnesses(
     provided
 }
 
+/// Collects script hashes from reference input UTxOs (Babbage+).
+///
+/// For each reference input that resolves to a Babbage `BabbageTxOut` with a
+/// `script_ref`, computes the script hash. Returns the set of script hashes
+/// available via references.
+///
+/// Reference: upstream `getReferenceScripts` — `referenceScriptHashes`.
+fn collect_reference_script_hashes(
+    utxo: &crate::utxo::MultiEraUtxo,
+    reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+) -> HashSet<[u8; 28]> {
+    let mut hashes = HashSet::new();
+    if let Some(ref_inputs) = reference_inputs {
+        for txin in ref_inputs {
+            if let Some(txout) = utxo.get(txin) {
+                if let Some(sr) = txout.script_ref() {
+                    hashes.insert(crate::witnesses::script_hash(&sr.0));
+                }
+            }
+        }
+    }
+    hashes
+}
+
 /// Validates that no scripts in the witness set are extraneous — every
 /// provided script must be required by an input, certificate, withdrawal,
 /// mint, vote, or proposal in the transaction.
@@ -8950,6 +9092,7 @@ fn provided_script_hashes_from_witnesses(
 fn validate_no_extraneous_script_witnesses(
     witness_bytes: Option<&[u8]>,
     required_script_hashes: &HashSet<[u8; 28]>,
+    reference_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Result<(), LedgerError> {
     let witness_bytes = match witness_bytes {
         Some(wb) => wb,
@@ -8957,8 +9100,15 @@ fn validate_no_extraneous_script_witnesses(
     };
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(witness_bytes)?;
     let provided = provided_script_hashes_from_witnesses(&ws);
+    // Upstream Babbage: `neededNonRefs = sNeeded \ sRefs`; extraneous = `sReceived \ neededNonRefs`.
+    // For Shelley/Alonzo (no reference inputs), reference_script_hashes is None which
+    // degenerates to `sReceived \ sNeeded`.
+    let needed_non_refs: HashSet<[u8; 28]> = match reference_script_hashes {
+        Some(refs) => required_script_hashes.difference(refs).copied().collect(),
+        None => required_script_hashes.clone(),
+    };
     for hash in &provided {
-        if !required_script_hashes.contains(hash) {
+        if !needed_non_refs.contains(hash) {
             return Err(LedgerError::ExtraneousScriptWitness { hash: *hash });
         }
     }
@@ -8970,10 +9120,15 @@ fn validate_no_extraneous_script_witnesses(
 fn validate_no_extraneous_script_witnesses_typed(
     ws: &crate::eras::shelley::ShelleyWitnessSet,
     required_script_hashes: &HashSet<[u8; 28]>,
+    reference_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Result<(), LedgerError> {
     let provided = provided_script_hashes_from_witnesses(ws);
+    let needed_non_refs: HashSet<[u8; 28]> = match reference_script_hashes {
+        Some(refs) => required_script_hashes.difference(refs).copied().collect(),
+        None => required_script_hashes.clone(),
+    };
     for hash in &provided {
-        if !required_script_hashes.contains(hash) {
+        if !needed_non_refs.contains(hash) {
             return Err(LedgerError::ExtraneousScriptWitness { hash: *hash });
         }
     }
@@ -9347,7 +9502,7 @@ pub(crate) fn tally_committee_votes(
     let mut abstain: u64 = 0;
     let mut eligible: u64 = 0;
 
-    for (cold_cred, member_state) in committee_state.iter() {
+    for (_cold_cred, member_state) in committee_state.iter() {
         // Resigned members do not count.
         if member_state.is_resigned() {
             continue;
@@ -9359,17 +9514,25 @@ pub(crate) fn tally_committee_votes(
         eligible += 1;
 
         // Find whether this committee member voted.
-        // Votes are keyed by Voter; committee votes use cold-credential tags.
-        let voter = match cold_cred {
-            StakeCredential::AddrKeyHash(h) => Voter::CommitteeKeyHash(*h),
-            StakeCredential::ScriptHash(h) => Voter::CommitteeScript(*h),
-        };
+        // Votes are keyed by Voter which carries HOT credential hashes
+        // (Conway CDDL tags 0/1 = `committee_hot_credential`).  We must
+        // look up the member's authorized hot credential and build the Voter
+        // from that, not from the cold credential.
+        //
+        // Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `ccVotesSatisfied`
+        // iterates `committeeMembers`, resolves each cold credential to its
+        // hot credential via `votingCommitteeCredentials`, and then looks up
+        // the vote keyed by the hot credential.
+        let hot_voter = member_state.hot_credential().map(|hot_cred| match hot_cred {
+            StakeCredential::AddrKeyHash(h) => Voter::CommitteeKeyHash(h),
+            StakeCredential::ScriptHash(h) => Voter::CommitteeScript(h),
+        });
 
-        match action.votes.get(&voter) {
+        match hot_voter.and_then(|v| action.votes.get(&v)) {
             Some(Vote::Yes) => yes += 1,
             Some(Vote::No) => no += 1,
             Some(Vote::Abstain) => abstain += 1,
-            None => {} // did not vote — counted in eligible but not tallied
+            None => {} // no hot credential or did not vote — counted in eligible but not tallied
         }
     }
 
@@ -12134,6 +12297,20 @@ mod tests {
         })
     }
 
+    /// Authorize a hot credential for a committee member in test setups.
+    ///
+    /// In Conway, committee votes are keyed by HOT credentials (CDDL tags
+    /// 0/1).  Tests must authorize a hot credential for each cold member
+    /// before inserting votes, otherwise `tally_committee_votes` cannot
+    /// resolve votes.
+    fn authorize_cc_hot(cs: &mut CommitteeState, cold: StakeCredential, hot: StakeCredential) {
+        cs.get_mut(&cold)
+            .expect("cold credential not registered")
+            .set_authorization(Some(
+                CommitteeAuthorization::CommitteeHotCredential(hot),
+            ));
+    }
+
     // -- VoteTally::meets_threshold ---
 
     #[test]
@@ -12186,14 +12363,18 @@ mod tests {
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
 
-        let cred_a = StakeCredential::AddrKeyHash([1; 28]);
-        let cred_b = StakeCredential::AddrKeyHash([2; 28]);
-        cs.register(cred_a);
-        cs.register(cred_b);
+        let cold_a = StakeCredential::AddrKeyHash([1; 28]);
+        let cold_b = StakeCredential::AddrKeyHash([2; 28]);
+        let hot_a = StakeCredential::AddrKeyHash([11; 28]);
+        let hot_b = StakeCredential::AddrKeyHash([12; 28]);
+        cs.register(cold_a);
+        cs.register(cold_b);
+        authorize_cc_hot(&mut cs, cold_a, hot_a);
+        authorize_cc_hot(&mut cs, cold_b, hot_b);
 
-        // Both vote yes.
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
-        action.votes.insert(Voter::CommitteeKeyHash([2; 28]), Vote::Yes);
+        // Both vote yes (votes keyed by HOT credential hash).
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 2);
@@ -12208,16 +12389,18 @@ mod tests {
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
 
-        let cred_a = StakeCredential::AddrKeyHash([1; 28]);
-        let cred_b = StakeCredential::AddrKeyHash([2; 28]);
-        cs.register(cred_a);
-        cs.register(cred_b);
-        // Resign member B.
-        cs.get_mut(&cred_b).unwrap().set_authorization(Some(
+        let cold_a = StakeCredential::AddrKeyHash([1; 28]);
+        let cold_b = StakeCredential::AddrKeyHash([2; 28]);
+        let hot_a = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register(cold_a);
+        cs.register(cold_b);
+        authorize_cc_hot(&mut cs, cold_a, hot_a);
+        // Resign member B (no hot credential needed for resigned members).
+        cs.get_mut(&cold_b).unwrap().set_authorization(Some(
             CommitteeAuthorization::CommitteeMemberResigned(None),
         ));
 
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 1);
@@ -12962,12 +13145,21 @@ mod tests {
     fn accepted_by_committee_happy_path() {
         let mut action = test_no_confidence_action();
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        cs.register(StakeCredential::AddrKeyHash([2; 28]));
-        cs.register(StakeCredential::AddrKeyHash([3; 28]));
+        let cold_a = StakeCredential::AddrKeyHash([1; 28]);
+        let cold_b = StakeCredential::AddrKeyHash([2; 28]);
+        let cold_c = StakeCredential::AddrKeyHash([3; 28]);
+        let hot_a = StakeCredential::AddrKeyHash([11; 28]);
+        let hot_b = StakeCredential::AddrKeyHash([12; 28]);
+        let hot_c = StakeCredential::AddrKeyHash([13; 28]);
+        cs.register(cold_a);
+        cs.register(cold_b);
+        cs.register(cold_c);
+        authorize_cc_hot(&mut cs, cold_a, hot_a);
+        authorize_cc_hot(&mut cs, cold_b, hot_b);
+        authorize_cc_hot(&mut cs, cold_c, hot_c);
 
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
-        action.votes.insert(Voter::CommitteeKeyHash([2; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
         // 3 does not vote.
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
@@ -12978,11 +13170,20 @@ mod tests {
     fn accepted_by_committee_rejected() {
         let mut action = test_no_confidence_action();
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        cs.register(StakeCredential::AddrKeyHash([2; 28]));
-        cs.register(StakeCredential::AddrKeyHash([3; 28]));
+        let cold_a = StakeCredential::AddrKeyHash([1; 28]);
+        let cold_b = StakeCredential::AddrKeyHash([2; 28]);
+        let cold_c = StakeCredential::AddrKeyHash([3; 28]);
+        let hot_a = StakeCredential::AddrKeyHash([11; 28]);
+        let hot_b = StakeCredential::AddrKeyHash([12; 28]);
+        let hot_c = StakeCredential::AddrKeyHash([13; 28]);
+        cs.register(cold_a);
+        cs.register(cold_b);
+        cs.register(cold_c);
+        authorize_cc_hot(&mut cs, cold_a, hot_a);
+        authorize_cc_hot(&mut cs, cold_b, hot_b);
+        authorize_cc_hot(&mut cs, cold_c, hot_c);
 
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
         // Only 1/3 yes.
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
@@ -13045,8 +13246,11 @@ mod tests {
     fn ratify_hf_rejected_when_dreps_insufficient() {
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([101; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
 
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
@@ -13080,8 +13284,11 @@ mod tests {
         let mut action = test_hf_action();
         // CC: 1 member, votes yes.
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([101; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
 
         // DRep: 1 drep, votes yes.
         let mut drep_state = DrepState::new();
@@ -13465,8 +13672,11 @@ mod tests {
     fn committee_tally_single_member_exact_quorum() {
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 1);
@@ -13480,8 +13690,11 @@ mod tests {
     fn committee_member_votes_no() {
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::No);
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::No);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.no, 1);
@@ -13500,9 +13713,11 @@ mod tests {
         // Member expires at epoch 10; tallied at epoch 11 → expired.
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
-        let cred = StakeCredential::AddrKeyHash([1; 28]);
-        cs.register_with_term(cred, 10);
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register_with_term(cold, 10);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(11));
         assert_eq!(tally.total, 0, "expired member excluded from eligible");
@@ -13515,9 +13730,11 @@ mod tests {
         // Upstream: `currentEpoch <= expirationEpoch`.
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
-        let cred = StakeCredential::AddrKeyHash([1; 28]);
-        cs.register_with_term(cred, 10);
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register_with_term(cold, 10);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(10));
         assert_eq!(tally.total, 1, "member active at boundary epoch");
@@ -13529,12 +13746,16 @@ mod tests {
         // Two members: one expired, one active. Only active one counts.
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
-        let cred_expired = StakeCredential::AddrKeyHash([1; 28]);
-        let cred_active = StakeCredential::AddrKeyHash([2; 28]);
-        cs.register_with_term(cred_expired, 5);
-        cs.register_with_term(cred_active, 100);
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
-        action.votes.insert(Voter::CommitteeKeyHash([2; 28]), Vote::Yes);
+        let cold_expired = StakeCredential::AddrKeyHash([1; 28]);
+        let cold_active = StakeCredential::AddrKeyHash([2; 28]);
+        let hot_expired = StakeCredential::AddrKeyHash([11; 28]);
+        let hot_active = StakeCredential::AddrKeyHash([12; 28]);
+        cs.register_with_term(cold_expired, 5);
+        cs.register_with_term(cold_active, 100);
+        authorize_cc_hot(&mut cs, cold_expired, hot_expired);
+        authorize_cc_hot(&mut cs, cold_active, hot_active);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action.votes.insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(10));
         assert_eq!(tally.total, 1, "only active member in eligible");
@@ -13546,8 +13767,11 @@ mod tests {
         // Members registered without term (legacy) are always active.
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([1; 28]), Vote::Yes);
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(999_999));
         assert_eq!(tally.total, 1, "no-term member never expires");
@@ -13559,10 +13783,19 @@ mod tests {
         // 3 members, 2 expired. Only 1 active and votes yes → 1/1 >= 2/3.
         let mut action = test_no_confidence_action();
         let mut cs = CommitteeState::default();
-        cs.register_with_term(StakeCredential::AddrKeyHash([1; 28]), 5);
-        cs.register_with_term(StakeCredential::AddrKeyHash([2; 28]), 5);
-        cs.register_with_term(StakeCredential::AddrKeyHash([3; 28]), 100);
-        action.votes.insert(Voter::CommitteeKeyHash([3; 28]), Vote::Yes);
+        let cold_a = StakeCredential::AddrKeyHash([1; 28]);
+        let cold_b = StakeCredential::AddrKeyHash([2; 28]);
+        let cold_c = StakeCredential::AddrKeyHash([3; 28]);
+        let hot_a = StakeCredential::AddrKeyHash([11; 28]);
+        let hot_b = StakeCredential::AddrKeyHash([12; 28]);
+        let hot_c = StakeCredential::AddrKeyHash([13; 28]);
+        cs.register_with_term(cold_a, 5);
+        cs.register_with_term(cold_b, 5);
+        cs.register_with_term(cold_c, 100);
+        authorize_cc_hot(&mut cs, cold_a, hot_a);
+        authorize_cc_hot(&mut cs, cold_b, hot_b);
+        authorize_cc_hot(&mut cs, cold_c, hot_c);
+        action.votes.insert(Voter::CommitteeKeyHash([13; 28]), Vote::Yes);
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
         assert!(
@@ -13694,8 +13927,11 @@ mod tests {
         action: &mut GovernanceActionState,
     ) -> (CommitteeState, UnitInterval) {
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([0xCC; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([0xCC; 28]), Vote::Yes);
+        let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
+        let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::Yes);
         let quorum = UnitInterval { numerator: 1, denominator: 2 };
         (cs, quorum)
     }
@@ -13794,8 +14030,11 @@ mod tests {
         let mut action = test_no_confidence_action();
         // CC member votes no
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([0xCC; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([0xCC; 28]), Vote::No);
+        let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
+        let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
         let quorum = UnitInterval { numerator: 1, denominator: 2 };
 
         let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
@@ -13947,8 +14186,11 @@ mod tests {
         let mut action = test_treasury_action();
         // CC votes no.
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([0xCC; 28]));
-        action.votes.insert(Voter::CommitteeKeyHash([0xCC; 28]), Vote::No);
+        let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
+        let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
         let quorum = UnitInterval { numerator: 1, denominator: 2 };
 
         let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
@@ -15193,6 +15435,167 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // WellFormedUnitIntervalRatification — quorum validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proposal_rejects_update_committee_quorum_zero_denominator() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members = BTreeMap::new();
+        members.insert(crate::StakeCredential::AddrKeyHash([0xAA; 28]), 100);
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: members,
+                quorum: UnitInterval { numerator: 1, denominator: 0 },
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::WellFormedUnitIntervalRatification { .. })
+        ));
+    }
+
+    #[test]
+    fn proposal_rejects_update_committee_quorum_numerator_exceeds_denominator() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members = BTreeMap::new();
+        members.insert(crate::StakeCredential::AddrKeyHash([0xAA; 28]), 100);
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: members,
+                quorum: UnitInterval { numerator: 5, denominator: 3 },
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::WellFormedUnitIntervalRatification { .. })
+        ));
+    }
+
+    #[test]
+    fn proposal_accepts_update_committee_quorum_valid_unit_interval() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members = BTreeMap::new();
+        members.insert(crate::StakeCredential::AddrKeyHash([0xAA; 28]), 100);
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: members,
+                quorum: UnitInterval { numerator: 2, denominator: 3 },
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+        );
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // CC tally hot/cold credential resolution
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn committee_tally_resolves_hot_credential_distinct_from_cold() {
+        // Cold credential ≠ hot credential — vote is keyed by HOT.
+        // Verify tally correctly resolves cold→hot.
+        let mut action = test_no_confidence_action();
+        let mut cs = CommitteeState::default();
+        let cold = StakeCredential::AddrKeyHash([0x50; 28]);
+        let hot = StakeCredential::AddrKeyHash([0x60; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+
+        // Vote is stored under the HOT credential hash (per Conway CDDL).
+        action.votes.insert(Voter::CommitteeKeyHash([0x60; 28]), Vote::Yes);
+
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0)));
+    }
+
+    #[test]
+    fn committee_tally_vote_under_cold_hash_not_found() {
+        // If someone mistakenly inserts a vote keyed by the COLD hash,
+        // the tally should NOT find it when the member has a distinct hot.
+        let mut action = test_no_confidence_action();
+        let mut cs = CommitteeState::default();
+        let cold = StakeCredential::AddrKeyHash([0x50; 28]);
+        let hot = StakeCredential::AddrKeyHash([0x60; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+
+        // Incorrectly keyed by cold hash.
+        action.votes.insert(Voter::CommitteeKeyHash([0x50; 28]), Vote::Yes);
+
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        // Should fail — the vote is under the wrong key.
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0)));
+    }
+
+    #[test]
+    fn committee_tally_unauthorized_member_vote_ignored() {
+        // Member with no hot credential authorization — vote cannot be found.
+        let mut action = test_no_confidence_action();
+        let mut cs = CommitteeState::default();
+        let cold = StakeCredential::AddrKeyHash([0x50; 28]);
+        cs.register(cold);
+        // No hot credential authorized.
+
+        // Vote under cold hash (the only hash available).
+        action.votes.insert(Voter::CommitteeKeyHash([0x50; 28]), Vote::Yes);
+
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        // Unauthorized member — vote not counted.
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0)));
+    }
+
+    // -----------------------------------------------------------------------
     // Vote recasting and DRep vote removal on unregistration
     // -----------------------------------------------------------------------
 
@@ -15592,6 +15995,68 @@ mod tests {
         assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(dp.key_deposits, 2_000_000);
+    }
+
+    /// Conway DELEG rule: `checkStakeKeyNotRegistered` —
+    /// `AccountRegistrationDeposit` must reject if credential is already registered.
+    /// Reference: `Cardano.Ledger.Conway.Rules.Deleg` — `StakeKeyRegisteredDELEG`.
+    #[test]
+    fn test_cert_conway_reregistration_rejected() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xC1; 28]);
+        // Pre-register the credential so re-registration should be rejected.
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        // AccountRegistrationDeposit (tag 7) — must fail.
+        let certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
+        let res = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        );
+        assert!(matches!(res, Err(LedgerError::StakeCredentialAlreadyRegistered(_))));
+    }
+
+    /// Conway DELEG rule: `checkStakeKeyNotRegistered` for
+    /// `AccountRegistrationDelegationToStakePool` (tag 9).
+    #[test]
+    fn test_cert_conway_reg_deleg_pool_reregistration_rejected() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xE1; 28];
+        pool.register(PoolParams {
+            operator,
+            vrf_keyhash: [0xE1; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xE1; 28]) },
+            pool_owners: vec![[0xE1; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        });
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
+        // Pre-register so re-registration via reg+deleg cert should fail.
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePool(cred, operator, 2_000_000)];
+        let res = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        );
+        assert!(matches!(res, Err(LedgerError::StakeCredentialAlreadyRegistered(_))));
     }
 
     #[test]
@@ -17320,12 +17785,13 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Conway re-registration silent no-op tests
-    // Reference: Cardano.Ledger.Conway.Rules.Deleg — `when (not exists) $ do …`
+    // Conway re-registration rejection tests
+    // Reference: Cardano.Ledger.Conway.Rules.Deleg — `checkStakeKeyNotRegistered`
+    // Upstream rejects re-registration with `StakeKeyRegisteredDELEG`.
     // ------------------------------------------------------------------
 
     #[test]
-    fn conway_tag7_re_registration_is_silent_noop() {
+    fn conway_tag7_re_registration_is_rejected() {
         let mut pool = PoolState::new();
         let mut sc = StakeCredentials::new();
         let cred = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
@@ -17340,15 +17806,15 @@ mod tests {
 
         // Conway tag 7: AccountRegistrationDeposit on already-registered cred.
         let certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
-        let adj = apply_certificates_and_withdrawals(
+        let err = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+        ).unwrap_err();
 
-        // Must succeed as a no-op: no additional deposit charged.
-        assert_eq!(adj.total_deposits, 0);
-        assert!(sc.is_registered(&cred));
-        assert_eq!(dp.key_deposits, 2_000_000); // unchanged
+        // Upstream: `StakeKeyRegisteredDELEG` — re-registration is rejected.
+        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
+        // Deposit pot unchanged.
+        assert_eq!(dp.key_deposits, 2_000_000);
     }
 
     #[test]
@@ -17374,7 +17840,7 @@ mod tests {
     }
 
     #[test]
-    fn conway_tag11_re_registration_delegates_without_double_deposit() {
+    fn conway_tag11_re_registration_rejected() {
         let mut pool = PoolState::new();
         let mut sc = StakeCredentials::new();
         let cred = crate::StakeCredential::AddrKeyHash([0xA3; 28]);
@@ -17399,19 +17865,17 @@ mod tests {
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
-        // Conway tag 11: AccountRegistrationDelegationToStakePool.
+        // Conway tag 11: AccountRegistrationDelegationToStakePool on already-registered cred.
         let certs = vec![DCert::AccountRegistrationDelegationToStakePool(
             cred, pool_hash, 2_000_000,
         )];
-        let adj = apply_certificates_and_withdrawals(
+        let err = apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+        ).unwrap_err();
 
-        // No additional deposit charged (registration was no-op).
-        assert_eq!(adj.total_deposits, 0);
-        // But delegation must have occurred.
-        assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(pool_hash));
+        // Upstream: `StakeKeyRegisteredDELEG` — re-registration is rejected.
+        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
         assert_eq!(dp.key_deposits, 2_000_000); // unchanged
     }
 
@@ -17522,6 +17986,120 @@ mod tests {
         assert!(
             pool.get(&operator).unwrap().retiring_epoch.is_none(),
             "pool retiring_epoch must not be set when epoch validation fails",
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // ExtraneousScriptWitness — reference script deduction (Babbage+)
+    // ----------------------------------------------------------------
+
+    /// Helper: build a default (empty) ShelleyWitnessSet.
+    fn empty_witness_set() -> crate::eras::shelley::ShelleyWitnessSet {
+        crate::eras::shelley::ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        }
+    }
+
+    #[test]
+    fn extraneous_script_witness_accepted_when_in_required() {
+        // Script is required and provided → OK.
+        let ns = crate::eras::allegra::NativeScript::ScriptPubkey([0xAA; 28]);
+        let hash = crate::native_script::native_script_hash(&ns);
+        let mut ws = empty_witness_set();
+        ws.native_scripts.push(ns);
+        let mut required = HashSet::new();
+        required.insert(hash);
+        let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extraneous_script_witness_rejected_when_not_required() {
+        // Script is provided but NOT required → ExtraneousScriptWitness.
+        let ns = crate::eras::allegra::NativeScript::ScriptPubkey([0xBB; 28]);
+        let hash = crate::native_script::native_script_hash(&ns);
+        let mut ws = empty_witness_set();
+        ws.native_scripts.push(ns);
+        let required = HashSet::new(); // nothing required
+        let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, None);
+        assert!(matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash));
+    }
+
+    #[test]
+    fn extraneous_script_deducted_by_reference_babbage() {
+        // Script is required AND provided via reference. The witness copy is
+        // extraneous because the reference already satisfies it. Upstream
+        // Babbage logic: `neededNonRefs = sNeeded \ sRefs`, then
+        // `sReceived ⊆ neededNonRefs` must hold. Because the script is in
+        // sRefs, it is removed from needed, making the witness extraneous.
+        let ns = crate::eras::allegra::NativeScript::ScriptPubkey([0xCC; 28]);
+        let hash = crate::native_script::native_script_hash(&ns);
+        let mut ws = empty_witness_set();
+        ws.native_scripts.push(ns); // provided in witness set
+        let mut required = HashSet::new();
+        required.insert(hash); // required by transaction
+        let mut refs = HashSet::new();
+        refs.insert(hash); // also available via reference input
+        // With refs: neededNonRefs = required \ refs = ∅ → witness is extraneous.
+        let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, Some(&refs));
+        assert!(
+            matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash),
+            "script satisfied by reference must make the witness extraneous",
+        );
+    }
+
+    #[test]
+    fn extraneous_script_not_deducted_without_reference() {
+        // Same scenario but refs = None (pre-Babbage era). The witness is
+        // acceptable because reference deduction doesn't apply.
+        let ns = crate::eras::allegra::NativeScript::ScriptPubkey([0xCC; 28]);
+        let hash = crate::native_script::native_script_hash(&ns);
+        let mut ws = empty_witness_set();
+        ws.native_scripts.push(ns);
+        let mut required = HashSet::new();
+        required.insert(hash);
+        // Without refs: neededNonRefs = required → witness is accepted.
+        let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, None);
+        assert!(result.is_ok(), "without reference deduction, witness covering a required script is fine");
+    }
+
+    #[test]
+    fn extraneous_script_partial_deduction() {
+        // Two scripts required, one is via reference. Providing only the
+        // non-referenced one as a witness is OK. Providing both is not.
+        let ns_a = crate::eras::allegra::NativeScript::ScriptPubkey([0xDD; 28]);
+        let ns_b = crate::eras::allegra::NativeScript::ScriptPubkey([0xEE; 28]);
+        let hash_a = crate::native_script::native_script_hash(&ns_a);
+        let hash_b = crate::native_script::native_script_hash(&ns_b);
+        let mut required = HashSet::new();
+        required.insert(hash_a);
+        required.insert(hash_b);
+        let mut refs = HashSet::new();
+        refs.insert(hash_b); // only B is via reference
+
+        // Providing only A → OK
+        let mut ws1 = empty_witness_set();
+        ws1.native_scripts.push(ns_a.clone());
+        assert!(
+            validate_no_extraneous_script_witnesses_typed(&ws1, &required, Some(&refs)).is_ok(),
+            "only the non-referenced script as witness should be accepted",
+        );
+
+        // Providing both A and B → B is extraneous
+        let mut ws2 = empty_witness_set();
+        ws2.native_scripts.push(ns_a);
+        ws2.native_scripts.push(ns_b);
+        let result = validate_no_extraneous_script_witnesses_typed(&ws2, &required, Some(&refs));
+        assert!(
+            matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash_b),
+            "script B is available via reference, so providing it as witness is extraneous",
         );
     }
 }

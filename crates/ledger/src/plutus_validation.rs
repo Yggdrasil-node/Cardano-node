@@ -739,9 +739,6 @@ pub fn validate_supplemental_datums(
 
     // tx_hashes: all datum hashes from witness set
     let tx_hashes: HashSet<[u8; 32]> = collect_datum_map(&ws).into_keys().collect();
-    if tx_hashes.is_empty() {
-        return Ok(());
-    }
 
     // Collect Plutus scripts (witness + reference + spending) to identify Plutus-locked inputs.
     let ref_txins: Vec<_> = reference_input_utxos.iter().map(|(txin, _)| txin.clone()).collect();
@@ -777,6 +774,15 @@ pub fn validate_supplemental_datums(
     for (_, ref_txout) in reference_input_utxos {
         if let Some(dh) = ref_txout.datum_hash() {
             allowed.insert(dh);
+        }
+    }
+
+    // Phase-1 check: input_hashes ⊆ tx_hashes — every Plutus-locked
+    // spending input's datum hash must be present in the witness datum map.
+    // Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums`.
+    for dh in &input_hashes {
+        if !tx_hashes.contains(dh) {
+            return Err(LedgerError::MissingRequiredDatums { hash: *dh });
         }
     }
 
@@ -2345,5 +2351,58 @@ mod tests {
         let (version, bytes) = scripts_with.get(&script_hash).unwrap();
         assert_eq!(*version, PlutusVersion::V2);
         assert_eq!(bytes, &script_bytes);
+    }
+
+    /// Phase-1 check: Plutus-locked spending inputs whose datum hash is
+    /// not in the witness datum map must be rejected with
+    /// `MissingRequiredDatums` before script evaluation (not Phase-2).
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums`.
+    #[test]
+    fn validate_supplemental_datums_rejects_missing_required_datum() {
+        let script_bytes = vec![0x01, 0x02, 0x03];
+        let script_hash = plutus_script_hash(PlutusVersion::V1, &script_bytes);
+
+        let txin = ShelleyTxIn { transaction_id: [0xAB; 32], index: 0 };
+        let address = Address::Enterprise(EnterpriseAddress {
+            network: 1,
+            payment: StakeCredential::ScriptHash(script_hash),
+        }).to_bytes();
+
+        let mut utxo = MultiEraUtxo::new();
+        let datum_hash = [0x99; 32];
+        utxo.insert(
+            txin.clone(),
+            MultiEraTxOut::Alonzo(AlonzoTxOut {
+                address,
+                amount: Value::Coin(5_000_000),
+                datum_hash: Some(datum_hash),
+            }),
+        );
+
+        // Witness set with the PlutusV1 script but NO datum entries.
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![script_bytes],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let wb = ws.to_cbor_bytes();
+
+        let result = validate_supplemental_datums(
+            Some(&wb),
+            &utxo,
+            &[txin],
+            &[],
+            &[],
+        );
+        assert!(
+            matches!(result, Err(LedgerError::MissingRequiredDatums { hash }) if hash == datum_hash),
+            "must reject with MissingRequiredDatums when datum hash not in witness set, got: {:?}",
+            result,
+        );
     }
 }

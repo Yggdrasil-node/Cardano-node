@@ -229,3 +229,267 @@ fn allegra_block_rejects_extraneous_native_script() {
         result,
     );
 }
+
+// ── Shelley submitted path: extraneous native script ───────────────────
+
+/// The Shelley submitted-tx path must reject native scripts that are not
+/// required by any input, cert, or withdrawal — parity with upstream
+/// `extraneousScriptWitnessesUTXOW` which applies from Shelley onward.
+#[test]
+fn shelley_submitted_tx_rejects_extraneous_native_script() {
+    let signer = TestSigner::new([0xB1; 32]);
+    let mut state = LedgerState::new(Era::Shelley);
+    state.set_protocol_params(permissive_params());
+
+    // Seed a VKey-locked UTxO whose address matches the signer.
+    let input = ShelleyTxIn { transaction_id: [0xB1; 32], index: 0 };
+    state.utxo_mut().insert(input.clone(), ShelleyTxOut {
+        address: signer.enterprise_addr(),
+        amount: 5_000_000,
+    });
+
+    let body = ShelleyTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    let unrequired_script = NativeScript::ScriptAll(vec![]);
+    let unrequired_hash = native_script_hash(&unrequired_script);
+
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(unrequired_script);
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
+
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: None,
+    });
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ExtraneousScriptWitness { hash }) if hash == unrequired_hash
+        ),
+        "expected ExtraneousScriptWitness for Shelley, got: {:?}",
+        result,
+    );
+}
+
+// ── Shelley submitted path: required multisig script accepted ──────────
+
+/// When a native script IS required (script-locked UTxO input), the
+/// Shelley submitted path should accept it.
+#[test]
+fn shelley_submitted_tx_accepts_required_native_script() {
+    let mut state = LedgerState::new(Era::Shelley);
+    state.set_protocol_params(permissive_params());
+
+    // Script-locked UTxO: enterprise script-hash address (type 0x71)
+    let required_script = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&required_script);
+    let mut script_addr = vec![0x71]; // enterprise script-hash, network 1
+    script_addr.extend_from_slice(&script_hash);
+
+    let input = ShelleyTxIn {
+        transaction_id: [0xB2; 32],
+        index: 0,
+    };
+    state.utxo_mut().insert(
+        input.clone(),
+        ShelleyTxOut {
+            address: script_addr,
+            amount: 5_000_000,
+        },
+    );
+
+    let body = ShelleyTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: sample_addr(),
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(required_script);
+
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: None,
+    });
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        result.is_ok(),
+        "expected Ok for required native script in Shelley, got: {:?}",
+        result,
+    );
+}
+
+// ── Shelley block path: extraneous native script ───────────────────────
+
+/// Block path (apply_block_validated) should reject extraneous script
+/// witnesses in Shelley era.
+#[test]
+fn shelley_block_rejects_extraneous_native_script() {
+    let signer = TestSigner::new([0xB3; 32]);
+    let mut state = LedgerState::new(Era::Shelley);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn { transaction_id: [0xB3; 32], index: 0 };
+    state.utxo_mut().insert(input.clone(), ShelleyTxOut {
+        address: signer.enterprise_addr(),
+        amount: 5_000_000,
+    });
+
+    let body = ShelleyTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    let unrequired_script = NativeScript::ScriptAll(vec![]);
+    let unrequired_hash = native_script_hash(&unrequired_script);
+
+    let body_bytes = body.to_cbor_bytes();
+    let tx_body_hash = compute_tx_id(&body_bytes).0;
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(unrequired_script);
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
+    let ws_bytes = ws.to_cbor_bytes();
+
+    let tx = Tx {
+        id: compute_tx_id(&body_bytes),
+        body: body_bytes,
+        witnesses: Some(ws_bytes),
+        auxiliary_data: None,
+        is_valid: None,
+    };
+
+    let block = Block {
+        era: Era::Shelley,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        matches!(
+            result,
+            Err(LedgerError::ExtraneousScriptWitness { hash }) if hash == unrequired_hash
+        ),
+        "expected ExtraneousScriptWitness for Shelley block, got: {:?}",
+        result,
+    );
+}
+
+// ── Shelley block path: missing script witness ─────────────────────────
+
+/// When a Shelley-era UTxO is script-locked but no script is provided in
+/// the witness set, the block path should reject with MissingScriptWitness.
+#[test]
+fn shelley_block_rejects_missing_script_witness() {
+    let mut state = LedgerState::new(Era::Shelley);
+    state.set_protocol_params(permissive_params());
+
+    let required_script = NativeScript::ScriptAll(vec![]);
+    let script_hash = native_script_hash(&required_script);
+    let mut script_addr = vec![0x71];
+    script_addr.extend_from_slice(&script_hash);
+
+    let input = ShelleyTxIn {
+        transaction_id: [0xB4; 32],
+        index: 0,
+    };
+    state.utxo_mut().insert(
+        input.clone(),
+        ShelleyTxOut {
+            address: script_addr,
+            amount: 5_000_000,
+        },
+    );
+
+    let body = ShelleyTxBody {
+        inputs: vec![input],
+        outputs: vec![ShelleyTxOut {
+            address: sample_addr(),
+            amount: 5_000_000,
+        }],
+        fee: 0,
+        ttl: 1000,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+    };
+
+    // Witness set with NO scripts.
+    let ws = empty_witness_set();
+
+    let body_bytes = body.to_cbor_bytes();
+    let ws_bytes = ws.to_cbor_bytes();
+
+    let tx = Tx {
+        id: compute_tx_id(&body_bytes),
+        body: body_bytes,
+        witnesses: Some(ws_bytes),
+        auxiliary_data: None,
+        is_valid: None,
+    };
+
+    let block = Block {
+        era: Era::Shelley,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        matches!(result, Err(LedgerError::MissingScriptWitness { .. })),
+        "expected MissingScriptWitness for missing multisig in Shelley block, got: {:?}",
+        result,
+    );
+}

@@ -571,7 +571,7 @@ fn is_plutus_script_well_formed(
 }
 
 /// Computes the script hash for a `Script` enum value.
-fn script_hash(script: &crate::plutus::Script) -> [u8; 28] {
+pub fn script_hash(script: &crate::plutus::Script) -> [u8; 28] {
     use crate::plutus_validation::PlutusVersion;
     match script {
         crate::plutus::Script::Native(ns) => crate::native_script::native_script_hash(ns),

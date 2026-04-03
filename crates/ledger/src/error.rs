@@ -235,6 +235,12 @@ pub enum LedgerError {
     #[error("committee update proposal adds and removes the same members: {0:?}")]
     ConflictingCommitteeUpdate(Vec<StakeCredential>),
 
+    #[error("committee update proposal quorum is not a well-formed unit interval (numerator={numerator}, denominator={denominator})")]
+    WellFormedUnitIntervalRatification {
+        numerator: u64,
+        denominator: u64,
+    },
+
     #[error("committee update proposal uses expiration epochs that are not after the current epoch: {0:?}")]
     ExpirationEpochTooSmall(Vec<(StakeCredential, EpochNo)>),
 
@@ -521,6 +527,14 @@ pub enum LedgerError {
     /// (`NotAllowedSupplementalDatums`).
     #[error("witness datum with hash {hash:02x?} is not allowed as supplemental")]
     NotAllowedSupplementalDatums { hash: [u8; 32] },
+
+    /// A Plutus-locked spending input's datum hash is not present in the
+    /// transaction witness datum map — the script cannot be executed.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums`
+    /// (`MissingRequiredDatums`).
+    #[error("required datum hash {hash:02x?} not present in witness datums")]
+    MissingRequiredDatums { hash: [u8; 32] },
 
     /// A Plutus-script-locked spending input (PlutusV1 or PlutusV2) lacks a datum
     /// or inline datum. The UTxO is unspendable without datum information.

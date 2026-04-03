@@ -31,6 +31,17 @@ pub struct ChainEntry {
     pub slot: SlotNo,
     /// The block's height (block number).
     pub block_no: BlockNo,
+    /// The previous block's header hash from this block's header.
+    ///
+    /// When `Some`, [`ChainState::roll_forward`] validates that this
+    /// matches the current tip's header hash, enforcing the CHAINHEAD
+    /// prev-hash invariant.  `None` is accepted for the first block
+    /// (genesis) and for test convenience when prev-hash tracking
+    /// is not needed.
+    ///
+    /// Reference: `blockPrevHash` in
+    /// `Ouroboros.Consensus.Block.Abstract`.
+    pub prev_hash: Option<HeaderHash>,
 }
 
 /// Tracks the volatile tip of the chain with rollback depth enforcement.
@@ -89,8 +100,14 @@ impl ChainState {
 
     /// Roll forward by appending a new block to the chain tip.
     ///
-    /// Returns an error if the block number does not strictly follow the
-    /// current tip's block number.
+    /// Enforces three CHAINHEAD invariants:
+    /// 1. **Block number contiguous** — `entry.block_no == tip.block_no + 1`
+    /// 2. **Slot strictly increasing** — `entry.slot > tip.slot`
+    /// 3. **Prev-hash matches tip** — when `entry.prev_hash` is `Some`,
+    ///    it must equal the current tip's header hash
+    ///
+    /// Reference: `tickChainDepState` and `chainSelectionForBlock` in
+    /// `Ouroboros.Consensus`.
     pub fn roll_forward(&mut self, entry: ChainEntry) -> Result<(), ConsensusError> {
         if let Some(last) = self.entries.last() {
             if entry.block_no.0 != last.block_no.0 + 1 {
@@ -98,6 +115,20 @@ impl ChainState {
                     expected: last.block_no.0 + 1,
                     got: entry.block_no.0,
                 });
+            }
+            if entry.slot.0 <= last.slot.0 {
+                return Err(ConsensusError::SlotNotIncreasing {
+                    tip_slot: last.slot.0,
+                    block_slot: entry.slot.0,
+                });
+            }
+            if let Some(prev) = entry.prev_hash {
+                if prev != last.hash {
+                    return Err(ConsensusError::PrevHashMismatch {
+                        expected: last.hash,
+                        got: prev,
+                    });
+                }
             }
         }
         self.entries.push(entry);
@@ -187,6 +218,7 @@ mod tests {
             hash: HeaderHash(hash),
             slot: SlotNo(slot),
             block_no: BlockNo(block_no),
+            prev_hash: None,
         }
     }
 
@@ -251,6 +283,72 @@ mod tests {
                 got: 3,
             }
         );
+    }
+
+    #[test]
+    fn roll_forward_rejects_non_increasing_slot() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.roll_forward(mk_entry(0, 10)).unwrap();
+        // same slot
+        let err = cs.roll_forward(mk_entry(1, 10)).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::SlotNotIncreasing {
+                tip_slot: 10,
+                block_slot: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn roll_forward_rejects_decreasing_slot() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.roll_forward(mk_entry(0, 20)).unwrap();
+        let err = cs.roll_forward(mk_entry(1, 15)).unwrap_err();
+        assert_eq!(
+            err,
+            ConsensusError::SlotNotIncreasing {
+                tip_slot: 20,
+                block_slot: 15,
+            }
+        );
+    }
+
+    #[test]
+    fn roll_forward_validates_prev_hash_when_present() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        let first = mk_entry(0, 0);
+        let first_hash = first.hash;
+        cs.roll_forward(first).unwrap();
+
+        // Correct prev_hash.
+        let mut second = mk_entry(1, 10);
+        second.prev_hash = Some(first_hash);
+        cs.roll_forward(second).unwrap();
+        assert_eq!(cs.volatile_len(), 2);
+    }
+
+    #[test]
+    fn roll_forward_rejects_wrong_prev_hash() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        let first = mk_entry(0, 0);
+        cs.roll_forward(first).unwrap();
+
+        let mut second = mk_entry(1, 10);
+        second.prev_hash = Some(HeaderHash([0xFF; 32])); // wrong
+        let err = cs.roll_forward(second).unwrap_err();
+        assert!(matches!(err, ConsensusError::PrevHashMismatch { .. }));
+    }
+
+    #[test]
+    fn roll_forward_skips_prev_hash_check_when_none() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.roll_forward(mk_entry(0, 0)).unwrap();
+        // prev_hash = None → no check
+        let second = mk_entry(1, 10);
+        assert!(second.prev_hash.is_none());
+        cs.roll_forward(second).unwrap();
+        assert_eq!(cs.volatile_len(), 2);
     }
 
     // ── roll_backward ────────────────────────────────────────────────

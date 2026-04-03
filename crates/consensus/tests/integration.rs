@@ -673,6 +673,7 @@ fn entry(fill: u8, slot: u64, block_no: u64) -> ChainEntry {
         hash: HeaderHash([fill; 32]),
         slot: SlotNo(slot),
         block_no: BlockNo(block_no),
+        prev_hash: None,
     }
 }
 
@@ -881,6 +882,7 @@ fn mainnet_security_param() {
             hash: HeaderHash([0x00; 32]),
             slot: SlotNo(i),
             block_no: BlockNo(i),
+            prev_hash: None,
         })
         .expect("forward");
     }

@@ -2433,16 +2433,16 @@ mod tests {
     #[test]
     fn test_hf_enacted_with_unanimous_votes() {
         let mut ledger = make_governance_ledger();
-        let cc_cold_cred = test_cred(0xC0);
+        let cc_hot_cred = test_cred(0xC1);
         let drep_cred = [0xD0; 28];
         let pool_key = test_pool(20);
 
         let gai = test_gov_action_id(0xC1, 0);
         let mut gas = GovernanceActionState::new(test_hf_proposal());
 
-        // Record CC vote (yes) — keyed by cold credential.
+        // Record CC vote (yes) — keyed by HOT credential (CDDL tags 0/1).
         gas.record_vote(
-            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
             Vote::Yes,
         );
         // Record DRep vote (yes).
@@ -2498,7 +2498,7 @@ mod tests {
     #[test]
     fn test_new_constitution_enacted_updates_enact_state() {
         let mut ledger = make_governance_ledger();
-        let cc_cold_cred = test_cred(0xC0);
+        let cc_hot_cred = test_cred(0xC1);
         let drep_cred = [0xD0; 28];
 
         let gai = test_gov_action_id(0xE1, 0);
@@ -2506,7 +2506,7 @@ mod tests {
 
         // NewConstitution requires CC + DRep, but NOT SPO.
         gas.record_vote(
-            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
             Vote::Yes,
         );
         gas.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
@@ -2743,7 +2743,7 @@ mod tests {
     #[test]
     fn test_update_committee_enacted_when_result_meets_min_committee_size() {
         let mut ledger = make_governance_ledger();
-        let cc_cold_cred = test_cred(0xC0);
+        let cc_hot_cred = test_cred(0xC1);
 
         let mut drep_thresholds = DRepVotingThresholds::default();
         drep_thresholds.committee_normal = UnitInterval {
@@ -2784,7 +2784,7 @@ mod tests {
         let gai = test_gov_action_id(0xFD, 0);
         let mut gas = GovernanceActionState::new(proposal);
         gas.record_vote(
-            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
             Vote::Yes,
         );
         ledger
@@ -2971,7 +2971,7 @@ mod tests {
         // A has votes and will be enacted. B has no votes.
         // After A is enacted, B should be removed (its prev_action_id is stale).
         let mut ledger = make_governance_ledger();
-        let cc_cold_cred = test_cred(0xC0);
+        let cc_hot_cred = test_cred(0xC1);
         let drep_cred = [0xD0; 28];
         let pool_key = test_pool(20);
 
@@ -3002,7 +3002,7 @@ mod tests {
         let gai_a = test_gov_action_id(0xF0, 0);
         let mut gas_a = GovernanceActionState::new(proposal_a);
         gas_a.record_vote(
-            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
             Vote::Yes,
         );
         gas_a.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
@@ -3056,7 +3056,7 @@ mod tests {
             let gai_a2 = test_gov_action_id(0xF2, 0);
             let mut gas_a2 = GovernanceActionState::new(proposal_a2);
             gas_a2.record_vote(
-                Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+                Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
                 Vote::Yes,
             );
             gas_a2.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
@@ -3107,7 +3107,7 @@ mod tests {
         // B references None (the old root) → stale.
         // C references B (stale) → also stale.
         let mut ledger = make_governance_ledger();
-        let cc_cold_cred = test_cred(0xC0);
+        let cc_hot_cred = test_cred(0xC1);
         let drep_cred = [0xD0; 28];
         let pool_key = test_pool(20);
 
@@ -3152,7 +3152,7 @@ mod tests {
         };
         let mut gas_a = GovernanceActionState::new(proposal_a);
         gas_a.record_vote(
-            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
             Vote::Yes,
         );
         gas_a.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
@@ -3278,7 +3278,7 @@ mod tests {
         // If a HardFork is enacted, a ParameterChange with prev_action_id=None
         // should NOT be pruned — they are different purposes.
         let mut ledger = make_governance_ledger();
-        let cc_cold_cred = test_cred(0xC0);
+        let cc_hot_cred = test_cred(0xC1);
         let drep_cred = [0xD0; 28];
         let pool_key = test_pool(20);
 
@@ -3314,7 +3314,7 @@ mod tests {
         };
         let mut gas_hf = GovernanceActionState::new(proposal_hf);
         gas_hf.record_vote(
-            Voter::CommitteeKeyHash(*cc_cold_cred.hash()),
+            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
             Vote::Yes,
         );
         gas_hf.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);

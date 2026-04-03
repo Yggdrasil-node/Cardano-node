@@ -2749,30 +2749,43 @@ pub async fn sync_step_multi_era(
 /// tracking from genesis.
 pub fn multi_era_block_to_chain_entry(block: &MultiEraBlock) -> Option<ChainEntry> {
     match block {
-        MultiEraBlock::Byron { block: byron, .. } => Some(ChainEntry {
-            hash: byron.header_hash(),
-            slot: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
-            block_no: BlockNo(byron.chain_difficulty()),
-        }),
+        MultiEraBlock::Byron { block: byron, .. } => {
+            let prev = match byron {
+                yggdrasil_ledger::eras::byron::ByronBlock::EpochBoundary { prev_hash, .. }
+                | yggdrasil_ledger::eras::byron::ByronBlock::MainBlock { prev_hash, .. } => {
+                    Some(HeaderHash(*prev_hash))
+                }
+            };
+            Some(ChainEntry {
+                hash: byron.header_hash(),
+                slot: SlotNo(byron.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
+                block_no: BlockNo(byron.chain_difficulty()),
+                prev_hash: prev,
+            })
+        }
         MultiEraBlock::Shelley(b) => Some(ChainEntry {
             hash: b.header_hash(),
             slot: SlotNo(b.header.body.slot),
             block_no: BlockNo(b.header.body.block_number),
+            prev_hash: b.header.body.prev_hash.map(HeaderHash),
         }),
         MultiEraBlock::Alonzo(b) => Some(ChainEntry {
             hash: b.header_hash(),
             slot: SlotNo(b.header.body.slot),
             block_no: BlockNo(b.header.body.block_number),
+            prev_hash: b.header.body.prev_hash.map(HeaderHash),
         }),
         MultiEraBlock::Babbage(b) => Some(ChainEntry {
             hash: b.header_hash(),
             slot: SlotNo(b.header.body.slot),
             block_no: BlockNo(b.header.body.block_number),
+            prev_hash: b.header.body.prev_hash.map(HeaderHash),
         }),
         MultiEraBlock::Conway(b) => Some(ChainEntry {
             hash: b.header_hash(),
             slot: SlotNo(b.header.body.slot),
             block_no: BlockNo(b.header.body.block_number),
+            prev_hash: b.header.body.prev_hash.map(HeaderHash),
         }),
     }
 }

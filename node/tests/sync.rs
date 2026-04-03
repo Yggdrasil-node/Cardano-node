@@ -2794,6 +2794,7 @@ fn cross_subsystem_block_to_chain_state_to_storage() {
                 hash,
                 slot: SlotNo(i * 10),
                 block_no: BlockNo(i),
+                prev_hash: None,
             })
             .expect("chain forward");
     }
@@ -2857,6 +2858,7 @@ fn cross_subsystem_rollback_flow() {
                 hash,
                 slot: SlotNo(i * 10),
                 block_no: BlockNo(i),
+                prev_hash: None,
             })
             .expect("forward");
     }
@@ -3085,7 +3087,7 @@ fn make_shelley_block_with_number(block_no: u64, slot: u64) -> ShelleyBlock {
             body: ShelleyHeaderBody {
                 block_number: block_no,
                 slot,
-                prev_hash: Some([block_no as u8; 32]),
+                prev_hash: None,
                 issuer_vkey: [0u8; 32],
                 vrf_vkey: [0u8; 32],
                 nonce_vrf: ShelleyVrfCert {
@@ -3234,6 +3236,7 @@ fn promote_stable_blocks_moves_to_immutable() {
             hash: b.header.hash,
             slot: b.header.slot_no,
             block_no: b.header.block_no,
+            prev_hash: None,
         })
         .collect();
 
@@ -3272,6 +3275,7 @@ fn chaindb_promote_volatile_prefix_moves_to_immutable_and_prunes_volatile() {
             hash: b.header.hash,
             slot: b.header.slot_no,
             block_no: b.header.block_no,
+            prev_hash: None,
         })
         .collect();
 

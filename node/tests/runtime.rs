@@ -890,10 +890,8 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     let magic = 77;
 
     let block_one = build_multi_era_envelope(0, &build_byron_ebb_body(0, 1, &[0; 32]));
-    let tip_one = Point::BlockPoint(
-        SlotNo(0),
-        ByronBlock::decode_ebb(&block_one[2..]).expect("decode ebb 1").header_hash(),
-    );
+    let block_one_hash = ByronBlock::decode_ebb(&block_one[2..]).expect("decode ebb 1").header_hash();
+    let tip_one = Point::BlockPoint(SlotNo(0), block_one_hash);
     let first_addr = spawn_verified_batch_responder(
         magic,
         tip_one,
@@ -902,9 +900,9 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     )
     .await;
 
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(0, 2, &[0; 32]));
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &block_one_hash.0));
     let tip_two = Point::BlockPoint(
-        SlotNo(0),
+        SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
     );
     let second_addr = spawn_verified_batch_responder(
@@ -975,7 +973,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         .latest_ledger_checkpoint()
         .expect("decode checkpoint")
         .expect("checkpoint persisted after chaindb sync");
-    assert_eq!(checkpoint_slot, SlotNo(0));
+    assert_eq!(checkpoint_slot, SlotNo(21600));
     assert_eq!(checkpoint.restore().tip, tip_two);
 }
 
@@ -1143,9 +1141,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x11; 32]));
     checkpoint_state.tip = recovered_point;
 
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(0, 2, &[0; 32]));
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
-        SlotNo(0),
+        SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
     );
     let addr = spawn_verified_batch_responder_from_point(
@@ -1230,7 +1228,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         .latest_ledger_checkpoint()
         .expect("decode checkpoint")
         .expect("checkpoint persisted after resumed sync");
-    assert_eq!(checkpoint_slot, SlotNo(0));
+    assert_eq!(checkpoint_slot, SlotNo(21600));
     assert_eq!(checkpoint.restore().tip, tip_two);
 }
 
@@ -1241,9 +1239,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x11; 32]));
     let first_addr = spawn_disconnect_after_handshake_responder(magic).await;
 
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(0, 2, &[0; 32]));
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
-        SlotNo(0),
+        SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
     );
     let second_addr = spawn_verified_batch_responder_from_point(
@@ -1342,9 +1340,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x22; 32]));
     let first_addr = spawn_disconnect_after_handshake_responder(magic).await;
 
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(0, 2, &[0; 32]));
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
-        SlotNo(0),
+        SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
     );
     let second_addr = spawn_verified_batch_responder_from_point(

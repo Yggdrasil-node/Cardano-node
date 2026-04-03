@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 40 parity audit rounds completed (400 upstream rule areas verified); production-ready across all subsystems
+**Status**: 44 parity audit rounds completed (410+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -18,12 +18,12 @@
 | **Peer Management** | Governor with dual churn, big-ledger evaluation, in-flight tracking, exponential backoff, forget-cold-peers, PickPolicy randomized selection, connection manager lifecycle, inbound governor | ✅ 100% |
 | **Mempool** | Fee-ordered queue + TTL + eviction + collateral + ExUnits + conflict detection + cross-peer TxId dedup + ledger revalidation (syncWithLedger) + epoch revalidation | ✅ 100% |
 | **Storage** | Immutable/volatile/checkpoint stores with GC, slot lookup, corruption resilience, active crash recovery, fsync durability, ChainDB promote-stable-blocks | ✅ 100% |
-| **Plutus** | CEK machine (88 builtins, V1/V2/V3), 16 cost expression shapes, parameterized cost model, Flat deserialization, ScriptContext construction | ✅ 98% |
+| **Plutus** | CEK machine (88 builtins, V1/V2/V3), 16 cost expression shapes, parameterized cost model, Flat deserialization, ScriptContext per-version encoding parity | ✅ 99% |
 | **Block Production** | Credential loading, VRF leader election, KES evolution, header forging, self-validation, adoption tracing, slot clock loop | ✅ 100% |
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3917 workspace tests passing, 43 audit rounds covering 400+ upstream rule areas verified with zero gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3954 workspace tests passing, 44 audit rounds covering 410+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -117,10 +117,15 @@
 **Ledger**:
 - `validate_collateral()` — Complete: VKey-locked address enforcement, mandatory when redeemers present, Babbage return/total-collateral checks
 - `compute_epoch_rewards()` — Complete: upstream RUPD→SNAP ordering, delta_reserves-only reserves debit, fee pot not subtracted from reserves
-- `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; CC expired-member term filtering; threshold math complete
+- `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; CC expired-member term filtering; CC hot/cold credential resolution (votes keyed by HOT credential per Conway CDDL, tally resolves cold→hot); threshold math complete
+- `validate_conway_proposals()` — Proposal validation includes `WellFormedUnitIntervalRatification` (committee quorum must be valid unit interval: denominator > 0 and numerator ≤ denominator)
 - `ratify_and_enact()` — Enacted+expired+subtree-pruned deposit refunds via returnProposalDeposits; unclaimed→treasury
 - `remove_lineage_conflicting_proposals()` — proposalsApplyEnactment: purpose-root chain validation removes stale proposals
 - `apply_submitted_tx()` — Pre-mempool validation for LocalTxSubmission and runtime mempool admission paths
+
+**Consensus**:
+- `ChainState::roll_forward()` — CHAINHEAD validation enforces slot strictly increasing (`SlotNotIncreasing`) and prev-hash matching current tip hash (`PrevHashMismatch`), in addition to existing block-number contiguity check. Reference: `Ouroboros.Consensus.Block.Abstract` (`blockPrevHash`), `Ouroboros.Consensus.HeaderValidation` (slot monotonicity)
+- `ChainEntry::prev_hash` — Carries `Option<HeaderHash>` extracted per era (Byron `prev_hash`, Shelley/Alonzo/Babbage/Conway `header.body.prev_hash`); `None` skips the check for backward compatibility
 
 **Mempool**:
 - Collateral and script-budget checks — Enforced via staged ledger admission (`add_tx_to_shared_mempool`/`add_tx_to_mempool` calling `apply_submitted_tx` before insert)
@@ -311,4 +316,6 @@
 | 38 | Block production, forging, leader election (10 areas) | 10 | None |
 | 39 | Plutus CEK machine, builtins, cost model (10 areas) | 10 | None |
 | 40 | Peer governor, diffusion, connection manager (10 areas) | 10 | None |
-| **Total** | **All subsystems** | **400** | **3 fix rounds (atomicity, mempool, asset name)** |
+| 41-43 | UTxO validation, epoch boundary, BBODY/CHAINHEAD (30 areas) | 30 | Gap #14 CC hot/cold tally, Gap #15 well-formed UnitInterval, Gap #16 CHAINHEAD prev-hash + slot |
+| 44 | Plutus ScriptContext per-version encoding (10 areas) | 10 | Gap #17: 7 encoding bugs fixed (B1–B4, B6–B8) |
+| **Total** | **All subsystems** | **440** | **7 fix rounds** |

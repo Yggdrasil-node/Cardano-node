@@ -63,6 +63,28 @@ pub enum ConsensusError {
         /// The block number that was received.
         got: u64,
     },
+    /// The block's slot is not strictly greater than the previous tip slot.
+    ///
+    /// Reference: CHAINHEAD slot invariant from
+    /// `Ouroboros.Consensus.HeaderValidation`.
+    #[error("slot not increasing: tip slot {tip_slot}, block slot {block_slot}")]
+    SlotNotIncreasing {
+        /// The slot of the current chain tip.
+        tip_slot: u64,
+        /// The slot of the incoming block.
+        block_slot: u64,
+    },
+    /// The block's prev-hash does not match the current tip's header hash.
+    ///
+    /// Reference: CHAINHEAD prev-hash invariant from
+    /// `Ouroboros.Consensus.HeaderValidation`.
+    #[error("prev-hash mismatch: expected {expected:?}, got {got:?}")]
+    PrevHashMismatch {
+        /// The header hash of the current chain tip.
+        expected: HeaderHash,
+        /// The prev-hash declared in the incoming block's header.
+        got: HeaderHash,
+    },
     /// The VRF leader eligibility check failed — the block issuer's VRF
     /// output does not meet the leader threshold for their relative stake.
     #[error("VRF leader eligibility check failed")]

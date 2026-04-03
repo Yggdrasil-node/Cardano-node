@@ -196,7 +196,7 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
         tx_ctx
             .inputs
             .iter()
-            .filter_map(|(txin, txout)| plutus_input_data(txin, txout))
+            .filter_map(|(txin, txout)| plutus_input_data(version, txin, txout))
             .collect(),
     );
 
@@ -204,18 +204,20 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
         tx_ctx
             .resolved_reference_inputs
             .iter()
-            .filter_map(|(txin, txout)| plutus_input_data(txin, txout))
+            .filter_map(|(txin, txout)| plutus_input_data(version, txin, txout))
             .collect(),
     );
 
     let outputs_data = PlutusData::List(
-        tx_ctx.outputs.iter().filter_map(plutus_output_data).collect(),
+        tx_ctx.outputs.iter().filter_map(|o| plutus_output_data(version, o)).collect(),
     );
 
-    // Fee as lovelace-only Value map: "" -> ("" -> coin)
-    let fee = PlutusData::Map(vec![
-        (PlutusData::Bytes(vec![]), PlutusData::Integer(tx_ctx.fee as i128)),
-    ]);
+    // V1/V2 fee is a full Value: Map [(CurrencySymbol "", Map [(TokenName "", Integer fee)])]
+    // V3 fee is a plain Lovelace (Integer).
+    // Reference: V1/V2 — `transCoinToValue (txBody ^. feeTxBodyL)`
+    //            V3   — `transCoinToLovelace (txBody ^. feeTxBodyL)`
+    let fee_v1v2 = plutus_value_data(&yggdrasil_ledger::eras::mary::Value::Coin(tx_ctx.fee));
+    let fee_v3 = PlutusData::Integer(tx_ctx.fee as i128);
 
     let mint_entries: Vec<(PlutusData, PlutusData)> = tx_ctx
         .mint
@@ -274,13 +276,37 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
     let tx_id = PlutusData::Constr(0, vec![PlutusData::Bytes(tx_ctx.tx_hash.to_vec())]);
 
     match version {
-        PlutusVersion::V1 => Ok(PlutusData::Constr(
+        PlutusVersion::V1 => {
+            // V1 mint prepends zero-ADA entry (upstream `transMintValue m = transCoinToValue zero <> transMultiAsset m`)
+            let mut v1_mint = vec![(
+                PlutusData::Bytes(vec![]),
+                PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::Integer(0))]),
+            )];
+            v1_mint.extend(mint_entries);
+            // V1 withdrawals: [(StakingCredential, Integer)] as List of tuples
+            let wdrl_list_v1 = PlutusData::List(
+                wdrl_entries_v2
+                    .iter()
+                    .map(|(cred, amt)| PlutusData::Constr(0, vec![cred.clone(), amt.clone()]))
+                    .collect(),
+            );
+            // V1 datums: [(DatumHash, Datum)] as List of tuples
+            let datums_list_v1 = PlutusData::List(
+                tx_ctx
+                    .witness_datums
+                    .iter()
+                    .map(|(hash, datum)| {
+                        PlutusData::Constr(0, vec![PlutusData::Bytes(hash.to_vec()), datum.clone()])
+                    })
+                    .collect(),
+            );
+            Ok(PlutusData::Constr(
             0,
             vec![
                 inputs_data,                                          // inputs
                 outputs_data,                                         // outputs
-                fee,                                                  // fee
-                PlutusData::Map(mint_entries),                        // mint
+                fee_v1v2.clone(),                                     // fee (Value)
+                PlutusData::Map(v1_mint),                             // mint (with zero-ADA)
                 PlutusData::List(                                      // dcert (legacy encoding)
                     tx_ctx
                         .certificates
@@ -288,15 +314,21 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
                         .map(legacy_dcert_data)
                         .collect::<Result<Vec<_>, _>>()?,
                 ),
-                PlutusData::Map(wdrl_entries_v2),                     // withdrawals
+                wdrl_list_v1,                                         // withdrawals (list of tuples)
                 valid_range,                                          // validRange
                 signatories,                                          // signatories
-                datums,                                               // datums
+                datums_list_v1,                                       // datums (list of tuples)
                 tx_id,                                                // txInfoId
             ],
-        )),
+        ))},
 
         PlutusVersion::V2 => {
+            // V2 mint also prepends zero-ADA entry (upstream `transMintValue`)
+            let mut v2_mint = vec![(
+                PlutusData::Bytes(vec![]),
+                PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::Integer(0))]),
+            )];
+            v2_mint.extend(mint_entries);
             let redeemers_v2 = PlutusData::Map(
                 tx_ctx
                     .redeemers
@@ -310,8 +342,8 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
                 inputs_data,                                          // inputs
                 ref_inputs_data,                                      // referenceInputs (NEW)
                 outputs_data,                                         // outputs
-                fee,                                                  // fee
-                PlutusData::Map(mint_entries),                        // mint
+                fee_v1v2,                                             // fee (Value)
+                PlutusData::Map(v2_mint),                             // mint (with zero-ADA)
                 PlutusData::List(                                      // dcert (legacy encoding)
                     tx_ctx
                         .certificates
@@ -319,11 +351,11 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
                         .map(legacy_dcert_data)
                         .collect::<Result<Vec<_>, _>>()?,
                 ),
-                PlutusData::Map(wdrl_entries_v2),                     // withdrawals
+                PlutusData::Map(wdrl_entries_v2),                     // withdrawals (Map)
                 valid_range,                                          // validRange
                 signatories,                                          // signatories
                 redeemers_v2,                                         // redeemers
-                datums,                                               // datums
+                datums,                                               // datums (Map)
                 tx_id,                                                // txInfoId
             ],
         ))},
@@ -388,14 +420,14 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
                     inputs_data,                                      // inputs
                     ref_inputs_data,                                  // referenceInputs
                     outputs_data,                                     // outputs
-                    fee,                                              // fee
-                    PlutusData::Map(mint_entries),                    // mint
+                    fee_v3,                                           // fee (Lovelace = Integer)
+                    PlutusData::Map(mint_entries),                    // mint (V3: no zero-ADA padding)
                     tx_certs,                                         // txCerts (V3 encoding)
-                    PlutusData::Map(wdrl_entries_v3),                 // withdrawals
+                    PlutusData::Map(wdrl_entries_v3),                 // withdrawals (Map)
                     valid_range,                                      // validRange
                     signatories,                                      // signatories
                     redeemers_v3,                                     // redeemers
-                    datums,                                           // datums
+                    datums,                                           // datums (Map)
                     tx_id,                                            // txInfoId
                     votes,                                            // votes
                     proposal_procedures,                              // proposalProcedures
@@ -433,7 +465,7 @@ fn posix_time_range(start: Option<u64>, end: Option<u64>) -> PlutusData {
             0,
             vec![
                 PlutusData::Constr(1, vec![PlutusData::Integer(e as i128)]), // Finite
-                PlutusData::Constr(1, vec![]),                              // True (inclusive)
+                PlutusData::Constr(0, vec![]),                              // False (exclusive) — upstream strictUpperBound
             ],
         ),
         None => PlutusData::Constr(
@@ -449,12 +481,13 @@ fn posix_time_range(start: Option<u64>, end: Option<u64>) -> PlutusData {
 
 /// Encode a TxInInfo as PlutusData: Constr(0, [txOutRef, txOut]).
 fn plutus_input_data(
+    version: PlutusVersion,
     txin: &yggdrasil_ledger::eras::shelley::ShelleyTxIn,
     txout: &yggdrasil_ledger::utxo::MultiEraTxOut,
 ) -> Option<PlutusData> {
     Some(PlutusData::Constr(
         0,
-        vec![plutus_txin_data(txin), plutus_output_data(txout)?],
+        vec![plutus_txin_data(txin), plutus_output_data(version, txout)?],
     ))
 }
 
@@ -471,10 +504,13 @@ fn plutus_txin_data(txin: &yggdrasil_ledger::eras::shelley::ShelleyTxIn) -> Plut
 
 /// Encode a MultiEraTxOut as PlutusData.
 ///
-/// V1/V2 TxOut: Constr(0, [address, value, datum_hash_option])
-/// where address = Constr(0, [credential, maybe_staking_credential])
-///       value   = Map[(policy, Map[(asset, qty)])]  or just lovelace
-fn plutus_output_data(txout: &yggdrasil_ledger::utxo::MultiEraTxOut) -> Option<PlutusData> {
+/// V1 TxOut: Constr(0, [address, value, maybe_datum_hash]) — 3 fields, all eras
+///   Reference: `transTxOutV1` in Alonzo.Plutus.TxInfo / Conway.TxInfo
+///
+/// V2/V3 TxOut: Constr(0, [address, value, datum_option, script_ref]) — 4 fields (Babbage+)
+///         or   Constr(0, [address, value, maybe_datum_hash]) — 3 fields (pre-Babbage)
+///   Reference: `transTxOutV2` in Babbage.TxInfo
+fn plutus_output_data(version: PlutusVersion, txout: &yggdrasil_ledger::utxo::MultiEraTxOut) -> Option<PlutusData> {
     match txout {
         yggdrasil_ledger::utxo::MultiEraTxOut::Shelley(o) => Some(PlutusData::Constr(
             0,
@@ -507,29 +543,50 @@ fn plutus_output_data(txout: &yggdrasil_ledger::utxo::MultiEraTxOut) -> Option<P
             ))
         }
         yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(o) => {
-            let datum_field = match &o.datum_option {
-                Some(yggdrasil_ledger::eras::babbage::DatumOption::Hash(h)) => {
-                    PlutusData::Constr(1, vec![PlutusData::Bytes(h.to_vec())])
-                }
-                Some(yggdrasil_ledger::eras::babbage::DatumOption::Inline(d)) => {
-                    PlutusData::Constr(2, vec![d.clone()])
-                }
-                None => PlutusData::Constr(0, vec![]),
-            };
-            // For V2 TxOut shape: Constr(0, [address, value, datum_option, script_ref_option])
-            let script_ref_field = match &o.script_ref {
-                Some(sref) => PlutusData::Constr(0, vec![PlutusData::Bytes(script_hash_from_ref(sref).to_vec())]),
-                None => PlutusData::Constr(1, vec![]),
-            };
-            Some(PlutusData::Constr(
-                0,
-                vec![
-                    plutus_address_data(&o.address)?,
-                    plutus_value_data(&o.amount),
-                    datum_field,
-                    script_ref_field,
-                ],
-            ))
+            if version == PlutusVersion::V1 {
+                // V1: 3-element shape with Maybe DatumHash.
+                // Inline datums and reference scripts are not visible to V1 scripts.
+                // Reference: upstream `transTxOutV1` rejects inline datums with
+                // `InlineDatumsNotSupported`, but we silently downgrade here.
+                let datum_opt = match &o.datum_option {
+                    Some(yggdrasil_ledger::eras::babbage::DatumOption::Hash(h)) => {
+                        PlutusData::Constr(0, vec![PlutusData::Bytes(h.to_vec())])
+                    }
+                    _ => PlutusData::Constr(1, vec![]), // Nothing — inline datums invisible to V1
+                };
+                Some(PlutusData::Constr(
+                    0,
+                    vec![
+                        plutus_address_data(&o.address)?,
+                        plutus_value_data(&o.amount),
+                        datum_opt,
+                    ],
+                ))
+            } else {
+                // V2/V3: 4-element shape with OutputDatum and Maybe ScriptHash.
+                let datum_field = match &o.datum_option {
+                    Some(yggdrasil_ledger::eras::babbage::DatumOption::Hash(h)) => {
+                        PlutusData::Constr(1, vec![PlutusData::Bytes(h.to_vec())])
+                    }
+                    Some(yggdrasil_ledger::eras::babbage::DatumOption::Inline(d)) => {
+                        PlutusData::Constr(2, vec![d.clone()])
+                    }
+                    None => PlutusData::Constr(0, vec![]),
+                };
+                let script_ref_field = match &o.script_ref {
+                    Some(sref) => PlutusData::Constr(0, vec![PlutusData::Bytes(script_hash_from_ref(sref).to_vec())]),
+                    None => PlutusData::Constr(1, vec![]),
+                };
+                Some(PlutusData::Constr(
+                    0,
+                    vec![
+                        plutus_address_data(&o.address)?,
+                        plutus_value_data(&o.amount),
+                        datum_field,
+                        script_ref_field,
+                    ],
+                ))
+            }
         }
     }
 }
@@ -723,6 +780,29 @@ fn guard_legacy_plutus_context_features(
         return Err(LedgerError::UnsupportedPlutusContext(
             "Reference inputs require Plutus V2 context support",
         ));
+    }
+    // B7: V1 rejects inline datums and reference scripts in any resolved output.
+    // Reference: upstream `transTxOutV1` → InlineDatumsNotSupported / ReferenceScriptsNotSupported
+    if matches!(version, PlutusVersion::V1) {
+        let all_outputs = tx_ctx
+            .inputs
+            .iter()
+            .map(|(_, o)| o)
+            .chain(tx_ctx.outputs.iter());
+        for txout in all_outputs {
+            if let yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(b) = txout {
+                if matches!(b.datum_option, Some(yggdrasil_ledger::eras::babbage::DatumOption::Inline(_))) {
+                    return Err(LedgerError::UnsupportedPlutusContext(
+                        "Inline datums not supported in Plutus V1 context",
+                    ));
+                }
+                if b.script_ref.is_some() {
+                    return Err(LedgerError::UnsupportedPlutusContext(
+                        "Reference scripts not supported in Plutus V1 context",
+                    ));
+                }
+            }
+        }
     }
     if tx_ctx.voting_procedures.is_some() {
         return Err(LedgerError::UnsupportedPlutusContext(
@@ -2329,7 +2409,7 @@ mod tests {
         });
 
         assert_eq!(
-            plutus_output_data(&txout),
+            plutus_output_data(PlutusVersion::V2, &txout),
             Some(PlutusData::Constr(
                 0,
                 vec![
@@ -2378,7 +2458,7 @@ mod tests {
         });
 
         assert_eq!(
-            plutus_output_data(&txout),
+            plutus_output_data(PlutusVersion::V2, &txout),
             Some(PlutusData::Constr(
                 0,
                 vec![
@@ -2410,7 +2490,7 @@ mod tests {
             amount: 1,
         });
 
-        assert_eq!(plutus_output_data(&txout), None);
+        assert_eq!(plutus_output_data(PlutusVersion::V2, &txout), None);
     }
 
     #[test]
@@ -3107,11 +3187,11 @@ mod tests {
                 vec![
                     PlutusData::Constr(0, vec![
                         PlutusData::Constr(1, vec![PlutusData::Integer(1000)]), // Finite(1000)
-                        PlutusData::Constr(1, vec![]),                          // True
+                        PlutusData::Constr(1, vec![]),                          // True (inclusive)
                     ]),
                     PlutusData::Constr(0, vec![
                         PlutusData::Constr(1, vec![PlutusData::Integer(2000)]), // Finite(2000)
-                        PlutusData::Constr(1, vec![]),                          // True
+                        PlutusData::Constr(0, vec![]),                          // False (exclusive — upstream strictUpperBound)
                     ]),
                 ],
             )
@@ -3152,12 +3232,12 @@ mod tests {
                 PlutusData::Constr(1, vec![]),
             ])
         );
-        // Upper bound: Finite(9999)
+        // Upper bound: Finite(9999) — exclusive (upstream strictUpperBound)
         assert_eq!(
             fields[1],
             PlutusData::Constr(0, vec![
                 PlutusData::Constr(1, vec![PlutusData::Integer(9999)]),
-                PlutusData::Constr(1, vec![]),
+                PlutusData::Constr(0, vec![]),
             ])
         );
     }
@@ -3650,7 +3730,7 @@ mod tests {
             datum_option: None,
             script_ref: None,
         });
-        let result = plutus_input_data(&txin, &txout).expect("Should encode");
+        let result = plutus_input_data(PlutusVersion::V2, &txin, &txout).expect("Should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         assert_eq!(fields.len(), 2);
         // First field is the txin encoding
@@ -3744,7 +3824,7 @@ mod tests {
             address: addr.to_bytes(),
             amount: 2_000_000,
         });
-        let result = plutus_output_data(&txout).expect("Shelley should encode");
+        let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Shelley should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         assert_eq!(fields.len(), 3, "Shelley TxOut must have 3 fields");
         assert_eq!(fields[2], PlutusData::Constr(1, vec![]), "Datum must be Nothing");
@@ -3760,7 +3840,7 @@ mod tests {
             address: addr.to_bytes(),
             amount: Value::Coin(3_000_000),
         });
-        let result = plutus_output_data(&txout).expect("Mary should encode");
+        let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Mary should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         assert_eq!(fields.len(), 3, "Mary TxOut must have 3 fields");
         assert_eq!(fields[2], PlutusData::Constr(1, vec![]), "Datum must be Nothing");
@@ -3777,7 +3857,7 @@ mod tests {
             amount: Value::Coin(4_000_000),
             datum_hash: Some([0x44; 32]),
         });
-        let result = plutus_output_data(&txout).expect("Alonzo should encode");
+        let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Alonzo should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         assert_eq!(fields.len(), 3, "Alonzo TxOut must have 3 fields");
         assert_eq!(
@@ -3798,7 +3878,7 @@ mod tests {
             amount: Value::Coin(1_000_000),
             datum_hash: None,
         });
-        let result = plutus_output_data(&txout).expect("Alonzo should encode");
+        let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Alonzo should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         assert_eq!(fields[2], PlutusData::Constr(1, vec![]), "Datum must be Nothing");
     }
@@ -3814,7 +3894,7 @@ mod tests {
             datum_option: Some(DatumOption::Inline(PlutusData::Integer(777))),
             script_ref: None,
         });
-        let result = plutus_output_data(&txout).expect("Babbage should encode");
+        let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Babbage should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         assert_eq!(fields.len(), 4, "Babbage TxOut must have 4 fields");
         // Inline datum → Constr(2, [data])
@@ -3834,7 +3914,7 @@ mod tests {
             datum_option: Some(DatumOption::Hash([0x88; 32])),
             script_ref: None,
         });
-        let result = plutus_output_data(&txout).expect("Babbage should encode");
+        let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Babbage should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         // Datum hash → Constr(1, [Bytes(hash)])
         assert_eq!(fields[2], PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x88; 32])]));
@@ -3851,10 +3931,208 @@ mod tests {
             datum_option: None,
             script_ref: None,
         });
-        let result = plutus_output_data(&txout).expect("Babbage should encode");
+        let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Babbage should encode");
         let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
         // No datum → Constr(0, []) i.e. NoDatum
         assert_eq!(fields[2], PlutusData::Constr(0, vec![]));
+    }
+
+    // -- B6: V1 Babbage TxOut uses 3-element shape ----------------------------
+
+    #[test]
+    fn plutus_output_data_v1_babbage_has_3_fields_with_datum_hash() {
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+            address: Address::Enterprise(EnterpriseAddress {
+                network: 1,
+                payment: StakeCredential::AddrKeyHash([0xAA; 28]),
+            }).to_bytes(),
+            amount: Value::Coin(3_000_000),
+            datum_option: Some(DatumOption::Hash([0xBB; 32])),
+            script_ref: None,
+        });
+        let result = plutus_output_data(PlutusVersion::V1, &txout).expect("V1 Babbage should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 3, "V1 Babbage TxOut must have 3 fields");
+        // Datum hash → Just(hash)
+        assert_eq!(fields[2], PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xBB; 32])]));
+    }
+
+    #[test]
+    fn plutus_output_data_v1_babbage_inline_datum_becomes_nothing() {
+        // V1 cannot see inline datums — they are downgraded to Nothing.
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+            address: Address::Enterprise(EnterpriseAddress {
+                network: 1,
+                payment: StakeCredential::AddrKeyHash([0xCC; 28]),
+            }).to_bytes(),
+            amount: Value::Coin(1_000_000),
+            datum_option: Some(DatumOption::Inline(PlutusData::Integer(42))),
+            script_ref: None,
+        });
+        let result = plutus_output_data(PlutusVersion::V1, &txout).expect("V1 Babbage should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 3, "V1 Babbage TxOut must have 3 fields");
+        // Inline datum invisible to V1: Nothing
+        assert_eq!(fields[2], PlutusData::Constr(1, vec![]));
+    }
+
+    #[test]
+    fn plutus_output_data_v1_babbage_no_datum() {
+        let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+            address: Address::Enterprise(EnterpriseAddress {
+                network: 1,
+                payment: StakeCredential::AddrKeyHash([0xDD; 28]),
+            }).to_bytes(),
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: None,
+        });
+        let result = plutus_output_data(PlutusVersion::V1, &txout).expect("V1 Babbage should encode");
+        let PlutusData::Constr(0, fields) = result else { panic!("Expected Constr(0, ...)") };
+        assert_eq!(fields.len(), 3, "V1 Babbage TxOut must have 3 fields");
+        assert_eq!(fields[2], PlutusData::Constr(1, vec![]), "No datum = Nothing");
+    }
+
+    // -- B7: V1 guard rejects inline datums and reference scripts -------------
+
+    #[test]
+    fn guard_v1_rejects_inline_datum_in_input() {
+        let mut tx_ctx = test_tx_ctx();
+        tx_ctx.inputs = vec![(
+            yggdrasil_ledger::eras::shelley::ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+            yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+                address: Address::Enterprise(EnterpriseAddress {
+                    network: 1,
+                    payment: StakeCredential::AddrKeyHash([0x02; 28]),
+                }).to_bytes(),
+                amount: Value::Coin(1_000_000),
+                datum_option: Some(DatumOption::Inline(PlutusData::Integer(1))),
+                script_ref: None,
+            }),
+        )];
+        let result = guard_legacy_plutus_context_features(PlutusVersion::V1, &tx_ctx);
+        assert!(result.is_err(), "V1 must reject inline datums");
+    }
+
+    #[test]
+    fn guard_v1_rejects_reference_script_in_output() {
+        let mut tx_ctx = test_tx_ctx();
+        tx_ctx.outputs = vec![
+            yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+                address: Address::Enterprise(EnterpriseAddress {
+                    network: 1,
+                    payment: StakeCredential::AddrKeyHash([0x03; 28]),
+                }).to_bytes(),
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: Some(ScriptRef(Script::PlutusV2(vec![0xDE, 0xAD]))),
+            }),
+        ];
+        let result = guard_legacy_plutus_context_features(PlutusVersion::V1, &tx_ctx);
+        assert!(result.is_err(), "V1 must reject reference scripts");
+    }
+
+    #[test]
+    fn guard_v2_allows_inline_datum_and_reference_script() {
+        let mut tx_ctx = test_tx_ctx();
+        tx_ctx.inputs = vec![(
+            yggdrasil_ledger::eras::shelley::ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+            yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
+                address: Address::Enterprise(EnterpriseAddress {
+                    network: 1,
+                    payment: StakeCredential::AddrKeyHash([0x02; 28]),
+                }).to_bytes(),
+                amount: Value::Coin(1_000_000),
+                datum_option: Some(DatumOption::Inline(PlutusData::Integer(1))),
+                script_ref: Some(ScriptRef(Script::PlutusV2(vec![0xDE, 0xAD]))),
+            }),
+        )];
+        let result = guard_legacy_plutus_context_features(PlutusVersion::V2, &tx_ctx);
+        assert!(result.is_ok(), "V2 must allow inline datums and reference scripts");
+    }
+
+    // -- B1/B2: V3 fee is plain Integer, V1/V2 fee is nested Value -----------
+
+    #[test]
+    fn tx_info_v3_fee_is_plain_integer() {
+        let mut tx_ctx = test_tx_ctx();
+        tx_ctx.fee = 500_000;
+        let tx_info = expect_tx_info(PlutusVersion::V3, &tx_ctx);
+        let PlutusData::Constr(0, fields) = tx_info else { panic!() };
+        // V3 field 3 = fee (Lovelace = plain Integer)
+        assert_eq!(fields[3], PlutusData::Integer(500_000));
+    }
+
+    // -- B3: V2 mint also has zero-ADA padding, V3 mint does not --------------
+
+    #[test]
+    fn tx_info_v2_mint_has_zero_ada_padding() {
+        let mut tx_ctx = test_tx_ctx();
+        let policy: [u8; 28] = [0x11; 28];
+        let mut assets = BTreeMap::new();
+        assets.insert(b"X".to_vec(), 5i64);
+        tx_ctx.mint.insert(policy, assets);
+
+        let tx_info = expect_tx_info(PlutusVersion::V2, &tx_ctx);
+        let PlutusData::Constr(0, fields) = tx_info else { panic!() };
+        // V2 field 4 = mint
+        let PlutusData::Map(mint) = &fields[4] else { panic!("Expected Map") };
+        assert_eq!(mint.len(), 2, "zero-ADA entry + 1 policy");
+        assert_eq!(mint[0].0, PlutusData::Bytes(vec![]), "first entry is empty policy");
+    }
+
+    #[test]
+    fn tx_info_v3_mint_has_no_zero_ada_padding() {
+        let mut tx_ctx = test_tx_ctx();
+        let policy: [u8; 28] = [0x11; 28];
+        let mut assets = BTreeMap::new();
+        assets.insert(b"X".to_vec(), 5i64);
+        tx_ctx.mint.insert(policy, assets);
+
+        let tx_info = expect_tx_info(PlutusVersion::V3, &tx_ctx);
+        let PlutusData::Constr(0, fields) = tx_info else { panic!() };
+        // V3 field 4 = mint
+        let PlutusData::Map(mint) = &fields[4] else { panic!("Expected Map") };
+        assert_eq!(mint.len(), 1, "V3 has no zero-ADA padding — only the real policy");
+        assert_eq!(mint[0].0, PlutusData::Bytes(vec![0x11; 28]));
+    }
+
+    // -- B8: V1 withdrawals use List-of-tuples, V2 uses Map -------------------
+
+    #[test]
+    fn tx_info_v1_withdrawals_are_list_of_tuples() {
+        let mut tx_ctx = test_tx_ctx();
+        let cred = StakeCredential::AddrKeyHash([0x55; 28]);
+        tx_ctx.withdrawals.insert(
+            RewardAccount { network: 1, credential: cred },
+            42,
+        );
+
+        let tx_info = expect_tx_info(PlutusVersion::V1, &tx_ctx);
+        let PlutusData::Constr(0, fields) = tx_info else { panic!() };
+        // V1 field 5 = withdrawals
+        let PlutusData::List(wdrl) = &fields[5] else { panic!("V1 withdrawals should be List, not Map") };
+        assert_eq!(wdrl.len(), 1);
+        // Each entry is Constr(0, [staking_credential, amount])
+        let PlutusData::Constr(0, pair) = &wdrl[0] else { panic!("Expected Constr tuple") };
+        assert_eq!(pair.len(), 2);
+        assert_eq!(pair[1], PlutusData::Integer(42));
+    }
+
+    #[test]
+    fn tx_info_v2_withdrawals_are_map() {
+        let mut tx_ctx = test_tx_ctx();
+        let cred = StakeCredential::AddrKeyHash([0x55; 28]);
+        tx_ctx.withdrawals.insert(
+            RewardAccount { network: 1, credential: cred },
+            42,
+        );
+
+        let tx_info = expect_tx_info(PlutusVersion::V2, &tx_ctx);
+        let PlutusData::Constr(0, fields) = tx_info else { panic!() };
+        // V2 field 6 = withdrawals (Map)
+        let PlutusData::Map(wdrl) = &fields[6] else { panic!("V2 withdrawals should be Map") };
+        assert_eq!(wdrl.len(), 1);
     }
 
     // -- gov_action_data_v3 remaining variants --------------------------------
@@ -3978,18 +4256,20 @@ mod tests {
 
     #[test]
     fn tx_info_v1_fee_is_flat_map_not_value() {
-        // V1 fee field is Map([(Bytes([]), Integer(fee))]) — a flat lovelace map,
-        // not the nested Value encoding used for outputs.
+        // V1 fee field is a nested Value: Map[("" → Map[("" → fee)])] (upstream transCoinToValue).
         let mut tx_ctx = test_tx_ctx();
         tx_ctx.fee = 173_201;
         let tx_info = expect_tx_info(PlutusVersion::V1, &tx_ctx);
         let PlutusData::Constr(0, fields) = tx_info else { panic!() };
-        // V1 field 2 = fee
+        // V1 field 2 = fee (Value encoding)
         assert_eq!(
             fields[2],
             PlutusData::Map(vec![(
                 PlutusData::Bytes(vec![]),
-                PlutusData::Integer(173_201),
+                PlutusData::Map(vec![(
+                    PlutusData::Bytes(vec![]),
+                    PlutusData::Integer(173_201),
+                )]),
             )])
         );
     }
@@ -4000,12 +4280,15 @@ mod tests {
         tx_ctx.fee = 250_000;
         let tx_info = expect_tx_info(PlutusVersion::V2, &tx_ctx);
         let PlutusData::Constr(0, fields) = tx_info else { panic!() };
-        // V2 field 3 = fee (after inputs, referenceInputs, outputs)
+        // V2 field 3 = fee (Value encoding — nested Map)
         assert_eq!(
             fields[3],
             PlutusData::Map(vec![(
                 PlutusData::Bytes(vec![]),
-                PlutusData::Integer(250_000),
+                PlutusData::Map(vec![(
+                    PlutusData::Bytes(vec![]),
+                    PlutusData::Integer(250_000),
+                )]),
             )])
         );
     }
@@ -4071,7 +4354,7 @@ mod tests {
         // V1 field 0 = inputs
         let PlutusData::List(inputs) = &fields[0] else { panic!("Expected List") };
         assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0], plutus_input_data(&txin, &txout).unwrap());
+        assert_eq!(inputs[0], plutus_input_data(PlutusVersion::V1, &txin, &txout).unwrap());
     }
 
     #[test]
@@ -4110,11 +4393,15 @@ mod tests {
 
         let tx_info = expect_tx_info(PlutusVersion::V1, &tx_ctx);
         let PlutusData::Constr(0, fields) = tx_info else { panic!() };
-        // V1 field 3 = mint
+        // V1 field 3 = mint (with zero-ADA prefix from upstream transMintValue)
         let PlutusData::Map(mint) = &fields[3] else { panic!("Expected Map") };
-        assert_eq!(mint.len(), 1);
-        assert_eq!(mint[0].0, PlutusData::Bytes(vec![0x22; 28]));
-        let PlutusData::Map(assets) = &mint[0].1 else { panic!("Expected asset Map") };
+        assert_eq!(mint.len(), 2, "zero-ADA entry + 1 policy");
+        // mint[0] = zero-ADA prefix
+        assert_eq!(mint[0].0, PlutusData::Bytes(vec![]));
+        assert_eq!(mint[0].1, PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::Integer(0))]));
+        // mint[1] = actual policy
+        assert_eq!(mint[1].0, PlutusData::Bytes(vec![0x22; 28]));
+        let PlutusData::Map(assets) = &mint[1].1 else { panic!("Expected asset Map") };
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].0, PlutusData::Bytes(b"TokenA".to_vec()));
         assert_eq!(assets[0].1, PlutusData::Integer(100));
@@ -4170,11 +4457,13 @@ mod tests {
 
         let tx_info = expect_tx_info(PlutusVersion::V1, &tx_ctx);
         let PlutusData::Constr(0, fields) = tx_info else { panic!() };
-        // V1 field 8 = datums
-        let PlutusData::Map(datums) = &fields[8] else { panic!("Expected Map") };
+        // V1 field 8 = datums (List of Constr tuples \u2014 upstream PV1 encoding)
+        let PlutusData::List(datums) = &fields[8] else { panic!("Expected List") };
         assert_eq!(datums.len(), 1);
-        assert_eq!(datums[0].0, PlutusData::Bytes(vec![0x66; 32]));
-        assert_eq!(datums[0].1, PlutusData::Integer(999));
+        assert_eq!(
+            datums[0],
+            PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x66; 32]), PlutusData::Integer(999)])
+        );
     }
 
     #[test]
@@ -4322,8 +4611,8 @@ mod tests {
         let v2 = expect_tx_info(PlutusVersion::V2, &tx_ctx);
         let PlutusData::Constr(0, f1) = v1 else { panic!() };
         let PlutusData::Constr(0, f2) = v2 else { panic!() };
-        // V1 field 0 = inputs; V2 field 0 = inputs
-        assert_eq!(f1[0], f2[0], "V1 and V2 must encode inputs identically");
+        // V1 uses 3-element Babbage output (no datum_option/script_ref); V2 uses 4-element
+        assert_ne!(f1[0], f2[0], "V1 and V2 Babbage outputs differ (3-element vs 4-element)");
     }
 
     #[test]
@@ -4350,11 +4639,12 @@ mod tests {
         let PlutusData::Constr(0, f2) = v2 else { panic!() };
         let PlutusData::Constr(0, f3) = v3 else { panic!() };
         // V2 and V3 share positions for: inputs(0), refInputs(1), outputs(2),
-        // fee(3), validRange(7), signatories(8), datums(10), id(11)
+        // validRange(7), signatories(8), datums(10), id(11)
+        // fee(3) DIVERGES: V2 uses Value (nested Map), V3 uses Lovelace (Integer)
         assert_eq!(f2[0], f3[0], "inputs must match");
         assert_eq!(f2[1], f3[1], "refInputs must match");
         assert_eq!(f2[2], f3[2], "outputs must match");
-        assert_eq!(f2[3], f3[3], "fee must match");
+        assert_ne!(f2[3], f3[3], "V2 fee is Value (nested Map), V3 fee is Lovelace (Integer)");
         assert_eq!(f2[7], f3[7], "validRange must match");
         assert_eq!(f2[8], f3[8], "signatories must match");
         assert_eq!(f2[10], f3[10], "datums must match");
@@ -4447,11 +4737,13 @@ mod tests {
 
         let tx_info = expect_tx_info(PlutusVersion::V1, &tx_ctx);
         let PlutusData::Constr(0, fields) = tx_info else { panic!() };
-        // V1 field 3 = mint
+        // V1 field 3 = mint (with zero-ADA prefix from upstream transMintValue)
         let PlutusData::Map(mint) = &fields[3] else { panic!("Expected Map") };
-        assert_eq!(mint.len(), 2, "Both policies must appear");
-        // Second policy has 2 assets
-        let PlutusData::Map(assets_for_p2) = &mint[1].1 else { panic!("Expected asset Map") };
+        assert_eq!(mint.len(), 3, "zero-ADA entry + 2 policies");
+        // mint[0] = zero-ADA prefix
+        assert_eq!(mint[0].0, PlutusData::Bytes(vec![]));
+        // Third entry (index 2) is the second policy with 2 assets
+        let PlutusData::Map(assets_for_p2) = &mint[2].1 else { panic!("Expected asset Map") };
         assert_eq!(assets_for_p2.len(), 2, "Second policy should have two assets");
     }
 
