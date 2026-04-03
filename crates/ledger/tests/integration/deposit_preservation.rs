@@ -259,7 +259,8 @@ fn shelley_pool_registration_deposit_balances() {
         ShelleyTxOut { address: vec![0x01], amount: consumed },
     );
 
-    // Pre-register pool owner (upstream StakePoolOwnerNotRegisteredPOOL).
+    // Register pool owner as stake credential (not required by upstream
+    // POOL rule, but useful for reward claiming).
     state
         .stake_credentials_mut()
         .register(StakeCredential::AddrKeyHash([0x40; 28]));

@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3905 workspace tests passing, 40 audit rounds covering 400 upstream rule areas verified with zero gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3917 workspace tests passing, 43 audit rounds covering 400+ upstream rule areas verified with zero gaps)
 
 ---
 
@@ -50,8 +50,13 @@
 - Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
 - `validate_script_witnesses_well_formed()` / `validate_reference_scripts_well_formed()` — Malformed Plutus script detection at admission (upstream `validateScriptsWellFormed`)
 - `validate_outside_forecast()` — OutsideForecast infrastructure (upstream no-op due to `unsafeLinearExtendEpochInfo`)
+- `delegate_stake_credential()` — Pool-registration check on delegation: all eras (Shelley through Conway) reject delegation to unregistered pools via `DelegateeNotRegisteredDELEG` (upstream `Cardano.Ledger.Shelley.Rules.Deleg`)
+- `PoolState::find_pool_by_vrf_key()` — Conway VRF key uniqueness enforcement: new pool registrations reject duplicate VRF keys, re-registrations allow same pool's own key (upstream `VRFKeyHashAlreadyRegistered` / `hardforkConwayDisallowDuplicatedVRFKeys`)
 - `record_block_producer()` / `take_blocks_made()` — Per-pool block production tracking in LedgerState (upstream `NewEpochState.nesBcur`)
-- `derive_pool_performance()` — Pool performance ratios from internal blocks_made + stake distribution
+- `derive_pool_performance()` — Pool performance ratios from internal blocks_made + stake distribution; d>=0.8 early-return gives perf=1 for all block-producing pools (upstream `mkApparentPerformance`)
+- `StakeCredentials::clear_pool_delegations()` — POOLREAP delegation cleanup on pool retirement (upstream `removeStakePoolDelegations`)
+- `PoolState::adopt_future_params()` — Adopts staged re-registration params at epoch boundary (upstream SNAP rule merging `psFutureStakePoolParams` into `psStakePoolParams`)
+- `PoolState::register_with_deposit()` — New registration inserts; re-registration stages in `future_params` and clears retirement (upstream `poolTransition` two-phase semantics)
 - `MultiEraUtxo` — Unified UTxO model for all eras
 
 **Consensus**:

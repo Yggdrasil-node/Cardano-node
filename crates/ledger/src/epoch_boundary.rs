@@ -178,11 +178,28 @@ fn compute_eta(
 /// `expected_blocks = σ_pool * total_blocks`. When the snapshot has no
 /// stake data, returns an empty map (all pools get perfect performance).
 ///
-/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `completeRupd`.
+/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `completeRupd`,
+/// `mkApparentPerformance`.
+///
+/// When `d >= 0.8` (early Shelley era), upstream assigns apparent
+/// performance of 1 to every block-producing pool regardless of
+/// their actual share of blocks.
 fn derive_pool_performance(
     blocks_made: &BTreeMap<PoolKeyHash, u64>,
     set_snapshot: &crate::stake::StakeSnapshot,
+    d: UnitInterval,
 ) -> BTreeMap<PoolKeyHash, UnitInterval> {
+    // d >= 0.8  →  all block-producing pools get perf = 1.
+    // Reference: `mkApparentPerformance` in Shelley.Rewards:
+    //   | unboundRational d_ < 0.8 = beta / sigma
+    //   | otherwise = 1
+    if d.numerator * 10 >= d.denominator * 8 && d.denominator > 0 {
+        return blocks_made
+            .keys()
+            .map(|pool_hash| (*pool_hash, UnitInterval { numerator: 1, denominator: 1 }))
+            .collect();
+    }
+
     let stake_dist = set_snapshot.pool_stake_distribution();
     let total_stake = stake_dist.total_active_stake();
     if total_stake == 0 || blocks_made.is_empty() {
@@ -313,7 +330,7 @@ pub fn apply_epoch_boundary(
     // Derive effective performance: caller-provided or from internal blocks_made.
     let effective_performance: BTreeMap<PoolKeyHash, UnitInterval>;
     if pool_performance.is_empty() && !ledger.blocks_made().is_empty() {
-        effective_performance = derive_pool_performance(ledger.blocks_made(), &snapshots.set);
+        effective_performance = derive_pool_performance(ledger.blocks_made(), &snapshots.set, d_param);
     } else {
         effective_performance = pool_performance.clone();
     }
@@ -336,8 +353,12 @@ pub fn apply_epoch_boundary(
     let mir_result = apply_mir_at_epoch_boundary(ledger);
 
     // -----------------------------------------------------------------------
-    // 2. SNAP — compute a fresh mark snapshot from post-reward state
-    //    and rotate the three-snapshot ring.
+    // 2. SNAP — adopt staged future pool params, then compute a fresh mark
+    //    snapshot from post-reward state and rotate the three-snapshot ring.
+    //
+    //    Upstream `snapTransition` merges `psFutureStakePoolParams` into
+    //    `psStakePoolParams` (preserving deposits) before taking the new
+    //    mark snapshot.
     //
     //    Because rewards have already been credited above, the new mark
     //    snapshot reflects the updated reward account balances.
@@ -345,6 +366,7 @@ pub fn apply_epoch_boundary(
     //    Reference: `Cardano.Ledger.Shelley.Rules.Snap` — runs inside
     //    the EPOCH rule, after RUPD.
     // -----------------------------------------------------------------------
+    ledger.pool_state_mut().adopt_future_params();
     let new_mark = compute_stake_snapshot(
         ledger.multi_era_utxo(),
         ledger.stake_credentials(),
@@ -1266,6 +1288,11 @@ pub fn retire_pools_with_refunds(
     // 2. Remove the retiring pools from the registry.
     let retired_keys = ledger.pool_state_mut().process_retirements(epoch);
 
+    // 2b. Clear pool delegations pointing at retired pools.
+    //     Upstream: `removeStakePoolDelegations (delegsToClear cs retired)`
+    //     in `Cardano.Ledger.Shelley.Rules.PoolReap`.
+    ledger.stake_credentials_mut().clear_pool_delegations(&retired_keys);
+
     // 3. Credit refunds to reward accounts; track unclaimed deposits.
     let mut total_refunded: u64 = 0;
     let mut total_unclaimed: u64 = 0;
@@ -1793,6 +1820,58 @@ mod tests {
             retire_pools_with_refunds(&mut ledger, EpochNo(1));
         assert!(retired.is_empty());
         assert_eq!(refunded, 0);
+    }
+
+    /// Upstream `poolReapTransition` calls `removeStakePoolDelegations`
+    /// to clear the pool delegation for every credential that was
+    /// delegated to a retiring pool. Verify we do the same.
+    #[test]
+    fn test_pool_retirement_clears_delegations() {
+        let mut ledger = make_ledger_with_pool(5);
+        ledger.deposit_pot_mut().add_pool_deposit(500_000_000);
+
+        // Add a second credential delegating to the same pool.
+        let cred2 = test_cred(0xF5);
+        ledger.stake_credentials_mut().register(cred2);
+        ledger
+            .stake_credentials_mut()
+            .get_mut(&cred2)
+            .unwrap()
+            .set_delegated_pool(Some(test_pool(5)));
+
+        // Add a third credential delegating to a *different* pool (should NOT be touched).
+        let cred3 = test_cred(0xF6);
+        ledger.stake_credentials_mut().register(cred3);
+        ledger
+            .stake_credentials_mut()
+            .get_mut(&cred3)
+            .unwrap()
+            .set_delegated_pool(Some(test_pool(99)));
+
+        // Schedule pool 5 for retirement.
+        ledger.pool_state_mut().retire(test_pool(5), EpochNo(5));
+
+        let (retired, _, _) = retire_pools_with_refunds(&mut ledger, EpochNo(5));
+        assert_eq!(retired.len(), 1);
+
+        // The operator credential (cred 5) and extra delegator must have
+        // their delegation cleared.
+        assert_eq!(
+            ledger.stake_credentials().get(&test_cred(5)).unwrap().delegated_pool(),
+            None,
+            "operator delegation should be cleared",
+        );
+        assert_eq!(
+            ledger.stake_credentials().get(&cred2).unwrap().delegated_pool(),
+            None,
+            "extra delegator should be cleared",
+        );
+        // Credential delegated to a different pool must be untouched.
+        assert_eq!(
+            ledger.stake_credentials().get(&cred3).unwrap().delegated_pool(),
+            Some(test_pool(99)),
+            "unrelated delegation must be preserved",
+        );
     }
 
     // -- Governance action expiry -----------------------------------------
@@ -4206,7 +4285,8 @@ mod tests {
     #[test]
     fn derive_pool_performance_empty_counts_returns_empty() {
         let snapshot = StakeSnapshot::empty();
-        let perf = super::derive_pool_performance(&BTreeMap::new(), &snapshot);
+        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let perf = super::derive_pool_performance(&BTreeMap::new(), &snapshot, d);
         assert!(perf.is_empty());
     }
 
@@ -4215,7 +4295,8 @@ mod tests {
         let snapshot = StakeSnapshot::empty();
         let mut counts = BTreeMap::new();
         counts.insert(test_pool(1), 10);
-        let perf = super::derive_pool_performance(&counts, &snapshot);
+        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let perf = super::derive_pool_performance(&counts, &snapshot, d);
         assert!(perf.is_empty());
     }
 
@@ -4227,7 +4308,8 @@ mod tests {
         snapshot.stake.add(test_cred(1), 1000);
         let mut counts = BTreeMap::new();
         counts.insert(test_pool(1), 10);
-        let perf = super::derive_pool_performance(&counts, &snapshot);
+        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let perf = super::derive_pool_performance(&counts, &snapshot, d);
         let p = perf.get(&test_pool(1)).unwrap();
         // Single pool with all stake and all blocks → ratio = 1/1 = 1.0.
         assert_eq!(p.numerator * p.denominator, p.denominator * p.numerator);
@@ -4247,7 +4329,8 @@ mod tests {
         let mut counts = BTreeMap::new();
         counts.insert(test_pool(1), 5);
         counts.insert(test_pool(2), 5);
-        let perf = super::derive_pool_performance(&counts, &snapshot);
+        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let perf = super::derive_pool_performance(&counts, &snapshot, d);
         // Pool 1: expected 75% of 10 = 7.5, actual 5.
         // performance = 5 * 1000 / (750 * 10) = 5000 / 7500 ≈ 0.667
         let p1 = perf.get(&test_pool(1)).unwrap();
@@ -4256,6 +4339,33 @@ mod tests {
         // performance = 5 * 1000 / (250 * 10) = 5000 / 2500 = 2.0
         let p2 = perf.get(&test_pool(2)).unwrap();
         assert!(p2.numerator * 1 > p2.denominator * 1); // > 1.0
+    }
+
+    #[test]
+    fn derive_pool_performance_high_d_gives_perfect_score() {
+        // When d >= 0.8 (early Shelley), all block-producing pools get
+        // apparent performance = 1 regardless of their actual share of blocks.
+        // Reference: upstream `mkApparentPerformance`.
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.pool_params.insert(test_pool(1), test_pool_params(1));
+        snapshot.pool_params.insert(test_pool(2), test_pool_params(2));
+        snapshot.delegations.insert(test_cred(1), test_pool(1));
+        snapshot.delegations.insert(test_cred(2), test_pool(2));
+        snapshot.stake.add(test_cred(1), 750);
+        snapshot.stake.add(test_cred(2), 250);
+        let mut counts = BTreeMap::new();
+        counts.insert(test_pool(1), 5);
+        counts.insert(test_pool(2), 5);
+        // d = 0.9 (>= 0.8)
+        let d = UnitInterval { numerator: 9, denominator: 10 };
+        let perf = super::derive_pool_performance(&counts, &snapshot, d);
+        // Both pools should have perf = 1.
+        let p1 = perf.get(&test_pool(1)).unwrap();
+        assert_eq!(p1.numerator, 1);
+        assert_eq!(p1.denominator, 1);
+        let p2 = perf.get(&test_pool(2)).unwrap();
+        assert_eq!(p2.numerator, 1);
+        assert_eq!(p2.denominator, 1);
     }
 
     // ── blocks_made integration ────────────────────────────────────────

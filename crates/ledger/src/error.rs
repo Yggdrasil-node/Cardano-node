@@ -66,6 +66,17 @@ pub enum LedgerError {
     #[error("stake pool not registered: {0:02x?}")]
     PoolNotRegistered(PoolKeyHash),
 
+    /// Upstream: `VRFKeyHashAlreadyRegistered` — in Conway, a pool's VRF key
+    /// must not already be in use by another registered pool.
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Pool` —
+    /// `hardforkConwayDisallowDuplicatedVRFKeys`.
+    #[error("VRF key hash already registered by pool {existing_pool:02x?}")]
+    VrfKeyAlreadyRegistered {
+        pool: PoolKeyHash,
+        vrf_key: [u8; 32],
+        existing_pool: PoolKeyHash,
+    },
+
     #[error("pool cost {cost} is below minPoolCost {min_pool_cost}")]
     PoolCostTooLow { cost: u64, min_pool_cost: u64 },
 
@@ -78,8 +89,10 @@ pub enum LedgerError {
     #[error("pool metadata URL too long: {length} bytes (max 64)")]
     PoolMetadataUrlTooLong { length: usize },
 
-    /// Upstream: `StakePoolOwnerNotRegisteredPOOL` — all pool owners must be
-    /// registered stake credentials at registration time.
+    /// DEPRECATED: The upstream POOL rule (`Cardano.Ledger.Shelley.Rules.Pool`)
+    /// intentionally does NOT enforce pool-owner registration. This variant is
+    /// retained for CBOR backward compatibility with older checkpoints but is
+    /// no longer produced at runtime.
     #[error("pool owner not registered as stake credential: {owner:02x?}")]
     PoolOwnerNotRegistered { owner: AddrKeyHash },
 
@@ -729,6 +742,18 @@ pub enum LedgerError {
         "total reference script size {actual} exceeds maximum {max_allowed} bytes"
     )]
     TxRefScriptsSizeTooBig {
+        actual: usize,
+        max_allowed: usize,
+    },
+
+    /// Total reference script size across all transactions in a block exceeds
+    /// the block-level maximum (Conway BBODY rule).
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Bbody` — `BodyRefScriptsSizeTooBig`.
+    #[error(
+        "block total reference script size {actual} exceeds block maximum {max_allowed} bytes"
+    )]
+    BodyRefScriptsSizeTooBig {
         actual: usize,
         max_allowed: usize,
     },

@@ -679,6 +679,7 @@ fn main() -> Result<()> {
                     max_major_protocol_version: Some(file_cfg.max_major_protocol_version),
                     future_check,
                     ocert_counters: Some(OcertCounters::new()),
+                    pp_major_protocol_version: None,
                 })
             };
 
@@ -723,6 +724,7 @@ fn main() -> Result<()> {
                         max_major_protocol_version: Some(file_cfg.max_major_protocol_version),
                         future_check,
                         ocert_counters: Some(OcertCounters::new()),
+                        pp_major_protocol_version: None,
                     },
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),

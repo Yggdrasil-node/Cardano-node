@@ -51,7 +51,8 @@ fn ledger_state_applies_pool_registration_certificate() {
 
     let params = sample_pool_params();
     let operator = params.operator;
-    // Pre-register pool owners so StakePoolOwnerNotRegisteredPOOL passes.
+    // Register pool owners as stake credentials (not required by upstream
+    // POOL rule, but useful for reward claiming / query tests).
     for owner in &params.pool_owners {
         state
             .stake_credentials_mut()

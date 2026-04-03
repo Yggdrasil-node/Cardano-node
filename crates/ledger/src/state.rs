@@ -252,29 +252,91 @@ impl RegisteredPool {
 }
 
 /// Stake-pool registry state visible from the ledger.
+///
+/// Upstream `PState` carries four maps:
+/// - `psStakePoolParams`        — currently effective pool parameters
+/// - `psFutureStakePoolParams`  — re-registration params staged for next epoch
+/// - `psRetiring`               — pools scheduled for retirement (embedded in our entries)
+/// - `psVRFKeyHashes`           — VRF key dedup (derived on the fly in our implementation)
+///
+/// We model `psStakePoolParams` + `psRetiring` in `entries`, and
+/// `psFutureStakePoolParams` in `future_params`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PoolState {
     entries: BTreeMap<PoolKeyHash, RegisteredPool>,
+    /// Re-registered pool params staged for adoption at the next epoch
+    /// boundary. Reference: upstream `psFutureStakePoolParams`.
+    future_params: BTreeMap<PoolKeyHash, PoolParams>,
 }
 
 impl CborEncode for PoolState {
     fn encode_cbor(&self, enc: &mut Encoder) {
+        // New format: CBOR map with keys 0 (entries) and 1 (future_params).
+        // Key 1 is only emitted when future_params is non-empty.
+        let map_len = if self.future_params.is_empty() { 1 } else { 2 };
+        enc.map(map_len);
+        // Key 0: entries
+        enc.unsigned(0);
         enc.array(self.entries.len() as u64);
         for pool in self.entries.values() {
             pool.encode_cbor(enc);
+        }
+        // Key 1: future_params (only when non-empty)
+        if !self.future_params.is_empty() {
+            enc.unsigned(1);
+            enc.array(self.future_params.len() as u64);
+            for params in self.future_params.values() {
+                params.encode_cbor(enc);
+            }
         }
     }
 }
 
 impl CborDecode for PoolState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
-        let len = dec.array()?;
-        let mut entries = BTreeMap::new();
-        for _ in 0..len {
-            let pool = RegisteredPool::decode_cbor(dec)?;
-            entries.insert(pool.params.operator, pool);
+        let major = dec.peek_major()?;
+        if major == 5 {
+            // New format: CBOR map
+            let map_len = dec.map()?;
+            let mut entries = BTreeMap::new();
+            let mut future_params = BTreeMap::new();
+            for _ in 0..map_len {
+                let key = dec.unsigned()?;
+                match key {
+                    0 => {
+                        let len = dec.array()?;
+                        for _ in 0..len {
+                            let pool = RegisteredPool::decode_cbor(dec)?;
+                            entries.insert(pool.params.operator, pool);
+                        }
+                    }
+                    1 => {
+                        let len = dec.array()?;
+                        for _ in 0..len {
+                            let params = PoolParams::decode_cbor(dec)?;
+                            future_params.insert(params.operator, params);
+                        }
+                    }
+                    _ => {
+                        // Skip unknown keys for forward compatibility.
+                        dec.skip()?;
+                    }
+                }
+            }
+            Ok(Self { entries, future_params })
+        } else {
+            // Legacy format: bare array of RegisteredPool (no future_params).
+            let len = dec.array()?;
+            let mut entries = BTreeMap::new();
+            for _ in 0..len {
+                let pool = RegisteredPool::decode_cbor(dec)?;
+                entries.insert(pool.params.operator, pool);
+            }
+            Ok(Self {
+                entries,
+                future_params: BTreeMap::new(),
+            })
         }
-        Ok(Self { entries })
     }
 }
 
@@ -319,29 +381,34 @@ impl PoolState {
         access_points
     }
 
-    /// Inserts or replaces the registration for a pool operator.
+    /// Registers a new pool or stages a re-registration for the next epoch.
     ///
-    /// `deposit` is the deposit paid at registration time (upstream
-    /// `pp_poolDeposit` at the registering epoch).  On re-registration,
-    /// upstream carries forward the original deposit amount via
-    /// `spsDeposit currentState` in `mkStakePoolState`.
+    /// **New registration** (`operator` not in `entries`): creates a new
+    /// `RegisteredPool` entry with the given `deposit`.
+    ///
+    /// **Re-registration** (`operator` already in `entries`): stages the new
+    /// `params` in `future_params` for adoption at the next epoch boundary.
+    /// The original deposit is preserved, and any pending retirement is
+    /// cleared.  Reference: upstream `poolTransition` in
+    /// `Cardano.Ledger.Shelley.Rules.Pool` — re-registration inserts into
+    /// `psFutureStakePoolParams` and deletes from `psRetiring`.
     pub fn register_with_deposit(&mut self, params: PoolParams, deposit: u64) {
         let operator = params.operator;
-        // On re-registration, preserve the original deposit (upstream
-        // behavior: `mkStakePoolState (currentState ^. spsDepositL)`).
-        let existing_deposit = self
-            .entries
-            .get(&operator)
-            .map(|e| e.deposit)
-            .unwrap_or(deposit);
-        self.entries.insert(
-            operator,
-            RegisteredPool {
-                params,
-                retiring_epoch: None,
-                deposit: existing_deposit,
-            },
-        );
+        if let Some(existing) = self.entries.get_mut(&operator) {
+            // Re-registration: stage future params, unretire.
+            existing.retiring_epoch = None;
+            self.future_params.insert(operator, params);
+        } else {
+            // New registration.
+            self.entries.insert(
+                operator,
+                RegisteredPool {
+                    params,
+                    retiring_epoch: None,
+                    deposit,
+                },
+            );
+        }
     }
 
     /// Inserts or replaces the registration for a pool operator
@@ -364,6 +431,7 @@ impl PoolState {
 
     /// Removes all pools whose `retiring_epoch` ≤ `current_epoch`.
     ///
+    /// Also clears any staged `future_params` for the retired pools.
     /// Returns the operator keys of the pools that were retired.
     pub fn process_retirements(&mut self, current_epoch: EpochNo) -> Vec<PoolKeyHash> {
         let retiring: Vec<PoolKeyHash> = self
@@ -376,8 +444,56 @@ impl PoolState {
             .collect();
         for key in &retiring {
             self.entries.remove(key);
+            self.future_params.remove(key);
         }
         retiring
+    }
+
+    /// Returns the operator key of the pool that already uses `vrf_key`, if any.
+    ///
+    /// Searches both current entries and staged future_params.
+    /// This implements the lookup behind upstream `psVRFKeyHashes` for the
+    /// `VRFKeyHashAlreadyRegistered` predicate check.
+    pub fn find_pool_by_vrf_key(&self, vrf_key: &VrfKeyHash) -> Option<PoolKeyHash> {
+        // Check future params first (they represent the latest intent).
+        for (operator, params) in &self.future_params {
+            if params.vrf_keyhash == *vrf_key {
+                return Some(*operator);
+            }
+        }
+        for (operator, pool) in &self.entries {
+            // Skip entries that have a future_params override (already checked).
+            if self.future_params.contains_key(operator) {
+                continue;
+            }
+            if pool.params.vrf_keyhash == *vrf_key {
+                return Some(*operator);
+            }
+        }
+        None
+    }
+
+    /// Returns the staged future params map (upstream
+    /// `psFutureStakePoolParams`).
+    pub fn future_params(&self) -> &BTreeMap<PoolKeyHash, PoolParams> {
+        &self.future_params
+    }
+
+    /// Adopts staged future pool params into current entries, preserving
+    /// each pool's deposit and clearing the future set.
+    ///
+    /// Upstream: SNAP rule merges `psFutureStakePoolParams` into
+    /// `psStakePoolParams` at epoch boundary, carrying forward
+    /// `spsDeposit` and resetting the future map.
+    pub fn adopt_future_params(&mut self) {
+        let staged = std::mem::take(&mut self.future_params);
+        for (operator, params) in staged {
+            if let Some(entry) = self.entries.get_mut(&operator) {
+                entry.params = params;
+            }
+            // If the pool was removed (retired) between re-registration and
+            // epoch boundary, the future params are silently dropped.
+        }
     }
 }
 
@@ -752,6 +868,25 @@ impl StakeCredentials {
         for state in self.entries.values_mut() {
             if state.delegated_drep.as_ref() == Some(drep) {
                 state.delegated_drep = None;
+            }
+        }
+    }
+
+    /// Clears pool delegation from all stake credentials delegated to any of
+    /// the given retired pools.
+    ///
+    /// Upstream: `removeStakePoolDelegations` in
+    /// `Cardano.Ledger.Shelley.Rules.PoolReap` — called at epoch boundary
+    /// to decouple delegators from pools that have just retired.
+    pub fn clear_pool_delegations(&mut self, retired: &[PoolKeyHash]) {
+        if retired.is_empty() {
+            return;
+        }
+        for state in self.entries.values_mut() {
+            if let Some(pool) = state.delegated_pool {
+                if retired.contains(&pool) {
+                    state.delegated_pool = None;
+                }
             }
         }
     }
@@ -6071,6 +6206,27 @@ impl LedgerState {
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
         }
 
+        // Conway BBODY rule: block-level reference-script size limit.
+        // Sum ref-script sizes across all transactions pre-mutation.
+        // Reference: `Cardano.Ledger.Conway.Rules.Bbody` — `BodyRefScriptsSizeTooBig`.
+        {
+            let mut block_ref_total: usize = 0;
+            for (_, _, body, _, _, _) in &decoded {
+                block_ref_total = block_ref_total.saturating_add(
+                    self.multi_era_utxo.total_ref_scripts_size(
+                        &body.inputs,
+                        body.reference_inputs.as_deref(),
+                    ),
+                );
+            }
+            if block_ref_total > crate::utxo::MAX_REF_SCRIPT_SIZE_PER_BLOCK {
+                return Err(LedgerError::BodyRefScriptsSizeTooBig {
+                    actual: block_ref_total,
+                    max_allowed: crate::utxo::MAX_REF_SCRIPT_SIZE_PER_BLOCK,
+                });
+            }
+        }
+
         let mut staged = self.multi_era_utxo.clone();
         let mut staged_pool_state = self.pool_state.clone();
         let mut staged_stake_credentials = self.stake_credentials.clone();
@@ -7825,12 +7981,17 @@ fn apply_certificates_and_withdrawals(
                     total_refunds = total_refunds.saturating_add(*refund);
                 }
                 DCert::DelegationToStakePool(credential, pool) => {
+                    // Upstream Shelley DELEG enforces
+                    // DelegateeNotRegisteredDELEG for ALL eras (Shelley
+                    // through Babbage).  Conway uses
+                    // DelegateeStakePoolNotRegisteredDELEG in ConwayDELEG.
                     delegate_stake_credential(
                         pool_state,
                         stake_credentials,
                         reward_accounts,
                         *credential,
                         *pool,
+                        true,
                     )?;
                 }
                 DCert::AccountRegistrationDelegationToStakePool(credential, pool, deposit) => {
@@ -7853,6 +8014,7 @@ fn apply_certificates_and_withdrawals(
                         reward_accounts,
                         *credential,
                         *pool,
+                        true, // Conway-only cert — always check
                     )?;
                 }
                 DCert::DelegationToDrep(credential, drep) => {
@@ -7865,6 +8027,7 @@ fn apply_certificates_and_withdrawals(
                         reward_accounts,
                         *credential,
                         *pool,
+                        true, // Conway-only cert — always check
                     )?;
                     delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
                 }
@@ -7904,6 +8067,7 @@ fn apply_certificates_and_withdrawals(
                         reward_accounts,
                         *credential,
                         *pool,
+                        true, // Conway-only cert — always check
                     )?;
                     delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
                 }
@@ -7966,14 +8130,28 @@ fn apply_certificates_and_withdrawals(
                             }
                         }
                     }
-                    // POOL rule: all pool owners must be registered stake
-                    // credentials (upstream `StakePoolOwnerNotRegisteredPOOL`).
-                    for owner in &params.pool_owners {
-                        let cred = StakeCredential::AddrKeyHash(*owner);
-                        if !stake_credentials.is_registered(&cred) {
-                            return Err(LedgerError::PoolOwnerNotRegistered {
-                                owner: *owner,
-                            });
+                    // NOTE: The upstream POOL rule (`Cardano.Ledger.Shelley.Rules.Pool`)
+                    // intentionally does NOT check that pool owners are registered
+                    // stake credentials. The formal Shelley spec included such a check,
+                    // but the Haskell implementation omits it. Delegating with an
+                    // unregistered owner is harmless — the owner simply cannot claim
+                    // rewards until registered.
+                    // Conway POOL rule: VRF key must not already be registered
+                    // by another pool.
+                    // Reference: `Cardano.Ledger.Shelley.Rules.Pool` —
+                    // `hardforkConwayDisallowDuplicatedVRFKeys`.
+                    if ctx.is_conway {
+                        let is_new = !pool_state.is_registered(&params.operator);
+                        if let Some(existing) = pool_state.find_pool_by_vrf_key(&params.vrf_keyhash) {
+                            // For new registration: VRF must not be used at all.
+                            // For re-registration: VRF may be the same pool's own key.
+                            if is_new || existing != params.operator {
+                                return Err(LedgerError::VrfKeyAlreadyRegistered {
+                                    pool: params.operator,
+                                    vrf_key: params.vrf_keyhash,
+                                    existing_pool: existing,
+                                });
+                            }
                         }
                     }
                     let is_new = !pool_state.is_registered(&params.operator);
@@ -8157,8 +8335,14 @@ fn delegate_stake_credential(
     reward_accounts: &mut RewardAccounts,
     credential: StakeCredential,
     pool: PoolKeyHash,
+    check_pool_registered: bool,
 ) -> Result<(), LedgerError> {
-    if !pool_state.is_registered(&pool) {
+    // Upstream: only Conway DELEG checks `DelegateeStakePoolNotRegisteredDELEG`.
+    // In Shelley through Babbage, delegation to an unregistered pool silently
+    // succeeds — the delegation is recorded but has no effect until the pool
+    // registers.
+    // Reference: `Cardano.Ledger.Conway.Rules.Deleg` — `checkStakeDelegateeRegistered`.
+    if check_pool_registered && !pool_state.is_registered(&pool) {
         return Err(LedgerError::PoolNotRegistered(pool));
     }
 
@@ -15642,8 +15826,8 @@ mod tests {
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
-        // Pre-register the pool owner as a stake credential (upstream
-        // StakePoolOwnerNotRegisteredPOOL requires all owners registered).
+        // Register the pool owner as a stake credential (not required by
+        // upstream POOL rule, but useful for reward claiming in tests).
         sc.register(StakeCredential::AddrKeyHash([0xAA; 28]));
 
         let params = PoolParams {
@@ -15664,6 +15848,40 @@ mod tests {
         ).unwrap();
         assert!(pool.is_registered(&[0xAA; 28]));
         assert_eq!(dp.pool_deposits, 500_000_000);
+    }
+
+    /// Upstream POOL rule does not enforce pool-owner registration as a
+    /// stake credential. Pool registration must succeed even when owners
+    /// are unregistered. Reference: `Cardano.Ledger.Shelley.Rules.Pool`.
+    #[test]
+    fn test_cert_pool_registration_unregistered_owner_accepted() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        // Intentionally do NOT register the owner as a stake credential.
+        let params = PoolParams {
+            operator: [0xBB; 28],
+            vrf_keyhash: [0xBB; 32],
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 1, denominator: 10 },
+            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]) },
+            pool_owners: vec![[0xBB; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let certs = vec![DCert::PoolRegistration(params)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap();
+        assert!(pool.is_registered(&[0xBB; 28]));
     }
 
     #[test]
@@ -16276,7 +16494,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cert_delegate_to_unregistered_pool() {
+    fn test_cert_delegate_to_unregistered_pool_shelley_rejects() {
+        // Upstream Shelley DELEG checks DelegateeNotRegisteredDELEG for ALL
+        // eras (Shelley through Babbage): `Map.member stakePool
+        // (psStakePools ..) ?! DelegateeNotRegisteredDELEG stakePool`.
         let mut pool = PoolState::new();
         let mut sc = StakeCredentials::new();
         let cred = crate::StakeCredential::AddrKeyHash([0xFC; 28]);
@@ -16286,7 +16507,7 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_cert_ctx();
+        let ctx = sample_cert_ctx(); // is_conway: false
 
         let certs = vec![DCert::DelegationToStakePool(cred, [0x00; 28])]; // pool not registered
         let err = apply_certificates_and_withdrawals(
@@ -16294,6 +16515,303 @@ mod tests {
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
         ).unwrap_err();
         assert!(matches!(err, LedgerError::PoolNotRegistered(_)));
+    }
+
+    #[test]
+    fn test_cert_delegate_to_unregistered_pool_conway_rejects() {
+        // Upstream Conway DELEG added `DelegateeStakePoolNotRegisteredDELEG`.
+        // Reference: `Cardano.Ledger.Conway.Rules.Deleg` — `checkStakeDelegateeRegistered`.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xFC; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx(); // is_conway: true
+
+        let certs = vec![DCert::DelegationToStakePool(cred, [0x00; 28])]; // pool not registered
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::PoolNotRegistered(_)));
+    }
+
+    #[test]
+    fn test_conway_pool_registration_duplicate_vrf_key_rejected() {
+        // Upstream Conway POOL rule: `VRFKeyHashAlreadyRegistered`.
+        // Two pools cannot register with the same VRF key in Conway.
+        let mut pool_state = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        // Register owners for both pools.
+        let owner_a = StakeCredential::AddrKeyHash([0xA0; 28]);
+        let owner_b = StakeCredential::AddrKeyHash([0xB0; 28]);
+        sc.register(owner_a);
+        sc.register(owner_b);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        let shared_vrf: [u8; 32] = [0xCC; 32];
+        let pool_a = PoolParams {
+            operator: [0xA1; 28],
+            vrf_keyhash: shared_vrf,
+            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
+            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+        };
+        let pool_b = PoolParams {
+            operator: [0xB1; 28],
+            vrf_keyhash: shared_vrf, // same VRF key
+            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB0; 28]) },
+            pool_owners: vec![[0xB0; 28]], relays: vec![], pool_metadata: None,
+        };
+        // Register pool A first, then try pool B with same VRF key.
+        let certs = vec![
+            DCert::PoolRegistration(pool_a),
+            DCert::PoolRegistration(pool_b),
+        ];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::VrfKeyAlreadyRegistered { .. }));
+    }
+
+    #[test]
+    fn test_conway_pool_reregistration_same_vrf_key_accepted() {
+        // Re-registering a pool with its own VRF key should succeed.
+        let mut pool_state = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let owner = StakeCredential::AddrKeyHash([0xA0; 28]);
+        sc.register(owner);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        let params = PoolParams {
+            operator: [0xA1; 28],
+            vrf_keyhash: [0xDD; 32],
+            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
+            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+        };
+        // Register pool, then re-register with same params (same VRF key).
+        let certs = vec![
+            DCert::PoolRegistration(params.clone()),
+            DCert::PoolRegistration(params),
+        ];
+        let result = apply_certificates_and_withdrawals(
+            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        );
+        assert!(result.is_ok(), "re-registration with same VRF key should succeed: {result:?}");
+    }
+
+    #[test]
+    fn test_pool_reregistration_stages_future_params() {
+        // Re-registering an existing pool should NOT change current params;
+        // new params are staged in future_params.
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xFA; 28];
+        let original = PoolParams {
+            operator,
+            vrf_keyhash: [0x01; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFA; 28]) },
+            pool_owners: vec![[0xFA; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let updated = PoolParams {
+            pledge: 5_000,
+            vrf_keyhash: [0x02; 32],
+            ..original.clone()
+        };
+        pool.register_with_deposit(original.clone(), 500_000_000);
+        pool.register_with_deposit(updated.clone(), 0); // deposit ignored for re-reg
+
+        // Current params unchanged.
+        assert_eq!(pool.get(&operator).unwrap().params.pledge, 1_000);
+        assert_eq!(pool.get(&operator).unwrap().params.vrf_keyhash, [0x01; 32]);
+        // Future params staged.
+        assert!(pool.future_params().contains_key(&operator));
+        assert_eq!(pool.future_params()[&operator].pledge, 5_000);
+        assert_eq!(pool.future_params()[&operator].vrf_keyhash, [0x02; 32]);
+    }
+
+    #[test]
+    fn test_adopt_future_params_applies_staged_and_clears() {
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xFB; 28];
+        let original = PoolParams {
+            operator,
+            vrf_keyhash: [0x01; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFB; 28]) },
+            pool_owners: vec![[0xFB; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let updated = PoolParams {
+            pledge: 9_000,
+            ..original.clone()
+        };
+        pool.register_with_deposit(original, 500_000_000);
+        pool.register_with_deposit(updated, 0); // stage re-registration
+
+        pool.adopt_future_params();
+
+        // New params adopted, deposit preserved.
+        assert_eq!(pool.get(&operator).unwrap().params.pledge, 9_000);
+        assert_eq!(pool.get(&operator).unwrap().deposit, 500_000_000);
+        // Future set cleared.
+        assert!(pool.future_params().is_empty());
+    }
+
+    #[test]
+    fn test_pool_state_cbor_round_trip_with_future_params() {
+        let mut pool = PoolState::new();
+        let op1: [u8; 28] = [0xAA; 28];
+        let op2: [u8; 28] = [0xBB; 28];
+        let mk_params = |op: [u8; 28], pledge: u64| PoolParams {
+            operator: op,
+            vrf_keyhash: [op[0]; 32],
+            pledge,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash(op) },
+            pool_owners: vec![op],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        pool.register_with_deposit(mk_params(op1, 100), 500_000_000);
+        pool.register_with_deposit(mk_params(op2, 200), 500_000_000);
+        // Stage re-registration for op1.
+        pool.register_with_deposit(mk_params(op1, 999), 0);
+
+        let mut enc = crate::cbor::Encoder::new();
+        pool.encode_cbor(&mut enc);
+        let bytes = enc.into_bytes();
+
+        let mut dec = crate::cbor::Decoder::new(&bytes);
+        let decoded = PoolState::decode_cbor(&mut dec).unwrap();
+
+        assert_eq!(decoded.get(&op1).unwrap().params.pledge, 100); // current
+        assert_eq!(decoded.future_params()[&op1].pledge, 999);     // staged
+        assert_eq!(decoded.get(&op2).unwrap().params.pledge, 200);
+        assert!(decoded.future_params().get(&op2).is_none());
+    }
+
+    #[test]
+    fn test_pool_retirement_clears_future_params() {
+        // If a pool is retired while it has staged future params,
+        // process_retirements MUST clear both entries and future_params.
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xFC; 28];
+        let original = PoolParams {
+            operator,
+            vrf_keyhash: [0x01; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFC; 28]) },
+            pool_owners: vec![[0xFC; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        pool.register_with_deposit(original.clone(), 500_000_000);
+        // Stage re-registration.
+        pool.register_with_deposit(PoolParams { pledge: 9_999, ..original }, 0);
+        assert!(pool.future_params().contains_key(&operator));
+        // Schedule retirement.
+        pool.retire(operator, EpochNo(5));
+        let retired = pool.process_retirements(EpochNo(5));
+        assert_eq!(retired, vec![operator]);
+        assert!(!pool.is_registered(&operator));
+        assert!(pool.future_params().is_empty());
+    }
+
+    #[test]
+    fn test_reregistration_clears_retirement() {
+        // Re-registering a pool that is scheduled for retirement should
+        // clear the retirement flag (upstream `psRetiring` deletion).
+        let mut pool = PoolState::new();
+        let operator: [u8; 28] = [0xFD; 28];
+        let params = PoolParams {
+            operator,
+            vrf_keyhash: [0x01; 32],
+            pledge: 1_000,
+            cost: 170_000_000,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFD; 28]) },
+            pool_owners: vec![[0xFD; 28]],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        pool.register_with_deposit(params.clone(), 500_000_000);
+        pool.retire(operator, EpochNo(10));
+        assert!(pool.get(&operator).unwrap().retiring_epoch.is_some());
+
+        // Re-register → retirement should be cleared.
+        pool.register_with_deposit(PoolParams { pledge: 2_000, ..params }, 0);
+        assert!(pool.get(&operator).unwrap().retiring_epoch.is_none());
+    }
+
+    #[test]
+    fn test_shelley_pool_registration_duplicate_vrf_key_accepted() {
+        // Pre-Conway: duplicate VRF keys are allowed.
+        let mut pool_state = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let owner_a = StakeCredential::AddrKeyHash([0xA0; 28]);
+        let owner_b = StakeCredential::AddrKeyHash([0xB0; 28]);
+        sc.register(owner_a);
+        sc.register(owner_b);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx(); // is_conway: false
+
+        let shared_vrf: [u8; 32] = [0xEE; 32];
+        let pool_a = PoolParams {
+            operator: [0xA1; 28],
+            vrf_keyhash: shared_vrf,
+            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
+            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+        };
+        let pool_b = PoolParams {
+            operator: [0xB1; 28],
+            vrf_keyhash: shared_vrf, // same VRF key — should be allowed pre-Conway
+            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB0; 28]) },
+            pool_owners: vec![[0xB0; 28]], relays: vec![], pool_metadata: None,
+        };
+        let certs = vec![
+            DCert::PoolRegistration(pool_a),
+            DCert::PoolRegistration(pool_b),
+        ];
+        let result = apply_certificates_and_withdrawals(
+            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        );
+        assert!(result.is_ok(), "Shelley-era duplicate VRF keys should be allowed: {result:?}");
     }
 
     #[test]

@@ -4969,6 +4969,7 @@ mod tests {
                 max_major_protocol_version: Some(10),
                 future_check: None,
                 ocert_counters: None,
+                pp_major_protocol_version: None,
             },
             nonce_config: None,
             security_param: None,

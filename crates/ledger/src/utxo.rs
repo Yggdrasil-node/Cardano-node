@@ -16,6 +16,13 @@ use crate::eras::allegra::AllegraTxBody;
 /// Hardcoded upstream constant (not a governable protocol parameter).
 /// Reference: `Cardano.Ledger.Conway.PParams` — `ppMaxRefScriptSizePerTxG`.
 pub const MAX_REF_SCRIPT_SIZE_PER_TX: usize = 204_800;
+
+/// Maximum total reference-script size (in bytes) per block.
+///
+/// Hardcoded upstream constant; summed across all transactions in the block.
+/// Reference: `Cardano.Ledger.Conway.Rules.Bbody` —
+/// `BodyRefScriptsSizeTooBig`, `ppMaxRefScriptSizePerBlockG`.
+pub const MAX_REF_SCRIPT_SIZE_PER_BLOCK: usize = 1_048_576;
 use crate::eras::alonzo::{AlonzoTxBody, AlonzoTxOut};
 use crate::eras::babbage::{BabbageTxBody, BabbageTxOut};
 use crate::eras::byron::ByronTx;
@@ -1665,5 +1672,13 @@ mod tests {
             result,
             Err(LedgerError::OutsideForecast { slot: 151, limit: 150 })
         ));
+    }
+
+    #[test]
+    fn block_ref_script_limit_is_1mib() {
+        // Upstream constant ppMaxRefScriptSizePerBlockG = 1 MiB.
+        assert_eq!(super::MAX_REF_SCRIPT_SIZE_PER_BLOCK, 1_048_576);
+        // Per-tx limit is 200 KiB.
+        assert_eq!(super::MAX_REF_SCRIPT_SIZE_PER_TX, 204_800);
     }
 }

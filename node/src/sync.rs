@@ -137,6 +137,22 @@ pub enum SyncError {
         /// The node's configured `MaxMajorProtVer`.
         max: u64,
     },
+
+    /// Block header major protocol version exceeds
+    /// `pp.protocolVersion.major + 1`.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Bbody` —
+    /// `HeaderProtVerTooHigh`.
+    #[error(
+        "header protocol version too high: major {header_major} > pp major \
+         {pp_major} + 1"
+    )]
+    HeaderProtVerTooHigh {
+        /// Major version declared in the block header.
+        header_major: u64,
+        /// Current protocol-parameter major version.
+        pp_major: u64,
+    },
 }
 
 impl SyncError {
@@ -164,6 +180,7 @@ impl SyncError {
                 | SyncError::WrongBlockBodySize { .. }
                 | SyncError::ProtocolVersionMismatch { .. }
                 | SyncError::ProtocolVersionTooHigh { .. }
+                | SyncError::HeaderProtVerTooHigh { .. }
         )
     }
 }
@@ -2073,6 +2090,15 @@ pub struct VerificationConfig {
     /// Reference: `PraosState.csCounters` in
     /// `Ouroboros.Consensus.Protocol.Praos`.
     pub ocert_counters: Option<OcertCounters>,
+    /// Current protocol-parameter major version from the live ledger state.
+    ///
+    /// When present, block headers are rejected if their major version
+    /// exceeds `pp_major_protocol_version + 1` (Conway BBODY rule
+    /// `HeaderProtVerTooHigh`).
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Bbody` —
+    /// `pvMajor(bhprotver hdr) > succVersion(pvMajor pp)`.
+    pub pp_major_protocol_version: Option<u64>,
 }
 
 /// Configuration for the blocks-from-the-future check.
@@ -2476,6 +2502,19 @@ pub fn verify_multi_era_block(
 ) -> Result<(), SyncError> {
     // BBODY/BHEAD-level protocol-version check (Shelley+ only).
     validate_block_protocol_version_with_max(block, config.max_major_protocol_version)?;
+
+    // Conway BBODY: HeaderProtVerTooHigh — header major must be
+    // ≤ pp.protocolVersion.major + 1.
+    if let Some(pp_major) = config.pp_major_protocol_version {
+        if let Some((header_major, _)) = block.protocol_version() {
+            if header_major > pp_major + 1 {
+                return Err(SyncError::HeaderProtVerTooHigh {
+                    header_major,
+                    pp_major,
+                });
+            }
+        }
+    }
 
     match block {
         MultiEraBlock::Shelley(shelley) => {

@@ -376,7 +376,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
             max_kes_evolutions: 62,
             verify_body_hash: true,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None,
+            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: Some(SecurityParam(1)),
@@ -1793,7 +1793,7 @@ fn verify_multi_era_block_byron_is_noop() {
         max_kes_evolutions: 62,
         verify_body_hash: false,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None,
+            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
     };
     assert!(verify_multi_era_block(&me, &config).is_ok());
 }
@@ -2513,7 +2513,7 @@ fn verify_multi_era_block_babbage_passes() {
         max_kes_evolutions: 62,
         verify_body_hash: false,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None,
+            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
     };
     let result = verify_multi_era_block(&me, &config);
     // Expect error since the signature is dummy bytes, confirming the
@@ -2539,7 +2539,7 @@ fn verify_multi_era_block_conway_passes() {
         max_kes_evolutions: 62,
         verify_body_hash: false,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None,
+            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
     };
     let result = verify_multi_era_block(&me, &config);
     assert!(result.is_err());
@@ -4358,11 +4358,82 @@ fn verify_multi_era_block_rejects_bad_protocol_version() {
         verify_body_hash: false,
         max_major_protocol_version: None,
         future_check: None,
-        ocert_counters: None,
+        ocert_counters: None, pp_major_protocol_version: None,
     };
     let err = verify_multi_era_block(&block, &config).unwrap_err();
     assert!(
         format!("{err}").contains("protocol version mismatch"),
         "verify_multi_era_block should catch protocol version error, got: {err}"
     );
+}
+
+/// Conway BBODY parity: header major version must be ≤ pp major + 1.
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Bbody` — `HeaderProtVerTooHigh`.
+#[test]
+fn verify_multi_era_block_rejects_header_prot_ver_too_high() {
+    // Conway block claiming major 12 when PP says major 10 → rejected.
+    let block = MultiEraBlock::Conway(Box::new(ConwayBlock {
+        header: PraosHeader {
+            body: PraosHeaderBody {
+                protocol_version: (12, 0),
+                ..sample_praos_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }));
+    let config = VerificationConfig {
+        slots_per_kes_period: 129600,
+        max_kes_evolutions: 62,
+        verify_body_hash: false,
+        max_major_protocol_version: Some(15), // high ceiling so this check doesn't fire
+        future_check: None,
+        ocert_counters: None,
+        pp_major_protocol_version: Some(10), // PP says major 10 → header 12 > 11
+    };
+    let err = verify_multi_era_block(&block, &config).unwrap_err();
+    assert!(
+        format!("{err}").contains("header protocol version too high"),
+        "expected HeaderProtVerTooHigh, got: {err}"
+    );
+}
+
+/// Header major == pp major + 1 should be accepted.
+#[test]
+fn verify_multi_era_block_accepts_header_prot_ver_at_successor() {
+    let block = MultiEraBlock::Conway(Box::new(ConwayBlock {
+        header: PraosHeader {
+            body: PraosHeaderBody {
+                protocol_version: (11, 0),
+                ..sample_praos_header_body()
+            },
+            signature: vec![0xDD; 448],
+        },
+        transaction_bodies: vec![],
+        transaction_witness_sets: vec![],
+        auxiliary_data_set: std::collections::HashMap::new(),
+        invalid_transactions: vec![],
+    }));
+    let config = VerificationConfig {
+        slots_per_kes_period: 129600,
+        max_kes_evolutions: 62,
+        verify_body_hash: false,
+        max_major_protocol_version: Some(15),
+        future_check: None,
+        ocert_counters: None,
+        pp_major_protocol_version: Some(10), // PP 10, header 11 = 10+1 → ok
+    };
+    // This should NOT fail on protocol version — it may fail on KES/VRF
+    // checks, but not on HeaderProtVerTooHigh.
+    let result = verify_multi_era_block(&block, &config);
+    if let Err(e) = &result {
+        assert!(
+            !format!("{e}").contains("header protocol version too high"),
+            "header major 11 with PP major 10 should be accepted, got: {e}"
+        );
+    }
 }
