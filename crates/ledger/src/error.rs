@@ -803,6 +803,14 @@ pub enum LedgerError {
     /// `adaPolicy ∉ supp mint tx` (Mary through Conway).
     #[error("transaction attempts to mint or burn ADA (policy ID is the zero hash)")]
     TriesToForgeADA,
+
+    /// An asset name exceeds the CDDL maximum of 32 bytes.
+    ///
+    /// CDDL: `asset_name = bytes .size (0..32)`
+    ///
+    /// Reference: `Cardano.Ledger.Mary.Value` — asset name size constraint.
+    #[error("asset name too long ({actual} bytes, max 32)")]
+    AssetNameTooLong { actual: usize },
 }
 
 // ─────────────────────────────────────────────────────────────────────────

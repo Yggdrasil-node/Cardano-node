@@ -174,6 +174,9 @@ fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, Ledg
         let mut assets = BTreeMap::new();
         for _ in 0..asset_count {
             let name = dec.bytes()?.to_vec();
+            if name.len() > 32 {
+                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+            }
             let qty = dec.unsigned()?;
             assets.insert(name, qty);
         }
@@ -211,6 +214,9 @@ pub(crate) fn decode_mint_asset(dec: &mut Decoder<'_>) -> Result<MintAsset, Ledg
         let mut assets = BTreeMap::new();
         for _ in 0..asset_count {
             let name = dec.bytes()?.to_vec();
+            if name.len() > 32 {
+                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+            }
             let qty = dec.integer()?;
             assets.insert(name, qty);
         }
@@ -710,5 +716,61 @@ mod tests {
         let mut dec = Decoder::new(&bytes);
         let decoded = decode_multi_asset_unsigned(&mut dec).unwrap();
         assert_eq!(decoded, ma);
+    }
+
+    // ── Asset name length validation (CDDL: bytes .size (0..32)) ─────────
+
+    #[test]
+    fn asset_name_32_bytes_accepted() {
+        let name = vec![0xAA; 32]; // exactly 32 bytes — valid
+        let mut ma = BTreeMap::new();
+        let mut assets = BTreeMap::new();
+        assets.insert(name, 42u64);
+        ma.insert([0x01; 28], assets);
+
+        let mut enc = Encoder::new();
+        encode_multi_asset(&mut enc, &ma);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let decoded = decode_multi_asset_unsigned(&mut dec).unwrap();
+        assert_eq!(decoded, ma);
+    }
+
+    #[test]
+    fn asset_name_33_bytes_rejected() {
+        // Manually encode a multi-asset with a 33-byte asset name
+        let mut enc = Encoder::new();
+        enc.map(1); // 1 policy
+        enc.bytes(&[0x01; 28]); // policy id
+        enc.map(1); // 1 asset
+        enc.bytes(&[0xBB; 33]); // 33-byte asset name — too long
+        enc.unsigned(100);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let result = decode_multi_asset_unsigned(&mut dec);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, LedgerError::AssetNameTooLong { actual: 33 }),
+            "expected AssetNameTooLong, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn mint_asset_name_33_bytes_rejected() {
+        let mut enc = Encoder::new();
+        enc.map(1);
+        enc.bytes(&[0x01; 28]);
+        enc.map(1);
+        enc.bytes(&[0xCC; 33]); // 33-byte asset name
+        enc.integer(50);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let result = decode_mint_asset(&mut dec);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            LedgerError::AssetNameTooLong { actual: 33 }
+        ));
     }
 }
