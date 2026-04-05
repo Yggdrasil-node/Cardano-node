@@ -1426,3 +1426,231 @@ fn post_bootstrap_allows_script_hash_withdrawal_without_drep() {
         "script-hash withdrawal should not trigger DRep delegation check, got: {err:?}",
     );
 }
+
+// -----------------------------------------------------------------------
+// 9. Interleaved proposal staging — same-tx proposal chaining
+//    (upstream `foldlM'` + `processProposal` ordering)
+// -----------------------------------------------------------------------
+
+/// Verifies that proposal 1 can reference proposal 0 from a previous
+/// transaction via the governance actions map, and the interleaved
+/// validate+stage ordering (upstream `foldlM'` + `processProposal`)
+/// stages each valid proposal before validating the next.
+#[test]
+fn conway_proposal_chaining_across_txs_succeeds() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    let consumed = 10_000_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let cred = StakeCredential::AddrKeyHash([0xE2; 28]);
+    state.stake_credentials_mut().register(cred);
+    let return_account = RewardAccount { network: 1, credential: cred };
+    state.reward_accounts_mut()
+        .insert(return_account, RewardAccountState::new(0, None));
+
+    // --- Block 1: Stage a ParameterChange proposal (prev_action_id = None) ---
+    let proposal_0 = ProposalProcedure {
+        deposit: 0,
+        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        gov_action: GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: {
+                let mut ppu = ProtocolParameterUpdate::default();
+                ppu.min_fee_a = Some(1);
+                ppu
+            },
+            guardrails_script_hash: None,
+        },
+        anchor: Anchor {
+            url: "https://example.invalid/proposal-0".to_string(),
+            data_hash: [0xE3; 32],
+        },
+    };
+
+    let body_0 = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x01],
+            amount: Value::Coin(consumed),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(vec![proposal_0]),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+    let tx_id_0 = compute_tx_id(&body_0.to_cbor_bytes()).0;
+
+    let block1 = make_conway_block(10, 1, 0xE1, vec![body_0]);
+    state.apply_block(&block1).expect("block 1 with initial proposal should succeed");
+
+    // --- Block 2: Chain a second ParameterChange referencing proposal 0 ---
+    let consumed_2 = 10_000_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xE5; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed_2 },
+    );
+
+    let proposal_1 = ProposalProcedure {
+        deposit: 0,
+        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        gov_action: GovAction::ParameterChange {
+            prev_action_id: Some(GovActionId {
+                transaction_id: tx_id_0,
+                gov_action_index: 0,
+            }),
+            protocol_param_update: {
+                let mut ppu = ProtocolParameterUpdate::default();
+                ppu.min_fee_b = Some(2);
+                ppu
+            },
+            guardrails_script_hash: None,
+        },
+        anchor: Anchor {
+            url: "https://example.invalid/proposal-1".to_string(),
+            data_hash: [0xE4; 32],
+        },
+    };
+
+    let body_1 = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: [0xE5; 32], index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x01],
+            amount: Value::Coin(consumed_2),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: Some(vec![proposal_1]),
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let block2 = make_conway_block(20, 2, 0xE5, vec![body_1]);
+    state.apply_block(&block2).expect(
+        "proposal chaining across txs: proposal 1 references proposal 0 via prev_action_id",
+    );
+}
+
+/// Verifies that a same-tx reference to a not-yet-validated proposal fails
+/// correctly. Proposal 0 references proposal 1 (forward reference) which
+/// violates the upstream invariant where proposals are processed in order.
+#[test]
+fn conway_same_tx_forward_reference_rejected() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    let consumed = 10_000_000u64;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xF1; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let cred = StakeCredential::AddrKeyHash([0xF2; 28]);
+    state.stake_credentials_mut().register(cred);
+    let return_account = RewardAccount { network: 1, credential: cred };
+    state.reward_accounts_mut()
+        .insert(return_account, RewardAccountState::new(0, None));
+
+    let body_template = ConwayTxBody {
+        inputs: vec![ShelleyTxIn { transaction_id: [0xF1; 32], index: 0 }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x01],
+            amount: Value::Coin(consumed),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+    let tx_id_bytes = compute_tx_id(&body_template.to_cbor_bytes()).0;
+
+    // Proposal 0 references proposal 1 (forward reference — index 1 >= own index 0)
+    let proposal_0_fwd = ProposalProcedure {
+        deposit: 0,
+        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        gov_action: GovAction::ParameterChange {
+            prev_action_id: Some(GovActionId {
+                transaction_id: tx_id_bytes,
+                gov_action_index: 1,
+            }),
+            protocol_param_update: {
+                let mut ppu = ProtocolParameterUpdate::default();
+                ppu.min_fee_a = Some(1);
+                ppu
+            },
+            guardrails_script_hash: None,
+        },
+        anchor: Anchor {
+            url: "https://example.invalid/forward-ref-0".to_string(),
+            data_hash: [0xF3; 32],
+        },
+    };
+
+    let proposal_1_info = ProposalProcedure {
+        deposit: 0,
+        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        gov_action: GovAction::InfoAction,
+        anchor: Anchor {
+            url: "https://example.invalid/forward-ref-1".to_string(),
+            data_hash: [0xF4; 32],
+        },
+    };
+
+    let body = ConwayTxBody {
+        proposal_procedures: Some(vec![proposal_0_fwd.clone(), proposal_1_info]),
+        ..body_template
+    };
+
+    let block = make_conway_block(10, 1, 0xF1, vec![body]);
+    let err = state.apply_block(&block).unwrap_err();
+    assert_eq!(err, LedgerError::InvalidPrevGovActionId(proposal_0_fwd));
+}

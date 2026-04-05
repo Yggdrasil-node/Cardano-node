@@ -7563,17 +7563,25 @@ fn conway_protocol_param_update_well_formed(
     true
 }
 
+/// Validates and stages Conway governance proposal procedures in sequential
+/// order, matching upstream `conwayGovTransition`'s `foldlM'` +
+/// `processProposal` semantics.  Each proposal is validated first; only
+/// valid proposals are staged into `governance_actions` before the next
+/// proposal is validated.  This ensures proposal N+1 can reference
+/// proposal N via `prev_action_id`, but a bad-lineage proposal N is never
+/// visible to subsequent proposals.
 fn validate_conway_proposals(
     tx_id: crate::types::TxId,
     proposal_procedures: &[crate::eras::conway::ProposalProcedure],
     current_epoch: EpochNo,
-    governance_actions: &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+    governance_actions: &mut BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
     stake_credentials: &StakeCredentials,
     protocol_version: Option<(u64, u64)>,
     gov_action_deposit: Option<u64>,
     expected_network_id: Option<u8>,
     protocol_params: Option<&crate::protocol_params::ProtocolParameters>,
     enact_state: &EnactState,
+    gov_action_lifetime: Option<u64>,
 ) -> Result<(), LedgerError> {
     use crate::eras::conway::GovAction;
 

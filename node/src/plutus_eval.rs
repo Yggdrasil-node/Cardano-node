@@ -199,7 +199,7 @@ fn script_context_data(
             vec![
                 build_tx_info(eval.version, tx_ctx, evaluator)?,
                 eval.redeemer.clone(),
-                script_info_data_v3(&eval.purpose, eval.datum.as_ref())?,
+                script_info_data_v3(&eval.purpose, eval.datum.as_ref(), tx_ctx.protocol_version)?,
             ],
         ),
     })
@@ -402,11 +402,12 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext, evaluator: &CekPlut
         ))},
 
         PlutusVersion::V3 => {
+            let pv = tx_ctx.protocol_version;
             let redeemers_v3 = PlutusData::Map(
                 tx_ctx
                     .redeemers
                     .iter()
-                    .map(|(purpose, redeemer)| Ok((script_purpose_data_v3(purpose)?, redeemer.clone())))
+                    .map(|(purpose, redeemer)| Ok((script_purpose_data_v3(purpose, pv)?, redeemer.clone())))
                     .collect::<Result<Vec<_>, LedgerError>>()?,
             );
             // V3 uses the richer TxCert encoding (not legacy DCert).
@@ -414,7 +415,7 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext, evaluator: &CekPlut
                 tx_ctx
                     .certificates
                     .iter()
-                    .map(tx_cert_data_v3)
+                    .map(|c| tx_cert_data_v3(c, pv))
                     .collect::<Result<Vec<_>, _>>()?,
             );
             let current_treasury = maybe_data(
@@ -729,7 +730,7 @@ fn script_purpose_data_v1v2(purpose: &ScriptPurpose) -> Result<PlutusData, Ledge
     })
 }
 
-fn script_purpose_data_v3(purpose: &ScriptPurpose) -> Result<PlutusData, LedgerError> {
+fn script_purpose_data_v3(purpose: &ScriptPurpose, pv: Option<(u64, u64)>) -> Result<PlutusData, LedgerError> {
     Ok(match purpose {
         ScriptPurpose::Minting { policy_id } => {
             PlutusData::Constr(0, vec![PlutusData::Bytes(policy_id.to_vec())])
@@ -748,7 +749,7 @@ fn script_purpose_data_v3(purpose: &ScriptPurpose) -> Result<PlutusData, LedgerE
             3,
             vec![
                 PlutusData::Integer(*cert_index as i128),
-                tx_cert_data_v3(certificate)?,
+                tx_cert_data_v3(certificate, pv)?,
             ],
         ),
         ScriptPurpose::Voting { voter } => {
@@ -770,6 +771,7 @@ fn script_purpose_data_v3(purpose: &ScriptPurpose) -> Result<PlutusData, LedgerE
 fn script_info_data_v3(
     purpose: &ScriptPurpose,
     datum: Option<&PlutusData>,
+    pv: Option<(u64, u64)>,
 ) -> Result<PlutusData, LedgerError> {
     Ok(match purpose {
         ScriptPurpose::Minting { policy_id } => {
@@ -788,7 +790,7 @@ fn script_info_data_v3(
             certificate,
         } => PlutusData::Constr(3, vec![
             PlutusData::Integer(*cert_index as i128),
-            tx_cert_data_v3(certificate)?,
+            tx_cert_data_v3(certificate, pv)?,
         ]),
         ScriptPurpose::Voting { voter } => {
             PlutusData::Constr(4, vec![voter_data_v3(voter)])
@@ -873,7 +875,13 @@ fn certifying_purpose_data(_cert_index: u64, certificate: &DCert) -> Result<Plut
     Ok(PlutusData::Constr(3, vec![certificate_data]))
 }
 
-fn tx_cert_data_v3(certificate: &DCert) -> Result<PlutusData, LedgerError> {
+/// Upstream `hardforkConwayBootstrapPhase`: PV major == 9.
+fn is_conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {
+    matches!(protocol_version, Some((9, _)))
+}
+
+fn tx_cert_data_v3(certificate: &DCert, protocol_version: Option<(u64, u64)>) -> Result<PlutusData, LedgerError> {
+    let bootstrap = is_conway_bootstrap_phase(protocol_version);
     match certificate {
         DCert::AccountRegistration(credential) => Ok(PlutusData::Constr(
             0,
@@ -887,14 +895,22 @@ fn tx_cert_data_v3(certificate: &DCert) -> Result<PlutusData, LedgerError> {
             2,
             vec![credential_data(credential), delegatee_stake_data(pool_key_hash)],
         )),
-        DCert::AccountRegistrationDeposit(credential, deposit) => Ok(PlutusData::Constr(
-            0,
-            vec![credential_data(credential), maybe_lovelace(Some(*deposit))],
-        )),
-        DCert::AccountUnregistrationDeposit(credential, refund) => Ok(PlutusData::Constr(
-            1,
-            vec![credential_data(credential), maybe_lovelace(Some(*refund))],
-        )),
+        DCert::AccountRegistrationDeposit(credential, deposit) => {
+            // Upstream #4863: PV9 omits deposit (hardforkConwayBootstrapPhase).
+            let dep = if bootstrap { None } else { Some(*deposit) };
+            Ok(PlutusData::Constr(
+                0,
+                vec![credential_data(credential), maybe_lovelace(dep)],
+            ))
+        }
+        DCert::AccountUnregistrationDeposit(credential, refund) => {
+            // Upstream #4863: PV9 omits refund (hardforkConwayBootstrapPhase).
+            let rf = if bootstrap { None } else { Some(*refund) };
+            Ok(PlutusData::Constr(
+                1,
+                vec![credential_data(credential), maybe_lovelace(rf)],
+            ))
+        }
         DCert::DelegationToDrep(credential, drep) => Ok(PlutusData::Constr(
             2,
             vec![credential_data(credential), delegatee_vote_data(drep)],
@@ -2571,7 +2587,7 @@ mod tests {
             2_000_000,
             None,
         );
-        let result = tx_cert_data_v3(&cert).expect("DrepRegistration should encode");
+        let result = tx_cert_data_v3(&cert, None).expect("DrepRegistration should encode");
         // Constr(4, [DRepCredential(PubKeyCredential(hash)), deposit])
         assert_eq!(
             result,
@@ -2593,7 +2609,7 @@ mod tests {
             StakeCredential::ScriptHash([0x22; 28]),
             500_000,
         );
-        let result = tx_cert_data_v3(&cert).expect("DrepUnregistration should encode");
+        let result = tx_cert_data_v3(&cert, None).expect("DrepUnregistration should encode");
         // Constr(6, [DRepCredential(ScriptCredential(hash)), refund])
         assert_eq!(
             result,
@@ -2615,7 +2631,7 @@ mod tests {
             StakeCredential::AddrKeyHash([0x33; 28]),
             StakeCredential::ScriptHash([0x44; 28]),
         );
-        let result = tx_cert_data_v3(&cert).expect("CommitteeAuthorization should encode");
+        let result = tx_cert_data_v3(&cert, None).expect("CommitteeAuthorization should encode");
         // Constr(9, [ColdCommitteeCredential(PubKey), HotCommitteeCredential(Script)])
         assert_eq!(
             result,
@@ -2639,7 +2655,7 @@ mod tests {
             StakeCredential::ScriptHash([0x55; 28]),
             None,
         );
-        let result = tx_cert_data_v3(&cert).expect("CommitteeResignation should encode");
+        let result = tx_cert_data_v3(&cert, None).expect("CommitteeResignation should encode");
         // Constr(10, [ColdCommitteeCredential(Script)])
         assert_eq!(
             result,
@@ -2660,7 +2676,7 @@ mod tests {
             StakeCredential::AddrKeyHash([0x66; 28]),
             1_000_000,
         );
-        let result = tx_cert_data_v3(&cert).expect("AccountRegistrationDeposit should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("AccountRegistrationDeposit should encode for V3");
         // Constr(0, [credential, Just(deposit)]) — distinct from legacy which ignores deposit
         assert_eq!(
             result,
@@ -2677,7 +2693,7 @@ mod tests {
     #[test]
     fn tx_cert_data_v3_encodes_plain_registration_with_nothing_deposit() {
         let cert = DCert::AccountRegistration(StakeCredential::ScriptHash([0x11; 28]));
-        let result = tx_cert_data_v3(&cert).expect("AccountRegistration should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("AccountRegistration should encode for V3");
         // Constr(0, [credential, Nothing]) — no deposit present
         assert_eq!(
             result,
@@ -2694,7 +2710,7 @@ mod tests {
     #[test]
     fn tx_cert_data_v3_encodes_plain_unregistration_with_nothing_refund() {
         let cert = DCert::AccountUnregistration(StakeCredential::AddrKeyHash([0x22; 28]));
-        let result = tx_cert_data_v3(&cert).expect("AccountUnregistration should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("AccountUnregistration should encode for V3");
         // Constr(1, [credential, Nothing])
         assert_eq!(
             result,
@@ -2714,7 +2730,7 @@ mod tests {
             StakeCredential::ScriptHash([0x33; 28]),
             750_000,
         );
-        let result = tx_cert_data_v3(&cert).expect("AccountUnregistrationDeposit should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("AccountUnregistrationDeposit should encode for V3");
         // Constr(1, [credential, Just(refund)])
         assert_eq!(
             result,
@@ -2728,6 +2744,71 @@ mod tests {
         );
     }
 
+    /// PV9 (Conway bootstrap phase): deposit is omitted from
+    /// `AccountRegistrationDeposit` — upstream bug #4863.
+    #[test]
+    fn tx_cert_data_v3_pv9_omits_registration_deposit() {
+        let cert = DCert::AccountRegistrationDeposit(
+            StakeCredential::AddrKeyHash([0x66; 28]),
+            1_000_000,
+        );
+        let result = tx_cert_data_v3(&cert, Some((9, 0))).expect("should encode for PV9");
+        // PV9: Constr(0, [credential, Nothing]) — deposit omitted
+        assert_eq!(
+            result,
+            PlutusData::Constr(
+                0,
+                vec![
+                    PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x66; 28])]),
+                    PlutusData::Constr(1, vec![]),
+                ],
+            )
+        );
+    }
+
+    /// PV9 (Conway bootstrap phase): refund is omitted from
+    /// `AccountUnregistrationDeposit` — upstream bug #4863.
+    #[test]
+    fn tx_cert_data_v3_pv9_omits_unregistration_refund() {
+        let cert = DCert::AccountUnregistrationDeposit(
+            StakeCredential::ScriptHash([0x33; 28]),
+            750_000,
+        );
+        let result = tx_cert_data_v3(&cert, Some((9, 0))).expect("should encode for PV9");
+        // PV9: Constr(1, [credential, Nothing]) — refund omitted
+        assert_eq!(
+            result,
+            PlutusData::Constr(
+                1,
+                vec![
+                    PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x33; 28])]),
+                    PlutusData::Constr(1, vec![]),
+                ],
+            )
+        );
+    }
+
+    /// PV10: deposit is included (normal behavior, not bootstrap phase).
+    #[test]
+    fn tx_cert_data_v3_pv10_includes_registration_deposit() {
+        let cert = DCert::AccountRegistrationDeposit(
+            StakeCredential::AddrKeyHash([0x66; 28]),
+            1_000_000,
+        );
+        let result = tx_cert_data_v3(&cert, Some((10, 0))).expect("should encode for PV10");
+        // PV10: Constr(0, [credential, Just(deposit)])
+        assert_eq!(
+            result,
+            PlutusData::Constr(
+                0,
+                vec![
+                    PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x66; 28])]),
+                    PlutusData::Constr(0, vec![PlutusData::Integer(1_000_000)]),
+                ],
+            )
+        );
+    }
+
     #[test]
     fn tx_cert_data_v3_encodes_delegation_to_stake_pool() {
         let pool_hash: [u8; 28] = [0xaa; 28];
@@ -2735,7 +2816,7 @@ mod tests {
             StakeCredential::AddrKeyHash([0x44; 28]),
             pool_hash,
         );
-        let result = tx_cert_data_v3(&cert).expect("DelegationToStakePool should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("DelegationToStakePool should encode for V3");
         // Constr(2, [credential, Delegatee::Stake(pool_hash)])
         assert_eq!(
             result,
@@ -2755,7 +2836,7 @@ mod tests {
             StakeCredential::AddrKeyHash([0x55; 28]),
             DRep::AlwaysNoConfidence,
         );
-        let result = tx_cert_data_v3(&cert).expect("DelegationToDrep should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("DelegationToDrep should encode for V3");
         // Constr(2, [credential, Delegatee::Vote(AlwaysNoConfidence)])
         assert_eq!(
             result,
@@ -2777,7 +2858,7 @@ mod tests {
             pool_hash,
             DRep::AlwaysAbstain,
         );
-        let result = tx_cert_data_v3(&cert).expect("DelegationToStakePoolAndDrep should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("DelegationToStakePoolAndDrep should encode for V3");
         // Constr(2, [credential, Delegatee::StakeVote(pool_hash, drep)])
         assert_eq!(
             result,
@@ -2805,7 +2886,7 @@ mod tests {
             pool_hash,
             3_000_000,
         );
-        let result = tx_cert_data_v3(&cert).expect("AccountRegistrationDelegationToStakePool should encode");
+        let result = tx_cert_data_v3(&cert, None).expect("AccountRegistrationDelegationToStakePool should encode");
         // Constr(3, [credential, Delegatee::Stake(pool), deposit])
         assert_eq!(
             result,
@@ -2827,7 +2908,7 @@ mod tests {
             DRep::KeyHash([0xdd; 28]),
             5_000_000,
         );
-        let result = tx_cert_data_v3(&cert).expect("AccountRegistrationDelegationToDrep should encode");
+        let result = tx_cert_data_v3(&cert, None).expect("AccountRegistrationDelegationToDrep should encode");
         // Constr(3, [credential, Delegatee::Vote(DRep::KeyHash), deposit])
         assert_eq!(
             result,
@@ -2857,7 +2938,7 @@ mod tests {
             DRep::ScriptHash([0xff; 28]),
             4_000_000,
         );
-        let result = tx_cert_data_v3(&cert).expect("AccountRegistrationDelegationToStakePoolAndDrep should encode");
+        let result = tx_cert_data_v3(&cert, None).expect("AccountRegistrationDelegationToStakePoolAndDrep should encode");
         // Constr(3, [credential, Delegatee::StakeVote(pool, drep), deposit])
         assert_eq!(
             result,
@@ -2888,7 +2969,7 @@ mod tests {
             StakeCredential::AddrKeyHash([0xbb; 28]),
             None,
         );
-        let result = tx_cert_data_v3(&cert).expect("DrepUpdate should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("DrepUpdate should encode for V3");
         // Constr(5, [DRepCredential(PubKeyCredential(hash))])
         assert_eq!(
             result,
@@ -2919,7 +3000,7 @@ mod tests {
             relays: vec![],
             pool_metadata: None,
         });
-        let result = tx_cert_data_v3(&cert).expect("PoolRegistration should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("PoolRegistration should encode for V3");
         // Constr(7, [operator_bytes, vrf_keyhash_bytes])
         assert_eq!(
             result,
@@ -2936,7 +3017,7 @@ mod tests {
     #[test]
     fn tx_cert_data_v3_encodes_pool_retirement() {
         let cert = DCert::PoolRetirement([0xcc; 28], EpochNo(42));
-        let result = tx_cert_data_v3(&cert).expect("PoolRetirement should encode for V3");
+        let result = tx_cert_data_v3(&cert, None).expect("PoolRetirement should encode for V3");
         // Constr(8, [pool_key_hash, epoch])
         assert_eq!(
             result,
@@ -3620,7 +3701,7 @@ mod tests {
     #[test]
     fn script_purpose_v3_minting_uses_constr_0() {
         let purpose = ScriptPurpose::Minting { policy_id: [0x66; 28] };
-        let result = script_purpose_data_v3(&purpose).unwrap();
+        let result = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(
             result,
             PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x66; 28])])
@@ -3630,7 +3711,7 @@ mod tests {
     #[test]
     fn script_purpose_v3_spending_uses_constr_1() {
         let purpose = ScriptPurpose::Spending { tx_id: [0x77; 32], index: 5 };
-        let result = script_purpose_data_v3(&purpose).unwrap();
+        let result = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(
             result,
             PlutusData::Constr(1, vec![tx_out_ref_data(&[0x77; 32], 5)])
@@ -3644,7 +3725,7 @@ mod tests {
         let purpose = ScriptPurpose::Rewarding {
             reward_account: RewardAccount { network: 1, credential: cred },
         };
-        let result = script_purpose_data_v3(&purpose).unwrap();
+        let result = script_purpose_data_v3(&purpose, None).unwrap();
         // credential_data(ScriptHash) → Constr(1, [Bytes])
         assert_eq!(
             result,
@@ -3678,7 +3759,7 @@ mod tests {
         let purpose = ScriptPurpose::Voting {
             voter: Voter::StakePool([0x99; 28]),
         };
-        let result = script_purpose_data_v3(&purpose).unwrap();
+        let result = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(
             result,
             PlutusData::Constr(4, vec![
@@ -3701,7 +3782,7 @@ mod tests {
                 anchor: Anchor { url: String::new(), data_hash: [0; 32] },
             },
         };
-        let result = script_purpose_data_v3(&purpose).unwrap();
+        let result = script_purpose_data_v3(&purpose, None).unwrap();
         let PlutusData::Constr(5, fields) = result else { panic!("Expected Constr(5, ...)") };
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0], PlutusData::Integer(0));
@@ -3789,7 +3870,7 @@ mod tests {
     fn script_info_v3_spending_with_datum_includes_just() {
         let datum = PlutusData::Integer(99);
         let purpose = ScriptPurpose::Spending { tx_id: [0xAA; 32], index: 3 };
-        let result = script_info_data_v3(&purpose, Some(&datum)).unwrap();
+        let result = script_info_data_v3(&purpose, Some(&datum), None).unwrap();
         let PlutusData::Constr(1, fields) = result else { panic!("Spending must be Constr(1, ...)") };
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0], tx_out_ref_data(&[0xAA; 32], 3));
@@ -3800,7 +3881,7 @@ mod tests {
     #[test]
     fn script_info_v3_spending_without_datum_includes_nothing() {
         let purpose = ScriptPurpose::Spending { tx_id: [0xBB; 32], index: 0 };
-        let result = script_info_data_v3(&purpose, None).unwrap();
+        let result = script_info_data_v3(&purpose, None, None).unwrap();
         let PlutusData::Constr(1, fields) = result else { panic!("Spending must be Constr(1, ...)") };
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[1], PlutusData::Constr(1, vec![])); // Nothing
@@ -3809,8 +3890,8 @@ mod tests {
     #[test]
     fn script_info_v3_minting_matches_script_purpose_v3() {
         let purpose = ScriptPurpose::Minting { policy_id: [0xCC; 28] };
-        let info = script_info_data_v3(&purpose, None).unwrap();
-        let sp = script_purpose_data_v3(&purpose).unwrap();
+        let info = script_info_data_v3(&purpose, None, None).unwrap();
+        let sp = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(info, sp, "Minting ScriptInfo and ScriptPurpose should be identical for V3");
     }
 
@@ -4589,7 +4670,7 @@ mod tests {
         let PlutusData::List(certs) = &fields[5] else { panic!("Expected List") };
         assert_eq!(certs.len(), 1);
         // V3 AccountRegistration = Constr(0, [credential, maybe_lovelace(None)])
-        assert_eq!(certs[0], tx_cert_data_v3(&tx_ctx.certificates[0]).unwrap());
+        assert_eq!(certs[0], tx_cert_data_v3(&tx_ctx.certificates[0], None).unwrap());
     }
 
     #[test]
@@ -4734,7 +4815,7 @@ mod tests {
         let PlutusData::List(certs_v2) = &f2[5] else { panic!() };
         let PlutusData::List(certs_v3) = &f3[5] else { panic!() };
         assert_eq!(certs_v2[0], legacy_dcert_data(&cert).unwrap());
-        assert_eq!(certs_v3[0], tx_cert_data_v3(&cert).unwrap());
+        assert_eq!(certs_v3[0], tx_cert_data_v3(&cert, None).unwrap());
         // They must be different (legacy reg = Constr(0,[cred]) vs V3 reg = Constr(0,[cred, Nothing]))
         assert_ne!(certs_v2[0], certs_v3[0], "Legacy and V3 cert encodings must differ");
     }
@@ -4828,9 +4909,9 @@ mod tests {
         let PlutusData::List(certs) = &fields[5] else { panic!("Expected List") };
         assert_eq!(certs.len(), 3, "All three certs must be encoded");
         // Verify each is the V3 encoding
-        assert_eq!(certs[0], tx_cert_data_v3(&tx_ctx.certificates[0]).unwrap());
-        assert_eq!(certs[1], tx_cert_data_v3(&tx_ctx.certificates[1]).unwrap());
-        assert_eq!(certs[2], tx_cert_data_v3(&tx_ctx.certificates[2]).unwrap());
+        assert_eq!(certs[0], tx_cert_data_v3(&tx_ctx.certificates[0], None).unwrap());
+        assert_eq!(certs[1], tx_cert_data_v3(&tx_ctx.certificates[1], None).unwrap());
+        assert_eq!(certs[2], tx_cert_data_v3(&tx_ctx.certificates[2], None).unwrap());
     }
 
     // -----------------------------------------------------------------------
@@ -4847,8 +4928,8 @@ mod tests {
                 credential: StakeCredential::ScriptHash([0x51; 28]),
             },
         };
-        let info = script_info_data_v3(&purpose, None).unwrap();
-        let sp = script_purpose_data_v3(&purpose).unwrap();
+        let info = script_info_data_v3(&purpose, None, None).unwrap();
+        let sp = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(info, sp, "Rewarding ScriptInfo and ScriptPurpose must be identical");
         // Verify structure: Constr(2, [credential_data])
         assert_eq!(
@@ -4866,15 +4947,15 @@ mod tests {
             cert_index: 5,
             certificate: cert.clone(),
         };
-        let info = script_info_data_v3(&purpose, None).unwrap();
-        let sp = script_purpose_data_v3(&purpose).unwrap();
+        let info = script_info_data_v3(&purpose, None, None).unwrap();
+        let sp = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(info, sp, "Certifying ScriptInfo and ScriptPurpose must be identical");
         // Verify structure
         assert_eq!(
             info,
             PlutusData::Constr(3, vec![
                 PlutusData::Integer(5),
-                tx_cert_data_v3(&cert).unwrap(),
+                tx_cert_data_v3(&cert, None).unwrap(),
             ])
         );
     }
@@ -4884,8 +4965,8 @@ mod tests {
         let purpose = ScriptPurpose::Voting {
             voter: Voter::DRepKeyHash([0x71; 28]),
         };
-        let info = script_info_data_v3(&purpose, None).unwrap();
-        let sp = script_purpose_data_v3(&purpose).unwrap();
+        let info = script_info_data_v3(&purpose, None, None).unwrap();
+        let sp = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(info, sp, "Voting ScriptInfo and ScriptPurpose must be identical");
         assert_eq!(
             info,
@@ -4911,8 +4992,8 @@ mod tests {
             proposal_index: 3,
             proposal: proposal.clone(),
         };
-        let info = script_info_data_v3(&purpose, None).unwrap();
-        let sp = script_purpose_data_v3(&purpose).unwrap();
+        let info = script_info_data_v3(&purpose, None, None).unwrap();
+        let sp = script_purpose_data_v3(&purpose, None).unwrap();
         assert_eq!(info, sp, "Proposing ScriptInfo and ScriptPurpose must be identical");
         assert_eq!(
             info,

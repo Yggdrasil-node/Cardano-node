@@ -168,6 +168,11 @@ pub struct TxContext {
     pub voting_procedures: Option<VotingProcedures>,
     /// Conway proposal procedures carried by the transaction body.
     pub proposal_procedures: Vec<ProposalProcedure>,
+    /// Protocol version `(major, minor)` for version-dependent ScriptContext
+    /// encoding.  When `major == 9` (Conway bootstrap phase), PlutusV3
+    /// `RegDepositTxCert` / `UnRegDepositTxCert` deposit fields are omitted
+    /// to match the upstream PV9 bug preserved by `hardforkConwayBootstrapPhase`.
+    pub protocol_version: Option<(u64, u64)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1097,6 +1102,7 @@ pub fn validate_plutus_scripts(
         redeemers: resolved_redeemers.clone(),
         voting_procedures: tx_ctx.voting_procedures.clone(),
         proposal_procedures: tx_ctx.proposal_procedures.clone(),
+        protocol_version: tx_ctx.protocol_version,
     };
 
     // Determine which required script hashes need Plutus evaluation

@@ -453,3 +453,195 @@ fn conway_block_is_valid_true_rejects_wrong_treasury_value() {
         result,
     );
 }
+
+/// Alonzo block with `is_valid = false` tx carrying a PPUP update must NOT
+/// collect the proposal — upstream `alonzoEvalScriptsTxInvalid` returns
+/// `pure pup` (unchanged proposals) and does not run the DELEGS sub-rule.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxos` — `alonzoEvalScriptsTxInvalid`.
+#[test]
+fn alonzo_block_is_valid_false_skips_ppup_collection() {
+    let keyhash = [0xDD; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Alonzo);
+    let mut params = ProtocolParameters::alonzo_defaults();
+    params.min_fee_a = 0;
+    params.min_fee_b = 0;
+    state.set_protocol_params(params);
+    // Seed a genesis delegate so PPUP would be valid if collected.
+    let genesis_hash = [0x01; 28];
+    state.gen_delegs_mut().insert(
+        genesis_hash,
+        yggdrasil_ledger::GenesisDelegationState {
+            delegate: [0x02; 28],
+            vrf: [0x03; 32],
+        },
+    );
+
+    let spend_input = ShelleyTxIn { transaction_id: [0x50; 32], index: 0 };
+    let collateral_input = ShelleyTxIn { transaction_id: [0x51; 32], index: 0 };
+    seed_utxo(&mut state, spend_input.clone(), &addr, 5_000_000);
+    seed_utxo(&mut state, collateral_input.clone(), &addr, 3_000_000);
+
+    let update = ShelleyUpdate {
+        proposed_protocol_parameter_updates: {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert(genesis_hash, ProtocolParameterUpdate {
+                min_fee_a: Some(999),
+                ..Default::default()
+            });
+            m
+        },
+        epoch: 1,
+    };
+
+    let body = AlonzoTxBody {
+        inputs: vec![spend_input],
+        outputs: vec![AlonzoTxOut {
+            address: addr,
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        update: Some(update),
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: Some(vec![collateral_input]),
+        required_signers: None,
+        network_id: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+
+    let block = Block {
+        era: Era::Alonzo,
+        header: BlockHeader {
+            hash: HeaderHash([0x04; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0x11; 32],
+        },
+        transactions: vec![Tx {
+            id: tx_id,
+            body: body_bytes,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: Some(false),
+        }],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    state
+        .apply_block_validated(&block, None)
+        .expect("is_valid=false block should succeed");
+
+    assert!(
+        state.pending_pparam_updates().is_empty(),
+        "PPUP proposals from is_valid=false tx must NOT be collected, \
+         got: {:?}",
+        state.pending_pparam_updates(),
+    );
+}
+
+/// Babbage block with `is_valid = false` tx carrying MIR certificates must
+/// NOT accumulate the MIR entries — upstream `alonzoEvalScriptsTxInvalid`
+/// does not run the DELEGS sub-rule for invalid transactions.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxos` — `alonzoEvalScriptsTxInvalid`.
+#[test]
+fn babbage_block_is_valid_false_skips_mir_collection() {
+    let keyhash = [0xEE; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Babbage);
+    let mut params = ProtocolParameters::alonzo_defaults();
+    params.min_fee_a = 0;
+    params.min_fee_b = 0;
+    state.set_protocol_params(params);
+
+    let cred = StakeCredential::AddrKeyHash([0xF1; 28]);
+    let acct = RewardAccount { network: 1, credential: cred };
+    state
+        .reward_accounts_mut()
+        .insert(acct, RewardAccountState::new(0, None));
+
+    let spend_input = ShelleyTxIn { transaction_id: [0x60; 32], index: 0 };
+    let collateral_input = ShelleyTxIn { transaction_id: [0x61; 32], index: 0 };
+    seed_utxo(&mut state, spend_input.clone(), &addr, 5_000_000);
+    seed_utxo(&mut state, collateral_input.clone(), &addr, 3_000_000);
+
+    let body = BabbageTxBody {
+        inputs: vec![spend_input],
+        outputs: vec![BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: Some(vec![
+            DCert::MoveInstantaneousReward(
+                yggdrasil_ledger::MirPot::Reserves,
+                yggdrasil_ledger::MirTarget::StakeCredentials({
+                    let mut m = std::collections::BTreeMap::new();
+                    m.insert(cred, 1_000_000i64);
+                    m
+                }),
+            ),
+        ]),
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: Some(vec![collateral_input]),
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+
+    let block = Block {
+        era: Era::Babbage,
+        header: BlockHeader {
+            hash: HeaderHash([0x05; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0x11; 32],
+        },
+        transactions: vec![Tx {
+            id: tx_id,
+            body: body_bytes,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: Some(false),
+        }],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    state
+        .apply_block_validated(&block, None)
+        .expect("is_valid=false block should succeed");
+
+    assert!(
+        state.instantaneous_rewards().ir_reserves.is_empty(),
+        "MIR from is_valid=false tx must NOT be accumulated, \
+         got ir_reserves: {:?}",
+        state.instantaneous_rewards().ir_reserves,
+    );
+}
