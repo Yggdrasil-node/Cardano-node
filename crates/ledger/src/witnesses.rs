@@ -141,19 +141,21 @@ pub fn bootstrap_witness_key_hash_set(
     witnesses.iter().map(bootstrap_witness_key_hash).collect()
 }
 
-/// Collects the genesis key hashes required to authorize a PPUP update proposal.
+/// Collects the genesis delegate key hashes required to authorize a PPUP
+/// update proposal.
 ///
-/// Upstream `propWits` in `Cardano.Ledger.Shelley.UTxO` — restricts the
-/// `genDelegs` key-set to proposers that appear in the update map and
-/// inserts those genesis key hashes into the required witness set.
+/// Upstream `witsVKeyNeededGenDelegs` / `proposedUpdatesWitnesses` in
+/// `Cardano.Ledger.Shelley.UTxO` — intersects `genDelegs` with the
+/// proposal map, then maps `genDelegKeyHash` to extract the *delegate*
+/// key hash (not the genesis owner key hash).
 pub fn required_vkey_hashes_from_ppup(
     update: &crate::eras::shelley::ShelleyUpdate,
     gen_delegs: &std::collections::BTreeMap<[u8; 28], crate::state::GenesisDelegationState>,
     out: &mut HashSet<[u8; 28]>,
 ) {
     for proposer_hash in update.proposed_protocol_parameter_updates.keys() {
-        if gen_delegs.contains_key(proposer_hash) {
-            out.insert(*proposer_hash);
+        if let Some(deleg_state) = gen_delegs.get(proposer_hash) {
+            out.insert(deleg_state.delegate);
         }
     }
 }
@@ -1128,9 +1130,11 @@ mod tests {
             let proposer: [u8; 28] = [0x01; 28];
             let non_proposer: [u8; 28] = [0x02; 28];
 
+            let delegate_of_proposer: [u8; 28] = [0xAA; 28];
+
             let mut gen_delegs = BTreeMap::new();
             gen_delegs.insert(proposer, GenesisDelegationState {
-                delegate: [0xAA; 28],
+                delegate: delegate_of_proposer,
                 vrf: [0xBB; 32],
             });
             gen_delegs.insert(non_proposer, GenesisDelegationState {
@@ -1149,8 +1153,13 @@ mod tests {
             let mut required = HashSet::new();
             required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
 
-            // proposer that IS in gen_delegs must be required
-            assert!(required.contains(&proposer));
+            // Upstream `proposedUpdatesWitnesses` maps `genDelegKeyHash` over the
+            // intersection — the *delegate* key hash is required, not the genesis
+            // owner key hash.
+            assert!(required.contains(&delegate_of_proposer),
+                "delegate key hash must be required, not genesis owner key hash");
+            assert!(!required.contains(&proposer),
+                "genesis owner hash must NOT be in the required set");
             // non_proposer not in the update — must NOT appear
             assert!(!required.contains(&non_proposer));
             assert_eq!(required.len(), 1);
@@ -1204,5 +1213,90 @@ mod tests {
             let mut required = HashSet::new();
             required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
             assert!(required.is_empty());
+        }
+
+        /// Upstream `proposedUpdatesWitnesses` uses `Map.intersection genDelegs pup`
+        /// then `map genDelegKeyHash` — the result contains *delegate* key hashes
+        /// from each genesis delegation entry, not the genesis owner key hashes.
+        /// This test verifies multiple proposers each contribute their delegate hash.
+        #[test]
+        fn ppup_multiple_proposers_yield_delegate_hashes() {
+            use crate::eras::shelley::ShelleyUpdate;
+            use crate::protocol_params::ProtocolParameterUpdate;
+            use crate::state::GenesisDelegationState;
+            use std::collections::BTreeMap;
+
+            let owner_a: [u8; 28] = [0x01; 28];
+            let owner_b: [u8; 28] = [0x02; 28];
+            let delegate_a: [u8; 28] = [0xAA; 28];
+            let delegate_b: [u8; 28] = [0xBB; 28];
+
+            let mut gen_delegs = BTreeMap::new();
+            gen_delegs.insert(owner_a, GenesisDelegationState {
+                delegate: delegate_a,
+                vrf: [0x10; 32],
+            });
+            gen_delegs.insert(owner_b, GenesisDelegationState {
+                delegate: delegate_b,
+                vrf: [0x20; 32],
+            });
+
+            let mut updates = BTreeMap::new();
+            updates.insert(owner_a, ProtocolParameterUpdate::default());
+            updates.insert(owner_b, ProtocolParameterUpdate::default());
+
+            let update = ShelleyUpdate {
+                proposed_protocol_parameter_updates: updates,
+                epoch: 100,
+            };
+
+            let mut required = HashSet::new();
+            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+            assert_eq!(required.len(), 2);
+            assert!(required.contains(&delegate_a));
+            assert!(required.contains(&delegate_b));
+            // Owner hashes must NOT be in the required set
+            assert!(!required.contains(&owner_a));
+            assert!(!required.contains(&owner_b));
+        }
+
+        /// When a genesis delegate hash collides (two owners delegate to the
+        /// same delegate), the required set should contain a single entry.
+        #[test]
+        fn ppup_duplicate_delegate_hash_deduplicates() {
+            use crate::eras::shelley::ShelleyUpdate;
+            use crate::protocol_params::ProtocolParameterUpdate;
+            use crate::state::GenesisDelegationState;
+            use std::collections::BTreeMap;
+
+            let owner_a: [u8; 28] = [0x01; 28];
+            let owner_b: [u8; 28] = [0x02; 28];
+            let shared_delegate: [u8; 28] = [0xDD; 28];
+
+            let mut gen_delegs = BTreeMap::new();
+            gen_delegs.insert(owner_a, GenesisDelegationState {
+                delegate: shared_delegate,
+                vrf: [0x10; 32],
+            });
+            gen_delegs.insert(owner_b, GenesisDelegationState {
+                delegate: shared_delegate,
+                vrf: [0x20; 32],
+            });
+
+            let mut updates = BTreeMap::new();
+            updates.insert(owner_a, ProtocolParameterUpdate::default());
+            updates.insert(owner_b, ProtocolParameterUpdate::default());
+
+            let update = ShelleyUpdate {
+                proposed_protocol_parameter_updates: updates,
+                epoch: 100,
+            };
+
+            let mut required = HashSet::new();
+            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+            assert_eq!(required.len(), 1);
+            assert!(required.contains(&shared_delegate));
         }
     }

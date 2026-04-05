@@ -353,12 +353,12 @@ pub fn apply_epoch_boundary(
     let mir_result = apply_mir_at_epoch_boundary(ledger);
 
     // -----------------------------------------------------------------------
-    // 2. SNAP — adopt staged future pool params, then compute a fresh mark
-    //    snapshot from post-reward state and rotate the three-snapshot ring.
+    // 2. SNAP — compute a fresh mark snapshot from post-reward state
+    //    and rotate the three-snapshot ring.
     //
-    //    Upstream `snapTransition` merges `psFutureStakePoolParams` into
-    //    `psStakePoolParams` (preserving deposits) before taking the new
-    //    mark snapshot.
+    //    Future pool params are NOT adopted here — upstream `snapTransition`
+    //    takes the snapshot using the *current* `psStakePoolParams`, and
+    //    future params are activated later in POOLREAP.
     //
     //    Because rewards have already been credited above, the new mark
     //    snapshot reflects the updated reward account balances.
@@ -366,7 +366,6 @@ pub fn apply_epoch_boundary(
     //    Reference: `Cardano.Ledger.Shelley.Rules.Snap` — runs inside
     //    the EPOCH rule, after RUPD.
     // -----------------------------------------------------------------------
-    ledger.pool_state_mut().adopt_future_params();
     let new_mark = compute_stake_snapshot(
         ledger.multi_era_utxo(),
         ledger.stake_credentials(),
@@ -375,6 +374,16 @@ pub fn apply_epoch_boundary(
     );
     // fee_pot was already taken above; rotate returns 0 here.
     let _ = snapshots.rotate(new_mark);
+
+    // -----------------------------------------------------------------------
+    // 2b. Activate future pool params — upstream does this inside
+    //     `poolReapTransition` (after SNAP has already captured the
+    //     snapshot with old params).
+    //
+    //     Reference: `Cardano.Ledger.Shelley.Rules.PoolReap` —
+    //     `psFutureStakePoolParams` merged into `psStakePoolParams`.
+    // -----------------------------------------------------------------------
+    ledger.pool_state_mut().adopt_future_params();
 
     // -----------------------------------------------------------------------
     // 3. Pool retirement — remove pools and refund deposits.
@@ -469,17 +478,23 @@ pub fn apply_epoch_boundary(
     }
 
     // -----------------------------------------------------------------------
-    // 5c. Dormant epoch counter — if no active governance proposals
-    //     remain after expiry pruning and ratification enactment,
-    //     increment the dormant counter.  Otherwise reset it to zero.
-    //     Upstream: `updateNumDormantEpochs` in
-    //     `Cardano.Ledger.Conway.Rules.Epoch`.
+    // 5c. Dormant epoch counter — if no active (non-expired) governance
+    //     proposals remain, increment the dormant counter.  Otherwise
+    //     leave it unchanged.
+    //
+    //     Upstream `updateNumDormantEpochs` in
+    //     `Cardano.Ledger.Conway.Rules.Epoch` only calls `succ` when
+    //     proposals are empty and **never** resets to 0 at epoch boundary.
+    //     The counter is reset to 0 inside the per-tx
+    //     `updateDormantDRepExpiries` (GOV rule) when proposals first
+    //     appear and the dormant count is distributed to DRep expiries.
     // -----------------------------------------------------------------------
     if ledger.governance_actions().is_empty() {
         ledger.num_dormant_epochs = ledger.num_dormant_epochs.saturating_add(1);
-    } else {
-        ledger.num_dormant_epochs = 0;
     }
+    // When proposals exist: leave num_dormant_epochs unchanged (upstream
+    // semantics).  The per-tx updateDormantDRepExpiries already reset it
+    // when proposals first appeared.
 
     // -----------------------------------------------------------------------
     // 6. DRep inactivity — compute the set of DReps that have exceeded
@@ -4666,6 +4681,110 @@ mod tests {
         assert!(
             treasury_after >= treasury_before + deposit_amount,
             "treasury must include unclaimed expired governance deposit"
+        );
+    }
+
+    // -- Future-params adoption timing (SNAP before adopt) ----------------
+
+    /// Upstream EPOCH rule: SNAP takes the mark snapshot BEFORE
+    /// `psFutureStakePoolParams` are activated (activation happens in
+    /// POOLREAP). So a re-registered pool's new params should NOT appear
+    /// in the mark snapshot — only the old params.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Epoch` — SNAP → POOLREAP.
+    #[test]
+    fn snapshot_uses_old_params_before_future_adopt() {
+        let pool_id: u8 = 0x10;
+        let mut ledger = make_ledger_with_pool(pool_id);
+        let original_cost = test_pool_params(pool_id).cost; // 340M
+
+        // Re-register the same pool with different params to stage as
+        // future params (upstream `psFutureStakePoolParams`).
+        let mut new_params = test_pool_params(pool_id);
+        new_params.cost = 999_000_000; // different from original 340M
+        let pp_pool_deposit = test_protocol_params().pool_deposit;
+        ledger.pool_state_mut().register_with_deposit(new_params.clone(), pp_pool_deposit);
+
+        // Current params still have the original cost (future params are staged).
+        assert_eq!(
+            ledger.pool_state().get(&test_pool(pool_id)).unwrap().params().cost,
+            original_cost,
+        );
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch boundary should succeed");
+
+        // After epoch boundary, the mark snapshot should contain the OLD
+        // pool params (cost 340M), not the future params (cost 999M).
+        let snapped_cost = snapshots
+            .mark
+            .pool_params
+            .get(&test_pool(pool_id))
+            .expect("pool should be in mark snapshot")
+            .cost;
+        assert_eq!(
+            snapped_cost, original_cost,
+            "mark snapshot must use OLD pool params (upstream SNAP runs before POOLREAP adopt)"
+        );
+
+        // BUT after the epoch boundary, the live pool state should now
+        // have the new (adopted) params.
+        assert_eq!(
+            ledger.pool_state().get(&test_pool(pool_id)).unwrap().params().cost,
+            999_000_000,
+            "live pool params must be updated after epoch boundary"
+        );
+    }
+
+    // -- Dormant epoch counter: leave unchanged, never explicit reset -----
+
+    /// Upstream `updateNumDormantEpochs` increments when no proposals
+    /// exist and leaves unchanged otherwise — it never resets to 0 at
+    /// epoch boundary. The per-tx `updateDormantDRepExpiries` is
+    /// responsible for the reset.
+    #[test]
+    fn dormant_counter_not_reset_when_proposals_exist() {
+        let mut ledger = LedgerState::new(Era::Conway);
+        ledger.set_protocol_params(test_protocol_params());
+        ledger.accounting_mut().reserves = 14_000_000_000_000_000;
+        ledger.accounting_mut().treasury = 500_000_000_000;
+
+        // Require committee approval so the proposal cannot be trivially ratified.
+        require_committee_vote_for_ratification(&mut ledger, 0xC1, 0xC2);
+
+        // Pre-set the dormant counter to 5.
+        ledger.num_dormant_epochs = 5;
+
+        // Add a governance action that will NOT expire this epoch.
+        let proposal = test_proposal(500_000_000, 0x20);
+        let gas = GovernanceActionState::new_with_lifetime(
+            proposal,
+            EpochNo(1),
+            Some(10), // expires_after epoch 11 — far away from epoch 2
+        );
+        let gai = test_gov_action_id(0xEE, 0);
+        // Register the return reward account so the proposal isn't treated
+        // as un-reclaimable.
+        let ra = test_reward_account(0x20);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra, RewardAccountState::new(0, None));
+        ledger.governance_actions_mut().insert(gai, gas);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch boundary should succeed");
+
+        // Dormant counter must be LEFT UNCHANGED (still 5), not reset to 0.
+        assert_eq!(
+            ledger.num_dormant_epochs, 5,
+            "dormant counter must not be reset to 0 at epoch boundary when proposals exist \
+             (upstream updateNumDormantEpochs leaves unchanged; reset happens in per-tx GOV rule)"
         );
     }
 }

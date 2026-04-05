@@ -258,13 +258,16 @@ fn epoch_boundary_resets_dormant_when_proposals_exist() {
     );
     assert!(!state.governance_actions().is_empty());
 
-    // Epoch boundary with active proposal that can't pass → dormant resets to 0.
+    // Epoch boundary with active proposal that can't pass → upstream
+    // `updateNumDormantEpochs` leaves the counter UNCHANGED (never resets
+    // to 0 at epoch boundary). The per-tx `updateDormantDRepExpiries` is
+    // responsible for clearing dormant when proposals first appear.
     let _e3 = apply_epoch_boundary(
         &mut state, EpochNo(103), &mut snaps, &BTreeMap::new(),
     ).unwrap();
     // Proposal should still exist (not ratified, not expired).
     assert!(!state.governance_actions().is_empty());
-    assert_eq!(state.num_dormant_epochs(), 0);
+    assert_eq!(state.num_dormant_epochs(), 2, "dormant counter must stay unchanged at epoch boundary when proposals exist");
 }
 
 // ---------------------------------------------------------------------------
