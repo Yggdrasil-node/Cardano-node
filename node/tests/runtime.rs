@@ -855,6 +855,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
     let mut store = InMemoryVolatile::default();
 
@@ -934,6 +935,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -1013,6 +1015,7 @@ async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure(
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
 
     let tentative_state = Arc::new(RwLock::new(TentativeState::initial()));
@@ -1088,6 +1091,7 @@ async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
 
     let mut chain_db = ChainDb::new(
@@ -1176,6 +1180,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -1274,6 +1279,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);
@@ -1393,6 +1399,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);

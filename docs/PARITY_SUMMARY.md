@@ -320,4 +320,5 @@
 | 41-43 | UTxO validation, epoch boundary, BBODY/CHAINHEAD (30 areas) | 30 | Gap #14 CC hot/cold tally, Gap #15 well-formed UnitInterval, Gap #16 CHAINHEAD prev-hash + slot |
 | 44 | Plutus ScriptContext per-version encoding (10 areas) | 10 | Gap #17: 7 encoding bugs fixed (B1–B4, B6–B8) |
 | 45 | Conway UTXOW/CERTS/DELEG/GOVCERT/GOV rules (10 areas) | 10 | Gap #18: committee membership unconditional check; Gap #20: RefundIncorrectDELEG PV split |
-| **Total** | **All subsystems** | **450** | **8 fix rounds** |
+| 46 | Plutus slot-to-POSIX conversion | 6 | Gap A: posix_time_range now uses real POSIX ms |
+| **Total** | **All subsystems** | **456** | **9 fix rounds** |

@@ -385,6 +385,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         verify_vrf: false,
         active_slot_coeff: None,
         slot_length_secs: None,
+        system_start_unix_secs: None,
     };
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let mut chain_db = ChainDb::new(

@@ -47,10 +47,25 @@ use yggdrasil_plutus::{
 /// Decodes each script from its on-chain Flat bytes, applies datum (if
 /// spending), redeemer, and a version-aware ScriptContext, then evaluates
 /// within the budget declared by the transaction.
+///
+/// When `system_start_unix_secs` and `slot_length_secs` are provided the
+/// evaluator converts slot numbers in `TxContext.validity_start` /
+/// `TxContext.ttl` to POSIX milliseconds before encoding them in the
+/// `POSIXTimeRange` field of the `TxInfo` ScriptContext.  This matches
+/// the upstream `transVITime` in `Cardano.Ledger.Alonzo.Plutus.TxInfo`.
 #[derive(Clone, Debug, Default)]
 pub struct CekPlutusEvaluator {
     /// Cost model to use. Defaults to `CostModel::default()`.
     pub cost_model: CostModel,
+    /// Seconds since Unix epoch of the network genesis moment.
+    ///
+    /// Parsed from `ShelleyGenesis.system_start` (e.g. "2017-09-23T21:44:51Z").
+    /// When `None`, slot numbers are passed through as-is (legacy behaviour).
+    pub system_start_unix_secs: Option<f64>,
+    /// Slot duration in seconds from Shelley genesis (`slotLength`).
+    ///
+    /// Only used when `system_start_unix_secs` is `Some`.
+    pub slot_length_secs: f64,
 }
 
 impl CekPlutusEvaluator {
@@ -61,7 +76,29 @@ impl CekPlutusEvaluator {
 
     /// Create an evaluator with a custom cost model.
     pub fn with_cost_model(cost_model: CostModel) -> Self {
-        Self { cost_model }
+        Self { cost_model, ..Default::default() }
+    }
+
+    /// Create a fully configured evaluator.
+    pub fn with_time_conversion(
+        cost_model: CostModel,
+        system_start_unix_secs: f64,
+        slot_length_secs: f64,
+    ) -> Self {
+        Self {
+            cost_model,
+            system_start_unix_secs: Some(system_start_unix_secs),
+            slot_length_secs,
+        }
+    }
+
+    /// Convert a slot number to POSIX milliseconds using the stored
+    /// genesis parameters, or return the raw slot if unavailable.
+    fn slot_to_posix_ms(&self, slot: u64) -> u64 {
+        match self.system_start_unix_secs {
+            Some(start) => crate::genesis::slot_to_posix_ms(slot, start, self.slot_length_secs),
+            None => slot,
+        }
     }
 }
 
@@ -78,7 +115,7 @@ impl PlutusEvaluator for CekPlutusEvaluator {
         // 2. Build Term::Constant wrappers for datum, redeemer, and context.
         let redeemer_term = data_term(eval.redeemer.clone());
         // Build the ScriptContext from the normalized ledger transaction view.
-        let context_term = Term::Constant(Constant::Data(script_context_data(eval, tx_ctx)?));
+        let context_term = Term::Constant(Constant::Data(script_context_data(eval, tx_ctx, self)?));
 
         // 3. Apply arguments in the order specified by the Plutus script ABI.
         //    spending validator: script datum redeemer context
@@ -150,16 +187,17 @@ fn data_term(data: PlutusData) -> Term {
 fn script_context_data(
     eval: &PlutusScriptEval,
     tx_ctx: &TxContext,
+    evaluator: &CekPlutusEvaluator,
 ) -> Result<PlutusData, LedgerError> {
     Ok(match eval.version {
         PlutusVersion::V1 | PlutusVersion::V2 => PlutusData::Constr(
             0,
-            vec![build_tx_info(eval.version, tx_ctx)?, script_purpose_data_v1v2(&eval.purpose)?],
+            vec![build_tx_info(eval.version, tx_ctx, evaluator)?, script_purpose_data_v1v2(&eval.purpose)?],
         ),
         PlutusVersion::V3 => PlutusData::Constr(
             0,
             vec![
-                build_tx_info(eval.version, tx_ctx)?,
+                build_tx_info(eval.version, tx_ctx, evaluator)?,
                 eval.redeemer.clone(),
                 script_info_data_v3(&eval.purpose, eval.datum.as_ref())?,
             ],
@@ -185,7 +223,7 @@ fn script_context_data(
 ///   - `redeemers` use V3 `ScriptPurpose` keys
 ///   - `votes` and `proposalProcedures` are populated from Conway tx bodies
 ///   - `txCerts` uses the V3 TxCert encoding
-fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusData, LedgerError> {
+fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext, evaluator: &CekPlutusEvaluator) -> Result<PlutusData, LedgerError> {
     // -- Shared building blocks --
 
     if matches!(version, PlutusVersion::V1 | PlutusVersion::V2) {
@@ -255,7 +293,10 @@ fn build_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> Result<PlutusDat
         })
         .collect();
 
-    let valid_range = posix_time_range(tx_ctx.validity_start, tx_ctx.ttl);
+    let valid_range = posix_time_range(
+        tx_ctx.validity_start.map(|s| evaluator.slot_to_posix_ms(s)),
+        tx_ctx.ttl.map(|t| evaluator.slot_to_posix_ms(t)),
+    );
 
     let signatories = PlutusData::List(
         tx_ctx
@@ -1370,11 +1411,11 @@ mod tests {
     }
 
     fn expect_script_context_data(eval: &PlutusScriptEval, tx_ctx: &TxContext) -> PlutusData {
-        script_context_data(eval, tx_ctx).expect("script context should encode")
+        script_context_data(eval, tx_ctx, &CekPlutusEvaluator::new()).expect("script context should encode")
     }
 
     fn expect_tx_info(version: PlutusVersion, tx_ctx: &TxContext) -> PlutusData {
-        build_tx_info(version, tx_ctx).expect("tx info should encode")
+        build_tx_info(version, tx_ctx, &CekPlutusEvaluator::new()).expect("tx info should encode")
     }
 
     fn mint_eval(script_bytes: Vec<u8>, version: PlutusVersion) -> PlutusScriptEval {
@@ -1543,7 +1584,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(0),
-        ), &test_tx_ctx())
+        ), &test_tx_ctx(), &CekPlutusEvaluator::new())
         .expect_err("unsupported Conway cert should fail for V2");
 
         assert!(matches!(
@@ -1570,7 +1611,7 @@ mod tests {
             },
             None,
             PlutusData::Integer(0),
-        ), &test_tx_ctx())
+        ), &test_tx_ctx(), &CekPlutusEvaluator::new())
         .expect_err("unsupported Conway cert should fail for V1");
 
         assert!(matches!(
@@ -1822,6 +1863,7 @@ mod tests {
                 PlutusData::Integer(88),
             ),
             &test_tx_ctx(),
+            &CekPlutusEvaluator::new(),
         )
         .expect_err("V2 should reject Conway voting purpose encoding");
 
@@ -1844,6 +1886,7 @@ mod tests {
                 PlutusData::Integer(88),
             ),
             &test_tx_ctx(),
+            &CekPlutusEvaluator::new(),
         )
         .expect_err("V1 should reject Conway voting purpose encoding");
 
@@ -1882,6 +1925,7 @@ mod tests {
                 PlutusData::Integer(101),
             ),
             &test_tx_ctx(),
+            &CekPlutusEvaluator::new(),
         )
         .expect_err("V2 should reject Conway proposing purpose encoding");
 
@@ -1920,6 +1964,7 @@ mod tests {
                 PlutusData::Integer(101),
             ),
             &test_tx_ctx(),
+            &CekPlutusEvaluator::new(),
         )
         .expect_err("V1 should reject Conway proposing purpose encoding");
 
@@ -2065,7 +2110,7 @@ mod tests {
                 }),
             ));
 
-        let err = build_tx_info(PlutusVersion::V1, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V1, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V1 should reject reference inputs");
 
         assert!(matches!(
@@ -2114,7 +2159,7 @@ mod tests {
             },
         }];
 
-        let err = build_tx_info(PlutusVersion::V2, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V2, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V2 should reject Conway proposal procedures");
 
         assert!(matches!(
@@ -2142,7 +2187,7 @@ mod tests {
             },
         }];
 
-        let err = build_tx_info(PlutusVersion::V1, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V1, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V1 should reject Conway proposal procedures");
 
         assert!(matches!(
@@ -2157,7 +2202,7 @@ mod tests {
         let mut tx_ctx = test_tx_ctx();
         tx_ctx.current_treasury_value = Some(0);
 
-        let err = build_tx_info(PlutusVersion::V2, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V2, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V2 should reject current treasury value field presence");
 
         assert!(matches!(
@@ -2174,7 +2219,7 @@ mod tests {
             procedures: std::collections::BTreeMap::new(),
         });
 
-        let err = build_tx_info(PlutusVersion::V2, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V2, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V2 should reject Conway voting procedures even when empty");
 
         assert!(matches!(
@@ -2189,7 +2234,7 @@ mod tests {
         let mut tx_ctx = test_tx_ctx();
         tx_ctx.treasury_donation = Some(0);
 
-        let err = build_tx_info(PlutusVersion::V2, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V2, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V2 should reject treasury donation field presence");
 
         assert!(matches!(
@@ -2206,7 +2251,7 @@ mod tests {
             procedures: std::collections::BTreeMap::new(),
         });
 
-        let err = build_tx_info(PlutusVersion::V1, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V1, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V1 should reject Conway voting procedures even when empty");
 
         assert!(matches!(
@@ -2221,7 +2266,7 @@ mod tests {
         let mut tx_ctx = test_tx_ctx();
         tx_ctx.treasury_donation = Some(0);
 
-        let err = build_tx_info(PlutusVersion::V1, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V1, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V1 should reject treasury donation field presence");
 
         assert!(matches!(
@@ -2236,7 +2281,7 @@ mod tests {
         let mut tx_ctx = test_tx_ctx();
         tx_ctx.current_treasury_value = Some(0);
 
-        let err = build_tx_info(PlutusVersion::V1, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V1, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("V1 should reject current treasury value field presence");
 
         assert!(matches!(
@@ -2361,7 +2406,7 @@ mod tests {
         let mut tx_ctx = test_tx_ctx();
         tx_ctx.certificates = vec![DCert::GenesisDelegation([0x01; 28], [0x02; 28], [0x03; 32])];
 
-        let err = build_tx_info(PlutusVersion::V3, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V3, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("unsupported V3 certificates should fail encoding");
 
         assert!(matches!(
@@ -2384,7 +2429,7 @@ mod tests {
             },
         }];
 
-        let err = build_tx_info(PlutusVersion::V3, &tx_ctx)
+        let err = build_tx_info(PlutusVersion::V3, &tx_ctx, &CekPlutusEvaluator::new())
             .expect_err("malformed proposal reward account should fail encoding");
 
         assert!(matches!(
@@ -4875,6 +4920,60 @@ mod tests {
                 PlutusData::Integer(3),
                 proposal_procedure_data_v3(&proposal).unwrap(),
             ])
+        );
+    }
+
+    // -- slot-to-POSIX time conversion in evaluator --------------------------
+
+    #[test]
+    fn evaluator_slot_to_posix_ms_converts_when_configured() {
+        // Mainnet: system_start = "2017-09-23T21:44:51Z" → 1506203091 unix secs
+        let eval = CekPlutusEvaluator::with_time_conversion(
+            CostModel::default(),
+            1_506_203_091.0,
+            1.0,
+        );
+        assert_eq!(eval.slot_to_posix_ms(0), 1_506_203_091_000);
+        assert_eq!(eval.slot_to_posix_ms(100), 1_506_203_191_000);
+    }
+
+    #[test]
+    fn evaluator_slot_to_posix_ms_passthrough_when_unconfigured() {
+        // Default evaluator (no genesis info) should pass slot through.
+        let eval = CekPlutusEvaluator::new();
+        assert_eq!(eval.slot_to_posix_ms(42), 42);
+    }
+
+    #[test]
+    fn posix_time_range_with_converted_slots() {
+        // Verify the full data path: slot → POSIX ms → PlutusData encoding.
+        let eval = CekPlutusEvaluator::with_time_conversion(
+            CostModel::default(),
+            1_506_203_091.0, // mainnet system_start
+            1.0,
+        );
+        let start_ms = eval.slot_to_posix_ms(1000);
+        let end_ms = eval.slot_to_posix_ms(2000);
+        assert_eq!(start_ms, 1_506_204_091_000); // 1506203091 + 1000
+        assert_eq!(end_ms, 1_506_205_091_000);   // 1506203091 + 2000
+
+        let range = posix_time_range(Some(start_ms), Some(end_ms));
+        // Verify Finite(start_ms) inclusive lower, Finite(end_ms) exclusive upper.
+        assert_eq!(
+            range,
+            PlutusData::Constr(
+                0,
+                vec![
+                    PlutusData::Constr(0, vec![
+                        PlutusData::Constr(1, vec![PlutusData::Integer(start_ms as i128)]),
+                        PlutusData::Constr(1, vec![]),
+                    ]),
+                    PlutusData::Constr(0, vec![
+                        PlutusData::Constr(1, vec![PlutusData::Integer(end_ms as i128)]),
+                        PlutusData::Constr(0, vec![]),
+                    ]),
+                ],
+            )
         );
     }
 }

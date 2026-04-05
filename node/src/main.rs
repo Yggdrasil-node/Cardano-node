@@ -650,6 +650,10 @@ fn main() -> Result<()> {
                 });
             let genesis_slot_length: Option<f64> =
                 shelley_genesis.as_ref().map(|g| g.slot_length);
+            let genesis_system_start_unix_secs: Option<f64> = shelley_genesis
+                .as_ref()
+                .and_then(|g| g.system_start.as_deref())
+                .and_then(genesis::chrono_parse_system_start);
 
             // Compute FutureBlockCheckConfig from genesis system_start.
             // This provides the blocks-from-the-future detection for sync.
@@ -713,6 +717,7 @@ fn main() -> Result<()> {
                     verify_vrf: active_slot_coeff.is_some(),
                     active_slot_coeff: active_slot_coeff.clone(),
                     slot_length_secs: genesis_slot_length,
+                    system_start_unix_secs: genesis_system_start_unix_secs,
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -736,6 +741,7 @@ fn main() -> Result<()> {
                     verify_vrf: active_slot_coeff.is_some(),
                     active_slot_coeff,
                     slot_length_secs: genesis_slot_length,
+                    system_start_unix_secs: genesis_system_start_unix_secs,
                 }
             };
 

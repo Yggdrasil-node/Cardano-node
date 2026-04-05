@@ -1184,9 +1184,24 @@ pub fn current_wall_slot(system_start: &str, slot_length_secs: f64) -> Option<u6
     Some((elapsed / slot_length_secs) as u64)
 }
 
+/// Convert a slot number to POSIX milliseconds.
+///
+/// This implements the upstream `transVITime` conversion from
+/// `Cardano.Ledger.Alonzo.Plutus.TxInfo`:
+///
+///   `posix_ms = (system_start_unix_secs + slot * slot_length_secs) * 1000`
+///
+/// Both `system_start_unix_secs` (seconds since Unix epoch of the
+/// network's genesis moment) and `slot_length_secs` (Shelley genesis
+/// `slotLength`, typically 1.0) must come from the Shelley genesis
+/// configuration.
+pub fn slot_to_posix_ms(slot: u64, system_start_unix_secs: f64, slot_length_secs: f64) -> u64 {
+    ((system_start_unix_secs + slot as f64 * slot_length_secs) * 1000.0) as u64
+}
+
 /// Parse an ISO-8601 / RFC-3339 UTC timestamp like `"2017-09-23T21:44:51Z"`
 /// into seconds since the Unix epoch.
-fn chrono_parse_system_start(s: &str) -> Option<f64> {
+pub fn chrono_parse_system_start(s: &str) -> Option<f64> {
     // Accept the common `YYYY-MM-DDTHH:MM:SSZ` format used by upstream
     // genesis files.  We avoid pulling in a `chrono` dependency by doing
     // a minimal manual parse of the limited format that upstream emits.
@@ -1772,5 +1787,33 @@ mod tests {
     #[test]
     fn current_wall_slot_zero_slot_length_is_none() {
         assert!(current_wall_slot("2020-01-01T00:00:00Z", 0.0).is_none());
+    }
+
+    // -- slot_to_posix_ms (upstream transVITime parity) ----------------------
+
+    #[test]
+    fn slot_to_posix_ms_mainnet_slot_zero() {
+        // Mainnet system_start: "2017-09-23T21:44:51Z" → 1506203091 Unix seconds.
+        let start = chrono_parse_system_start("2017-09-23T21:44:51Z").unwrap();
+        assert_eq!(start, 1_506_203_091.0);
+        let ms = slot_to_posix_ms(0, start, 1.0);
+        assert_eq!(ms, 1_506_203_091_000);
+    }
+
+    #[test]
+    fn slot_to_posix_ms_mainnet_slot_100() {
+        let start = chrono_parse_system_start("2017-09-23T21:44:51Z").unwrap();
+        // slot 100 with 1 s slot length → system_start + 100 s
+        let ms = slot_to_posix_ms(100, start, 1.0);
+        assert_eq!(ms, 1_506_203_191_000);
+    }
+
+    #[test]
+    fn slot_to_posix_ms_fractional_slot_length() {
+        // Preview/Preprod use 1.0 s but verify that a 0.5 s slot length works.
+        let start = chrono_parse_system_start("2022-04-01T00:00:00Z").unwrap();
+        let ms_slot_10 = slot_to_posix_ms(10, start, 0.5);
+        let ms_slot_0 = slot_to_posix_ms(0, start, 0.5);
+        assert_eq!(ms_slot_10 - ms_slot_0, 5_000); // 10 slots × 0.5 s = 5 s = 5000 ms
     }
 }

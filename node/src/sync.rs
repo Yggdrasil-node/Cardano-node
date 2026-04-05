@@ -909,6 +909,34 @@ pub struct VerifiedSyncServiceConfig {
     /// Slot duration in seconds from Shelley genesis (`slotLength`).
     /// Defaults to 1.0 when unset.
     pub slot_length_secs: Option<f64>,
+    /// Seconds since Unix epoch of the network genesis moment.
+    ///
+    /// Parsed from `ShelleyGenesis.system_start`.  When set together with
+    /// `slot_length_secs`, the Plutus evaluator converts slot numbers to
+    /// POSIX milliseconds in the `POSIXTimeRange` field of ScriptContext
+    /// (upstream `transVITime`).
+    pub system_start_unix_secs: Option<f64>,
+}
+
+impl VerifiedSyncServiceConfig {
+    /// Build a `CekPlutusEvaluator` from this config's cost model and
+    /// time-conversion parameters.
+    pub(crate) fn build_plutus_evaluator(&self) -> crate::plutus_eval::CekPlutusEvaluator {
+        match (&self.plutus_cost_model, self.system_start_unix_secs) {
+            (Some(cm), Some(start)) => crate::plutus_eval::CekPlutusEvaluator::with_time_conversion(
+                cm.clone(),
+                start,
+                self.slot_length_secs.unwrap_or(1.0),
+            ),
+            (Some(cm), None) => crate::plutus_eval::CekPlutusEvaluator::with_cost_model(cm.clone()),
+            (None, Some(start)) => crate::plutus_eval::CekPlutusEvaluator {
+                system_start_unix_secs: Some(start),
+                slot_length_secs: self.slot_length_secs.unwrap_or(1.0),
+                ..Default::default()
+            },
+            (None, None) => crate::plutus_eval::CekPlutusEvaluator::default(),
+        }
+    }
 }
 
 /// Outcome returned when the verified sync service finishes.
@@ -1250,7 +1278,7 @@ where
 pub(crate) fn default_checkpoint_tracking<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
     base_ledger_state: LedgerState,
-    plutus_cost_model: Option<CostModel>,
+    config: &VerifiedSyncServiceConfig,
 ) -> Result<LedgerCheckpointTracking, SyncError>
 where
     I: ImmutableStore,
@@ -1262,9 +1290,7 @@ where
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state,
         last_persisted_point: recovery.point,
-        plutus_evaluator: plutus_cost_model
-            .map(crate::plutus_eval::CekPlutusEvaluator::with_cost_model)
-            .unwrap_or_default(),
+        plutus_evaluator: config.build_plutus_evaluator(),
         stake_snapshots: None,
         epoch_size: None,
         pool_block_counts: BTreeMap::new(),
@@ -1421,7 +1447,7 @@ where
     let mut checkpoint_tracking = default_checkpoint_tracking(
         chain_db,
         base_ledger_state,
-        config.plutus_cost_model.clone(),
+        config,
     )?;
 
     // Enable epoch boundary processing when nonce config provides epoch size.

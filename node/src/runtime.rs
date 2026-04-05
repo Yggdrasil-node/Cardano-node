@@ -4673,11 +4673,7 @@ where
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
-        plutus_evaluator: config
-            .plutus_cost_model
-            .clone()
-            .map(crate::plutus_eval::CekPlutusEvaluator::with_cost_model)
-            .unwrap_or_default(),
+        plutus_evaluator: config.build_plutus_evaluator(),
         stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
         pool_block_counts: std::collections::BTreeMap::new(),
@@ -4781,11 +4777,7 @@ where
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
-        plutus_evaluator: config
-            .plutus_cost_model
-            .clone()
-            .map(crate::plutus_eval::CekPlutusEvaluator::with_cost_model)
-            .unwrap_or_default(),
+        plutus_evaluator: config.build_plutus_evaluator(),
         stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
         pool_block_counts: std::collections::BTreeMap::new(),
@@ -4849,7 +4841,7 @@ where
         let mut ct = crate::sync::default_checkpoint_tracking(
             chain_db,
             base_ledger_state,
-            config.plutus_cost_model.clone(),
+            config,
         )?;
         if let Some(ref nonce_cfg) = config.nonce_config {
             ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
@@ -4978,6 +4970,7 @@ mod tests {
             verify_vrf: false,
             active_slot_coeff: None,
             slot_length_secs: None,
+            system_start_unix_secs: None,
         }
     }
 
