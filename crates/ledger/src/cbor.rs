@@ -2,7 +2,7 @@
 //!
 //! This module implements just enough of RFC 8949 (CBOR) to handle the
 //! core Cardano wire-format patterns: unsigned integers, byte strings,
-//! definite-length arrays, and simple values.
+//! definite- and indefinite-length arrays/maps, and simple values.
 //!
 //! Reference: RFC 8949 — Concise Binary Object Representation (CBOR).
 
@@ -28,6 +28,13 @@ const MAJOR_MAP: u8 = 5;
 const MAJOR_TAG: u8 = 6;
 /// Major type 7: simple values and floats.
 const MAJOR_SIMPLE: u8 = 7;
+
+/// Additional info value 31 signals indefinite-length for arrays, maps,
+/// byte strings, and text strings (RFC 8949 §3.2.1).
+const AI_INDEF: u8 = 31;
+
+/// The "break" stop-code byte (major 7, additional info 31 = `0xff`).
+const BREAK: u8 = (MAJOR_SIMPLE << 5) | AI_INDEF;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Encoder
@@ -309,17 +316,82 @@ impl<'a> Decoder<'a> {
         self.expect_major(MAJOR_UNSIGNED)
     }
 
-    /// Decodes a byte string (CBOR major type 2) and returns a borrowed
-    /// slice into the input.
+    /// Decodes a definite-length byte string (CBOR major type 2) and
+    /// returns a borrowed slice into the input.
+    ///
+    /// For indefinite-length byte strings, use [`bytes_owned()`].
     pub fn bytes(&mut self) -> Result<&'a [u8], LedgerError> {
+        self.bytes_definite()
+    }
+
+    /// Decodes a definite-length byte string (CBOR major type 2).
+    fn bytes_definite(&mut self) -> Result<&'a [u8], LedgerError> {
         let len = self.expect_major(MAJOR_BYTES)?;
         self.read_exact(len as usize)
+    }
+
+    /// Decodes a byte string (CBOR major type 2) supporting both
+    /// definite- and indefinite-length encoding.
+    ///
+    /// Indefinite-length byte strings (`0x5f` followed by definite-
+    /// length chunks and a break stop-code `0xff`) are concatenated
+    /// into an owned `Vec<u8>`.  Definite-length byte strings are
+    /// returned without extra allocation.
+    pub fn bytes_owned(&mut self) -> Result<Vec<u8>, LedgerError> {
+        let initial = self.peek_byte()?;
+        let major = initial >> 5;
+        if major != MAJOR_BYTES {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: MAJOR_BYTES,
+                actual: major,
+            });
+        }
+        let ai = initial & 0x1f;
+        if ai == AI_INDEF {
+            self.pos += 1; // consume 0x5f
+            let mut assembled = Vec::new();
+            loop {
+                if self.peek_byte()? == BREAK {
+                    self.pos += 1; // consume 0xff
+                    return Ok(assembled);
+                }
+                let chunk = self.bytes_definite()?;
+                assembled.extend_from_slice(chunk);
+            }
+        } else {
+            Ok(self.bytes_definite()?.to_vec())
+        }
     }
 
     /// Decodes a definite-length array header (CBOR major type 4) and
     /// returns the element count.
     pub fn array(&mut self) -> Result<u64, LedgerError> {
         self.expect_major(MAJOR_ARRAY)
+    }
+
+    /// Begins decoding an array (CBOR major type 4) that may be
+    /// definite- or indefinite-length.
+    ///
+    /// Returns `Some(n)` for a definite-length array of `n` items, or
+    /// `None` for an indefinite-length array.  When `None` is returned
+    /// the caller must decode items in a loop and call
+    /// [`is_break()`](Self::is_break) / [`consume_break()`](Self::consume_break)
+    /// to detect the end.
+    pub fn array_begin(&mut self) -> Result<Option<u64>, LedgerError> {
+        let initial = self.peek_byte()?;
+        let major = initial >> 5;
+        if major != MAJOR_ARRAY {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: MAJOR_ARRAY,
+                actual: major,
+            });
+        }
+        if initial & 0x1f == AI_INDEF {
+            self.pos += 1; // consume 0x9f
+            Ok(None)
+        } else {
+            Ok(Some(self.array()?))
+        }
     }
 
     /// Decodes the CBOR `null` value.
@@ -344,6 +416,30 @@ impl<'a> Decoder<'a> {
     /// without consuming it.
     pub fn peek_is_null(&self) -> bool {
         self.peek_byte().ok() == Some((MAJOR_SIMPLE << 5) | 22)
+    }
+
+    /// Returns `true` when the next byte is the CBOR break stop-code
+    /// (`0xff`), without consuming it.
+    ///
+    /// Use this inside indefinite-length array/map iteration loops to
+    /// detect the end of the container.
+    pub fn is_break(&self) -> bool {
+        self.peek_byte().ok() == Some(BREAK)
+    }
+
+    /// Consumes the CBOR break stop-code (`0xff`).
+    ///
+    /// Returns an error if the next byte is not `0xff`.
+    pub fn consume_break(&mut self) -> Result<(), LedgerError> {
+        let b = self.read_byte()?;
+        if b == BREAK {
+            Ok(())
+        } else {
+            Err(LedgerError::CborTypeMismatch {
+                expected: MAJOR_SIMPLE,
+                actual: b >> 5,
+            })
+        }
     }
 
     /// Decodes a negative integer (CBOR major type 1).
@@ -401,10 +497,61 @@ impl<'a> Decoder<'a> {
         })
     }
 
+    /// Decodes a UTF-8 text string (CBOR major type 3) supporting both
+    /// definite- and indefinite-length encoding.
+    pub fn text_owned(&mut self) -> Result<String, LedgerError> {
+        let initial = self.peek_byte()?;
+        let major = initial >> 5;
+        if major != MAJOR_TEXT {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: MAJOR_TEXT,
+                actual: major,
+            });
+        }
+        if initial & 0x1f == AI_INDEF {
+            self.pos += 1; // consume 0x7f
+            let mut assembled = String::new();
+            loop {
+                if self.peek_byte()? == BREAK {
+                    self.pos += 1; // consume 0xff
+                    return Ok(assembled);
+                }
+                assembled.push_str(self.text()?);
+            }
+        } else {
+            Ok(self.text()?.to_owned())
+        }
+    }
+
     /// Decodes a definite-length map header (CBOR major type 5) and
     /// returns the number of key-value pairs.
     pub fn map(&mut self) -> Result<u64, LedgerError> {
         self.expect_major(MAJOR_MAP)
+    }
+
+    /// Begins decoding a map (CBOR major type 5) that may be
+    /// definite- or indefinite-length.
+    ///
+    /// Returns `Some(n)` for a definite-length map of `n` entries, or
+    /// `None` for an indefinite-length map.  When `None` is returned
+    /// the caller must decode key-value pairs in a loop and call
+    /// [`is_break()`](Self::is_break) / [`consume_break()`](Self::consume_break)
+    /// to detect the end.
+    pub fn map_begin(&mut self) -> Result<Option<u64>, LedgerError> {
+        let initial = self.peek_byte()?;
+        let major = initial >> 5;
+        if major != MAJOR_MAP {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: MAJOR_MAP,
+                actual: major,
+            });
+        }
+        if initial & 0x1f == AI_INDEF {
+            self.pos += 1; // consume 0xbf
+            Ok(None)
+        } else {
+            Ok(Some(self.map()?))
+        }
     }
 
     /// Decodes a CBOR tag (major type 6) and returns the tag number.
@@ -446,34 +593,74 @@ impl<'a> Decoder<'a> {
     }
 
     /// Skips one complete CBOR data item (including nested structures).
+    ///
+    /// Handles both definite- and indefinite-length arrays, maps,
+    /// byte strings, and text strings (RFC 8949 §3.2.1).
     pub fn skip(&mut self) -> Result<(), LedgerError> {
         let initial = self.read_byte()?;
         let major = initial >> 5;
+        let ai = initial & 0x1f;
         match major {
             MAJOR_UNSIGNED | MAJOR_NEGATIVE => {
                 let _ = self.read_argument(initial)?;
             }
             MAJOR_BYTES | MAJOR_TEXT => {
-                let len = self.read_argument(initial)?;
-                let _ = self.read_exact(len as usize)?;
+                if ai == AI_INDEF {
+                    // Indefinite-length byte/text string: skip definite
+                    // chunks until break stop-code.
+                    loop {
+                        if self.peek_byte()? == BREAK {
+                            self.pos += 1;
+                            break;
+                        }
+                        // Each chunk must be a definite-length item of the
+                        // same major type (RFC 8949 §3.2.3).
+                        self.skip()?;
+                    }
+                } else {
+                    let len = self.read_argument(initial)?;
+                    let _ = self.read_exact(len as usize)?;
+                }
             }
             MAJOR_ARRAY => {
-                let count = self.read_argument(initial)?;
-                for _ in 0..count {
-                    self.skip()?;
+                if ai == AI_INDEF {
+                    loop {
+                        if self.peek_byte()? == BREAK {
+                            self.pos += 1;
+                            break;
+                        }
+                        self.skip()?;
+                    }
+                } else {
+                    let count = self.read_argument(initial)?;
+                    for _ in 0..count {
+                        self.skip()?;
+                    }
                 }
             }
             MAJOR_MAP => {
-                let count = self.read_argument(initial)?;
-                for _ in 0..count {
-                    self.skip()?;
-                    self.skip()?;
+                if ai == AI_INDEF {
+                    loop {
+                        if self.peek_byte()? == BREAK {
+                            self.pos += 1;
+                            break;
+                        }
+                        self.skip()?;
+                        self.skip()?;
+                    }
+                } else {
+                    let count = self.read_argument(initial)?;
+                    for _ in 0..count {
+                        self.skip()?;
+                        self.skip()?;
+                    }
                 }
             }
             MAJOR_SIMPLE => {
                 // Simple values (false, true, null) have no payload.
                 // Float16/32/64 have fixed-size payloads.
-                let ai = initial & 0x1f;
+                // ai == 31 is the break stop-code — should not appear as a
+                // standalone item (only inside indefinite containers).
                 match ai {
                     0..=23 => {} // simple value, no extra bytes
                     24 => { let _ = self.read_byte()?; }
@@ -2243,5 +2430,152 @@ mod tests {
         enc.array(1).unsigned(0);
         let bytes = enc.into_bytes();
         assert!(Point::from_cbor_bytes(&bytes).is_err());
+    }
+
+    // ── Indefinite-length CBOR tests ─────────────────────────────────
+
+    #[test]
+    fn skip_indefinite_array() {
+        // 0x9f 01 02 03 ff = [_ 1, 2, 3]
+        let data = [0x9f, 0x01, 0x02, 0x03, 0xff];
+        let mut dec = Decoder::new(&data);
+        dec.skip().unwrap();
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn skip_indefinite_map() {
+        // 0xbf 01 02 03 04 ff = {_ 1: 2, 3: 4}
+        let data = [0xbf, 0x01, 0x02, 0x03, 0x04, 0xff];
+        let mut dec = Decoder::new(&data);
+        dec.skip().unwrap();
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn skip_indefinite_bytes() {
+        // 0x5f 42 0102 43 030405 ff = (_ h'0102', h'030405')
+        let data = [0x5f, 0x42, 0x01, 0x02, 0x43, 0x03, 0x04, 0x05, 0xff];
+        let mut dec = Decoder::new(&data);
+        dec.skip().unwrap();
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn skip_indefinite_text() {
+        // 0x7f 63 666f6f 63 626172 ff = (_ "foo", "bar")
+        let data = [0x7f, 0x63, b'f', b'o', b'o', 0x63, b'b', b'a', b'r', 0xff];
+        let mut dec = Decoder::new(&data);
+        dec.skip().unwrap();
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn skip_nested_indefinite() {
+        // [_ [_ 1, 2], {_ 3: 4}]
+        let data = [
+            0x9f, // indef array
+            0x9f, 0x01, 0x02, 0xff, // indef array [1, 2]
+            0xbf, 0x03, 0x04, 0xff, // indef map {3: 4}
+            0xff, // end outer
+        ];
+        let mut dec = Decoder::new(&data);
+        dec.skip().unwrap();
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn array_begin_definite() {
+        // 83 01 02 03 = [1, 2, 3]
+        let data = [0x83, 0x01, 0x02, 0x03];
+        let mut dec = Decoder::new(&data);
+        let count = dec.array_begin().unwrap();
+        assert_eq!(count, Some(3));
+        for _ in 0..3 {
+            dec.unsigned().unwrap();
+        }
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn array_begin_indefinite() {
+        // 9f 01 02 03 ff = [_ 1, 2, 3]
+        let data = [0x9f, 0x01, 0x02, 0x03, 0xff];
+        let mut dec = Decoder::new(&data);
+        let count = dec.array_begin().unwrap();
+        assert_eq!(count, None);
+        let mut items = Vec::new();
+        while !dec.is_break() {
+            items.push(dec.unsigned().unwrap());
+        }
+        dec.consume_break().unwrap();
+        assert_eq!(items, vec![1, 2, 3]);
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn map_begin_indefinite() {
+        // bf 01 02 ff = {_ 1: 2}
+        let data = [0xbf, 0x01, 0x02, 0xff];
+        let mut dec = Decoder::new(&data);
+        let count = dec.map_begin().unwrap();
+        assert_eq!(count, None);
+        let mut entries = Vec::new();
+        while !dec.is_break() {
+            let k = dec.unsigned().unwrap();
+            let v = dec.unsigned().unwrap();
+            entries.push((k, v));
+        }
+        dec.consume_break().unwrap();
+        assert_eq!(entries, vec![(1, 2)]);
+    }
+
+    #[test]
+    fn bytes_owned_definite() {
+        let mut enc = Encoder::new();
+        enc.bytes(&[0x01, 0x02, 0x03]);
+        let data = enc.into_bytes();
+        let mut dec = Decoder::new(&data);
+        assert_eq!(dec.bytes_owned().unwrap(), vec![0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn bytes_owned_indefinite() {
+        // 5f 42 0102 43 030405 ff = (_ h'0102', h'030405')
+        let data = [0x5f, 0x42, 0x01, 0x02, 0x43, 0x03, 0x04, 0x05, 0xff];
+        let mut dec = Decoder::new(&data);
+        assert_eq!(
+            dec.bytes_owned().unwrap(),
+            vec![0x01, 0x02, 0x03, 0x04, 0x05]
+        );
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn text_owned_definite() {
+        let mut enc = Encoder::new();
+        enc.text("hello");
+        let data = enc.into_bytes();
+        let mut dec = Decoder::new(&data);
+        assert_eq!(dec.text_owned().unwrap(), "hello");
+    }
+
+    #[test]
+    fn text_owned_indefinite() {
+        // 7f 63 666f6f 63 626172 ff = (_ "foo", "bar")
+        let data = [0x7f, 0x63, b'f', b'o', b'o', 0x63, b'b', b'a', b'r', 0xff];
+        let mut dec = Decoder::new(&data);
+        assert_eq!(dec.text_owned().unwrap(), "foobar");
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn raw_value_captures_indefinite_array() {
+        // 9f 01 02 ff followed by 05
+        let data = [0x9f, 0x01, 0x02, 0xff, 0x05];
+        let mut dec = Decoder::new(&data);
+        let raw = dec.raw_value().unwrap();
+        assert_eq!(raw, &[0x9f, 0x01, 0x02, 0xff]);
+        assert_eq!(dec.unsigned().unwrap(), 5);
     }
 }

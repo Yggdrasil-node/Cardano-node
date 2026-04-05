@@ -4973,20 +4973,11 @@ impl LedgerState {
                     }
 
                     if let Some(proposal_procedures) = &tx.body.proposal_procedures {
-                        stage_conway_proposals(
-                            tx.tx_id(),
-                            self.current_epoch,
-                            self.protocol_params
-                                .as_ref()
-                                .and_then(|params| params.gov_action_lifetime),
-                            proposal_procedures,
-                            &mut governance_actions_for_tx,
-                        );
                         validate_conway_proposals(
                             tx.tx_id(),
                             proposal_procedures,
                             self.current_epoch,
-                            &governance_actions_for_tx,
+                            &mut governance_actions_for_tx,
                             &governance_stake_credentials,
                             self.protocol_params
                                 .as_ref()
@@ -4997,6 +4988,9 @@ impl LedgerState {
                             self.expected_network_id,
                             self.protocol_params.as_ref(),
                             &self.enact_state,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.gov_action_lifetime),
                         )?;
                     }
 
@@ -5915,15 +5909,19 @@ impl LedgerState {
         self.gen_delegs = staged_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
-        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, _is_valid) in &decoded {
-            if let Some(ref update) = body.update {
-                self.validate_ppup_proposal(update, None)?;
-                self.collect_pparam_proposals(update);
+        // Skip is_valid=false transactions — upstream alonzoEvalScriptsTxInvalid
+        // returns `pure pup` (no PPUP) and does not run DELEGS (no MIR).
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, is_valid) in &decoded {
+            if is_valid.unwrap_or(true) {
+                if let Some(ref update) = body.update {
+                    self.validate_ppup_proposal(update, None)?;
+                    self.collect_pparam_proposals(update);
+                }
+                accumulate_mir_from_certs(
+                    &mut self.instantaneous_rewards,
+                    body.certificates.as_deref(),
+                );
             }
-            accumulate_mir_from_certs(
-                &mut self.instantaneous_rewards,
-                body.certificates.as_deref(),
-            );
         }
         Ok(())
     }
@@ -6253,15 +6251,19 @@ impl LedgerState {
         self.gen_delegs = staged_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
-        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, _is_valid) in &decoded {
-            if let Some(ref update) = body.update {
-                self.validate_ppup_proposal(update, None)?;
-                self.collect_pparam_proposals(update);
+        // Skip is_valid=false transactions — upstream alonzoEvalScriptsTxInvalid
+        // returns `pure pup` (no PPUP) and does not run DELEGS (no MIR).
+        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, is_valid) in &decoded {
+            if is_valid.unwrap_or(true) {
+                if let Some(ref update) = body.update {
+                    self.validate_ppup_proposal(update, None)?;
+                    self.collect_pparam_proposals(update);
+                }
+                accumulate_mir_from_certs(
+                    &mut self.instantaneous_rewards,
+                    body.certificates.as_deref(),
+                );
             }
-            accumulate_mir_from_certs(
-                &mut self.instantaneous_rewards,
-                body.certificates.as_deref(),
-            );
         }
         Ok(())
     }
@@ -6689,20 +6691,11 @@ impl LedgerState {
                 }
 
                 if let Some(proposal_procedures) = &body.proposal_procedures {
-                    stage_conway_proposals(
-                        *tx_id,
-                        self.current_epoch,
-                        self.protocol_params
-                            .as_ref()
-                            .and_then(|params| params.gov_action_lifetime),
-                        proposal_procedures,
-                        &mut governance_actions_for_tx,
-                    );
                     validate_conway_proposals(
                         *tx_id,
                         proposal_procedures,
                         self.current_epoch,
-                        &governance_actions_for_tx,
+                        &mut governance_actions_for_tx,
                         &governance_stake_credentials,
                         self.protocol_params
                             .as_ref()
@@ -6713,6 +6706,9 @@ impl LedgerState {
                         self.expected_network_id,
                         self.protocol_params.as_ref(),
                         &self.enact_state,
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|params| params.gov_action_lifetime),
                     )?;
                 }
 
@@ -7180,28 +7176,6 @@ fn conway_expected_previous_hard_fork_version(
             Some((prev_action_id.clone(), *protocol_version, expected))
         }
         _ => None,
-    }
-}
-
-fn stage_conway_proposals(
-    tx_id: crate::types::TxId,
-    current_epoch: EpochNo,
-    gov_action_lifetime: Option<u64>,
-    proposal_procedures: &[crate::eras::conway::ProposalProcedure],
-    governance_actions: &mut BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
-) {
-    for (index, proposal) in proposal_procedures.iter().enumerate() {
-        governance_actions.insert(
-            crate::eras::conway::GovActionId {
-                transaction_id: tx_id.0,
-                gov_action_index: index as u16,
-            },
-            GovernanceActionState::new_with_lifetime(
-                proposal.clone(),
-                current_epoch,
-                gov_action_lifetime,
-            ),
-        );
     }
 }
 
@@ -7831,6 +7805,21 @@ fn validate_conway_proposals(
                 }
             }
         }
+
+        // Stage validated proposal (upstream foldlM' + processProposal:
+        // each proposal is validated then staged, so subsequent proposals
+        // in the same tx can reference it via prev_action_id lineage).
+        governance_actions.insert(
+            crate::eras::conway::GovActionId {
+                transaction_id: tx_id.0,
+                gov_action_index: proposal_index as u16,
+            },
+            GovernanceActionState::new_with_lifetime(
+                proposal.clone(),
+                current_epoch,
+                gov_action_lifetime,
+            ),
+        );
     }
 
     Ok(())
@@ -11035,13 +11024,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -11064,13 +11054,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -11098,13 +11089,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -11133,13 +11125,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -11156,7 +11149,7 @@ mod tests {
         let mut es = EnactState::default();
         es.prev_hard_fork = Some(enacted_id);
         let stake_creds = empty_stake_creds_with(1);
-        let stored = sample_governance_actions_with(vec![(
+        let mut stored = sample_governance_actions_with(vec![(
             pending_id.clone(),
             GovAction::HardForkInitiation {
                 prev_action_id: None,
@@ -11175,13 +11168,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &stored,
+            &mut stored,
             &stake_creds,
             Some((9, 0)),
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -11205,13 +11199,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &valid,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             Some((10, 0)),
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(valid_result.is_ok());
 
@@ -11227,13 +11222,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &invalid,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             Some((10, 0)),
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(invalid_result, Err(LedgerError::ProposalCantFollow { .. })));
     }
@@ -11256,13 +11252,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -11298,13 +11295,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -11340,13 +11338,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -11382,13 +11381,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(10),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             Some(&protocol_params),
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -11427,13 +11427,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(10),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             Some(&protocol_params),
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -11455,13 +11456,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -11488,13 +11490,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -11519,13 +11522,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             Some((9, 0)),
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -11554,13 +11558,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             Some((9, 0)),
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -11579,13 +11584,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             Some((9, 0)),
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -12111,13 +12117,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -12143,13 +12150,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -12178,13 +12186,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             Some(&protocol_params),
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -12209,13 +12218,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -12253,13 +12263,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &pool_zero,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(pool_result, Err(LedgerError::MalformedProposal(_))));
 
@@ -12267,13 +12278,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &gov_zero,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(gov_result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14607,13 +14619,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14638,13 +14651,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14669,13 +14683,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14700,13 +14715,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14731,13 +14747,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14762,13 +14779,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14797,13 +14815,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14832,13 +14851,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
@@ -14863,13 +14883,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -14887,13 +14908,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             Some(1000), // expected deposit = 1000
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -14911,13 +14933,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -14947,13 +14970,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             Some((10, 0)), // post-bootstrap: ZeroTreasuryWithdrawals enforced
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -14980,13 +15004,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15021,13 +15046,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             Some(1), // expected network = 1
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15063,13 +15089,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -15099,13 +15126,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15140,13 +15168,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15179,13 +15208,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15218,13 +15248,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -15251,13 +15282,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15289,13 +15321,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -15325,13 +15358,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15363,13 +15397,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(10),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15406,13 +15441,14 @@ mod tests {
             tx_id,
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15459,13 +15495,14 @@ mod tests {
             tx_id,
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15497,13 +15534,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15531,13 +15569,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(matches!(
             result,
@@ -15565,13 +15604,14 @@ mod tests {
             crate::types::TxId([0xAA; 32]),
             &proposals,
             EpochNo(0),
-            &BTreeMap::new(),
+            &mut BTreeMap::new(),
             &stake_creds,
             None,
             None,
             None,
             None,
             &es,
+            None,
         );
         assert!(result.is_ok());
     }

@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3977 workspace tests passing, 47 audit rounds covering 460+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3997 workspace tests passing, 50 audit rounds covering 490+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -321,4 +321,7 @@
 | 44 | Plutus ScriptContext per-version encoding (10 areas) | 10 | Gap #17: 7 encoding bugs fixed (B1–B4, B6–B8) |
 | 45 | Conway UTXOW/CERTS/DELEG/GOVCERT/GOV rules (10 areas) | 10 | Gap #18: committee membership unconditional check; Gap #20: RefundIncorrectDELEG PV split |
 | 46 | Plutus slot-to-POSIX conversion | 6 | Gap A: posix_time_range now uses real POSIX ms |
-| **Total** | **All subsystems** | **456** | **9 fix rounds** |
+| 47 | PPUP/MIR is_valid gating, proposal fold ordering | 4 | Gap B: Alonzo/Babbage is_valid=false still collected PPUP/MIR; Gap C: proposal fold ordering decoupled from validation |
+| 48 | CBOR indefinite-length support | 6 | Gap D: decoder rejected indefinite-length arrays/maps/bytes/text (RFC 8949 §3.2.1) |
+| 49 | Deep parity audit (24 areas: treasury ordering, committee auth, withdrawal witnesses, Byron fees, etc.) | 24 | None (all 24 areas already implemented) |
+| **Total** | **All subsystems** | **490** | **12 fix rounds** |

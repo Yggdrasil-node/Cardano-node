@@ -156,26 +156,48 @@ impl CborDecode for PlutusData {
             }
             // Byte string (major 2).
             2 => {
-                let b = dec.bytes()?.to_vec();
+                let b = dec.bytes_owned()?;
                 Ok(Self::Bytes(b))
             }
             // Array (major 4) → List.
             4 => {
-                let len = dec.array()?;
-                let mut items = Vec::with_capacity(len as usize);
-                for _ in 0..len {
-                    items.push(Self::decode_cbor(dec)?);
+                let mut items = Vec::new();
+                match dec.array_begin()? {
+                    Some(len) => {
+                        items.reserve(len as usize);
+                        for _ in 0..len {
+                            items.push(Self::decode_cbor(dec)?);
+                        }
+                    }
+                    None => {
+                        while !dec.is_break() {
+                            items.push(Self::decode_cbor(dec)?);
+                        }
+                        dec.consume_break()?;
+                    }
                 }
                 Ok(Self::List(items))
             }
             // Map (major 5) → Map.
             5 => {
-                let len = dec.map()?;
-                let mut entries = Vec::with_capacity(len as usize);
-                for _ in 0..len {
-                    let k = Self::decode_cbor(dec)?;
-                    let v = Self::decode_cbor(dec)?;
-                    entries.push((k, v));
+                let mut entries = Vec::new();
+                match dec.map_begin()? {
+                    Some(len) => {
+                        entries.reserve(len as usize);
+                        for _ in 0..len {
+                            let k = Self::decode_cbor(dec)?;
+                            let v = Self::decode_cbor(dec)?;
+                            entries.push((k, v));
+                        }
+                    }
+                    None => {
+                        while !dec.is_break() {
+                            let k = Self::decode_cbor(dec)?;
+                            let v = Self::decode_cbor(dec)?;
+                            entries.push((k, v));
+                        }
+                        dec.consume_break()?;
+                    }
                 }
                 Ok(Self::Map(entries))
             }
@@ -185,10 +207,20 @@ impl CborDecode for PlutusData {
                 match tag {
                     121..=127 => {
                         let alt = tag - CONSTR_TAG_BASE;
-                        let len = dec.array()?;
-                        let mut fields = Vec::with_capacity(len as usize);
-                        for _ in 0..len {
-                            fields.push(Self::decode_cbor(dec)?);
+                        let mut fields = Vec::new();
+                        match dec.array_begin()? {
+                            Some(len) => {
+                                fields.reserve(len as usize);
+                                for _ in 0..len {
+                                    fields.push(Self::decode_cbor(dec)?);
+                                }
+                            }
+                            None => {
+                                while !dec.is_break() {
+                                    fields.push(Self::decode_cbor(dec)?);
+                                }
+                                dec.consume_break()?;
+                            }
                         }
                         Ok(Self::Constr(alt, fields))
                     }
@@ -201,10 +233,20 @@ impl CborDecode for PlutusData {
                             });
                         }
                         let alt = dec.unsigned()?;
-                        let inner_len = dec.array()?;
-                        let mut fields = Vec::with_capacity(inner_len as usize);
-                        for _ in 0..inner_len {
-                            fields.push(Self::decode_cbor(dec)?);
+                        let mut fields = Vec::new();
+                        match dec.array_begin()? {
+                            Some(len) => {
+                                fields.reserve(len as usize);
+                                for _ in 0..len {
+                                    fields.push(Self::decode_cbor(dec)?);
+                                }
+                            }
+                            None => {
+                                while !dec.is_break() {
+                                    fields.push(Self::decode_cbor(dec)?);
+                                }
+                                dec.consume_break()?;
+                            }
                         }
                         Ok(Self::Constr(alt, fields))
                     }
@@ -719,5 +761,74 @@ mod tests {
         assert_eq!(dec.tag().unwrap(), 24);
         let payload = dec.bytes().unwrap();
         assert_eq!(payload, &inner_cbor);
+    }
+
+    // ── Indefinite-length PlutusData tests ───────────────────────────
+
+    #[test]
+    fn plutus_data_indefinite_list() {
+        // 9f 01 02 03 ff = [_ 1, 2, 3]
+        let data = [0x9f, 0x01, 0x02, 0x03, 0xff];
+        let pd = PlutusData::from_cbor_bytes(&data).unwrap();
+        assert_eq!(pd, PlutusData::List(vec![
+            PlutusData::Integer(1),
+            PlutusData::Integer(2),
+            PlutusData::Integer(3),
+        ]));
+    }
+
+    #[test]
+    fn plutus_data_indefinite_map() {
+        // bf 01 02 03 04 ff = {_ 1: 2, 3: 4}
+        let data = [0xbf, 0x01, 0x02, 0x03, 0x04, 0xff];
+        let pd = PlutusData::from_cbor_bytes(&data).unwrap();
+        assert_eq!(pd, PlutusData::Map(vec![
+            (PlutusData::Integer(1), PlutusData::Integer(2)),
+            (PlutusData::Integer(3), PlutusData::Integer(4)),
+        ]));
+    }
+
+    #[test]
+    fn plutus_data_indefinite_bytes() {
+        // 5f 42 0102 42 0304 ff = (_ h'0102', h'0304')
+        let data = [0x5f, 0x42, 0x01, 0x02, 0x42, 0x03, 0x04, 0xff];
+        let pd = PlutusData::from_cbor_bytes(&data).unwrap();
+        assert_eq!(pd, PlutusData::Bytes(vec![0x01, 0x02, 0x03, 0x04]));
+    }
+
+    #[test]
+    fn plutus_data_constr_indefinite_fields() {
+        // d8 79 (tag 121) 9f 01 02 ff = Constr(0, [_ 1, 2])
+        let data = [0xd8, 0x79, 0x9f, 0x01, 0x02, 0xff];
+        let pd = PlutusData::from_cbor_bytes(&data).unwrap();
+        assert_eq!(pd, PlutusData::Constr(0, vec![
+            PlutusData::Integer(1),
+            PlutusData::Integer(2),
+        ]));
+    }
+
+    #[test]
+    fn plutus_data_nested_indefinite() {
+        // [_ {_ 1: [_ 2, 3]}, (_ h'ff')]
+        #[rustfmt::skip]
+        let data = [
+            0x9f,                         // indef array
+            0xbf,                         //   indef map
+            0x01,                         //     key: 1
+            0x9f, 0x02, 0x03, 0xff,       //     value: [_ 2, 3]
+            0xff,                         //   end map
+            0x5f, 0x41, 0xff, 0xff,       //   (_ h'ff')
+            0xff,                         // end array
+        ];
+        let pd = PlutusData::from_cbor_bytes(&data).unwrap();
+        assert_eq!(pd, PlutusData::List(vec![
+            PlutusData::Map(vec![
+                (PlutusData::Integer(1), PlutusData::List(vec![
+                    PlutusData::Integer(2),
+                    PlutusData::Integer(3),
+                ])),
+            ]),
+            PlutusData::Bytes(vec![0xff]),
+        ]));
     }
 }
