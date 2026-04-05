@@ -1489,7 +1489,7 @@ fn conway_block_rejects_committee_vote_on_non_bootstrap_action_during_bootstrap(
 
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(conway_bootstrap_protocol_params());
-    state.committee_state_mut().register(cold_credential);
+    state.committee_state_mut().register_with_term(cold_credential, 200);
     state.governance_actions_mut().insert(
         gov_action_id.clone(),
         GovernanceActionState::new(ProposalProcedure {
@@ -1734,7 +1734,7 @@ fn conway_block_accepts_allowed_bootstrap_votes() {
     state
         .drep_state_mut()
         .register(DRep::KeyHash(drep_keyhash), RegisteredDrep::new(0, None));
-    state.committee_state_mut().register(cold_credential);
+    state.committee_state_mut().register_with_term(cold_credential, 200);
     state.pool_state_mut().register(PoolParams {
         operator: stake_pool_keyhash,
         vrf_keyhash: [0x74; 32],
@@ -2910,7 +2910,7 @@ fn conway_block_accepts_same_tx_committee_hot_authorization_for_voter() {
     };
 
     let mut state = LedgerState::new(Era::Conway);
-    state.committee_state_mut().register(cold_credential);
+    state.committee_state_mut().register_with_term(cold_credential, 200);
     state.governance_actions_mut().insert(
         known_action_id,
         GovernanceActionState::new(ProposalProcedure {
@@ -3257,7 +3257,7 @@ fn conway_block_rejects_committee_votes_for_disallowed_actions() {
     };
 
     let mut state = LedgerState::new(Era::Conway);
-    state.committee_state_mut().register(cold_credential);
+    state.committee_state_mut().register_with_term(cold_credential, 200);
     state.governance_actions_mut().insert(
         no_confidence_action_id.clone(),
         GovernanceActionState::new(ProposalProcedure {

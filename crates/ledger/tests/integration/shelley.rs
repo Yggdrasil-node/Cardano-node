@@ -900,7 +900,9 @@ fn utxo_rejects_no_inputs() {
 }
 
 #[test]
-fn utxo_rejects_no_outputs() {
+fn utxo_accepts_empty_outputs() {
+    // Upstream has no `OutputSetEmptyUTxO` — CDDL allows `[* transaction_output]`.
+    // A tx with inputs and zero outputs should be accepted (fee consumes all value).
     let mut utxo = ShelleyUtxo::new();
     seed_utxo(&mut utxo, [0x01; 32], 0, 5_000_000);
 
@@ -914,9 +916,8 @@ fn utxo_rejects_no_outputs() {
         update: None,
         auxiliary_data_hash: None,
     };
-    let err = utxo.apply_tx([0xFF; 32], &body, 500).expect_err("no outputs");
-    assert_eq!(err, LedgerError::NoOutputs);
-    assert_eq!(utxo.len(), 1);
+    utxo.apply_tx([0xFF; 32], &body, 500).expect("empty outputs should be accepted");
+    assert_eq!(utxo.len(), 0);
 }
 
 #[test]

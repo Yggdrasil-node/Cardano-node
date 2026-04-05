@@ -270,7 +270,7 @@ fn unelected_committee_voter_rejected_at_pv10() {
     // Register a cold committee member and authorize its hot credential.
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xDD; 28]);
-    state.committee_state_mut().register(cold_cred);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF0);
 
     // An UNKNOWN hot credential that is NOT authorized by any member.
@@ -311,7 +311,7 @@ fn elected_committee_voter_accepted_at_pv10() {
 
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xDD; 28]);
-    state.committee_state_mut().register(cold_cred);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF1);
 
     // Vote using the AUTHORIZED hot credential [0xDD; 28].
@@ -345,7 +345,7 @@ fn unelected_committee_voter_allowed_below_pv10() {
 
     // Register a committee member but do NOT authorize any hot credential.
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
-    state.committee_state_mut().register(cold_cred);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
 
     // Vote with a completely unrelated hot credential — at PV 9 the
     // unelected-committee-voters check is skipped.
@@ -388,7 +388,7 @@ fn resigned_committee_member_hot_cred_rejected_at_pv10() {
     // Register committee member and authorize hot credential via block.
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xDD; 28]);
-    state.committee_state_mut().register(cold_cred);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF2);
 
     // Resign the member through a block.

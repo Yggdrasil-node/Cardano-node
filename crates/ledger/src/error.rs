@@ -329,13 +329,24 @@ pub enum LedgerError {
 
     /// Upstream: `IncorrectDepositDELEG` (refund variant) — the refund
     /// amount carried in a Conway `UnRegCert` does not match the credential's
-    /// stored deposit.
+    /// stored deposit.  Used when PV < 10 (bootstrap phase).
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
     #[error(
         "incorrect key deposit refund in certificate: supplied {supplied}, expected {expected}"
     )]
     IncorrectKeyDepositRefund { supplied: u64, expected: u64 },
+
+    /// Upstream: `RefundIncorrectDELEG` — the refund amount carried in a
+    /// Conway `UnRegCert` does not match the credential's stored deposit.
+    /// Used when PV >= 10 (post-bootstrap Conway) via
+    /// `hardforkConwayDELEGIncorrectDepositsAndRefunds`.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
+    #[error(
+        "incorrect key deposit refund (post-bootstrap): supplied {supplied}, expected {expected}"
+    )]
+    RefundIncorrectDELEG { supplied: u64, expected: u64 },
 
     /// Upstream: `ConwayDRepIncorrectDeposit` — the deposit amount in a
     /// `ConwayRegDRep` certificate does not match `ppDRepDeposit`.

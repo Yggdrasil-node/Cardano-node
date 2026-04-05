@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 44 parity audit rounds completed (410+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 46 parity audit rounds completed (455+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3954 workspace tests passing, 44 audit rounds covering 410+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3962 workspace tests passing, 46 audit rounds covering 455+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -46,7 +46,8 @@
 - `accumulate_donation()` / `flush_donations_to_treasury()` — Conway treasury donation accumulation (UTXOS rule) + epoch-boundary flush (EPOCH rule)
 - `update_dormant_drep_expiries()` — Conway dormant epoch DRep activity bump when proposals appear (upstream `updateDormantDRepExpiries`)
 - `validate_conway_current_treasury_value()` — Conway currentTreasuryValue field validation
-- Conway deposit validation — `IncorrectDepositDELEG`, `IncorrectKeyDepositRefund`, `DrepIncorrectDeposit`, `DrepIncorrectRefund`, `WithdrawalNotFullDrain` (exact-drain semantics)
+- Conway deposit validation — `IncorrectDepositDELEG`, `IncorrectKeyDepositRefund`, `RefundIncorrectDELEG` (PV ≥ 10 split), `DrepIncorrectDeposit`, `DrepIncorrectRefund`, `WithdrawalNotFullDrain` (exact-drain semantics)
+- Conway committee membership check — `authorize_committee_hot_credential()` and `resign_committee_cold_credential()` unconditionally verify `isCurrentMember || isPotentialFutureMember` (upstream `checkAndOverwriteCommitteeMemberState`)
 - Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
 - `validate_script_witnesses_well_formed()` / `validate_reference_scripts_well_formed()` — Malformed Plutus script detection at admission (upstream `validateScriptsWellFormed`)
 - `validate_outside_forecast()` — OutsideForecast infrastructure (upstream no-op due to `unsafeLinearExtendEpochInfo`)
@@ -318,4 +319,5 @@
 | 40 | Peer governor, diffusion, connection manager (10 areas) | 10 | None |
 | 41-43 | UTxO validation, epoch boundary, BBODY/CHAINHEAD (30 areas) | 30 | Gap #14 CC hot/cold tally, Gap #15 well-formed UnitInterval, Gap #16 CHAINHEAD prev-hash + slot |
 | 44 | Plutus ScriptContext per-version encoding (10 areas) | 10 | Gap #17: 7 encoding bugs fixed (B1–B4, B6–B8) |
-| **Total** | **All subsystems** | **440** | **7 fix rounds** |
+| 45 | Conway UTXOW/CERTS/DELEG/GOVCERT/GOV rules (10 areas) | 10 | Gap #18: committee membership unconditional check; Gap #20: RefundIncorrectDELEG PV split |
+| **Total** | **All subsystems** | **450** | **8 fix rounds** |

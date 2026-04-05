@@ -939,12 +939,11 @@ impl ShelleyUtxo {
         deposits: u64,
         refunds: u64,
     ) -> Result<(), LedgerError> {
-        // 1. Non-empty inputs / outputs.
+        // 1. Non-empty inputs.
+        // Upstream `InputSetEmptyUTxO` — inputs must be non-empty.
+        // CDDL allows `[* transaction_output]` so empty outputs are valid.
         if body.inputs.is_empty() {
             return Err(LedgerError::NoInputs);
-        }
-        if body.outputs.is_empty() {
-            return Err(LedgerError::NoOutputs);
         }
 
         // 1b. Duplicate input check.

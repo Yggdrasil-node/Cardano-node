@@ -285,3 +285,171 @@ fn alonzo_block_is_valid_false_applies_collateral_only() {
         "normal tx outputs must not be produced when is_valid=false"
     );
 }
+
+/// Conway block with `is_valid = false` and an **incorrect**
+/// `current_treasury_value` must be accepted — upstream places
+/// `validateTreasuryValue` inside the `IsValid True` branch of
+/// `conwayLedgerTransitionTRC`, so it is skipped for invalid txs.
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Ledger` — `conwayLedgerTransitionTRC`.
+#[test]
+fn conway_block_is_valid_false_skips_treasury_value_check() {
+    let keyhash = [0xBB; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(permissive_params());
+    // Set treasury to a known value.
+    state.accounting_mut().treasury = 100;
+
+    let spend_input = ShelleyTxIn {
+        transaction_id: [0x30; 32],
+        index: 0,
+    };
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0x31; 32],
+        index: 0,
+    };
+    seed_utxo(&mut state, spend_input.clone(), &addr, 5_000_000);
+    seed_utxo(&mut state, collateral_input.clone(), &addr, 3_000_000);
+
+    let body = ConwayTxBody {
+        inputs: vec![spend_input.clone()],
+        outputs: vec![BabbageTxOut {
+            address: addr.clone(),
+            amount: Value::Coin(5_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: Some(vec![collateral_input.clone()]),
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        // Intentionally wrong — treasury is 100 but we claim 999.
+        current_treasury_value: Some(999),
+        treasury_donation: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+
+    let block = Block {
+        era: Era::Conway,
+        header: BlockHeader {
+            hash: HeaderHash([0x02; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0x11; 32],
+        },
+        transactions: vec![Tx {
+            id: tx_id,
+            body: body_bytes,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: Some(false),
+        }],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    state
+        .apply_block_validated(&block, None)
+        .expect("is_valid=false tx with wrong treasury value should be accepted");
+
+    assert!(
+        state.multi_era_utxo().get(&spend_input).is_some(),
+        "regular spending input must remain unspent when is_valid=false"
+    );
+    assert!(
+        state.multi_era_utxo().get(&collateral_input).is_none(),
+        "collateral input must be consumed when is_valid=false"
+    );
+}
+
+/// Verify that a Conway `is_valid = true` tx with wrong treasury value
+/// **is** rejected — the check must be active for valid transactions.
+#[test]
+fn conway_block_is_valid_true_rejects_wrong_treasury_value() {
+    let keyhash = [0xCC; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(permissive_params());
+    state.accounting_mut().treasury = 100;
+
+    let input = ShelleyTxIn {
+        transaction_id: [0x40; 32],
+        index: 0,
+    };
+    seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = ConwayTxBody {
+        inputs: vec![input],
+        outputs: vec![BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(4_800_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 200_000,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        // Wrong treasury value — should trigger rejection for valid tx.
+        current_treasury_value: Some(999),
+        treasury_donation: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+
+    let block = Block {
+        era: Era::Conway,
+        header: BlockHeader {
+            hash: HeaderHash([0x03; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0x11; 32],
+        },
+        transactions: vec![Tx {
+            id: tx_id,
+            body: body_bytes,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: Some(true),
+        }],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        matches!(result, Err(LedgerError::CurrentTreasuryValueIncorrect { .. })),
+        "is_valid=true tx with wrong treasury value must be rejected, got: {:?}",
+        result,
+    );
+}

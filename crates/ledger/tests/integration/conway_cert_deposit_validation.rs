@@ -291,9 +291,10 @@ fn conway_rejects_incorrect_key_refund_on_unregistration() {
     )]);
 
     let err = state.apply_block(&block).unwrap_err();
+    // Post-bootstrap (protocol_version != Some((9,_))), upstream uses RefundIncorrectDELEG
     assert_eq!(
         err,
-        LedgerError::IncorrectKeyDepositRefund { supplied: 1_000_000, expected: key_deposit }
+        LedgerError::RefundIncorrectDELEG { supplied: 1_000_000, expected: key_deposit }
     );
 }
 

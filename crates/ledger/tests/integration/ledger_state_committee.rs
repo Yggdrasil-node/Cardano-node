@@ -74,7 +74,7 @@ fn ledger_state_authorizes_known_committee_member_hot_key() {
     let mut state = LedgerState::new(Era::Conway);
     let cold_credential = StakeCredential::AddrKeyHash([0x68; 28]);
     let hot_credential = StakeCredential::ScriptHash([0x69; 28]);
-    state.committee_state_mut().register(cold_credential);
+    state.committee_state_mut().register_with_term(cold_credential, 200);
     state.multi_era_utxo_mut().insert_shelley(
         ShelleyTxIn {
             transaction_id: [0xAA; 32],
@@ -122,7 +122,7 @@ fn ledger_state_resigns_known_committee_member() {
         url: "https://example.com/committee-resignation.json".to_string(),
         data_hash: [0x6C; 32],
     };
-    state.committee_state_mut().register(cold_credential);
+    state.committee_state_mut().register_with_term(cold_credential, 200);
     state.multi_era_utxo_mut().insert_shelley(
         ShelleyTxIn { transaction_id: [0xAC; 32], index: 0 },
         ShelleyTxOut { address: vec![0x01], amount: 1_100_000 },
@@ -216,7 +216,7 @@ fn ledger_state_rejects_reauthorizing_resigned_committee_member() {
     let mut state = LedgerState::new(Era::Conway);
     let cold_credential = StakeCredential::AddrKeyHash([0x70; 28]);
     let hot_credential = StakeCredential::ScriptHash([0x71; 28]);
-    state.committee_state_mut().register(cold_credential);
+    state.committee_state_mut().register_with_term(cold_credential, 200);
     state.multi_era_utxo_mut().insert_shelley(
         ShelleyTxIn { transaction_id: [0xB0; 32], index: 0 },
         ShelleyTxOut { address: vec![0x01], amount: 1_100_000 },

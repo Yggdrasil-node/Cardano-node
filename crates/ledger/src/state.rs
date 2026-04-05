@@ -6393,11 +6393,6 @@ impl LedgerState {
                 Some(&body.inputs),
                 Some(&required_scripts),
             )?;
-            // Conway LEDGER rule: total reference script size limit
-            staged.validate_tx_ref_scripts_size(
-                &body.inputs,
-                body.reference_inputs.as_deref(),
-            )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
                 let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -6434,7 +6429,6 @@ impl LedgerState {
                 }
                 validate_tx_body_network_id(expected_net, body.network_id)?;
             }
-            validate_conway_current_treasury_value(body.current_treasury_value, current_treasury)?;
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
                 &body.inputs, &staged, &mut required,
@@ -6622,6 +6616,15 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
+            // Conway LEDGER rule: total reference script size limit
+            // (upstream runs inside IsValid True branch).
+            staged.validate_tx_ref_scripts_size(
+                &body.inputs,
+                body.reference_inputs.as_deref(),
+            )?;
+            // Conway LEDGER rule: treasury value consistency
+            // (upstream `validateTreasuryValue`, inside IsValid True branch).
+            validate_conway_current_treasury_value(body.current_treasury_value, current_treasury)?;
             // Conway LEDGER rule: withdrawal credentials must be delegated
             // to a DRep (post-bootstrap only, uses pre-CERTS state).
             validate_withdrawals_delegated(
@@ -8066,6 +8069,10 @@ fn apply_certificates_and_withdrawals(
                     // tracking was introduced), fall back to current `key_deposit`
                     // which matches upstream Shelley-era `shelleyKeyDepositsRefunds`
                     // behavior.
+                    //
+                    // Upstream `hardforkConwayDELEGIncorrectDepositsAndRefunds`:
+                    // PV >= 10 uses `RefundIncorrectDELEG Mismatch`,
+                    // PV < 10 uses the legacy `IncorrectDepositDELEG`.
                     if ctx.is_conway {
                         let raw_stored = stake_credentials
                             .get(credential)
@@ -8073,9 +8080,18 @@ fn apply_certificates_and_withdrawals(
                             .unwrap_or(0);
                         let expected_deposit = if raw_stored > 0 { raw_stored } else { key_deposit };
                         if *refund != expected_deposit {
-                            return Err(LedgerError::IncorrectKeyDepositRefund {
-                                supplied: *refund,
-                                expected: expected_deposit,
+                            return Err(if !ctx.bootstrap_phase {
+                                // PV >= 10: new error variant
+                                LedgerError::RefundIncorrectDELEG {
+                                    supplied: *refund,
+                                    expected: expected_deposit,
+                                }
+                            } else {
+                                // PV < 10 (bootstrap): legacy error variant
+                                LedgerError::IncorrectKeyDepositRefund {
+                                    supplied: *refund,
+                                    expected: expected_deposit,
+                                }
                             });
                         }
                     }
@@ -8486,14 +8502,24 @@ fn authorize_committee_hot_credential(
 ) -> Result<(), LedgerError> {
     // Upstream `checkAndOverwriteCommitteeMemberState` in
     // `Cardano.Ledger.Conway.Rules.GovCert`: the cold credential must be
-    // either a current committee member or appear in a pending
+    // either a current enacted committee member or appear in a pending
     // `UpdateCommittee` proposal's `newMembers` map
     // (`isPotentialFutureMember`).
+    //
+    // Unlike the previous implementation, this ALWAYS checks membership
+    // even when the credential already exists in `committee_state`.
+    // Auto-registered credentials (from `isPotentialFutureMember`) have
+    // `expires_at == None`; properly enacted members (from
+    // `register_with_term`) have `expires_at == Some(epoch)`.
+    let is_current_member = committee_state
+        .get(&cold_credential)
+        .is_some_and(|m| m.expires_at().is_some());
+    if !is_current_member && !is_potential_future_member(&cold_credential, governance_actions) {
+        return Err(LedgerError::CommitteeIsUnknown(cold_credential));
+    }
+
+    // Auto-register if not yet in the map (potential future member only).
     if committee_state.get(&cold_credential).is_none() {
-        if !is_potential_future_member(&cold_credential, governance_actions) {
-            return Err(LedgerError::CommitteeIsUnknown(cold_credential));
-        }
-        // Auto-register the credential so authorization can be set.
         committee_state.register(cold_credential);
     }
 
@@ -8515,11 +8541,16 @@ fn resign_committee_cold_credential(
     cold_credential: StakeCredential,
     anchor: Option<Anchor>,
 ) -> Result<(), LedgerError> {
-    // Same `isPotentialFutureMember` check as authorization.
+    // Same unconditional `isCurrentMember || isPotentialFutureMember`
+    // check as authorization (upstream `checkAndOverwriteCommitteeMemberState`).
+    let is_current_member = committee_state
+        .get(&cold_credential)
+        .is_some_and(|m| m.expires_at().is_some());
+    if !is_current_member && !is_potential_future_member(&cold_credential, governance_actions) {
+        return Err(LedgerError::CommitteeIsUnknown(cold_credential));
+    }
+
     if committee_state.get(&cold_credential).is_none() {
-        if !is_potential_future_member(&cold_credential, governance_actions) {
-            return Err(LedgerError::CommitteeIsUnknown(cold_credential));
-        }
         committee_state.register(cold_credential);
     }
 
@@ -16830,7 +16861,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let cold = crate::StakeCredential::AddrKeyHash([0xDA; 28]);
         let hot = crate::StakeCredential::AddrKeyHash([0xDB; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
@@ -16873,7 +16904,7 @@ mod tests {
         let mut sc = StakeCredentials::new();
         let mut cs = CommitteeState::new();
         let cold = crate::StakeCredential::AddrKeyHash([0xEA; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
@@ -16894,7 +16925,7 @@ mod tests {
         let mut sc = StakeCredentials::new();
         let mut cs = CommitteeState::new();
         let cold = crate::StakeCredential::AddrKeyHash([0xEB; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
@@ -16915,6 +16946,207 @@ mod tests {
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs2), None,
         ).unwrap_err();
         assert!(matches!(err, LedgerError::CommitteeHasPreviouslyResigned(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Gap #18: Committee unconditional membership check
+    // (upstream `checkAndOverwriteCommitteeMemberState`)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_committee_auth_auto_registered_stale_entry_rejected() {
+        // A credential was auto-registered via `is_potential_future_member`
+        // (register() without term), but the pending proposal expired.
+        // Now the credential is in CommitteeState but is NOT a real member.
+        // Authorization must fail with `CommitteeIsUnknown`.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xD1; 28]);
+        let hot = crate::StakeCredential::AddrKeyHash([0xD2; 28]);
+        // Simulate stale auto-registration (no term epoch).
+        cs.register(cold);
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        // No governance actions → credential is NOT a future member either.
+        let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::CommitteeIsUnknown(_)));
+    }
+
+    #[test]
+    fn test_committee_resign_auto_registered_stale_entry_rejected() {
+        // Same as above but for resignation.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xD3; 28]);
+        cs.register(cold);
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        let certs = vec![DCert::CommitteeResignation(cold, None)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::CommitteeIsUnknown(_)));
+    }
+
+    #[test]
+    fn test_committee_auth_enacted_member_succeeds() {
+        // A properly enacted member (with term epoch) can authorize.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xD4; 28]);
+        let hot = crate::StakeCredential::AddrKeyHash([0xD5; 28]);
+        cs.register_with_term(cold, 200);
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        ).unwrap();
+        let ms = cs.get(&cold).unwrap();
+        assert!(matches!(
+            ms.authorization(),
+            Some(CommitteeAuthorization::CommitteeHotCredential(h)) if *h == hot
+        ));
+    }
+
+    #[test]
+    fn test_committee_auth_potential_future_member_succeeds() {
+        // A credential that is NOT in CommitteeState but IS a potential
+        // future member (appears in a pending UpdateCommittee proposal).
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let cold = crate::StakeCredential::AddrKeyHash([0xD6; 28]);
+        let hot = crate::StakeCredential::AddrKeyHash([0xD7; 28]);
+        // No register — credential not in CommitteeState.
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx();
+
+        // Seed a pending UpdateCommittee action that lists this credential.
+        let mut members_to_add = std::collections::BTreeMap::new();
+        members_to_add.insert(cold, 300u64);
+        let action_id = crate::eras::conway::GovActionId {
+            transaction_id: [0xA0; 32],
+            gov_action_index: 0,
+        };
+        let mut gov = std::collections::BTreeMap::new();
+        gov.insert(action_id, GovernanceActionState::new(
+            crate::eras::conway::ProposalProcedure {
+                deposit: 0,
+                reward_account: vec![0x00],
+                gov_action: crate::eras::conway::GovAction::UpdateCommittee {
+                    prev_action_id: None,
+                    members_to_remove: vec![],
+                    members_to_add,
+                    quorum: UnitInterval { numerator: 1, denominator: 2 },
+                },
+                anchor: crate::types::Anchor {
+                    url: String::new(),
+                    data_hash: [0; 32],
+                },
+            },
+        ));
+
+        let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &gov, &ctx, Some(&certs), None,
+        ).unwrap();
+        // Credential was auto-registered in CommitteeState.
+        assert!(cs.is_member(&cold));
+    }
+
+    // -----------------------------------------------------------------------
+    // Gap #20: RefundIncorrectDELEG PV split
+    // (upstream `hardforkConwayDELEGIncorrectDepositsAndRefunds`)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_refund_incorrect_deleg_post_bootstrap() {
+        // PV >= 10 (post-bootstrap) uses RefundIncorrectDELEG.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
+
+        // Register first.
+        let ctx = sample_conway_cert_ctx(); // bootstrap_phase = false
+        let reg = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&reg), None,
+        ).unwrap();
+
+        // Attempt wrong refund.
+        let unreg = vec![DCert::AccountUnregistrationDeposit(cred, 9_999_999)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&unreg), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::RefundIncorrectDELEG {
+            supplied: 9_999_999,
+            expected: 2_000_000,
+        }));
+    }
+
+    #[test]
+    fn test_refund_incorrect_deleg_bootstrap_phase() {
+        // PV < 10 (bootstrap) uses legacy IncorrectKeyDepositRefund.
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
+
+        let mut ctx = sample_conway_cert_ctx();
+        ctx.bootstrap_phase = true; // PV 9
+
+        let reg = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
+        apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&reg), None,
+        ).unwrap();
+
+        let unreg = vec![DCert::AccountUnregistrationDeposit(cred, 7_777_777)];
+        let err = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&unreg), None,
+        ).unwrap_err();
+        assert!(matches!(err, LedgerError::IncorrectKeyDepositRefund {
+            supplied: 7_777_777,
+            expected: 2_000_000,
+        }));
     }
 
     #[test]
@@ -17740,7 +17972,7 @@ mod tests {
             &mut gd, &std::collections::BTreeMap::new(),
             &unreg_ctx, Some(&unreg_certs), None,
         ).unwrap_err();
-        assert!(matches!(err, LedgerError::IncorrectKeyDepositRefund {
+        assert!(matches!(err, LedgerError::RefundIncorrectDELEG {
             supplied: 3_000_000,
             expected: 2_000_000,
         }));

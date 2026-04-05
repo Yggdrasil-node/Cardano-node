@@ -919,13 +919,16 @@ pub fn validate_outside_forecast(
     Ok(())
 }
 
-/// Validates that inputs and outputs are non-empty.
-fn validate_nonempty<I, O>(inputs: &[I], outputs: &[O]) -> Result<(), LedgerError> {
+/// Validates that inputs are non-empty.
+///
+/// Upstream Shelley UTXO rules enforce `InputSetEmptyUTxO` (inputs must be
+/// non-empty) but have no corresponding check for empty outputs — CDDL
+/// allows `[* transaction_output]` (zero or more).
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `validateInputSetEmptyUTxO`.
+fn validate_nonempty<I, O>(inputs: &[I], _outputs: &[O]) -> Result<(), LedgerError> {
     if inputs.is_empty() {
         return Err(LedgerError::NoInputs);
-    }
-    if outputs.is_empty() {
-        return Err(LedgerError::NoOutputs);
     }
     Ok(())
 }
@@ -1355,7 +1358,8 @@ mod tests {
     }
 
     #[test]
-    fn apply_shelley_tx_no_outputs() {
+    fn apply_shelley_tx_empty_outputs_accepted() {
+        // Upstream has no `OutputSetEmptyUTxO` — CDDL allows `[* transaction_output]`.
         let (mut utxo, input) = seed_utxo_shelley(0x01, 3_000_000);
         let body = ShelleyTxBody {
             inputs: vec![input],
@@ -1367,10 +1371,7 @@ mod tests {
             update: None,
             auxiliary_data_hash: None,
         };
-        assert!(matches!(
-            utxo.apply_shelley_tx([0xaa; 32], &body, 50),
-            Err(LedgerError::NoOutputs)
-        ));
+        assert!(utxo.apply_shelley_tx([0xaa; 32], &body, 50).is_ok());
     }
 
     // ── apply_allegra_tx ───────────────────────────────────────────────
@@ -1530,10 +1531,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_nonempty_outputs_empty() {
+    fn validate_nonempty_outputs_empty_is_ok() {
+        // Upstream has no `OutputSetEmptyUTxO` — CDDL allows `[* transaction_output]`.
         let inputs = vec![sample_txin(0x01, 0)];
         let empty_outputs: Vec<ShelleyTxOut> = vec![];
-        assert!(matches!(validate_nonempty(&inputs, &empty_outputs), Err(LedgerError::NoOutputs)));
+        assert!(validate_nonempty(&inputs, &empty_outputs).is_ok());
     }
 
     #[test]
