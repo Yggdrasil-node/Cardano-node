@@ -165,7 +165,7 @@ impl CborDecode for AllegraTxBody {
             let key = dec.unsigned()?;
             match key {
                 0 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut ins = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
@@ -187,7 +187,7 @@ impl CborDecode for AllegraTxBody {
                     ttl = Some(dec.unsigned()?);
                 }
                 4 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut certs = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);

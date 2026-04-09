@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 47 parity audit rounds completed (460+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 48 parity audit rounds completed (470+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 3997 workspace tests passing, 50 audit rounds covering 490+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4006 workspace tests passing, 52 audit rounds covering 500+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -324,4 +324,5 @@
 | 47 | PPUP/MIR is_valid gating, proposal fold ordering | 4 | Gap B: Alonzo/Babbage is_valid=false still collected PPUP/MIR; Gap C: proposal fold ordering decoupled from validation |
 | 48 | CBOR indefinite-length support | 6 | Gap D: decoder rejected indefinite-length arrays/maps/bytes/text (RFC 8949 §3.2.1) |
 | 49 | Deep parity audit (24 areas: treasury ordering, committee auth, withdrawal witnesses, Byron fees, etc.) | 24 | None (all 24 areas already implemented) |
-| **Total** | **All subsystems** | **490** | **12 fix rounds** |
+| 50 | CBOR tag 258 set decode, min_committee_size floor, InfoAction ratification fix | 12 | Gap E: `array()` rejected #6.258 set encoding (27 sites); Gap F: min_committee_size floor not enforced; Gap G: InfoAction incorrectly ratified |
+| **Total** | **All subsystems** | **502** | **13 fix rounds** |

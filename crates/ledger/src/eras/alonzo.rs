@@ -396,7 +396,7 @@ impl CborDecode for AlonzoTxBody {
             let key = dec.unsigned()?;
             match key {
                 0 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut ins = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
@@ -418,7 +418,7 @@ impl CborDecode for AlonzoTxBody {
                     ttl = Some(dec.unsigned()?);
                 }
                 4 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut certs = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);
@@ -465,7 +465,7 @@ impl CborDecode for AlonzoTxBody {
                     script_data_hash = Some(hash);
                 }
                 13 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut cols = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         cols.push(ShelleyTxIn::decode_cbor(dec)?);
@@ -473,7 +473,7 @@ impl CborDecode for AlonzoTxBody {
                     collateral = Some(cols);
                 }
                 14 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut sigs = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         let raw = dec.bytes()?;

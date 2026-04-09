@@ -1082,7 +1082,7 @@ impl CborDecode for ConwayTxBody {
             let key = dec.unsigned()?;
             match key {
                 0 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut ins = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
@@ -1104,7 +1104,7 @@ impl CborDecode for ConwayTxBody {
                     ttl = Some(dec.unsigned()?);
                 }
                 4 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut certs = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);
@@ -1148,7 +1148,7 @@ impl CborDecode for ConwayTxBody {
                     script_data_hash = Some(hash);
                 }
                 13 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut cols = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         cols.push(ShelleyTxIn::decode_cbor(dec)?);
@@ -1156,7 +1156,7 @@ impl CborDecode for ConwayTxBody {
                     collateral = Some(cols);
                 }
                 14 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut sigs = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         let raw = dec.bytes()?;
@@ -1180,7 +1180,7 @@ impl CborDecode for ConwayTxBody {
                     total_collateral = Some(dec.unsigned()?);
                 }
                 18 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut refs = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         refs.push(ShelleyTxIn::decode_cbor(dec)?);
@@ -1191,7 +1191,7 @@ impl CborDecode for ConwayTxBody {
                     voting_procedures = Some(VotingProcedures::decode_cbor(dec)?);
                 }
                 20 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut props = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         props.push(ProposalProcedure::decode_cbor(dec)?);

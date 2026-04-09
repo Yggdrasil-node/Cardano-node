@@ -288,7 +288,7 @@ impl CborDecode for ShelleyTxBody {
             let key = dec.unsigned()?;
             match key {
                 0 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut ins = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
@@ -310,7 +310,7 @@ impl CborDecode for ShelleyTxBody {
                     ttl = Some(dec.unsigned()?);
                 }
                 4 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     let mut certs = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);
@@ -651,25 +651,25 @@ impl CborDecode for ShelleyWitnessSet {
             let key = dec.unsigned()?;
             match key {
                 0 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     for _ in 0..count {
                         vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
                     }
                 }
                 1 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     for _ in 0..count {
                         native_scripts.push(NativeScript::decode_cbor(dec)?);
                     }
                 }
                 2 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     for _ in 0..count {
                         bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
                     }
                 }
                 3 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     for _ in 0..count {
                         plutus_v1_scripts.push(dec.bytes()?.to_vec());
                     }
@@ -725,13 +725,13 @@ impl CborDecode for ShelleyWitnessSet {
                     }
                 }
                 6 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     for _ in 0..count {
                         plutus_v2_scripts.push(dec.bytes()?.to_vec());
                     }
                 }
                 7 => {
-                    let count = dec.array()?;
+                    let count = dec.array_or_set()?;
                     for _ in 0..count {
                         plutus_v3_scripts.push(dec.bytes()?.to_vec());
                     }

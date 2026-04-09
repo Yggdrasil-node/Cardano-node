@@ -9509,6 +9509,24 @@ impl VoteTally {
     }
 }
 
+/// Counts the number of active (non-resigned, non-expired) committee members.
+///
+/// A member is active when:
+/// - They have a registered hot credential (not resigned), **and**
+/// - Their term has not expired (`current_epoch <= expiry`).
+///
+/// This matches the upstream `activeCommitteeSize` calculation inside
+/// `votingCommitteeThresholdInternal`.
+fn count_active_committee_members(
+    committee_state: &CommitteeState,
+    current_epoch: EpochNo,
+) -> u64 {
+    committee_state
+        .iter()
+        .filter(|(_, member)| !member.is_resigned() && !member.is_expired(current_epoch))
+        .count() as u64
+}
+
 /// Tally constitutional-committee votes for a governance action.
 ///
 /// Each non-resigned, non-expired committee member has equal weight (1).
@@ -9769,21 +9787,52 @@ fn conway_committee_is_elected(committee_state: &CommitteeState) -> bool {
 /// The committee must meet a quorum (`committee_quorum` threshold)
 /// with equal-weight per-member votes.
 ///
-/// Returns `true` when:
-/// - The action type does not require CC approval (InfoAction), or
-/// - The CC tally meets the `committee_quorum` threshold.
+/// Upstream `votingCommitteeThresholdInternal` logic determines per-action
+/// voting semantics:
+/// - `NoConfidence` and `UpdateCommittee`: committee vote is not required
+///   (`NoVotingAllowed` → always passes, threshold 0).
+/// - `InfoAction`: no voting threshold available (`NoVotingThreshold` →
+///   committee never accepts, matching upstream behavior where InfoAction
+///   proposals are never ratified via committee vote).
+/// - For all other actions (NewConstitution, HardForkInitiation,
+///   ParameterChange, TreasuryWithdrawals): if the number of active
+///   (non-resigned, non-expired) committee members is below
+///   `min_committee_size` and we are **not** in bootstrap phase, the
+///   committee never accepts (upstream: too-small committee treated as
+///   absent).
+///
+/// Reference: `Cardano.Ledger.Conway.Governance.Internal` —
+/// `votingCommitteeThresholdInternal`, `committeeAccepted`.
 pub(crate) fn accepted_by_committee(
     action: &GovernanceActionState,
     committee_state: &CommitteeState,
     committee_quorum: &UnitInterval,
     current_epoch: EpochNo,
+    min_committee_size: u64,
+    is_bootstrap_phase: bool,
 ) -> bool {
-    let purpose = conway_gov_action_purpose(&action.proposal.gov_action);
-    if purpose == ConwayGovActionPurpose::Info {
-        return true;
+    use crate::eras::conway::GovAction;
+
+    match &action.proposal.gov_action {
+        // NoVotingAllowed → threshold 0 → always passes.
+        GovAction::NoConfidence { .. } | GovAction::UpdateCommittee { .. } => true,
+
+        // NoVotingThreshold → SNothing → always fails.
+        GovAction::InfoAction => false,
+
+        // All other actions use the committee quorum threshold,
+        // but only if the committee is large enough.
+        _ => {
+            if !is_bootstrap_phase {
+                let active = count_active_committee_members(committee_state, current_epoch);
+                if active < min_committee_size {
+                    return false;
+                }
+            }
+            let tally = tally_committee_votes(action, committee_state, current_epoch);
+            tally.meets_threshold(committee_quorum)
+        }
     }
-    let tally = tally_committee_votes(action, committee_state, current_epoch);
-    tally.meets_threshold(committee_quorum)
 }
 
 /// Determines whether a governance action is accepted by DReps.
@@ -9878,9 +9927,17 @@ pub(crate) fn ratify_action(
     drep_thresholds: &DRepVotingThresholds,
     pool_stake_dist: &PoolStakeDistribution,
     pool_thresholds: &PoolVotingThresholds,
+    min_committee_size: u64,
+    is_bootstrap_phase: bool,
 ) -> bool {
-    accepted_by_committee(action, committee_state, committee_quorum, current_epoch)
-        && accepted_by_dreps(
+    accepted_by_committee(
+        action,
+        committee_state,
+        committee_quorum,
+        current_epoch,
+        min_committee_size,
+        is_bootstrap_phase,
+    ) && accepted_by_dreps(
             action,
             committee_state,
             drep_state,
@@ -13185,16 +13242,103 @@ mod tests {
     // -- accepted_by_* predicates ---
 
     #[test]
-    fn info_action_always_accepted() {
+    fn info_action_never_accepted_by_committee() {
+        // InfoAction → NoVotingThreshold → committee never accepts.
+        // Upstream: votingCommitteeThresholdInternal returns NoVotingThreshold
+        // for InfoAction, which maps to SNothing → committeeAccepted = False.
         let action = test_info_action();
         let cs = CommitteeState::default();
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0)));
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
+    }
+
+    #[test]
+    fn no_confidence_always_passes_committee() {
+        // NoConfidence → NoVotingAllowed → threshold 0 → always passes.
+        // Upstream: votingCommitteeThresholdInternal returns NoVotingAllowed
+        // which maps to SJust minBound → committeeAccepted = True.
+        let action = test_no_confidence_action();
+        let cs = CommitteeState::default();
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false));
+    }
+
+    #[test]
+    fn update_committee_always_passes_committee() {
+        // UpdateCommittee → NoVotingAllowed → threshold 0 → always passes.
+        let action = GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval { numerator: 1, denominator: 2 },
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        });
+        let cs = CommitteeState::default();
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false));
+    }
+
+    #[test]
+    fn committee_below_min_size_rejects() {
+        // Active committee < min_committee_size → rejected (not bootstrap).
+        // Upstream: when activeCommitteeSize < ppCommitteeMinSizeL
+        // and NOT hardforkConwayBootstrapPhase, returns NoVotingThreshold.
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        // min_committee_size=2, active=1 → rejected
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 2, false));
+    }
+
+    #[test]
+    fn committee_at_min_size_accepts() {
+        // Active committee == min_committee_size → accepted.
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        // min_committee_size=1, active=1 → accepted
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 1, false));
+    }
+
+    #[test]
+    fn committee_below_min_size_bootstrap_bypasses() {
+        // Active committee < min_committee_size, but bootstrap phase → accepted.
+        // Upstream: hardforkConwayBootstrapPhase skips minSize check.
+        let mut action = test_hf_action();
+        let mut cs = CommitteeState::default();
+        let cold = StakeCredential::AddrKeyHash([1; 28]);
+        let hot = StakeCredential::AddrKeyHash([11; 28]);
+        cs.register(cold);
+        authorize_cc_hot(&mut cs, cold, hot);
+        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+
+        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        // min_committee_size=10, active=1, but bootstrap → accepted (1/1 >= 1/1)
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 10, true));
     }
 
     #[test]
     fn accepted_by_committee_happy_path() {
-        let mut action = test_no_confidence_action();
+        let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold_a = StakeCredential::AddrKeyHash([1; 28]);
         let cold_b = StakeCredential::AddrKeyHash([2; 28]);
@@ -13214,12 +13358,12 @@ mod tests {
         // 3 does not vote.
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0))); // 2/3 >= 2/3
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false)); // 2/3 >= 2/3
     }
 
     #[test]
     fn accepted_by_committee_rejected() {
-        let mut action = test_no_confidence_action();
+        let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold_a = StakeCredential::AddrKeyHash([1; 28]);
         let cold_b = StakeCredential::AddrKeyHash([2; 28]);
@@ -13238,7 +13382,7 @@ mod tests {
         // Only 1/3 yes.
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0))); // 1/3 < 2/3
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false)); // 1/3 < 2/3
     }
 
     #[test]
@@ -13269,7 +13413,11 @@ mod tests {
     // -- ratify_action combined ---
 
     #[test]
-    fn ratify_info_action_always_passes() {
+    fn ratify_info_action_never_ratified() {
+        // Upstream: InfoAction → NoVotingThreshold for all three voter roles.
+        // committeeAccepted = False ⇒ ratification always fails.
+        // Reference: Cardano.Ledger.Conway.Rules.Ratify — InfoAction is
+        // never enacted; it exists only to collect votes.
         let action = test_info_action();
         let cs = CommitteeState::default();
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
@@ -13279,7 +13427,7 @@ mod tests {
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
 
-        assert!(ratify_action(
+        assert!(!ratify_action(
             &action,
             &cs,
             &quorum,
@@ -13290,6 +13438,8 @@ mod tests {
             &dvt,
             &pool_dist,
             &pvt,
+            0,
+            false,
         ));
     }
 
@@ -13327,6 +13477,8 @@ mod tests {
             &dvt,
             &pool_dist,
             &pvt,
+            0,
+            false,
         ));
     }
 
@@ -13370,6 +13522,8 @@ mod tests {
             &dvt,
             &pool_dist,
             &pvt,
+            0,
+            false,
         ));
     }
 
@@ -13832,7 +13986,7 @@ mod tests {
     #[test]
     fn accepted_by_committee_expired_members_affect_quorum() {
         // 3 members, 2 expired. Only 1 active and votes yes → 1/1 >= 2/3.
-        let mut action = test_no_confidence_action();
+        let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold_a = StakeCredential::AddrKeyHash([1; 28]);
         let cold_b = StakeCredential::AddrKeyHash([2; 28]);
@@ -13850,7 +14004,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
         assert!(
-            accepted_by_committee(&action, &cs, &quorum, EpochNo(10)),
+            accepted_by_committee(&action, &cs, &quorum, EpochNo(10), 0, false),
             "expired members reduce eligible count, so 1/1 >= 2/3"
         );
     }
@@ -14027,6 +14181,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14051,6 +14206,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14073,13 +14229,16 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
     #[test]
-    fn ratify_no_confidence_rejected_when_committee_votes_no() {
+    fn ratify_no_confidence_passes_despite_committee_no_vote() {
+        // Upstream: NoConfidence → NoVotingAllowed for committee.
+        // Committee vote is irrelevant. DRep + SPO must still meet thresholds.
         let mut action = test_no_confidence_action();
-        // CC member votes no
+        // CC member votes no — but committee is bypassed for NoConfidence.
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
         let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
@@ -14093,10 +14252,11 @@ mod tests {
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
-        assert!(!ratify_action(
+        assert!(ratify_action(
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14118,6 +14278,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14141,6 +14302,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14160,6 +14322,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14184,6 +14347,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14206,6 +14370,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14229,6 +14394,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14254,6 +14420,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14275,6 +14442,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14298,6 +14466,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14319,6 +14488,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14341,6 +14511,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14378,6 +14549,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14409,6 +14581,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14444,6 +14617,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14475,6 +14649,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14494,6 +14669,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14518,6 +14694,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14538,6 +14715,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -14556,6 +14734,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
+            0, false,
         ));
     }
 
@@ -15624,7 +15803,7 @@ mod tests {
     fn committee_tally_resolves_hot_credential_distinct_from_cold() {
         // Cold credential ≠ hot credential — vote is keyed by HOT.
         // Verify tally correctly resolves cold→hot.
-        let mut action = test_no_confidence_action();
+        let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0x50; 28]);
         let hot = StakeCredential::AddrKeyHash([0x60; 28]);
@@ -15635,14 +15814,14 @@ mod tests {
         action.votes.insert(Voter::CommitteeKeyHash([0x60; 28]), Vote::Yes);
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0)));
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
     }
 
     #[test]
     fn committee_tally_vote_under_cold_hash_not_found() {
         // If someone mistakenly inserts a vote keyed by the COLD hash,
         // the tally should NOT find it when the member has a distinct hot.
-        let mut action = test_no_confidence_action();
+        let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0x50; 28]);
         let hot = StakeCredential::AddrKeyHash([0x60; 28]);
@@ -15654,13 +15833,13 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
         // Should fail — the vote is under the wrong key.
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0)));
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
     }
 
     #[test]
     fn committee_tally_unauthorized_member_vote_ignored() {
         // Member with no hot credential authorization — vote cannot be found.
-        let mut action = test_no_confidence_action();
+        let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0x50; 28]);
         cs.register(cold);
@@ -15671,7 +15850,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
         // Unauthorized member — vote not counted.
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0)));
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
     }
 
     // -----------------------------------------------------------------------

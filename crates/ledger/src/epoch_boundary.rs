@@ -935,13 +935,15 @@ fn ratify_and_enact(
 
     // Extract thresholds from protocol params.  When Conway-specific
     // threshold fields are absent, fall back to Conway defaults.
-    let (pool_thresholds, drep_thresholds, min_committee_size, committee_max_term) =
+    let (pool_thresholds, drep_thresholds, min_committee_size, committee_max_term, is_bootstrap_phase) =
         match ledger.protocol_params() {
             Some(pp) => (
                 pp.pool_voting_thresholds.clone().unwrap_or_default(),
                 pp.drep_voting_thresholds.clone().unwrap_or_default(),
                 pp.min_committee_size,
                 pp.committee_term_limit,
+                // Upstream `hardforkConwayBootstrapPhase`: PV major == 9.
+                matches!(pp.protocol_version, Some((9, _))),
             ),
             None => return RatifyAndEnactResult::default(),
         };
@@ -1036,6 +1038,8 @@ fn ratify_and_enact(
             &drep_thresholds,
             &pool_stake_dist,
             &pool_thresholds,
+            min_committee_size.unwrap_or(0),
+            is_bootstrap_phase,
         ) {
             continue;
         }
@@ -2385,6 +2389,9 @@ mod tests {
 
     #[test]
     fn test_info_action_always_ratified_at_epoch_boundary() {
+        // Upstream: InfoAction has NoVotingThreshold for committee, which
+        // means the committee acceptance check always returns false.
+        // InfoAction is therefore NEVER ratified.
         let mut ledger = make_governance_ledger();
         let gai = test_gov_action_id(0xA1, 0);
         let gas = GovernanceActionState::new(test_info_proposal());
@@ -2397,21 +2404,18 @@ mod tests {
         let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1 boundary");
 
-        // Re-insert the InfoAction (it was enacted at epoch 1).
-        let gas2 = GovernanceActionState::new(test_info_proposal());
-        let gai2 = test_gov_action_id(0xA2, 0);
-        ledger.governance_actions_mut().insert(gai2.clone(), gas2);
+        // InfoAction should NOT have been enacted — it remains pending.
+        assert!(
+            ledger.governance_actions().contains_key(&gai),
+            "InfoAction should remain pending — it is never ratified"
+        );
 
         let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
             .expect("epoch 2 boundary");
 
-        // InfoAction is always accepted → should be enacted.
-        assert_eq!(event.governance_actions_enacted, 1);
-        assert_eq!(event.enacted_gov_action_ids, vec![gai2]);
-        assert_eq!(event.enact_outcomes.len(), 1);
-        assert_eq!(event.enact_outcomes[0], EnactOutcome::NoEffect);
-        // Should be removed from pending set.
-        assert!(ledger.governance_actions().is_empty());
+        // InfoAction is never accepted → should NOT be enacted.
+        assert_eq!(event.governance_actions_enacted, 0);
+        assert!(ledger.governance_actions().contains_key(&gai));
     }
 
     #[test]
@@ -2495,7 +2499,9 @@ mod tests {
     fn test_ratification_without_voting_thresholds_uses_defaults() {
         let mut ledger = make_ledger_with_pool(21);
         // Protocol params without explicit Conway thresholds fall back to the
-        // built-in defaults so ratification still runs.
+        // built-in defaults so ratification still runs without errors.
+        // InfoAction is never ratified (upstream NoVotingThreshold), so the
+        // proposal stays pending but the epoch boundary completes successfully.
         let gas = GovernanceActionState::new(test_info_proposal());
         let gai = test_gov_action_id(0xD1, 0);
         ledger.governance_actions_mut().insert(gai.clone(), gas);
@@ -2506,8 +2512,8 @@ mod tests {
         let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1 boundary");
 
-        assert_eq!(event.governance_actions_enacted, 1);
-        assert!(ledger.governance_actions().is_empty());
+        assert_eq!(event.governance_actions_enacted, 0);
+        assert!(ledger.governance_actions().contains_key(&gai));
     }
 
     #[test]
@@ -2559,9 +2565,20 @@ mod tests {
     fn test_mixed_ratification_and_expiry() {
         let mut ledger = make_governance_ledger();
 
-        // Action 1: InfoAction (always ratified).
+        // Set motion-no-confidence DRep/SPO thresholds to 0 so NoConfidence
+        // auto-passes (committee always returns true for NoConfidence).
+        if let Some(pp) = ledger.protocol_params_mut() {
+            let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
+            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.drep_voting_thresholds = Some(dt);
+            let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
+            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.pool_voting_thresholds = Some(pt);
+        }
+
+        // Action 1: NoConfidence (always passes committee + 0-threshold DRep/SPO).
         let gai1 = test_gov_action_id(0xF1, 0);
-        let gas1 = GovernanceActionState::new(test_info_proposal());
+        let gas1 = GovernanceActionState::new(test_no_confidence_proposal());
         ledger.governance_actions_mut().insert(gai1.clone(), gas1);
 
         // Action 2: HF with no votes (not ratified) + expires after epoch 2.
@@ -2580,7 +2597,7 @@ mod tests {
         let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1");
 
-        // InfoAction should have been enacted, HF should still be pending.
+        // NoConfidence should have been enacted, HF should still be pending.
         assert!(!ledger.governance_actions().contains_key(&gai1));
 
         // Epoch 3: HF should expire (expires_after = 2 < 3).
@@ -2874,23 +2891,50 @@ mod tests {
     fn test_enacted_action_deposit_refunded_to_return_account() {
         let deposit = 500_000_000u64;
         let ra_byte = 0x50;
-        let (mut ledger, _gai) = make_ledger_with_deposited_info_action(deposit, ra_byte);
+        let mut ledger = make_governance_ledger();
         let ra = test_reward_account(ra_byte);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra, RewardAccountState::new(0, None));
+
+        // Set motion-no-confidence thresholds to 0 so NoConfidence auto-passes.
+        if let Some(pp) = ledger.protocol_params_mut() {
+            let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
+            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.drep_voting_thresholds = Some(dt);
+            let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
+            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.pool_voting_thresholds = Some(pt);
+        }
+
+        let gai1 = test_gov_action_id(0xEA, 0);
+        let proposal1 = crate::eras::conway::ProposalProcedure {
+            deposit,
+            reward_account: ra.to_bytes().to_vec(),
+            gov_action: GovAction::NoConfidence { prev_action_id: None },
+            anchor: Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        ledger
+            .governance_actions_mut()
+            .insert(gai1.clone(), GovernanceActionState::new(proposal1));
 
         let balance_before = ledger.reward_accounts().balance(&ra);
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        // First epoch populates mark snapshot.
+        // First epoch populates mark snapshot + enacts first NoConfidence.
         let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1");
 
-        // Re-insert the action (InfoAction was enacted at epoch 1).
-        let proposal = crate::eras::conway::ProposalProcedure {
+        // Re-insert — must chain from enacted root.
+        let proposal2 = crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: ra.to_bytes().to_vec(),
-            gov_action: GovAction::InfoAction,
+            gov_action: GovAction::NoConfidence { prev_action_id: Some(gai1.clone()) },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -2899,7 +2943,7 @@ mod tests {
         let gai2 = test_gov_action_id(0xEB, 0);
         ledger
             .governance_actions_mut()
-            .insert(gai2.clone(), GovernanceActionState::new(proposal));
+            .insert(gai2.clone(), GovernanceActionState::new(proposal2));
 
         let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
             .expect("epoch 2");
@@ -2911,7 +2955,7 @@ mod tests {
 
         // Reward account balance should increase by deposit.
         let balance_after = ledger.reward_accounts().balance(&ra);
-        // Two info actions were enacted across epochs 1+2, both refunded.
+        // Two actions were enacted across epochs 1+2, both refunded.
         assert!(balance_after >= balance_before + deposit);
     }
 
@@ -2920,12 +2964,22 @@ mod tests {
         let mut ledger = make_governance_ledger();
         let deposit = 300_000_000u64;
 
+        // Set motion-no-confidence thresholds to 0 so NoConfidence auto-passes.
+        if let Some(pp) = ledger.protocol_params_mut() {
+            let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
+            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.drep_voting_thresholds = Some(dt);
+            let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
+            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.pool_voting_thresholds = Some(pt);
+        }
+
         // Use an unregistered reward account.
         let unregistered_ra = test_reward_account(0x99);
         let proposal = crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: unregistered_ra.to_bytes().to_vec(),
-            gov_action: GovAction::InfoAction,
+            gov_action: GovAction::NoConfidence { prev_action_id: None },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -2945,11 +2999,11 @@ mod tests {
         let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1");
 
-        // Re-insert.
+        // Re-insert — must chain from enacted root.
         let proposal2 = crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: unregistered_ra.to_bytes().to_vec(),
-            gov_action: GovAction::InfoAction,
+            gov_action: GovAction::NoConfidence { prev_action_id: Some(gai.clone()) },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -3244,9 +3298,18 @@ mod tests {
     #[test]
     fn test_enacted_and_subtree_deposit_unclaimed_goes_to_treasury() {
         // Action A: enacted, return account unregistered.
-        // Action B: pruned by lineage, return account also unregistered.
-        // Both deposits should go to treasury.
+        // Deposit should go to treasury.
         let mut ledger = make_governance_ledger();
+
+        // Set motion-no-confidence thresholds to 0 so NoConfidence auto-passes.
+        if let Some(pp) = ledger.protocol_params_mut() {
+            let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
+            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.drep_voting_thresholds = Some(dt);
+            let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
+            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pp.pool_voting_thresholds = Some(pt);
+        }
 
         let deposit_a = 100_000_000u64;
         let unregistered_ra_a = test_reward_account(0x80);
@@ -3259,11 +3322,12 @@ mod tests {
 
         let gai_a = test_gov_action_id(0xD0, 0);
 
-        // Action A: InfoAction (auto-ratified), unregistered return account.
+        // Action A: NoConfidence (always passes committee, 0-threshold DRep/SPO),
+        // unregistered return account.
         let proposal_a = crate::eras::conway::ProposalProcedure {
             deposit: deposit_a,
             reward_account: unregistered_ra_a.to_bytes().to_vec(),
-            gov_action: GovAction::InfoAction,
+            gov_action: GovAction::NoConfidence { prev_action_id: None },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -4119,7 +4183,7 @@ mod tests {
 
     #[test]
     fn test_non_delaying_action_allows_continuation() {
-        // ParameterChange is non-delaying, so a subsequent InfoAction
+        // ParameterChange is non-delaying, so a subsequent NoConfidence
         // should still be enacted in the same epoch.
         let mut ledger = make_auto_pass_ledger();
 
@@ -4135,9 +4199,10 @@ mod tests {
         let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
         ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
 
-        let gai_info = test_gov_action_id(0x02, 0);
-        let gas_info = GovernanceActionState::new(test_info_proposal());
-        ledger.governance_actions_mut().insert(gai_info.clone(), gas_info);
+        // NoConfidence always passes committee; auto_pass_ledger has 0 thresholds.
+        let gai_nc = test_gov_action_id(0x02, 0);
+        let gas_nc = GovernanceActionState::new(test_no_confidence_proposal());
+        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
 
         let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
             .expect("epoch 2");
@@ -4145,7 +4210,7 @@ mod tests {
         // Both should be enacted (ParameterChange doesn't delay).
         assert_eq!(event.governance_actions_enacted, 2);
         assert!(event.enacted_gov_action_ids.contains(&gai_pc));
-        assert!(event.enacted_gov_action_ids.contains(&gai_info));
+        assert!(event.enacted_gov_action_ids.contains(&gai_nc));
         assert!(ledger.governance_actions().is_empty());
     }
 

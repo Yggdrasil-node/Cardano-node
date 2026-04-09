@@ -369,6 +369,30 @@ impl<'a> Decoder<'a> {
         self.expect_major(MAJOR_ARRAY)
     }
 
+    /// Decodes an array that may be wrapped in CBOR tag 258 (set).
+    ///
+    /// The Cardano CDDL specification defines `set<T>` as
+    /// `#6.258([* T])`.  The upstream Haskell decoder strips an
+    /// optional leading tag 258 before decoding the inner array.
+    /// Standard toolchains (cardano-cli) omit the tag, but third-party
+    /// builders (cardano-serialization-lib, lucid) may include it.
+    ///
+    /// This method transparently handles both `[* T]` and
+    /// `#6.258([* T])` forms.
+    pub fn array_or_set(&mut self) -> Result<u64, LedgerError> {
+        if self.peek_major()? == MAJOR_TAG {
+            let saved = self.pos;
+            let tag = self.tag()?;
+            if tag != 258 {
+                // Not a set tag — rewind and let array() produce the
+                // correct type-mismatch error.
+                self.pos = saved;
+                return self.array();
+            }
+        }
+        self.array()
+    }
+
     /// Begins decoding an array (CBOR major type 4) that may be
     /// definite- or indefinite-length.
     ///
@@ -2577,5 +2601,51 @@ mod tests {
         let raw = dec.raw_value().unwrap();
         assert_eq!(raw, &[0x9f, 0x01, 0x02, 0xff]);
         assert_eq!(dec.unsigned().unwrap(), 5);
+    }
+
+    // ── array_or_set: CBOR tag 258 transparent set decode ──────────────
+
+    #[test]
+    fn array_or_set_plain_array() {
+        // Plain array: 83 01 02 03  →  [1, 2, 3]
+        let data = [0x83, 0x01, 0x02, 0x03];
+        let mut dec = Decoder::new(&data);
+        let len = dec.array_or_set().unwrap();
+        assert_eq!(len, 3);
+        assert_eq!(dec.unsigned().unwrap(), 1);
+        assert_eq!(dec.unsigned().unwrap(), 2);
+        assert_eq!(dec.unsigned().unwrap(), 3);
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn array_or_set_tagged_258() {
+        // Tag 258 wrapping array: d9 0102 83 01 02 03  →  258([1, 2, 3])
+        let data = [0xd9, 0x01, 0x02, 0x83, 0x01, 0x02, 0x03];
+        let mut dec = Decoder::new(&data);
+        let len = dec.array_or_set().unwrap();
+        assert_eq!(len, 3);
+        assert_eq!(dec.unsigned().unwrap(), 1);
+        assert_eq!(dec.unsigned().unwrap(), 2);
+        assert_eq!(dec.unsigned().unwrap(), 3);
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn array_or_set_empty_tagged_258() {
+        // Tag 258 wrapping empty array: d9 0102 80  →  258([])
+        let data = [0xd9, 0x01, 0x02, 0x80];
+        let mut dec = Decoder::new(&data);
+        let len = dec.array_or_set().unwrap();
+        assert_eq!(len, 0);
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn array_or_set_rejects_non_array_non_tag() {
+        // Unsigned integer 0x05 — neither array nor tag.
+        let data = [0x05];
+        let mut dec = Decoder::new(&data);
+        assert!(dec.array_or_set().is_err());
     }
 }
