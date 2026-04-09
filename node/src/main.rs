@@ -974,6 +974,13 @@ fn strict_base_ledger_state(
             numerator: bootstrap.active_slots_coeff.0,
             denominator: bootstrap.active_slots_coeff.1,
         });
+        // Compute stability_window = 3k/f from genesis config so the
+        // ledger PPUP rule can enforce the exact upstream slot-of-no-return.
+        if file_cfg.active_slot_coeff > 0.0 {
+            let sw = (3.0 * file_cfg.security_param_k as f64
+                / file_cfg.active_slot_coeff) as u64;
+            state.set_stability_window(sw);
+        }
         }
     if let Some(params) = file_cfg
         .load_genesis_protocol_params(config_base_dir)

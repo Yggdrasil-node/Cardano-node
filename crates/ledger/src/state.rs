@@ -2530,6 +2530,18 @@ pub struct LedgerState {
     ///
     /// Reference: `ShelleyGenesis.sgActiveSlotsCoeff`.
     active_slot_coeff: UnitInterval,
+
+    /// Stability window in slots (`3k/f` for Praos); used for PPUP
+    /// slot-of-no-return calculations.  Not CBOR-serialized — set from
+    /// genesis.
+    ///
+    /// When `Some`, block-apply paths construct a `PpupSlotContext` so
+    /// the PPUP validator can enforce the exact upstream epoch-targeting
+    /// rule (`getTheSlotOfNoReturn`).  When `None` the relaxed fallback
+    /// (current or current+1) is used.
+    ///
+    /// Reference: `Cardano.Ledger.Slot.getTheSlotOfNoReturn`.
+    stability_window: Option<u64>,
 }
 
 /// Restorable checkpoint of full ledger state.
@@ -2821,6 +2833,7 @@ impl CborDecode for LedgerState {
             max_lovelace_supply: 0,
             slots_per_epoch: 0,
             active_slot_coeff: UnitInterval { numerator: 0, denominator: 1 },
+            stability_window: None,
         })
     }
 }
@@ -2899,6 +2912,7 @@ impl LedgerState {
             max_lovelace_supply: 0,
             slots_per_epoch: 0,
             active_slot_coeff: UnitInterval { numerator: 0, denominator: 1 },
+            stability_window: None,
         }
     }
 
@@ -3378,6 +3392,36 @@ impl LedgerState {
         self.active_slot_coeff = asc;
     }
 
+    /// Sets the stability window (`3k/f`) from genesis configuration.
+    ///
+    /// When set, PPUP validation uses the exact upstream slot-of-no-return
+    /// rule instead of the relaxed epoch-boundary fallback.
+    pub fn set_stability_window(&mut self, sw: u64) {
+        self.stability_window = Some(sw);
+    }
+
+    /// Returns the configured stability window, if any.
+    pub fn stability_window(&self) -> Option<u64> {
+        self.stability_window
+    }
+
+    /// Builds a [`PpupSlotContext`] for the given slot when the stability
+    /// window is configured and `slots_per_epoch > 0`.
+    ///
+    /// Returns `None` when either value is unavailable, making the PPUP
+    /// validator fall through to the relaxed epoch-boundary check.
+    fn ppup_slot_context(&self, slot: u64) -> Option<PpupSlotContext> {
+        let sw = self.stability_window?;
+        if self.slots_per_epoch == 0 {
+            return None;
+        }
+        Some(PpupSlotContext {
+            slot,
+            epoch_size: self.slots_per_epoch,
+            stability_window: sw,
+        })
+    }
+
     /// Sets the current epoch carried by the ledger state.
     pub fn set_current_epoch(&mut self, current_epoch: EpochNo) {
         self.current_epoch = current_epoch;
@@ -3791,7 +3835,7 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Shelley submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, None)?;
+                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -3922,7 +3966,7 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Allegra submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, None)?;
+                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -4056,7 +4100,7 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Mary submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, None)?;
+                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -4206,6 +4250,13 @@ impl LedgerState {
                     &tx.body.inputs,
                     &native_satisfied,
                 )?;
+                // Output-side datum hash check: Alonzo outputs to script
+                // addresses must carry datum_hash.
+                // Reference: Cardano.Ledger.Alonzo.Rules.Utxo —
+                //   validateOutputMissingDatumHashForScriptOutputs.
+                crate::plutus_validation::validate_outputs_missing_datum_hash_alonzo(
+                    &tx.body.outputs,
+                )?;
                 // Supplemental datum check (Alonzo submitted — no reference inputs).
                 {
                     let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -4312,7 +4363,7 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Alonzo submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, None)?;
+                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -4592,7 +4643,7 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Babbage submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, None)?;
+                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -5048,10 +5099,12 @@ impl LedgerState {
                 staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, total_deposits, cert_adj.total_refunds)?;
                 // Accumulate treasury donation (Conway UTXOS rule).
                 // Reference: Cardano.Ledger.Conway.Rules.Utxos — utxosDonationL.
+                // Reference: Cardano.Ledger.Conway.Rules.Utxo — validateZeroDonation.
                 if let Some(donation) = tx.body.treasury_donation {
-                    if donation > 0 {
-                        self.utxos_donation = self.utxos_donation.saturating_add(donation);
+                    if donation == 0 {
+                        return Err(LedgerError::ZeroDonation);
                     }
+                    self.utxos_donation = self.utxos_donation.saturating_add(donation);
                 }
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
@@ -5314,9 +5367,10 @@ impl LedgerState {
         self.gen_delegs = staged_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
+        let ppup_ctx = self.ppup_slot_context(slot);
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
             if let Some(ref update) = body.update {
-                self.validate_ppup_proposal(update, None)?;
+                self.validate_ppup_proposal(update, ppup_ctx.as_ref())?;
                 self.collect_pparam_proposals(update);
             }
             accumulate_mir_from_certs(
@@ -5458,9 +5512,10 @@ impl LedgerState {
         self.gen_delegs = staged_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
+        let ppup_ctx = self.ppup_slot_context(slot);
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
             if let Some(ref update) = body.update {
-                self.validate_ppup_proposal(update, None)?;
+                self.validate_ppup_proposal(update, ppup_ctx.as_ref())?;
                 self.collect_pparam_proposals(update);
             }
             accumulate_mir_from_certs(
@@ -5601,9 +5656,10 @@ impl LedgerState {
         self.gen_delegs = staged_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
+        let ppup_ctx = self.ppup_slot_context(slot);
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data) in &decoded {
             if let Some(ref update) = body.update {
-                self.validate_ppup_proposal(update, None)?;
+                self.validate_ppup_proposal(update, ppup_ctx.as_ref())?;
                 self.collect_pparam_proposals(update);
             }
             accumulate_mir_from_certs(
@@ -5780,6 +5836,13 @@ impl LedgerState {
                 &body.inputs,
                 &native_satisfied,
             )?;
+            // Output-side datum hash check: Alonzo outputs to script
+            // addresses must carry datum_hash.
+            // Reference: Cardano.Ledger.Alonzo.Rules.Utxo —
+            //   validateOutputMissingDatumHashForScriptOutputs.
+            crate::plutus_validation::validate_outputs_missing_datum_hash_alonzo(
+                &body.outputs,
+            )?;
             // Supplemental datum check (Alonzo — no reference inputs).
             {
                 let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
@@ -5911,10 +5974,11 @@ impl LedgerState {
         // accumulate MIR certificates (Shelley through Babbage only).
         // Skip is_valid=false transactions — upstream alonzoEvalScriptsTxInvalid
         // returns `pure pup` (no PPUP) and does not run DELEGS (no MIR).
+        let ppup_ctx = self.ppup_slot_context(slot);
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, is_valid) in &decoded {
             if is_valid.unwrap_or(true) {
                 if let Some(ref update) = body.update {
-                    self.validate_ppup_proposal(update, None)?;
+                    self.validate_ppup_proposal(update, ppup_ctx.as_ref())?;
                     self.collect_pparam_proposals(update);
                 }
                 accumulate_mir_from_certs(
@@ -6253,10 +6317,11 @@ impl LedgerState {
         // accumulate MIR certificates (Shelley through Babbage only).
         // Skip is_valid=false transactions — upstream alonzoEvalScriptsTxInvalid
         // returns `pure pup` (no PPUP) and does not run DELEGS (no MIR).
+        let ppup_ctx = self.ppup_slot_context(slot);
         for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, is_valid) in &decoded {
             if is_valid.unwrap_or(true) {
                 if let Some(ref update) = body.update {
-                    self.validate_ppup_proposal(update, None)?;
+                    self.validate_ppup_proposal(update, ppup_ctx.as_ref())?;
                     self.collect_pparam_proposals(update);
                 }
                 accumulate_mir_from_certs(
@@ -6764,10 +6829,12 @@ impl LedgerState {
             let total_deposits = cert_adj.total_deposits.saturating_add(proposal_deposits);
             staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, total_deposits, cert_adj.total_refunds)?;
             // Accumulate treasury donation (Conway UTXOS rule).
+            // Reference: Cardano.Ledger.Conway.Rules.Utxo — validateZeroDonation.
             if let Some(donation) = body.treasury_donation {
-                if donation > 0 {
-                    staged_utxos_donation = staged_utxos_donation.saturating_add(donation);
+                if donation == 0 {
+                    return Err(LedgerError::ZeroDonation);
                 }
+                staged_utxos_donation = staged_utxos_donation.saturating_add(donation);
             }
             } else {
                 if evaluator.is_some() {

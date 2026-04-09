@@ -298,3 +298,51 @@ fn boot_addr_mixed_outputs_second_fails() {
     let result = yggdrasil_ledger::validate_output_boot_addr_attrs(&outputs);
     assert!(matches!(result, Err(LedgerError::OutputBootAddrAttrsTooBig { .. })));
 }
+
+// ---------------------------------------------------------------------------
+// inner_cbor_size: measure inner output bytes without MultiEraTxOut wrapper
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inner_cbor_size_excludes_era_wrapper() {
+    let inner = ShelleyTxOut {
+        address: enterprise_addr(),
+        amount: 2_000_000,
+    };
+    let inner_bytes = inner.to_cbor_bytes();
+    let wrapped = MultiEraTxOut::Shelley(inner.clone());
+
+    // inner_cbor_size should match the raw inner encoding length.
+    assert_eq!(
+        wrapped.inner_cbor_size(),
+        inner_bytes.len(),
+        "inner_cbor_size must match raw Shelley output encoding length"
+    );
+
+    // The full MultiEraTxOut encoding adds an array(2) + tag byte wrapper.
+    let full_bytes = wrapped.to_cbor_bytes();
+    assert!(
+        full_bytes.len() > inner_bytes.len(),
+        "full encoding ({}) should be larger than inner ({})",
+        full_bytes.len(),
+        inner_bytes.len(),
+    );
+}
+
+#[test]
+fn inner_cbor_size_babbage_excludes_era_wrapper() {
+    let inner = BabbageTxOut {
+        address: enterprise_addr(),
+        amount: Value::Coin(5_000_000),
+        datum_option: None,
+        script_ref: None,
+    };
+    let inner_bytes = inner.to_cbor_bytes();
+    let wrapped = MultiEraTxOut::Babbage(inner.clone());
+
+    assert_eq!(
+        wrapped.inner_cbor_size(),
+        inner_bytes.len(),
+        "inner_cbor_size must match raw Babbage output encoding length"
+    );
+}

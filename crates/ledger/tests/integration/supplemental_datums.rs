@@ -71,7 +71,7 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: script_addr(&script_hash),
+            address: vkey_addr(),
             amount: Value::Coin(10_000_000),
             datum_hash: None, // output has no datum hash
         }],

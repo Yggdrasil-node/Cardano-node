@@ -94,7 +94,7 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: script_addr(&script_hash),
+            address: vkey_addr(),
             amount: Value::Coin(5_000_000),
             datum_hash: None,
         }],

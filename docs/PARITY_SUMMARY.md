@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4006 workspace tests passing, 52 audit rounds covering 500+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4015 workspace tests passing, 53 audit rounds covering 520+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -49,6 +49,10 @@
 - Conway deposit validation — `IncorrectDepositDELEG`, `IncorrectKeyDepositRefund`, `RefundIncorrectDELEG` (PV ≥ 10 split), `DrepIncorrectDeposit`, `DrepIncorrectRefund`, `WithdrawalNotFullDrain` (exact-drain semantics)
 - Conway committee membership check — `authorize_committee_hot_credential()` and `resign_committee_cold_credential()` unconditionally verify `isCurrentMember || isPotentialFutureMember` (upstream `checkAndOverwriteCommitteeMemberState`)
 - Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
+- `validate_outputs_missing_datum_hash_alonzo()` — Rejects Alonzo-era script-address outputs without `datum_hash` (upstream `validateOutputMissingDatumHashForScriptOutputs`)
+- `ZeroDonation` validation — Rejects Conway `treasury_donation == 0` (upstream `validateZeroDonation`)
+- `inner_cbor_size()` on `MultiEraTxOut` — Measures inner era-specific output size without enum wrapper for correct `coins_per_utxo_byte` calculation (upstream `sizedSize`)
+- `ppup_slot_context()` — Builds `PpupSlotContext` from `LedgerState.stability_window` + `slots_per_epoch`; wired into all 10 `validate_ppup_proposal` call sites (upstream `getTheSlotOfNoReturn`)
 - `validate_script_witnesses_well_formed()` / `validate_reference_scripts_well_formed()` — Malformed Plutus script detection at admission (upstream `validateScriptsWellFormed`)
 - `validate_outside_forecast()` — OutsideForecast infrastructure (upstream no-op due to `unsafeLinearExtendEpochInfo`)
 - `delegate_stake_credential()` — Pool-registration check on delegation: all eras (Shelley through Conway) reject delegation to unregistered pools via `DelegateeNotRegisteredDELEG` (upstream `Cardano.Ledger.Shelley.Rules.Deleg`)
@@ -325,4 +329,5 @@
 | 48 | CBOR indefinite-length support | 6 | Gap D: decoder rejected indefinite-length arrays/maps/bytes/text (RFC 8949 §3.2.1) |
 | 49 | Deep parity audit (24 areas: treasury ordering, committee auth, withdrawal witnesses, Byron fees, etc.) | 24 | None (all 24 areas already implemented) |
 | 50 | CBOR tag 258 set decode, min_committee_size floor, InfoAction ratification fix | 12 | Gap E: `array()` rejected #6.258 set encoding (27 sites); Gap F: min_committee_size floor not enforced; Gap G: InfoAction incorrectly ratified |
-| **Total** | **All subsystems** | **502** | **13 fix rounds** |
+| 51 | min_utxo output size, ZeroDonation, Alonzo output datum hash, PPUP slot-of-no-return | 18 | Gap H: `inner_cbor_size()` for min-lovelace measurement; Gap I: zero treasury donation silently accepted; Gap J: Alonzo script-output missing datum hash; Gap K: PPUP slot-of-no-return not wired |
+| **Total** | **All subsystems** | **520** | **14 fix rounds** |

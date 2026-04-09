@@ -135,6 +135,20 @@ impl MultiEraTxOut {
         }
     }
 
+    /// Returns the serialized CBOR byte size of the inner era-specific
+    /// output, without the `MultiEraTxOut` enum wrapper.
+    ///
+    /// This matches upstream `sizedSize` which measures the raw `TxOut`
+    /// encoding for `coins_per_utxo_byte` calculations.
+    pub fn inner_cbor_size(&self) -> usize {
+        match self {
+            Self::Shelley(o) => o.to_cbor_bytes().len(),
+            Self::Mary(o) => o.to_cbor_bytes().len(),
+            Self::Alonzo(o) => o.to_cbor_bytes().len(),
+            Self::Babbage(o) => o.to_cbor_bytes().len(),
+        }
+    }
+
     /// Returns the datum hash attached to this output, if any.
     ///
     /// - Shelley/Mary: always `None` (no datum support).

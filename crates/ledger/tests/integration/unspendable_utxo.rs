@@ -339,3 +339,216 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         "expected Ok for script-locked input with inline datum, got: {result:?}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Output-side: validate_outputs_missing_datum_hash_alonzo
+// (upstream: validateOutputMissingDatumHashForScriptOutputs)
+// ---------------------------------------------------------------------------
+
+/// Alonzo block with a script-locked output that is missing `datum_hash`
+/// should be rejected with `MissingDatumHashOnScriptOutput`.
+#[test]
+fn alonzo_output_to_script_without_datum_hash_rejected() {
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(permissive_alonzo_params());
+
+    let script_hash = [0xCC; 28];
+    let out_addr = script_addr(&script_hash);
+    let in_addr = vkey_addr();
+
+    let input = ShelleyTxIn { transaction_id: [0xA1; 32], index: 0 };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: in_addr.clone(),
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }),
+    );
+
+    let body = AlonzoTxBody {
+        inputs: vec![input],
+        outputs: vec![AlonzoTxOut {
+            address: out_addr,
+            amount: Value::Coin(5_000_000),
+            datum_hash: None, // missing — should trigger error
+        }],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+    let tx = Tx {
+        id: tx_id,
+        body: body_bytes,
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: Some(true),
+    };
+    let block = Block {
+        era: Era::Alonzo,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    let err = state
+        .apply_block_validated(&block, None)
+        .expect_err("Alonzo output to script addr without datum_hash should fail");
+    assert!(
+        matches!(err, LedgerError::MissingDatumHashOnScriptOutput { .. }),
+        "expected MissingDatumHashOnScriptOutput, got: {:?}",
+        err,
+    );
+}
+
+/// Alonzo output to a script address WITH datum_hash should pass.
+#[test]
+fn alonzo_output_to_script_with_datum_hash_accepted() {
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(permissive_alonzo_params());
+
+    let script_hash = [0xCC; 28];
+    let out_addr = script_addr(&script_hash);
+    let in_addr = vkey_addr();
+
+    let input = ShelleyTxIn { transaction_id: [0xA2; 32], index: 0 };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: in_addr.clone(),
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }),
+    );
+
+    let body = AlonzoTxBody {
+        inputs: vec![input],
+        outputs: vec![AlonzoTxOut {
+            address: out_addr,
+            amount: Value::Coin(5_000_000),
+            datum_hash: Some(witness_datum_hash()),
+        }],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+    let tx = Tx {
+        id: tx_id,
+        body: body_bytes,
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: Some(true),
+    };
+    let block = Block {
+        era: Era::Alonzo,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(11),
+            block_no: BlockNo(2),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    state
+        .apply_block_validated(&block, None)
+        .expect("Alonzo output to script addr with datum_hash should succeed");
+}
+
+/// Alonzo output to a VKey address without datum_hash — should be fine.
+#[test]
+fn alonzo_output_to_vkey_without_datum_hash_accepted() {
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(permissive_alonzo_params());
+
+    let in_addr = vkey_addr();
+
+    let input = ShelleyTxIn { transaction_id: [0xA3; 32], index: 0 };
+    state.multi_era_utxo_mut().insert(
+        input.clone(),
+        MultiEraTxOut::Alonzo(AlonzoTxOut {
+            address: in_addr.clone(),
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }),
+    );
+
+    let body = AlonzoTxBody {
+        inputs: vec![input],
+        outputs: vec![AlonzoTxOut {
+            address: in_addr,
+            amount: Value::Coin(5_000_000),
+            datum_hash: None,
+        }],
+        fee: 0,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+    let tx = Tx {
+        id: tx_id,
+        body: body_bytes,
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: Some(true),
+    };
+    let block = Block {
+        era: Era::Alonzo,
+        header: BlockHeader {
+            hash: HeaderHash([0; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(12),
+            block_no: BlockNo(3),
+            issuer_vkey: [0; 32],
+        },
+        transactions: vec![tx],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    state
+        .apply_block_validated(&block, None)
+        .expect("VKey address output without datum_hash is fine");
+}

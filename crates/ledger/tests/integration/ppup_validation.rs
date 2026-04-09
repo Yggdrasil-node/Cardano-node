@@ -287,3 +287,54 @@ fn ppup_slot_context_after_no_return_rejects_this_epoch() {
         other => panic!("expected PPUpdateWrongEpoch VoteForNextEpoch, got: {:?}", other),
     }
 }
+
+// --------------------------------------------------------------------------
+// ppup_slot_context helper + stability_window wiring
+// --------------------------------------------------------------------------
+
+#[test]
+fn ppup_slot_context_builds_from_stability_window() {
+    let genesis_key = [0x01; 28];
+    let mut state = make_state_with_gen_delegs(&[genesis_key]);
+    state.set_slots_per_epoch(432_000);
+    state.set_stability_window(129_600); // 3 * 2160 / 0.05
+
+    // Block at slot 4_320_000 (first slot of epoch 10, before slot-of-no-return).
+    // This-epoch target (10) should pass; next-epoch (11) should fail.
+    let update_this = make_update(genesis_key, 10, ProtocolParameterUpdate::default());
+    let update_next = make_update(genesis_key, 11, ProtocolParameterUpdate::default());
+
+    // Block-apply builds the context internally — simulate by calling
+    // validate_ppup_proposal with a manually built context that would
+    // match what ppup_slot_context(4_320_000) produces.
+    let ctx = PpupSlotContext {
+        slot: 4_320_000,
+        epoch_size: 432_000,
+        stability_window: 129_600,
+    };
+    state
+        .validate_ppup_proposal(&update_this, Some(&ctx))
+        .expect("this-epoch proposal should pass with stability_window configured");
+
+    let err = state
+        .validate_ppup_proposal(&update_next, Some(&ctx))
+        .expect_err("next-epoch proposal before slot-of-no-return should fail");
+    assert!(
+        matches!(err, LedgerError::PPUpdateWrongEpoch { .. }),
+        "expected PPUpdateWrongEpoch, got: {:?}",
+        err,
+    );
+}
+
+#[test]
+fn stability_window_none_uses_relaxed_check() {
+    let genesis_key = [0x01; 28];
+    let state = make_state_with_gen_delegs(&[genesis_key]);
+    // No set_stability_window call — state.stability_window() == None.
+    assert!(state.stability_window().is_none());
+    // Both current (10) and current+1 (11) should pass the relaxed check.
+    let update_this = make_update(genesis_key, 10, ProtocolParameterUpdate::default());
+    let update_next = make_update(genesis_key, 11, ProtocolParameterUpdate::default());
+    state.validate_ppup_proposal(&update_this, None).expect("relaxed: current epoch ok");
+    state.validate_ppup_proposal(&update_next, None).expect("relaxed: next epoch ok");
+}

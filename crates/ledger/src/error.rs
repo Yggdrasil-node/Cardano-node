@@ -214,6 +214,15 @@ pub enum LedgerError {
     #[error("current treasury value incorrect: supplied {supplied}, actual {actual}")]
     CurrentTreasuryValueIncorrect { supplied: u64, actual: u64 },
 
+    /// Conway transaction declares a `treasury_donation` of zero.
+    ///
+    /// Upstream rejects this as `ZeroDonation` — the field must either be
+    /// absent or carry a strictly positive amount.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Utxo` — `validateZeroDonation`.
+    #[error("treasury donation must be non-zero when present")]
+    ZeroDonation,
+
     #[error("governance voters do not exist: {0:?}")]
     VotersDoNotExist(Vec<crate::eras::conway::Voter>),
 
@@ -556,6 +565,17 @@ pub enum LedgerError {
     /// and `Cardano.Ledger.Alonzo.UTxO.getInputDataHashesTxBody`.
     #[error("spending input (tx {tx_id:02x?} index {index}) is locked by a PlutusV1/V2 script but has no datum or datum hash")]
     UnspendableUTxONoDatumHash { tx_id: [u8; 32], index: u64 },
+
+    /// An Alonzo-era transaction output is sent to a Plutus script address
+    /// but does not include a `datum_hash`.  The output would be permanently
+    /// unspendable.
+    ///
+    /// Babbage+ relaxes this via inline datums.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` —
+    ///   `validateOutputMissingDatumHashForScriptOutputs`.
+    #[error("Alonzo output to script address has no datum hash: address {address:02x?}")]
+    MissingDatumHashOnScriptOutput { address: Vec<u8> },
 
     #[error("datum not found for spending input (tx {tx_id:02x?} index {index})")]
     MissingDatum { tx_id: [u8; 32], index: u64 },

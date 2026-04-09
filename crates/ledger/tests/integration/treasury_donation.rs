@@ -172,7 +172,7 @@ fn conway_treasury_donation_none_does_not_change_utxos_donation() {
 }
 
 #[test]
-fn conway_treasury_donation_zero_does_not_change_utxos_donation() {
+fn conway_treasury_donation_zero_rejected() {
     let keyhash = [0xAA; 28];
     let addr = enterprise_addr(1, &keyhash);
 
@@ -187,14 +187,19 @@ fn conway_treasury_donation_zero_does_not_change_utxos_donation() {
 
     let body = simple_conway_body(input, &addr, 4_800_000, 200_000, Some(0));
     let block = make_conway_block(vec![(body, Some(true))], 300);
-    state
+    let err = state
         .apply_block_validated(&block, None)
-        .expect("conway block with zero treasury donation");
+        .expect_err("conway block with zero treasury donation should be rejected");
 
+    assert!(
+        matches!(err, LedgerError::ZeroDonation),
+        "expected ZeroDonation, got: {:?}",
+        err,
+    );
     assert_eq!(
         state.utxos_donation(),
         0,
-        "utxos_donation should remain zero when treasury_donation is Some(0)"
+        "utxos_donation should remain zero when block is rejected"
     );
 }
 
@@ -429,5 +434,75 @@ fn epoch_boundary_transfers_donations_to_treasury() {
         state.accounting().treasury >= 3_000_000,
         "treasury must include the donated amount (actual: {})",
         state.accounting().treasury,
+    );
+}
+
+// -----------------------------------------------------------------------
+// ZeroDonation validation (upstream `validateZeroDonation`)
+// -----------------------------------------------------------------------
+
+#[test]
+fn conway_zero_treasury_donation_rejected_block_apply() {
+    let keyhash = [0xAA; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn {
+        transaction_id: [0x10; 32],
+        index: 0,
+    };
+    seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = simple_conway_body(input, &addr, 4_900_000, 100_000, Some(0));
+    let block = make_conway_block(vec![(body, Some(true))], 200);
+    let err = state
+        .apply_block_validated(&block, None)
+        .expect_err("zero treasury donation should be rejected");
+    assert!(
+        matches!(err, LedgerError::ZeroDonation),
+        "expected ZeroDonation, got: {:?}",
+        err,
+    );
+}
+
+#[test]
+fn conway_zero_treasury_donation_rejected_submitted_tx() {
+    let signer = TestSigner::new([0x11; 32]);
+    let addr = signer.enterprise_addr();
+
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(permissive_params());
+
+    let input = ShelleyTxIn {
+        transaction_id: [0x11; 32],
+        index: 0,
+    };
+    seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
+
+    let body = simple_conway_body(input, &addr, 4_900_000, 100_000, Some(0));
+    let body_bytes = body.to_cbor_bytes();
+    let body_hash = yggdrasil_crypto::blake2b::hash_bytes_256(&body_bytes);
+    let ws = ShelleyWitnessSet {
+        vkey_witnesses: vec![signer.witness(&body_hash.0)],
+        native_scripts: vec![],
+        bootstrap_witnesses: vec![],
+        plutus_v1_scripts: vec![],
+        plutus_data: vec![],
+        redeemers: vec![],
+        plutus_v2_scripts: vec![],
+        plutus_v3_scripts: vec![],
+    };
+    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
+        body, ws, true, None,
+    ));
+    let err = state
+        .apply_submitted_tx(&submitted, SlotNo(200), None)
+        .expect_err("zero treasury donation should be rejected in submitted path");
+    assert!(
+        matches!(err, LedgerError::ZeroDonation),
+        "expected ZeroDonation, got: {:?}",
+        err,
     );
 }

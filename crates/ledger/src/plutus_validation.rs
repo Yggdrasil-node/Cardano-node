@@ -855,6 +855,33 @@ pub fn validate_unspendable_utxo_no_datum_hash(
     Ok(())
 }
 
+/// Validates that newly created outputs sent to Alonzo-era Plutus script
+/// addresses include a datum hash.
+///
+/// In Alonzo, every output locked to a Plutus script address **must** carry
+/// a `datum_hash`.  Without it the output is permanently unspendable.
+/// Babbage+ relaxes this by allowing inline datums, so this check applies
+/// only to Alonzo-era outputs.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` —
+///   `validateOutputMissingDatumHashForScriptOutputs`.
+pub fn validate_outputs_missing_datum_hash_alonzo(
+    outputs: &[crate::eras::alonzo::AlonzoTxOut],
+) -> Result<(), LedgerError> {
+    for output in outputs {
+        if let Some(addr) = Address::from_bytes(&output.address) {
+            if let Some(cred) = addr.payment_credential() {
+                if cred.is_script_hash() && output.datum_hash.is_none() {
+                    return Err(LedgerError::MissingDatumHashOnScriptOutput {
+                        address: output.address.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Phase-1 ExtraRedeemers check: every redeemer must target a purpose backed
 /// by a Plutus script.
 ///

@@ -23,7 +23,10 @@ pub fn validate_min_utxo(
     params: &ProtocolParameters,
     output: &MultiEraTxOut,
 ) -> Result<(), LedgerError> {
-    let serialized_size = output.to_cbor_bytes().len();
+    // Use the inner era-specific output size, matching upstream `sizedSize`
+    // which measures the raw TxOut CBOR encoding without the MultiEraTxOut
+    // enum wrapper.
+    let serialized_size = output.inner_cbor_size();
     if let Some(minimum) = params.min_lovelace_for_utxo(serialized_size) {
         let actual = output.coin();
         if actual < minimum {

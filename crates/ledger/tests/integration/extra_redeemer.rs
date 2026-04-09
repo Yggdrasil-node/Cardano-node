@@ -100,7 +100,7 @@ fn alonzo_block_rejects_extra_redeemer_for_native_script_input() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: script_addr(&script_hash),
+            address: vkey_addr(),
             amount: Value::Coin(5_000_000),
             datum_hash: None,
         }],
@@ -176,7 +176,7 @@ fn alonzo_block_accepts_native_script_tx_without_redeemers() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: script_addr(&script_hash),
+            address: vkey_addr(),
             amount: Value::Coin(5_000_000),
             datum_hash: None,
         }],
@@ -288,7 +288,7 @@ fn alonzo_block_rejects_extra_minting_redeemer_for_native_policy() {
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
-            address: script_addr(&script_hash),
+            address: vkey_addr(),
             amount: Value::Coin(10_000_000),
             datum_hash: None,
         }],
