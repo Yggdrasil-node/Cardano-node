@@ -1757,7 +1757,7 @@ pub fn enact_gov_action(
 
 fn enact_gov_action_at_epoch(
     enact: &mut EnactState,
-    current_epoch: EpochNo,
+    _current_epoch: EpochNo,
     action_id: crate::eras::conway::GovActionId,
     action: &crate::eras::conway::GovAction,
     committee: &mut CommitteeState,
@@ -1799,11 +1799,6 @@ fn enact_gov_action_at_epoch(
             quorum,
             ..
         } => {
-            let max_term_epoch = protocol_params
-                .as_ref()
-                .and_then(|pp| pp.committee_term_limit)
-                .map(|limit| current_epoch.0.saturating_add(limit));
-
             let mut removed = 0usize;
             for cred in members_to_remove {
                 if committee.unregister(cred).is_some() {
@@ -1812,12 +1807,6 @@ fn enact_gov_action_at_epoch(
             }
             let mut added = 0usize;
             for (cred, term_epoch) in members_to_add {
-                if *term_epoch <= current_epoch.0 {
-                    continue;
-                }
-                if max_term_epoch.is_some_and(|max_epoch| *term_epoch > max_epoch) {
-                    continue;
-                }
                 // Register the new member with no hot-key authorization
                 // but with a term expiry epoch (upstream committeeMembers).
                 if committee.register_with_term(*cred, *term_epoch) {
@@ -10466,7 +10455,7 @@ mod tests {
     }
 
     #[test]
-    fn test_enact_update_committee_ignores_non_future_member_expirations() {
+    fn test_enact_update_committee_preserves_member_expirations_verbatim() {
         let mut es = EnactState::new();
         let mut committee = CommitteeState::new();
         let existing = crate::StakeCredential::AddrKeyHash([0x21; 28]);
@@ -10507,16 +10496,16 @@ mod tests {
             outcome,
             EnactOutcome::CommitteeUpdated {
                 members_removed: 0,
-                members_added: 1,
+                members_added: 3,
             }
         );
-        assert!(!committee.is_member(&add_past));
-        assert!(!committee.is_member(&add_now));
+        assert!(committee.is_member(&add_past));
+        assert!(committee.is_member(&add_now));
         assert!(committee.is_member(&add_future));
     }
 
     #[test]
-    fn test_enact_update_committee_ignores_member_expirations_beyond_term_limit() {
+    fn test_enact_update_committee_does_not_filter_by_term_limit() {
         let mut es = EnactState::new();
         let mut committee = CommitteeState::new();
         let existing = crate::StakeCredential::AddrKeyHash([0x31; 28]);
@@ -10558,11 +10547,11 @@ mod tests {
             outcome,
             EnactOutcome::CommitteeUpdated {
                 members_removed: 0,
-                members_added: 1,
+                members_added: 2,
             }
         );
         assert!(committee.is_member(&add_within_limit));
-        assert!(!committee.is_member(&add_beyond_limit));
+        assert!(committee.is_member(&add_beyond_limit));
     }
 
     #[test]

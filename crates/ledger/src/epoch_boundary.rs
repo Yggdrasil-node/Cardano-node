@@ -1096,17 +1096,6 @@ fn ratify_and_enact(
     let mut enacted_purposes: BTreeSet<crate::state::ConwayGovActionPurpose> = BTreeSet::new();
     let mut delayed = false;
 
-    // Upstream RATIFY uses the pre-loop curPParams and un-decremented
-    // treasury for guard checks (validCommitteeTerm / withdrawalCanWithdraw).
-    // ParameterChange mutations are staged as futurePParams and promoted
-    // AFTER the loop; treasury is only decremented after RATIFY completes.
-    // Reference: Cardano.Ledger.Conway.Rules.Ratify (ratifyTransition).
-    let initial_committee_term_limit = ledger
-        .protocol_params()
-        .and_then(|pp| pp.committee_term_limit)
-        .or(committee_max_term);
-    let initial_treasury = ledger.accounting().treasury;
-
     for id in &sorted_ids {
         // Look up the action (it may have been removed by an earlier
         // enactment — shouldn't happen, but be defensive).
@@ -1125,9 +1114,16 @@ fn ratify_and_enact(
             continue;
         }
 
-        // 2. validCommitteeTerm — checked against INITIAL protocol params
-        //    (upstream curPParams, not futurePParams).
-        if !valid_committee_term(gov_action, initial_committee_term_limit, current_epoch) {
+        // 2. validCommitteeTerm — checked against CURRENT protocol params
+        //    from the evolving enact state.
+        if !valid_committee_term(
+            gov_action,
+            ledger
+                .protocol_params()
+                .and_then(|pp| pp.committee_term_limit)
+                .or(committee_max_term),
+            current_epoch,
+        ) {
             continue;
         }
 
@@ -1136,9 +1132,9 @@ fn ratify_and_enact(
             continue;
         }
 
-        // 4. withdrawalCanWithdraw — checked against INITIAL treasury
-        //    (upstream treasury is not decremented until after RATIFY).
-        if !withdrawal_can_withdraw(gov_action, initial_treasury) {
+        // 4. withdrawalCanWithdraw — checked against CURRENT treasury from
+        //    the evolving enact state.
+        if !withdrawal_can_withdraw(gov_action, ledger.accounting().treasury) {
             continue;
         }
 
@@ -2454,7 +2450,7 @@ mod tests {
 
     use crate::eras::conway::{Constitution, Vote, Voter};
     use crate::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
-    use crate::state::{CommitteeAuthorization, EnactOutcome};
+    use crate::state::CommitteeAuthorization;
 
     fn test_protocol_params_with_governance() -> ProtocolParameters {
         let mut pp = test_protocol_params();
@@ -3902,6 +3898,7 @@ mod tests {
             target_ra,
             crate::RewardAccountState::new(0, None),
         );
+        ledger.accounting_mut().reserves = 0;
         ledger.accounting_mut().treasury = 100_000_000;
 
         let gai = test_gov_action_id(0xE3, 0);
@@ -4388,13 +4385,8 @@ mod tests {
         let mut ledger = make_auto_pass_ledger();
 
         // Register a reward account target for the treasury withdrawal.
-        let target_cred = StakeCredential::AddrKeyHash([0xE0; 28]);
-        ledger.stake_credentials_mut().register(target_cred);
-        let target_ra = crate::RewardAccount { network: 1, credential: target_cred };
-        ledger.reward_accounts_mut().insert(
-            target_ra,
-            crate::RewardAccountState::new(0, None),
-        );
+        let target_ra = test_reward_account(20);
+        ledger.accounting_mut().reserves = 0;
         ledger.accounting_mut().treasury = 100_000_000;
 
         let mut snapshots = StakeSnapshots::new();
@@ -4819,19 +4811,14 @@ mod tests {
     // ── Ratification timing parity tests ───────────────────────────────
 
     #[test]
-    fn test_two_treasury_withdrawals_both_enacted_using_initial_treasury() {
-        // Upstream: RATIFY checks withdrawalCanWithdraw against the pre-loop
-        // treasury.  Two proposals each requesting 60M from a 100M treasury
-        // should BOTH pass because the treasury check uses the initial value.
+    fn test_two_treasury_withdrawals_use_progressive_treasury_guard() {
+        // Upstream: RATIFY checks withdrawalCanWithdraw against the evolving
+        // enact-state treasury. Two proposals each requesting 60M from a
+        // 100M treasury should enact only one proposal.
         let mut ledger = make_auto_pass_ledger();
 
-        let target_cred = StakeCredential::AddrKeyHash([0xE0; 28]);
-        ledger.stake_credentials_mut().register(target_cred);
-        let target_ra = crate::RewardAccount { network: 1, credential: target_cred };
-        ledger.reward_accounts_mut().insert(
-            target_ra,
-            crate::RewardAccountState::new(0, None),
-        );
+        let target_ra = test_reward_account(20);
+        ledger.accounting_mut().reserves = 0;
         ledger.accounting_mut().treasury = 100_000_000;
 
         let mut snapshots = StakeSnapshots::new();
@@ -4872,12 +4859,13 @@ mod tests {
         let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
             .expect("epoch 2");
 
-        // Both should be enacted (initial treasury 100M ≥ 60M for each check).
-        assert_eq!(event.governance_actions_enacted, 2);
+        // Only one should be enacted: after the first 60M withdrawal,
+        // treasury drops below 60M so the second fails the guard.
+        assert_eq!(event.governance_actions_enacted, 1);
 
-        // Reward account should have received 120M total.
+        // Reward account should have received only 60M.
         let balance = ledger.reward_accounts().get(&target_ra).unwrap().balance();
-        assert_eq!(balance, 120_000_000);
+        assert_eq!(balance, 60_000_000);
     }
 
     // ---------------------------------------------------------------
