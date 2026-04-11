@@ -9764,8 +9764,14 @@ pub(crate) fn tally_drep_votes(
 pub(crate) fn tally_spo_votes(
     action: &GovernanceActionState,
     pool_stake_dist: &PoolStakeDistribution,
+    is_bootstrap_phase: bool,
 ) -> VoteTally {
     use crate::eras::conway::{Vote, Voter};
+
+    let is_hard_fork = matches!(
+        &action.proposal.gov_action,
+        crate::eras::conway::GovAction::HardForkInitiation { .. }
+    );
 
     let mut yes: u64 = 0;
     let mut no: u64 = 0;
@@ -9777,7 +9783,17 @@ pub(crate) fn tally_spo_votes(
             Some(Vote::Yes) => yes = yes.saturating_add(pool_stake),
             Some(Vote::No) => no = no.saturating_add(pool_stake),
             Some(Vote::Abstain) => abstain = abstain.saturating_add(pool_stake),
-            None => {} // non-voting weight in total only
+            None => {
+                // Upstream spoAcceptedRatio:
+                // - HardForkInitiation: non-voting → implicit No (always)
+                // - Bootstrap phase: non-voting → implicit Abstain
+                // - Post-bootstrap: uses defaultStakePoolVote (not yet
+                //   implemented — falls through to implicit No).
+                if !is_hard_fork && is_bootstrap_phase {
+                    abstain = abstain.saturating_add(pool_stake);
+                }
+                // Otherwise: non-voting weight in total only (implicit No).
+            }
         }
     }
 
@@ -9795,11 +9811,9 @@ pub(crate) fn tally_spo_votes(
 /// (InfoAction — always accepted, never enacted).
 pub(crate) fn drep_threshold_for_action(
     action: &crate::eras::conway::GovAction,
-    committee_state: &CommitteeState,
+    has_committee: bool,
     thresholds: &DRepVotingThresholds,
 ) -> Option<UnitInterval> {
-    let committee_is_elected = conway_committee_is_elected(committee_state);
-
     match action {
         crate::eras::conway::GovAction::ParameterChange {
             protocol_param_update,
@@ -9812,7 +9826,10 @@ pub(crate) fn drep_threshold_for_action(
             Some(thresholds.motion_no_confidence)
         }
         crate::eras::conway::GovAction::UpdateCommittee { .. } => {
-            Some(if committee_is_elected {
+            // Upstream: `isElectedCommittee = isSJust (ensCommitteeL)`.
+            // When no committee exists (post-NoConfidence), use no-confidence
+            // threshold.
+            Some(if has_committee {
                 thresholds.committee_normal
             } else {
                 thresholds.committee_no_confidence
@@ -9833,11 +9850,9 @@ pub(crate) fn drep_threshold_for_action(
 /// Returns `None` for actions where SPO votes are not required.
 pub(crate) fn spo_threshold_for_action(
     action: &crate::eras::conway::GovAction,
-    committee_state: &CommitteeState,
+    has_committee: bool,
     thresholds: &PoolVotingThresholds,
 ) -> Option<UnitInterval> {
-    let committee_is_elected = conway_committee_is_elected(committee_state);
-
     match action {
         crate::eras::conway::GovAction::ParameterChange {
             protocol_param_update,
@@ -9851,7 +9866,8 @@ pub(crate) fn spo_threshold_for_action(
             Some(thresholds.motion_no_confidence)
         }
         crate::eras::conway::GovAction::UpdateCommittee { .. } => {
-            Some(if committee_is_elected {
+            // Upstream: `isElectedCommittee = isSJust (ensCommitteeL)`.
+            Some(if has_committee {
                 thresholds.committee_normal
             } else {
                 thresholds.committee_no_confidence
@@ -9861,12 +9877,6 @@ pub(crate) fn spo_threshold_for_action(
         | crate::eras::conway::GovAction::TreasuryWithdrawals { .. }
         | crate::eras::conway::GovAction::InfoAction => None,
     }
-}
-
-fn conway_committee_is_elected(committee_state: &CommitteeState) -> bool {
-    committee_state
-        .iter()
-        .any(|(_, member_state)| !member_state.is_resigned())
 }
 
 /// Determines whether a governance action is accepted by the
@@ -9942,7 +9952,7 @@ pub(crate) fn accepted_by_committee(
 /// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `dRepVotesSatisfied`.
 pub(crate) fn accepted_by_dreps(
     action: &GovernanceActionState,
-    committee_state: &CommitteeState,
+    has_committee: bool,
     drep_state: &DrepState,
     drep_delegated_stake: &BTreeMap<DRep, u64>,
     current_epoch: EpochNo,
@@ -9951,7 +9961,7 @@ pub(crate) fn accepted_by_dreps(
 ) -> bool {
     let Some(threshold) = drep_threshold_for_action(
         &action.proposal.gov_action,
-        committee_state,
+        has_committee,
         thresholds,
     ) else {
         return true; // no DRep vote required for this action type
@@ -9989,18 +9999,19 @@ pub(crate) fn accepted_by_dreps(
 /// - The stake-weighted SPO tally meets the per-type threshold.
 pub(crate) fn accepted_by_spo(
     action: &GovernanceActionState,
-    committee_state: &CommitteeState,
+    has_committee: bool,
     pool_stake_dist: &PoolStakeDistribution,
     thresholds: &PoolVotingThresholds,
+    is_bootstrap_phase: bool,
 ) -> bool {
     let Some(threshold) = spo_threshold_for_action(
         &action.proposal.gov_action,
-        committee_state,
+        has_committee,
         thresholds,
     ) else {
         return true; // no SPO vote required for this action type
     };
-    let tally = tally_spo_votes(action, pool_stake_dist);
+    let tally = tally_spo_votes(action, pool_stake_dist, is_bootstrap_phase);
     tally.meets_threshold(&threshold)
 }
 
@@ -10062,14 +10073,14 @@ pub(crate) fn ratify_action(
         has_committee,
     ) && accepted_by_dreps(
             action,
-            committee_state,
+            has_committee,
             drep_state,
             drep_delegated_stake,
             current_epoch,
             drep_activity,
             effective_drep_thresholds,
         )
-        && accepted_by_spo(action, committee_state, pool_stake_dist, pool_thresholds)
+        && accepted_by_spo(action, has_committee, pool_stake_dist, pool_thresholds, is_bootstrap_phase)
 }
 
 #[cfg(test)]
@@ -12745,7 +12756,7 @@ mod tests {
         action.votes.insert(Voter::StakePool(pool_a), Vote::Yes);
         action.votes.insert(Voter::StakePool(pool_b), Vote::No);
 
-        let tally = tally_spo_votes(&action, &pool_dist);
+        let tally = tally_spo_votes(&action, &pool_dist, false);
         assert_eq!(tally.yes, 600);
         assert_eq!(tally.no, 400);
         assert_eq!(tally.total, 1000);
@@ -13077,13 +13088,12 @@ mod tests {
     #[test]
     fn drep_threshold_for_hard_fork() {
         let thresholds = DRepVotingThresholds::default();
-        let committee_state = CommitteeState::default();
         let t = drep_threshold_for_action(
             &GovAction::HardForkInitiation {
                 prev_action_id: None,
                 protocol_version: (10, 0),
             },
-            &committee_state,
+            true,
             &thresholds,
         );
         assert_eq!(t, Some(thresholds.hard_fork_initiation));
@@ -13092,21 +13102,19 @@ mod tests {
     #[test]
     fn drep_threshold_for_info_is_none() {
         let thresholds = DRepVotingThresholds::default();
-        let committee_state = CommitteeState::default();
-        let t = drep_threshold_for_action(&GovAction::InfoAction, &committee_state, &thresholds);
+        let t = drep_threshold_for_action(&GovAction::InfoAction, true, &thresholds);
         assert!(t.is_none());
     }
 
     #[test]
     fn spo_threshold_for_constitution_is_none() {
         let thresholds = PoolVotingThresholds::default();
-        let committee_state = CommitteeState::default();
         let t = spo_threshold_for_action(
             &GovAction::NewConstitution {
                 prev_action_id: None,
                 constitution: sample_constitution("c1"),
             },
-            &committee_state,
+            true,
             &thresholds,
         );
         assert!(t.is_none());
@@ -13115,13 +13123,12 @@ mod tests {
     #[test]
     fn spo_threshold_for_treasury_is_none() {
         let thresholds = PoolVotingThresholds::default();
-        let committee_state = CommitteeState::default();
         let t = spo_threshold_for_action(
             &GovAction::TreasuryWithdrawals {
                 withdrawals: BTreeMap::new(),
                 guardrails_script_hash: None,
             },
-            &committee_state,
+            true,
             &thresholds,
         );
         assert!(t.is_none());
@@ -13130,12 +13137,11 @@ mod tests {
     #[test]
     fn drep_threshold_for_no_confidence_uses_motion_threshold() {
         let thresholds = DRepVotingThresholds::default();
-        let committee_state = CommitteeState::default();
         let t = drep_threshold_for_action(
             &GovAction::NoConfidence {
                 prev_action_id: None,
             },
-            &committee_state,
+            true,
             &thresholds,
         );
         assert_eq!(t, Some(thresholds.motion_no_confidence));
@@ -13144,12 +13150,11 @@ mod tests {
     #[test]
     fn spo_threshold_for_no_confidence_uses_motion_threshold() {
         let thresholds = PoolVotingThresholds::default();
-        let committee_state = CommitteeState::default();
         let t = spo_threshold_for_action(
             &GovAction::NoConfidence {
                 prev_action_id: None,
             },
-            &committee_state,
+            true,
             &thresholds,
         );
         assert_eq!(t, Some(thresholds.motion_no_confidence));
@@ -13158,7 +13163,6 @@ mod tests {
     #[test]
     fn spo_threshold_for_parameter_change_requires_security_group() {
         let thresholds = PoolVotingThresholds::default();
-        let committee_state = CommitteeState::default();
         let non_security = GovAction::ParameterChange {
             prev_action_id: None,
             protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
@@ -13176,9 +13180,9 @@ mod tests {
             guardrails_script_hash: None,
         };
 
-        assert!(spo_threshold_for_action(&non_security, &committee_state, &thresholds).is_none());
+        assert!(spo_threshold_for_action(&non_security, true, &thresholds).is_none());
         assert_eq!(
-            spo_threshold_for_action(&security, &committee_state, &thresholds),
+            spo_threshold_for_action(&security, true, &thresholds),
             Some(thresholds.pp_security_group)
         );
     }
@@ -13214,9 +13218,7 @@ mod tests {
             },
             guardrails_script_hash: None,
         };
-        let committee_state = CommitteeState::default();
-
-        let selected = drep_threshold_for_action(&action, &committee_state, &thresholds);
+        let selected = drep_threshold_for_action(&action, true, &thresholds);
         assert_eq!(selected, Some(thresholds.pp_gov_group));
     }
 
@@ -13238,9 +13240,8 @@ mod tests {
             },
             guardrails_script_hash: None,
         };
-        let committee_state = CommitteeState::default();
 
-        let selected = drep_threshold_for_action(&action, &committee_state, &thresholds);
+        let selected = drep_threshold_for_action(&action, true, &thresholds);
         assert_eq!(selected, None);
     }
 
@@ -13262,9 +13263,8 @@ mod tests {
             },
             guardrails_script_hash: None,
         };
-        let committee_state = CommitteeState::default();
 
-        let selected = drep_threshold_for_action(&action, &committee_state, &thresholds);
+        let selected = drep_threshold_for_action(&action, true, &thresholds);
         assert_eq!(selected, Some(thresholds.pp_economic_group));
     }
 
@@ -13281,29 +13281,15 @@ mod tests {
             },
         };
 
-        let empty_committee = CommitteeState::default();
-        let mut elected_committee = CommitteeState::default();
-        elected_committee.register(StakeCredential::AddrKeyHash([0x11; 28]));
-
+        // has_committee = false → no committee seated → no-confidence threshold
         assert_eq!(
-            drep_threshold_for_action(&action, &empty_committee, &thresholds),
+            drep_threshold_for_action(&action, false, &thresholds),
             Some(thresholds.committee_no_confidence)
         );
+        // has_committee = true → committee seated → normal threshold
         assert_eq!(
-            drep_threshold_for_action(&action, &elected_committee, &thresholds),
+            drep_threshold_for_action(&action, true, &thresholds),
             Some(thresholds.committee_normal)
-        );
-
-        let mut resigned_only_committee = CommitteeState::default();
-        let resigned = StakeCredential::AddrKeyHash([0x33; 28]);
-        resigned_only_committee.register(resigned);
-        resigned_only_committee
-            .get_mut(&resigned)
-            .expect("registered committee member")
-            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
-        assert_eq!(
-            drep_threshold_for_action(&action, &resigned_only_committee, &thresholds),
-            Some(thresholds.committee_no_confidence)
         );
     }
 
@@ -13320,29 +13306,15 @@ mod tests {
             },
         };
 
-        let empty_committee = CommitteeState::default();
-        let mut elected_committee = CommitteeState::default();
-        elected_committee.register(StakeCredential::AddrKeyHash([0x22; 28]));
-
+        // has_committee = false → no committee seated → no-confidence threshold
         assert_eq!(
-            spo_threshold_for_action(&action, &empty_committee, &thresholds),
+            spo_threshold_for_action(&action, false, &thresholds),
             Some(thresholds.committee_no_confidence)
         );
+        // has_committee = true → committee seated → normal threshold
         assert_eq!(
-            spo_threshold_for_action(&action, &elected_committee, &thresholds),
+            spo_threshold_for_action(&action, true, &thresholds),
             Some(thresholds.committee_normal)
-        );
-
-        let mut resigned_only_committee = CommitteeState::default();
-        let resigned = StakeCredential::AddrKeyHash([0x44; 28]);
-        resigned_only_committee.register(resigned);
-        resigned_only_committee
-            .get_mut(&resigned)
-            .expect("registered committee member")
-            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
-        assert_eq!(
-            spo_threshold_for_action(&action, &resigned_only_committee, &thresholds),
-            Some(thresholds.committee_no_confidence)
         );
     }
 
@@ -13566,7 +13538,6 @@ mod tests {
     #[test]
     fn accepted_by_dreps_treasury_action() {
         let mut action = test_treasury_action();
-        let committee_state = CommitteeState::default();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
@@ -13579,7 +13550,7 @@ mod tests {
         let thresholds = DRepVotingThresholds::default();
         assert!(accepted_by_dreps(
             &action,
-            &committee_state,
+            true,
             &drep_state,
             &stake,
             EpochNo(5),
@@ -13987,7 +13958,7 @@ mod tests {
     fn spo_tally_empty_pool_distribution_fails_positive_threshold() {
         let action = test_hf_action();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
-        let tally = tally_spo_votes(&action, &pool_dist);
+        let tally = tally_spo_votes(&action, &pool_dist, false);
         assert_eq!(tally.total, 0);
         // Zero total → active = 0 → upstream `%?` returns 0 → fails
         // any positive threshold.
@@ -14002,7 +13973,7 @@ mod tests {
         pool_stakes.insert([1u8; 28], 2000u64);
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 2000);
 
-        let tally = tally_spo_votes(&action, &pool_dist);
+        let tally = tally_spo_votes(&action, &pool_dist, false);
         assert_eq!(tally.total, 2000);
         assert_eq!(tally.yes, 0);
         // Non-voting pool means 0 yes out of 2000 → does NOT meet 51%.
@@ -14018,7 +13989,7 @@ mod tests {
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
         action.votes.insert(Voter::StakePool([1; 28]), Vote::Abstain);
 
-        let tally = tally_spo_votes(&action, &pool_dist);
+        let tally = tally_spo_votes(&action, &pool_dist, false);
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
         // All abstain → active = 0 → fails positive threshold.
@@ -14215,10 +14186,9 @@ mod tests {
     fn accepted_by_spo_treasury_always_true() {
         // TreasuryWithdrawals doesn't require SPO vote → always accepted.
         let action = test_treasury_action();
-        let cs = CommitteeState::default();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
-        assert!(accepted_by_spo(&action, &cs, &pool_dist, &pvt));
+        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false));
     }
 
     #[test]
@@ -14232,21 +14202,19 @@ mod tests {
             },
             anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
         });
-        let cs = CommitteeState::default();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
-        assert!(accepted_by_spo(&action, &cs, &pool_dist, &pvt));
+        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false));
     }
 
     #[test]
     fn accepted_by_dreps_info_always_true() {
         // InfoAction has no DRep threshold → always accepted.
         let action = test_info_action();
-        let cs = CommitteeState::default();
         let drep_state = DrepState::new();
         let drep_stake = BTreeMap::new();
         let dvt = DRepVotingThresholds::default();
-        assert!(accepted_by_dreps(&action, &cs, &drep_state, &drep_stake, EpochNo(1), 100, &dvt));
+        assert!(accepted_by_dreps(&action, true, &drep_state, &drep_stake, EpochNo(1), 100, &dvt));
     }
 
     // -----------------------------------------------------------------------
@@ -14958,6 +14926,78 @@ mod tests {
             &pool_dist, &pvt,
             0, true, true,
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // SPO bootstrap abstain + committee threshold selection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spo_tally_bootstrap_non_voting_counts_as_abstain() {
+        // Upstream spoAcceptedRatio: during bootstrap, non-voting SPOs count
+        // as Abstain (excluded from denominator), not implicit No.
+        let mut action = test_no_confidence_action();
+        // One pool votes yes, one pool does NOT vote.
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([0xA1; 28], 500);
+        pool_stakes.insert([0xA2; 28], 500);
+        action.votes.insert(Voter::StakePool([0xA1; 28]), Vote::Yes);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        // Without bootstrap: non-voting A2 is in denominator → yes=500/(1000-0) = 50%.
+        let tally_normal = tally_spo_votes(&action, &pool_dist, false);
+        assert_eq!(tally_normal.yes, 500);
+        assert_eq!(tally_normal.abstain, 0);
+        assert_eq!(tally_normal.total, 1000);
+
+        // With bootstrap: non-voting A2 counts as abstain → yes=500/(1000-500) = 100%.
+        let tally_bootstrap = tally_spo_votes(&action, &pool_dist, true);
+        assert_eq!(tally_bootstrap.yes, 500);
+        assert_eq!(tally_bootstrap.abstain, 500);
+        assert_eq!(tally_bootstrap.total, 1000);
+        // Effective ratio: 500 / (1000-500) = 100%.
+        assert!(tally_bootstrap.meets_threshold(&UnitInterval { numerator: 1, denominator: 1 }));
+    }
+
+    #[test]
+    fn spo_tally_bootstrap_hard_fork_non_voting_still_no() {
+        // Upstream: HardForkInitiation non-voting SPOs are always No,
+        // even during bootstrap.
+        let mut action = test_hf_action();
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert([0xA1; 28], 500);
+        pool_stakes.insert([0xA2; 28], 500); // doesn't vote
+        action.votes.insert(Voter::StakePool([0xA1; 28]), Vote::Yes);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        let tally = tally_spo_votes(&action, &pool_dist, true);
+        assert_eq!(tally.yes, 500);
+        assert_eq!(tally.abstain, 0); // NOT counted as abstain for HF
+        assert_eq!(tally.total, 1000);
+    }
+
+    #[test]
+    fn threshold_selection_uses_has_committee_not_member_state() {
+        // Upstream uses `isSJust ensCommitteeL` for threshold selection,
+        // NOT whether committee members are actively serving.
+        // has_committee=true → committee_normal threshold, even if all resigned.
+        // has_committee=false → committee_no_confidence threshold.
+        let thresholds = DRepVotingThresholds::default();
+
+        let uc_action = GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add: BTreeMap::new(),
+            quorum: UnitInterval { numerator: 1, denominator: 2 },
+        };
+
+        // has_committee=true → normal threshold
+        let t_normal = drep_threshold_for_action(&uc_action, true, &thresholds);
+        assert_eq!(t_normal, Some(thresholds.committee_normal));
+
+        // has_committee=false → no-confidence threshold
+        let t_no_conf = drep_threshold_for_action(&uc_action, false, &thresholds);
+        assert_eq!(t_no_conf, Some(thresholds.committee_no_confidence));
     }
 
     // -----------------------------------------------------------------------

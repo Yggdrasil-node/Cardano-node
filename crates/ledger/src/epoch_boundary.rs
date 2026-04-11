@@ -2611,7 +2611,11 @@ mod tests {
     }
 
     #[test]
-    fn test_update_committee_ratifies_with_resigned_only_committee() {
+    fn test_update_committee_ratifies_after_no_confidence() {
+        // Upstream: UpdateCommittee uses the no-confidence DRep/SPO threshold
+        // when `ensCommittee = SNothing` (i.e. `has_committee = false`),
+        // which only occurs after a formal NoConfidence enactment — not merely
+        // because all committee members resigned.
         let mut ledger = make_governance_ledger();
 
         // Differentiate elected vs non-elected committee paths.
@@ -2638,13 +2642,8 @@ mod tests {
             pp.pool_voting_thresholds = Some(pool_thresholds);
         }
 
-        // Make the committee resign-only (no elected non-resigned members).
-        let cc_cred = test_cred(0xC0);
-        ledger
-            .committee_state_mut()
-            .get_mut(&cc_cred)
-            .expect("committee member present")
-            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
+        // Simulate post-NoConfidence state: no committee.
+        ledger.enact_state_mut().has_committee = false;
 
         let gai = test_gov_action_id(0xFA, 0);
         let gas = GovernanceActionState::new(test_update_committee_proposal());
@@ -2662,6 +2661,7 @@ mod tests {
         let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
             .expect("epoch 2 boundary");
 
+        // With no-confidence thresholds (0/1) for DRep+SPO, action passes.
         assert_eq!(event.governance_actions_enacted, 1);
         assert_eq!(event.enacted_gov_action_ids, vec![gai]);
         assert!(ledger.governance_actions().is_empty());
