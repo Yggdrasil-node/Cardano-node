@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 62 parity audit rounds completed (595+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 63 parity audit rounds completed (600+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4047 workspace tests passing, 59 audit rounds covering 545+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4057 workspace tests passing, 63 audit rounds covering 600+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -337,4 +337,5 @@
 | 60 | Conway governance: committee existence + DRep bootstrap thresholds | 10 | Gap Q: `EnactState` lacked `has_committee` flag — post-NoConfidence non-HF/non-UC actions incorrectly passed committee gate; Gap R: DRep thresholds not zeroed during Conway bootstrap phase (PV 9) — upstream `votingDRepThresholdInternal` uses `def`/all-zero |
 | 61 | Threshold selection, SPO bootstrap abstain | 10 | Gap S: SPO non-voting counted as implicit No during bootstrap (upstream: Abstain, except HardFork always No); Gap V: `drep_threshold_for_action`/`spo_threshold_for_action` used member-state check instead of `ensCommittee` presence (`has_committee`) for normal/no-confidence threshold selection |
 | 62 | Governance ratification: proposal priority ordering | 8 | Gap W: `ratify_and_enact` iterated proposals in `GovActionId` (BTreeMap key) order instead of upstream `actionPriority` order — delaying actions (NoConfidence=0, UpdateCommittee=1, NewConstitution=2, HardForkInitiation=3) could be preempted by lower-priority non-delaying actions |
-| **Total** | **All subsystems** | **595** | **22 fix rounds** |
+| 63 | Governance expiry descendants, committee guard | 6 | Gap X: expired parent proposals did not transitively remove descendant proposals (upstream `proposalsRemoveWithDescendants`); Gap Y: extra `committee_update_meets_min_size` guard in ratification loop not present in upstream `ratifyTransition` (min_committee_size enforcement is only inside `committeeAccepted` via `votingCommitteeThreshold`) |
+| **Total** | **All subsystems** | **601** | **23 fix rounds** |

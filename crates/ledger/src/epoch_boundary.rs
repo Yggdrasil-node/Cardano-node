@@ -455,7 +455,18 @@ pub fn apply_epoch_boundary(
     // -----------------------------------------------------------------------
     let (expired_gov_action_ids, governance_deposit_refunds, expired_unclaimed_deposits) =
         remove_expired_governance_actions(ledger, new_epoch);
-    let governance_actions_expired = expired_gov_action_ids.len();
+
+    // 5a. Remove descendant proposals whose prev_action_id chains through
+    //     an expired parent.  Upstream `proposalsRemoveWithDescendants`
+    //     transitively removes descendants of expired proposals.
+    //     Reference: Cardano.Ledger.Conway.Governance.Proposals.
+    let (descendant_refunds, descendant_unclaimed) = if !expired_gov_action_ids.is_empty() {
+        remove_descendants_of(ledger, &expired_gov_action_ids)
+    } else {
+        (0, 0)
+    };
+    let governance_actions_expired =
+        expired_gov_action_ids.len();
 
     // -----------------------------------------------------------------------
     // 5b. Ratification — tally votes for surviving governance actions and
@@ -467,10 +478,12 @@ pub fn apply_epoch_boundary(
     let governance_actions_enacted = ratify_result.enacted_ids.len();
 
     // Credit unclaimed governance deposits to treasury — both from
-    // expired proposals with unregistered return accounts AND from
-    // enacted actions with unregistered return accounts.
+    // expired proposals with unregistered return accounts, from
+    // descendants of expired proposals, AND from enacted actions
+    // with unregistered return accounts.
     // Upstream: `returnProposalDeposits` in `Cardano.Ledger.Conway.Rules.Epoch`.
     let total_unclaimed = expired_unclaimed_deposits
+        .saturating_add(descendant_unclaimed)
         .saturating_add(ratify_result.unclaimed_deposits);
     if total_unclaimed > 0 {
         let acct = ledger.accounting_mut();
@@ -519,7 +532,8 @@ pub fn apply_epoch_boundary(
         delta_reserves: reward_dist.delta_reserves,
         accounts_rewarded,
         governance_actions_expired,
-        governance_deposit_refunds,
+        governance_deposit_refunds: governance_deposit_refunds
+            .saturating_add(descendant_refunds),
         expired_gov_action_ids,
         dreps_expired,
         governance_actions_enacted,
@@ -820,6 +834,77 @@ fn remove_expired_governance_actions(
     (expired_ids, total_refunded, unclaimed)
 }
 
+/// Transitively removes governance proposals whose `prev_action_id`
+/// chains through any of the given `removed_ids`.
+///
+/// This implements the upstream `proposalsRemoveWithDescendants`
+/// semantics: when a proposal is removed (e.g. expired), any dependent
+/// proposal whose lineage chains through it is also removed with deposit
+/// refund.  The traversal is transitive — grandchild proposals are
+/// caught too.
+///
+/// Returns `(total_refunded, unclaimed)` matching the same semantics as
+/// `remove_expired_governance_actions`.
+fn remove_descendants_of(
+    ledger: &mut LedgerState,
+    removed_ids: &[GovActionId],
+) -> (u64, u64) {
+    let mut all_removed: BTreeSet<GovActionId> = removed_ids.iter().cloned().collect();
+
+    // Iteratively discover descendants until no new ones are found.
+    loop {
+        let mut next_wave: Vec<GovActionId> = Vec::new();
+        for (id, state) in ledger.governance_actions().iter() {
+            if all_removed.contains(id) {
+                continue; // already marked for removal
+            }
+            let prev = gov_action_prev_id(&state.proposal().gov_action);
+            if let Some(Some(parent)) = prev {
+                if all_removed.contains(parent) {
+                    next_wave.push(id.clone());
+                }
+            }
+        }
+
+        if next_wave.is_empty() {
+            break;
+        }
+
+        for id in next_wave {
+            all_removed.insert(id);
+        }
+        // Continue iterating in case the newly added proposals have
+        // descendants of their own.
+    }
+
+    // Remove only the *descendants* (the original removed_ids are already gone).
+    let descendant_ids: Vec<GovActionId> = all_removed
+        .into_iter()
+        .filter(|id| !removed_ids.contains(id))
+        .collect();
+
+    let mut total_refunded: u64 = 0;
+    let mut unclaimed: u64 = 0;
+
+    for id in &descendant_ids {
+        if let Some(state) = ledger.governance_actions_mut().remove(id) {
+            let deposit = state.proposal().deposit;
+            if let Some(reward_account) = RewardAccount::from_bytes(&state.proposal().reward_account) {
+                if let Some(ra_state) = ledger.reward_accounts_mut().get_mut(&reward_account) {
+                    ra_state.set_balance(ra_state.balance().saturating_add(deposit));
+                    total_refunded = total_refunded.saturating_add(deposit);
+                } else {
+                    unclaimed = unclaimed.saturating_add(deposit);
+                }
+            } else {
+                unclaimed = unclaimed.saturating_add(deposit);
+            }
+        }
+    }
+
+    (total_refunded, unclaimed)
+}
+
 /// Returns the upstream ratification priority for a governance action.
 ///
 /// Proposals are processed in `actionPriority` order so that delaying
@@ -1063,14 +1148,6 @@ fn ratify_and_enact(
         let committee_quorum = ledger.enact_state().committee_quorum;
         let has_committee = ledger.enact_state().has_committee;
 
-        if !committee_update_meets_min_size(
-            action_state,
-            ledger.committee_state(),
-            min_committee_size,
-        ) {
-            continue;
-        }
-
         if !ratify_action(
             action_state,
             ledger.committee_state(),
@@ -1173,35 +1250,6 @@ fn ratify_and_enact(
         removed_due_to_enactment_deposit_refunds: subtree_refunded,
         unclaimed_deposits: unclaimed,
     }
-}
-
-fn committee_update_meets_min_size(
-    action_state: &crate::state::GovernanceActionState,
-    committee_state: &crate::state::CommitteeState,
-    min_committee_size: Option<u64>,
-) -> bool {
-    let Some(minimum) = min_committee_size else {
-        return true;
-    };
-
-    let crate::eras::conway::GovAction::UpdateCommittee {
-        members_to_remove,
-        members_to_add,
-        ..
-    } = &action_state.proposal().gov_action
-    else {
-        return true;
-    };
-
-    let mut members: BTreeSet<_> = committee_state.iter().map(|(credential, _)| *credential).collect();
-    for member in members_to_remove {
-        members.remove(member);
-    }
-    for member in members_to_add.keys() {
-        members.insert(*member);
-    }
-
-    (members.len() as u64) >= minimum
 }
 
 /// Result of the ratification-and-enactment step at an epoch boundary.
@@ -2149,6 +2197,106 @@ mod tests {
         assert_eq!(event.governance_deposit_refunds, 0);
     }
 
+    #[test]
+    fn test_expired_parent_removes_descendants() {
+        // When a governance action expires, any proposals that chain to it
+        // via prev_action_id should also be removed (recursively).
+        // Upstream reference: proposalsRemoveWithDescendants.
+        let mut ledger = make_governance_ledger();
+
+        let ra = test_reward_account(0xD0);
+        ledger
+            .reward_accounts_mut()
+            .insert(ra.clone(), RewardAccountState::new(0, None));
+
+        // Parent: ParameterChange proposed in epoch 0, expires at epoch 1.
+        let parent_id = test_gov_action_id(0xA0, 0);
+        let parent_proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 100,
+            reward_account: ra.to_bytes().to_vec(),
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: Default::default(),
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let parent_state = GovernanceActionState::new_with_lifetime(
+            parent_proposal,
+            EpochNo(0),
+            Some(1), // expires_after = epoch 1
+        );
+        ledger
+            .governance_actions_mut()
+            .insert(parent_id.clone(), parent_state);
+
+        // Child: ParameterChange chaining from parent, expires at epoch 10.
+        let child_id = test_gov_action_id(0xA1, 0);
+        let child_proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 200,
+            reward_account: ra.to_bytes().to_vec(),
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: Some(parent_id.clone()),
+                protocol_param_update: Default::default(),
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let child_state = GovernanceActionState::new_with_lifetime(
+            child_proposal,
+            EpochNo(0),
+            Some(10), // expires_after = epoch 10
+        );
+        ledger
+            .governance_actions_mut()
+            .insert(child_id.clone(), child_state);
+
+        // Grandchild: chaining from child.
+        let grandchild_id = test_gov_action_id(0xA2, 0);
+        let grandchild_proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 300,
+            reward_account: ra.to_bytes().to_vec(),
+            gov_action: GovAction::ParameterChange {
+                prev_action_id: Some(child_id.clone()),
+                protocol_param_update: Default::default(),
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let grandchild_state = GovernanceActionState::new_with_lifetime(
+            grandchild_proposal,
+            EpochNo(0),
+            Some(10), // expires_after = epoch 10
+        );
+        ledger
+            .governance_actions_mut()
+            .insert(grandchild_id.clone(), grandchild_state);
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 2 boundary: parent expires (expires_after=1 < 2), and both
+        // child and grandchild should be transitively removed as descendants.
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2 boundary");
+
+        assert_eq!(event.governance_actions_expired, 1, "parent expired");
+        assert!(!ledger.governance_actions().contains_key(&parent_id));
+        assert!(!ledger.governance_actions().contains_key(&child_id));
+        assert!(!ledger.governance_actions().contains_key(&grandchild_id));
+        // Deposits refunded: 100 (parent) + 200 (child) + 300 (grandchild)
+        assert_eq!(event.governance_deposit_refunds, 600);
+    }
+
     // -- DRep inactivity expiry -------------------------------------------
 
     use crate::state::RegisteredDrep;
@@ -2760,7 +2908,13 @@ mod tests {
     }
 
     #[test]
-    fn test_update_committee_rejected_when_result_below_min_committee_size() {
+    fn test_update_committee_enacted_even_when_result_below_min_committee_size() {
+        // Upstream: ratifyTransition does NOT have a resulting-committee-
+        // size guard.  The min_committee_size enforcement is only inside
+        // `votingCommitteeThreshold` which controls the committee vote
+        // for non-UpdateCommittee actions.  UpdateCommittee uses
+        // NoVotingAllowed (committee auto-passes), so the resulting
+        // committee size is irrelevant to ratification.
         let mut ledger = make_governance_ledger();
 
         let mut drep_thresholds = DRepVotingThresholds::default();
@@ -2781,6 +2935,7 @@ mod tests {
 
         // Default governance ledger starts with one active committee member;
         // removing it would produce committee size 0, below min size 2.
+        // Upstream: this still gets enacted (committee vote = NoVotingAllowed).
         let cc_cred = test_cred(0xC0);
         let proposal = crate::eras::conway::ProposalProcedure {
             deposit: 0,
@@ -2807,14 +2962,13 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
             .expect("epoch 1 boundary");
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2 boundary");
 
-        assert_eq!(event.governance_actions_enacted, 0);
-        assert!(event.enacted_gov_action_ids.is_empty());
-        assert!(ledger.governance_actions().contains_key(&gai));
+        // UpdateCommittee is enacted despite resulting committee being
+        // smaller than min_committee_size (upstream has no such guard).
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_gov_action_ids, vec![gai]);
     }
 
     #[test]
