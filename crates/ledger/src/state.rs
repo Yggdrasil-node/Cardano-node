@@ -4317,6 +4317,7 @@ impl LedgerState {
                         required_signers: tx.body.required_signers.clone().unwrap_or_default(),
                         mint: tx.body.mint.clone().unwrap_or_default(),
                         withdrawals: tx.body.withdrawals.clone().unwrap_or_default(),
+                        protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                         ..Default::default()
                     };
                     crate::plutus_validation::validate_plutus_scripts(
@@ -4597,6 +4598,7 @@ impl LedgerState {
                         mint: tx.body.mint.clone().unwrap_or_default(),
                         withdrawals: tx.body.withdrawals.clone().unwrap_or_default(),
                         reference_inputs: tx.body.reference_inputs.clone().unwrap_or_default(),
+                        protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                         ..Default::default()
                     };
                     crate::plutus_validation::validate_plutus_scripts(
@@ -4931,6 +4933,7 @@ impl LedgerState {
                         treasury_donation: tx.body.treasury_donation,
                         voting_procedures: tx.body.voting_procedures.clone(),
                         proposal_procedures: proposal_slice.to_vec(),
+                        protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                         ..Default::default()
                     };
                     crate::plutus_validation::validate_plutus_scripts(
@@ -5905,6 +5908,7 @@ impl LedgerState {
                     required_signers: body.required_signers.clone().unwrap_or_default(),
                     mint: body.mint.clone().unwrap_or_default(),
                     withdrawals: body.withdrawals.clone().unwrap_or_default(),
+                    protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                     ..Default::default()
                 };
                 crate::plutus_validation::validate_plutus_scripts(
@@ -6247,6 +6251,7 @@ impl LedgerState {
                     mint: body.mint.clone().unwrap_or_default(),
                     withdrawals: body.withdrawals.clone().unwrap_or_default(),
                     reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
+                    protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                     ..Default::default()
                 };
                 crate::plutus_validation::validate_plutus_scripts(
@@ -6660,6 +6665,7 @@ impl LedgerState {
                     treasury_donation: body.treasury_donation,
                     voting_procedures: body.voting_procedures.clone(),
                     proposal_procedures: proposal_slice.to_vec(),
+                    protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                     ..Default::default()
                 };
                 crate::plutus_validation::validate_plutus_scripts(

@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 56 parity audit rounds completed (540+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 58 parity audit rounds completed (540+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4035 workspace tests passing, 56 audit rounds covering 540+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4046 workspace tests passing, 58 audit rounds covering 540+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -331,4 +331,6 @@
 | 49 | Deep parity audit (24 areas: treasury ordering, committee auth, withdrawal witnesses, Byron fees, etc.) | 24 | None (all 24 areas already implemented) |
 | 50 | CBOR tag 258 set decode, min_committee_size floor, InfoAction ratification fix | 12 | Gap E: `array()` rejected #6.258 set encoding (27 sites); Gap F: min_committee_size floor not enforced; Gap G: InfoAction incorrectly ratified |
 | 51 | min_utxo output size, ZeroDonation, Alonzo output datum hash, PPUP slot-of-no-return | 18 | Gap H: `inner_cbor_size()` for min-lovelace measurement; Gap I: zero treasury donation silently accepted; Gap J: Alonzo script-output missing datum hash; Gap K: PPUP slot-of-no-return not wired |
-| **Total** | **All subsystems** | **520** | **14 fix rounds** |
+| 52-57 | VRF mode/usage, nonce derivation, leader value range, VRF proof verification | 30 | Era-aware VRF parity, TPraos nonce VRF proof verification |
+| 58 | TxContext protocol_version + reward calculation precision | 12 | Gap L: all 6 TxContext sites left `protocol_version: None` (broke V3 PV9 bootstrap); Gap M: `max_pool_reward` used 5-floor fixed-point (now exact U256 single-floor); Gap N: `delta_reserves` used double-floor (now single-floor) |
+| **Total** | **All subsystems** | **562** | **17 fix rounds** |
