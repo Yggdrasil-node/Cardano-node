@@ -2,10 +2,10 @@
 use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainCandidate, ChainEntry, ChainState, ConsensusError, EpochSize, Header,
     HeaderBody, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OpCert, SecurityParam,
-    VrfTiebreakerFlavor, check_is_leader, check_kes_period, check_leader_value,
-    epoch_first_slot, is_new_epoch, kes_period_of_slot, leadership_threshold, select_preferred,
-    slot_to_epoch, verify_header, verify_leader_proof, verify_opcert_only, vrf_input,
-    vrf_output_to_nonce,
+    VrfMode, VrfTiebreakerFlavor, VrfUsage, check_is_leader, check_kes_period,
+    check_leader_value, epoch_first_slot, is_new_epoch, kes_period_of_slot,
+    leadership_threshold, select_preferred, slot_to_epoch, verify_header, verify_leader_proof,
+    verify_opcert_only, vrf_input, vrf_output_to_nonce,
 };
 use yggdrasil_crypto::ed25519::SigningKey;
 use yggdrasil_crypto::sum_kes::{
@@ -152,19 +152,27 @@ fn nonce_self_combine_yields_zero() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn vrf_input_contains_slot_and_nonce() {
+fn vrf_input_praos_is_32_byte_hash() {
     let slot = SlotNo(42);
     let nonce = Nonce::Hash([0xBB; 32]);
-    let input = vrf_input(slot, nonce);
-    assert_eq!(input.len(), 8 + 32);
-    assert_eq!(&input[..8], &42u64.to_be_bytes());
-    assert_eq!(&input[8..], &[0xBB; 32]);
+    // Praos mkInputVRF: Blake2b-256(slot_be8 || nonce_bytes) → 32 bytes.
+    let input = vrf_input(slot, nonce, VrfMode::Praos, VrfUsage::Leader);
+    assert_eq!(input.len(), 32);
 }
 
 #[test]
-fn vrf_input_neutral_nonce_has_no_nonce_bytes() {
-    let input = vrf_input(SlotNo(1), Nonce::Neutral);
-    assert_eq!(input.len(), 8);
+fn vrf_input_tpraos_is_32_byte_xored_hash() {
+    let slot = SlotNo(42);
+    let nonce = Nonce::Hash([0xBB; 32]);
+    // TPraos mkSeed: Blake2b-256(slot_be8 || nonce_bytes) XOR tag_hash → 32 bytes.
+    let input = vrf_input(slot, nonce, VrfMode::TPraos, VrfUsage::Leader);
+    assert_eq!(input.len(), 32);
+}
+
+#[test]
+fn vrf_input_tpraos_neutral_nonce_still_32_bytes() {
+    let input = vrf_input(SlotNo(1), Nonce::Neutral, VrfMode::TPraos, VrfUsage::Leader);
+    assert_eq!(input.len(), 32);
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +185,7 @@ fn check_leader_value_all_zeros_output_is_leader() {
     // threshold, so it should always be a leader.
     let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
     let output = VrfOutput::from_bytes([0u8; 64]);
-    let result = check_leader_value(&output, 1, 1, &asc)
+    let result = check_leader_value(&output, 1, 1, &asc, VrfMode::TPraos)
         .expect("valid");
     assert!(result, "all-zeros output should be below any positive threshold");
 }
@@ -188,7 +196,7 @@ fn check_leader_value_all_ones_output_is_not_leader() {
     // any stake fraction less than 1.
     let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
     let output = VrfOutput::from_bytes([0xFF; 64]);
-    let result = check_leader_value(&output, 1, 100, &asc)
+    let result = check_leader_value(&output, 1, 100, &asc, VrfMode::TPraos)
         .expect("valid");
     assert!(!result, "all-ones output should exceed threshold for small stake");
 }
@@ -207,12 +215,12 @@ fn check_is_leader_round_trip() {
     // Use full stake and high active slot coefficient to guarantee leadership.
     let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let result = check_is_leader(&sk, slot, epoch_nonce, 1, 1, &asc)
+    let result = check_is_leader(&sk, slot, epoch_nonce, 1, 1, &asc, VrfMode::TPraos)
         .expect("should not error with valid parameters");
     let (_output, proof_bytes) = result.expect("with sigma=1 and f=1, should always be leader");
 
     // Verify the proof.
-    let verified = verify_leader_proof(&vk, slot, epoch_nonce, &proof_bytes, 1, 1, &asc)
+    let verified = verify_leader_proof(&vk, slot, epoch_nonce, &proof_bytes, 1, 1, &asc, VrfMode::TPraos)
         .expect("verification should succeed");
     assert!(verified, "valid proof should pass leader threshold");
 }
@@ -226,12 +234,12 @@ fn verify_leader_proof_rejects_wrong_slot() {
     let epoch_nonce = Nonce::Hash([0xCC; 32]);
     let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let (_, proof_bytes) = check_is_leader(&sk, slot, epoch_nonce, 1, 1, &asc)
+    let (_, proof_bytes) = check_is_leader(&sk, slot, epoch_nonce, 1, 1, &asc, VrfMode::TPraos)
         .expect("valid")
         .expect("leader with f=1,σ=1");
 
     // Wrong slot should fail VRF verification.
-    let result = verify_leader_proof(&vk, SlotNo(51), epoch_nonce, &proof_bytes, 1, 1, &asc);
+    let result = verify_leader_proof(&vk, SlotNo(51), epoch_nonce, &proof_bytes, 1, 1, &asc, VrfMode::TPraos);
     assert!(result.is_err(), "proof computed for slot 50 should not verify at slot 51");
 }
 
@@ -245,11 +253,11 @@ fn verify_leader_proof_rejects_wrong_key() {
     let epoch_nonce = Nonce::Neutral;
     let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let (_, proof_bytes) = check_is_leader(&sk_a, slot, epoch_nonce, 1, 1, &asc)
+    let (_, proof_bytes) = check_is_leader(&sk_a, slot, epoch_nonce, 1, 1, &asc, VrfMode::TPraos)
         .expect("valid")
         .expect("leader");
 
-    let result = verify_leader_proof(&vk_b, slot, epoch_nonce, &proof_bytes, 1, 1, &asc);
+    let result = verify_leader_proof(&vk_b, slot, epoch_nonce, &proof_bytes, 1, 1, &asc, VrfMode::TPraos);
     assert!(result.is_err(), "proof from key A should not verify with key B");
 }
 
@@ -261,7 +269,7 @@ fn verify_leader_proof_rejects_truncated_proof() {
     let epoch_nonce = Nonce::Neutral;
     let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
 
-    let result = verify_leader_proof(&vk, slot, epoch_nonce, &[0u8; 10], 1, 1, &asc);
+    let result = verify_leader_proof(&vk, slot, epoch_nonce, &[0u8; 10], 1, 1, &asc, VrfMode::TPraos);
     assert_eq!(result, Err(ConsensusError::InvalidVrfProof));
 }
 
@@ -1319,7 +1327,7 @@ fn leader_check_fractional_stake_with_zeros_output() {
     // positive threshold, so this should always be a leader.
     let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
     let output = VrfOutput::from_bytes([0u8; 64]);
-    let result = check_leader_value(&output, 1, 100, &asc).expect("valid");
+    let result = check_leader_value(&output, 1, 100, &asc, VrfMode::TPraos).expect("valid");
     assert!(result, "all-zeros output with fractional stake should be leader");
 }
 
@@ -1331,7 +1339,7 @@ fn leader_check_full_stake_all_ones_output() {
     // (1-f)^1 = 0.95, so target ≈ 0 < certNatMax × 0.95 → NOT leader.
     let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
     let output = VrfOutput::from_bytes([0xFF; 64]);
-    let result = check_leader_value(&output, 100, 100, &asc).expect("valid");
+    let result = check_leader_value(&output, 100, 100, &asc, VrfMode::TPraos).expect("valid");
     assert!(!result, "all-ones output should not be leader even with full stake");
 }
 
@@ -1341,7 +1349,7 @@ fn leader_check_sigma_exceeds_denominator() {
     // should not panic — it just performs the arithmetic.
     let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
     let output = VrfOutput::from_bytes([0x80; 64]);
-    let result = check_leader_value(&output, 200, 100, &asc);
+    let result = check_leader_value(&output, 200, 100, &asc, VrfMode::TPraos);
     // We only care that it doesn't panic; the result can be Ok(true) or Ok(false).
     assert!(result.is_ok(), "sigma_num > sigma_den should not panic");
 }

@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 55 parity audit rounds completed (535+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 56 parity audit rounds completed (540+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4021 workspace tests passing, 55 audit rounds covering 535+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4032 workspace tests passing, 56 audit rounds covering 540+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -67,11 +67,12 @@
 **Consensus**:
 - `verify_praos_header()` — Slot leader validation (VRF + OpCert)
 - `verify_shelley_header()` — Shelley-era header validation
-- `verify_block_vrf()` — VRF proof verification with leader-value check
+- `verify_block_vrf()` — VRF proof verification with era-aware leader-value check (TPraos raw-512-bit / Praos range-extended-256-bit)
 - `validate_block_protocol_version()` — Era/protocol-version consistency (hard-fork combinator parity)
 - `validate_block_body_size()` — Declared vs actual body size (upstream `WrongBlockBodySizeBBODY`)
 - `self_validate_forged_block()` — Local forged-block guardrail before persistence (protocol-version/body-hash/body-size/header-identity checks)
 - `NonceEvolutionState::apply_block()` — UPDN + TICKN nonce mixing with era-aware VRF derivation (TPraos simple hash vs Praos double-hash with "N" prefix)
+- `VrfMode` / `VrfUsage` — Era-aware VRF dispatch: `praos_vrf_input()` (upstream `mkInputVRF`), `tpraos_vrf_seed()` (upstream `mkSeed` with `seedL`/`seedEta` XOR), `check_leader_value()` with mode-aware range extension (upstream `vrfLeaderValue` / `checkLeaderNatValue`)
 - `ChainState` — Volatility tracking with stable/unstable window
 
 **Network**:

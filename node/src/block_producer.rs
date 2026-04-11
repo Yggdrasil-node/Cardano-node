@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use yggdrasil_consensus::{
-    ActiveSlotCoeff, HeaderBody, OpCert,
+    ActiveSlotCoeff, HeaderBody, OpCert, VrfMode,
     check_is_leader, kes_period_of_slot, check_kes_period,
 };
 use yggdrasil_crypto::ed25519::{Signature, VerificationKey};
@@ -589,6 +589,7 @@ pub fn check_slot_leadership(
         sigma_num,
         sigma_den,
         active_slot_coeff,
+        VrfMode::Praos, // Block production is always Praos-era (Babbage/Conway).
     )
     .map_err(|e| BlockProducerError::Crypto(e.to_string()))?;
 

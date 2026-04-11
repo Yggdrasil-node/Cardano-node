@@ -1,10 +1,45 @@
 use num_bigint::BigUint;
 use num_integer::Integer;
 use num_traits::{One, Zero};
+use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::vrf::{VrfOutput, VrfSecretKey, VrfVerificationKey};
 use yggdrasil_ledger::{Nonce, SlotNo};
 
 use crate::ConsensusError;
+
+/// Distinguishes the two VRF protocol modes used across Cardano eras.
+///
+/// - **TPraos** (Shelley–Alonzo): uses `mkSeed` with a per-purpose XOR tag
+///   and checks the raw 512-bit VRF output against `2^512`.
+/// - **Praos** (Babbage/Conway): uses `mkInputVRF` (Blake2b-256 of slot||nonce)
+///   and applies range extension (`Blake2b-256("L" || output)`) to check a
+///   256-bit value against `2^256`.
+///
+/// Reference: `Ouroboros.Consensus.Protocol.TPraos` vs
+/// `Ouroboros.Consensus.Protocol.Praos`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VrfMode {
+    /// Shelley through Alonzo: `mkSeed` construction, raw 512-bit leader check.
+    TPraos,
+    /// Babbage and Conway: `mkInputVRF` construction, range-extended 256-bit
+    /// leader check.
+    Praos,
+}
+
+/// Distinguishes the two VRF proof purposes within a TPraos block header.
+///
+/// TPraos headers carry two VRF proofs (`nonce_vrf` and `leader_vrf`), each
+/// produced over a different seed.  Praos headers carry only one unified VRF
+/// proof that serves both purposes.
+///
+/// Reference: `seedEta` / `seedL` in `Cardano.Protocol.TPraos.BHeader`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VrfUsage {
+    /// Leader election proof (TPraos `seedL`, tag = `mkNonceFromNumber 1`).
+    Leader,
+    /// Nonce contribution proof (TPraos `seedEta`, tag = `mkNonceFromNumber 0`).
+    Nonce,
+}
 
 /// Pre-computed active slot coefficient for deterministic leader election.
 ///
@@ -106,22 +141,72 @@ pub fn leadership_threshold(
 // VRF input construction
 // ---------------------------------------------------------------------------
 
-/// Builds the VRF input bytes from a slot number and an epoch nonce.
+/// Builds the raw VRF input bytes from a slot number and an epoch nonce
+/// (pre-hash concatenation, no Blake2b-256, no seed tag).
 ///
-/// The input is `slot_be8 || nonce_bytes` (or just `slot_be8` when the nonce
-/// is neutral).
-///
-/// Reference: `mkInputVRF` in
-/// `Ouroboros.Consensus.Protocol.Praos.VRF` — the produced bytes are
-/// hashed *by the VRF prove function itself*, so we return the raw
-/// concatenation here.
-pub fn vrf_input(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
+/// This is the base concatenation `slot_be8 || nonce_bytes` before any
+/// protocol-specific hashing or XOR.  Callers that need upstream-compatible
+/// VRF inputs should use [`praos_vrf_input`] or [`tpraos_vrf_seed`] instead.
+fn raw_vrf_input_bytes(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
     let mut buf = Vec::with_capacity(40);
     buf.extend_from_slice(&slot.0.to_be_bytes());
     if let Nonce::Hash(h) = epoch_nonce {
         buf.extend_from_slice(&h);
     }
     buf
+}
+
+/// Builds the Praos (Babbage/Conway) VRF input: `Blake2b-256(slot_be8 || nonce_bytes)`.
+///
+/// The result is a 32-byte hash matching upstream `mkInputVRF` from
+/// `Ouroboros.Consensus.Protocol.Praos.VRF`, which is used as
+/// `getSignableRepresentation` for the single unified VRF proof.
+pub fn praos_vrf_input(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
+    hash_bytes_256(&raw_vrf_input_bytes(slot, epoch_nonce)).0.to_vec()
+}
+
+/// Pre-computed seed tag hashes for TPraos VRF input construction.
+///
+/// Upstream `mkNonceFromNumber n` = `Nonce (Blake2b-256(CBOR(n)))`.
+/// CBOR(0) = `0x00`, CBOR(1) = `0x01`.
+///
+/// Reference: `mkNonceFromNumber` in `Cardano.Ledger.BaseTypes`.
+fn tpraos_seed_tag_hash(usage: VrfUsage) -> [u8; 32] {
+    match usage {
+        VrfUsage::Nonce => hash_bytes_256(&[0x00]).0,   // mkNonceFromNumber 0 = seedEta
+        VrfUsage::Leader => hash_bytes_256(&[0x01]).0,   // mkNonceFromNumber 1 = seedL
+    }
+}
+
+/// Builds a TPraos (Shelley–Alonzo) VRF seed: `Blake2b-256(slot_be8 || nonce_bytes) XOR tag_hash`.
+///
+/// `usage` selects the seed tag:
+/// - `VrfUsage::Leader` → `seedL` (tag 1): used for the leader VRF proof.
+/// - `VrfUsage::Nonce`  → `seedEta` (tag 0): used for the nonce VRF proof.
+///
+/// The result is a 32-byte value matching upstream `mkSeed` from
+/// `Cardano.Protocol.TPraos.BHeader`.
+pub fn tpraos_vrf_seed(slot: SlotNo, epoch_nonce: Nonce, usage: VrfUsage) -> Vec<u8> {
+    let base_hash = hash_bytes_256(&raw_vrf_input_bytes(slot, epoch_nonce)).0;
+    let tag_hash = tpraos_seed_tag_hash(usage);
+    // XOR the two 32-byte hashes.
+    let mut result = [0u8; 32];
+    for i in 0..32 {
+        result[i] = base_hash[i] ^ tag_hash[i];
+    }
+    result.to_vec()
+}
+
+/// Builds the VRF input for the given mode and usage.
+///
+/// - `VrfMode::Praos` ignores `usage` (single unified VRF) and returns
+///   `praos_vrf_input()`.
+/// - `VrfMode::TPraos` returns `tpraos_vrf_seed()` with the given usage.
+pub fn vrf_input(slot: SlotNo, epoch_nonce: Nonce, mode: VrfMode, usage: VrfUsage) -> Vec<u8> {
+    match mode {
+        VrfMode::Praos => praos_vrf_input(slot, epoch_nonce),
+        VrfMode::TPraos => tpraos_vrf_seed(slot, epoch_nonce, usage),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -131,23 +216,26 @@ pub fn vrf_input(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
 /// Determines whether a VRF output qualifies the holder as slot leader
 /// given their relative stake and the active slot coefficient.
 ///
-/// The check is fully deterministic: the 64-byte VRF output is interpreted
-/// as a 512-bit big-endian unsigned integer `p`, and the comparison
-/// `p < certNatMax × (1 − (1−f)^σ)` is evaluated without any
-/// floating-point arithmetic using a Taylor-expansion comparison on
-/// `exp(−σ × activeSlotLog)`.
+/// The check is fully deterministic and uses a Taylor-expansion comparison
+/// on `exp(−σ × activeSlotLog)` to avoid floating-point arithmetic.
+///
+/// For **TPraos** (Shelley–Alonzo): the raw 64-byte VRF output is interpreted
+/// as a 512-bit big-endian unsigned integer.  `certNatMax = 2^512`.
+/// Reference: `checkLeaderValue` in `Cardano.Protocol.TPraos.BHeader`.
+///
+/// For **Praos** (Babbage/Conway): VRF range extension is applied —
+/// `Blake2b-256("L" || output)` → 32 bytes → natural.  `certNatMax = 2^256`.
+/// Reference: `vrfLeaderValue` + `checkLeaderNatValue` in
+/// `Ouroboros.Consensus.Protocol.Praos.VRF`.
 ///
 /// `sigma_num` / `sigma_den` encode the pool's relative stake σ as a
-/// rational.  For a pool holding `s` lovelace of `t` total active stake,
-/// pass `sigma_num = s, sigma_den = t`.
-///
-/// Reference: `checkLeaderNatValue` in
-/// `Ouroboros.Consensus.Protocol.Praos.VRF`.
+/// rational.
 pub fn check_leader_value(
     vrf_output: &VrfOutput,
     sigma_num: u64,
     sigma_den: u64,
     active_slot_coeff: &ActiveSlotCoeff,
+    mode: VrfMode,
 ) -> Result<bool, ConsensusError> {
     if sigma_den == 0 {
         return Err(ConsensusError::InvalidActiveSlotCoeff);
@@ -156,10 +244,28 @@ pub fn check_leader_value(
     if sigma_num == 0 {
         return Ok(false);
     }
-    // certNatMax = 2^512
-    let cert_nat_max: BigUint = BigUint::one() << 512u32;
-    // Interpret VRF output as big-endian 512-bit natural.
-    let cert_nat = BigUint::from_bytes_be(vrf_output.to_bytes().as_ref());
+
+    let (cert_nat, cert_nat_max) = match mode {
+        VrfMode::TPraos => {
+            // Raw 512-bit output, certNatMax = 2^512.
+            let max: BigUint = BigUint::one() << 512u32;
+            let nat = BigUint::from_bytes_be(vrf_output.to_bytes().as_ref());
+            (nat, max)
+        }
+        VrfMode::Praos => {
+            // Range-extended: Blake2b-256("L" || output) → 32 bytes → natural.
+            // certNatMax = 2^256.
+            let output_bytes = vrf_output.to_bytes();
+            let mut prefixed = Vec::with_capacity(1 + output_bytes.len());
+            prefixed.push(b'L');
+            prefixed.extend_from_slice(&output_bytes);
+            let leader_hash = hash_bytes_256(&prefixed).0;
+            let max: BigUint = BigUint::one() << 256u32;
+            let nat = BigUint::from_bytes_be(&leader_hash);
+            (nat, max)
+        }
+    };
+
     if cert_nat >= cert_nat_max {
         return Ok(false);
     }
@@ -168,8 +274,6 @@ pub fn check_leader_value(
     // We need: target > certNatMax × (1−f)^σ
     // ⟺ target > certNatMax × exp(−σ × activeSlotLog)
     // where activeSlotLog = −ln(1−f) > 0.
-    //
-    // The product σ × activeSlotLog = (sigma_num × log_num) / (sigma_den × log_den).
     let x_num = BigUint::from(sigma_num) * &active_slot_coeff.log_num;
     let x_den = BigUint::from(sigma_den) * &active_slot_coeff.log_den;
 
@@ -277,7 +381,7 @@ fn taylor_exp_cmp(
 /// Evaluates whether the given VRF secret key wins the slot lottery.
 ///
 /// Performs the full pipeline:
-/// 1. Construct the VRF input from `slot` and `epoch_nonce`.
+/// 1. Construct the VRF input from `slot` and `epoch_nonce` using `mode`.
 /// 2. Produce a VRF proof using the secret key.
 /// 3. Check the output against the leader threshold.
 ///
@@ -293,12 +397,13 @@ pub fn check_is_leader(
     sigma_num: u64,
     sigma_den: u64,
     active_slot_coeff: &ActiveSlotCoeff,
+    mode: VrfMode,
 ) -> Result<Option<(VrfOutput, Vec<u8>)>, ConsensusError> {
-    let input = vrf_input(slot, epoch_nonce);
+    let input = vrf_input(slot, epoch_nonce, mode, VrfUsage::Leader);
     let (output, proof) = sk
         .prove(&input)
         .map_err(|_| ConsensusError::InvalidVrfProof)?;
-    let is_leader = check_leader_value(&output, sigma_num, sigma_den, active_slot_coeff)?;
+    let is_leader = check_leader_value(&output, sigma_num, sigma_den, active_slot_coeff, mode)?;
     if is_leader {
         Ok(Some((output, proof.to_bytes().to_vec())))
     } else {
@@ -324,6 +429,7 @@ pub fn verify_leader_proof(
     sigma_num: u64,
     sigma_den: u64,
     active_slot_coeff: &ActiveSlotCoeff,
+    mode: VrfMode,
 ) -> Result<bool, ConsensusError> {
     use yggdrasil_crypto::vrf::{VrfProof, VRF_PROOF_SIZE};
 
@@ -332,12 +438,12 @@ pub fn verify_leader_proof(
         .map_err(|_| ConsensusError::InvalidVrfProof)?;
     let proof = VrfProof::from_bytes(proof_arr);
 
-    let input = vrf_input(slot, epoch_nonce);
+    let input = vrf_input(slot, epoch_nonce, mode, VrfUsage::Leader);
     let output = vk
         .verify(&input, &proof)
         .map_err(|_| ConsensusError::InvalidVrfProof)?;
 
-    check_leader_value(&output, sigma_num, sigma_den, active_slot_coeff)
+    check_leader_value(&output, sigma_num, sigma_den, active_slot_coeff, mode)
 }
 
 // ---------------------------------------------------------------------------
@@ -447,8 +553,8 @@ mod tests {
     fn leader_check_all_zeros_is_leader() {
         let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
         let output = VrfOutput::from_bytes([0u8; 64]);
-        // Full stake: sigma = 1/1.
-        let result = check_leader_value(&output, 1, 1, &asc).expect("valid");
+        // Full stake: sigma = 1/1.  TPraos mode (raw 512-bit check).
+        let result = check_leader_value(&output, 1, 1, &asc, VrfMode::TPraos).expect("valid");
         assert!(result, "all-zeros VRF output should always qualify as leader");
     }
 
@@ -457,7 +563,7 @@ mod tests {
         let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
         let output = VrfOutput::from_bytes([0xFF; 64]);
         // Small stake: sigma = 1/100.
-        let result = check_leader_value(&output, 1, 100, &asc).expect("valid");
+        let result = check_leader_value(&output, 1, 100, &asc, VrfMode::TPraos).expect("valid");
         assert!(!result, "all-ones VRF output should exceed threshold for small stake");
     }
 
@@ -465,7 +571,7 @@ mod tests {
     fn leader_check_zero_stake_never_leader() {
         let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
         let output = VrfOutput::from_bytes([0u8; 64]);
-        let result = check_leader_value(&output, 0, 1, &asc).expect("valid");
+        let result = check_leader_value(&output, 0, 1, &asc, VrfMode::TPraos).expect("valid");
         assert!(!result, "zero stake should never qualify");
     }
 
@@ -474,5 +580,109 @@ mod tests {
         let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
         let t = leadership_threshold(&asc, 1.0);
         assert!((t - 0.05).abs() < 1e-10);
+    }
+
+    // ----- Era-aware VRF input tests -----
+
+    #[test]
+    fn praos_vrf_input_is_32_bytes() {
+        let nonce = Nonce::Hash([0xAA; 32]);
+        let input = praos_vrf_input(SlotNo(42), nonce);
+        assert_eq!(input.len(), 32, "Praos mkInputVRF produces Blake2b-256 hash");
+    }
+
+    #[test]
+    fn tpraos_vrf_seed_is_32_bytes() {
+        let nonce = Nonce::Hash([0xAA; 32]);
+        let seed = tpraos_vrf_seed(SlotNo(42), nonce, VrfUsage::Leader);
+        assert_eq!(seed.len(), 32, "TPraos mkSeed produces 32-byte XOR'd hash");
+    }
+
+    #[test]
+    fn tpraos_leader_and_nonce_seeds_differ() {
+        let nonce = Nonce::Hash([0xBB; 32]);
+        let leader_seed = tpraos_vrf_seed(SlotNo(100), nonce, VrfUsage::Leader);
+        let nonce_seed = tpraos_vrf_seed(SlotNo(100), nonce, VrfUsage::Nonce);
+        assert_ne!(leader_seed, nonce_seed, "seedL and seedEta must differ");
+    }
+
+    #[test]
+    fn praos_and_tpraos_inputs_differ() {
+        let nonce = Nonce::Hash([0xCC; 32]);
+        let praos = praos_vrf_input(SlotNo(50), nonce);
+        let tpraos_leader = tpraos_vrf_seed(SlotNo(50), nonce, VrfUsage::Leader);
+        let tpraos_nonce = tpraos_vrf_seed(SlotNo(50), nonce, VrfUsage::Nonce);
+        assert_ne!(praos, tpraos_leader, "Praos mkInputVRF != TPraos mkSeed seedL");
+        assert_ne!(praos, tpraos_nonce, "Praos mkInputVRF != TPraos mkSeed seedEta");
+    }
+
+    #[test]
+    fn vrf_input_dispatch_praos() {
+        let nonce = Nonce::Hash([0xDD; 32]);
+        let direct = praos_vrf_input(SlotNo(7), nonce);
+        let dispatched = vrf_input(SlotNo(7), nonce, VrfMode::Praos, VrfUsage::Leader);
+        assert_eq!(direct, dispatched);
+        // Praos ignores usage — nonce variant should also match.
+        let dispatched_n = vrf_input(SlotNo(7), nonce, VrfMode::Praos, VrfUsage::Nonce);
+        assert_eq!(direct, dispatched_n);
+    }
+
+    #[test]
+    fn vrf_input_dispatch_tpraos() {
+        let nonce = Nonce::Hash([0xEE; 32]);
+        let direct = tpraos_vrf_seed(SlotNo(7), nonce, VrfUsage::Leader);
+        let dispatched = vrf_input(SlotNo(7), nonce, VrfMode::TPraos, VrfUsage::Leader);
+        assert_eq!(direct, dispatched);
+    }
+
+    #[test]
+    fn praos_leader_check_uses_256_bit_range() {
+        // Praos range-extends with Blake2b-256("L"||output), so even all-zeros
+        // output becomes a non-trivial hash.  Use f=1 (always leader) to check
+        // that the Praos path itself works without tripping on the hash value.
+        let asc = ActiveSlotCoeff::from_rational(1, 1).expect("valid");
+        let output = VrfOutput::from_bytes([0u8; 64]);
+        let tpraos_result = check_leader_value(&output, 1, 1, &asc, VrfMode::TPraos).expect("ok");
+        let praos_result = check_leader_value(&output, 1, 1, &asc, VrfMode::Praos).expect("ok");
+        // With f=1 and full stake, both paths must elect leader.
+        assert!(tpraos_result);
+        assert!(praos_result);
+    }
+
+    #[test]
+    fn praos_leader_check_rejects_high_hash_small_stake() {
+        // For small stake, both modes should reject high VRF outputs.
+        let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid");
+        let output = VrfOutput::from_bytes([0xFF; 64]);
+        let tpraos = check_leader_value(&output, 1, 100, &asc, VrfMode::TPraos).expect("ok");
+        let praos = check_leader_value(&output, 1, 100, &asc, VrfMode::Praos).expect("ok");
+        assert!(!tpraos);
+        assert!(!praos);
+    }
+
+    #[test]
+    fn mkInputVRF_matches_upstream_blake2b_hash() {
+        // Verify that praos_vrf_input is Blake2b-256 of the raw slot||nonce bytes.
+        let slot = SlotNo(42);
+        let nonce = Nonce::Hash([0xAA; 32]);
+        let raw = raw_vrf_input_bytes(slot, nonce);
+        let expected = hash_bytes_256(&raw).0;
+        let actual = praos_vrf_input(slot, nonce);
+        assert_eq!(actual, expected.to_vec());
+    }
+
+    #[test]
+    fn tpraos_seed_xor_is_reversible() {
+        // XOR with the same tag twice should yield the original base hash.
+        let slot = SlotNo(99);
+        let nonce = Nonce::Hash([0x55; 32]);
+        let base_hash = hash_bytes_256(&raw_vrf_input_bytes(slot, nonce)).0;
+        let seed = tpraos_vrf_seed(slot, nonce, VrfUsage::Leader);
+        let tag = tpraos_seed_tag_hash(VrfUsage::Leader);
+        let mut recovered = [0u8; 32];
+        for i in 0..32 {
+            recovered[i] = seed[i] ^ tag[i];
+        }
+        assert_eq!(recovered, base_hash);
     }
 }

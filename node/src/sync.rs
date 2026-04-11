@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof};
+use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
@@ -2179,26 +2179,30 @@ pub fn verify_block_vrf(
     block: &MultiEraBlock,
     params: &VrfVerificationParams,
 ) -> Result<bool, SyncError> {
-    let (vrf_vkey_bytes, leader_proof, slot) = match block {
+    let (vrf_vkey_bytes, leader_proof, slot, mode) = match block {
         MultiEraBlock::Shelley(s) => (
             s.header.body.vrf_vkey,
             &s.header.body.leader_vrf.proof,
             SlotNo(s.header.body.slot),
+            VrfMode::TPraos,
         ),
         MultiEraBlock::Alonzo(a) => (
             a.header.body.vrf_vkey,
             &a.header.body.leader_vrf.proof,
             SlotNo(a.header.body.slot),
+            VrfMode::TPraos,
         ),
         MultiEraBlock::Babbage(b) => (
             b.header.body.vrf_vkey,
             &b.header.body.vrf_result.proof,
             SlotNo(b.header.body.slot),
+            VrfMode::Praos,
         ),
         MultiEraBlock::Conway(c) => (
             c.header.body.vrf_vkey,
             &c.header.body.vrf_result.proof,
             SlotNo(c.header.body.slot),
+            VrfMode::Praos,
         ),
         MultiEraBlock::Byron { .. } => return Ok(true),
     };
@@ -2212,6 +2216,7 @@ pub fn verify_block_vrf(
         params.sigma_num,
         params.sigma_den,
         &params.active_slot_coeff,
+        mode,
     )
     .map_err(SyncError::Consensus)
 }
