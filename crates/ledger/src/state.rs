@@ -16,6 +16,8 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+type FutureGenesisDelegKey = (u64, GenesisHash);
+
 // ---------------------------------------------------------------------------
 // PPUP (Protocol Parameter Update Proposal) helpers
 // ---------------------------------------------------------------------------
@@ -2452,6 +2454,14 @@ pub struct LedgerState {
     ///
     /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `GenDelegs`.
     gen_delegs: BTreeMap<GenesisHash, GenesisDelegationState>,
+    /// Future genesis delegations scheduled by `GenesisDelegation`
+    /// certificates.
+    ///
+    /// Keyed by `(activation_slot, genesis_hash)` and adopted into
+    /// `gen_delegs` when the current slot reaches `activation_slot`.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.State` — `dsFutureGenDelegs`.
+    future_gen_delegs: BTreeMap<FutureGenesisDelegKey, GenesisDelegationState>,
     /// Pending Shelley-era protocol parameter update proposals keyed by
     /// target epoch and genesis delegate key hash.
     ///
@@ -2822,6 +2832,7 @@ impl CborDecode for LedgerState {
             accounting,
             enact_state,
             gen_delegs,
+            future_gen_delegs: BTreeMap::new(),
             pending_pparam_updates,
             utxos_donation,
             instantaneous_rewards,
@@ -2905,6 +2916,7 @@ impl LedgerState {
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
             gen_delegs: BTreeMap::new(),
+            future_gen_delegs: BTreeMap::new(),
             pending_pparam_updates: BTreeMap::new(),
             utxos_donation: 0,
             instantaneous_rewards: InstantaneousRewards::default(),
@@ -3637,6 +3649,7 @@ impl LedgerState {
         }
 
         self.maybe_activate_pending_shelley_genesis(block.era);
+    self.adopt_scheduled_genesis_delegations(slot);
 
         // Block-level size validation when protocol parameters are available.
         if let Some(params) = &self.protocol_params {
@@ -3699,6 +3712,7 @@ impl LedgerState {
         current_slot: crate::types::SlotNo,
         evaluator: Option<&dyn crate::plutus_validation::PlutusEvaluator>,
     ) -> Result<(), LedgerError> {
+        self.adopt_scheduled_genesis_delegations(current_slot.0);
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         match tx {
             crate::tx::MultiEraSubmittedTx::Shelley(tx) => {
@@ -3800,8 +3814,9 @@ impl LedgerState {
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
+                let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let cert_adj = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -3809,10 +3824,13 @@ impl LedgerState {
                     &mut staged_reward_accounts,
                     &mut staged_deposit_pot,
                     &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
                     &self.governance_actions,
                     &cert_ctx,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
+                    current_slot.0,
+                    self.stability_window,
                 )?;
                 staged.apply_tx_with_withdrawals(
                     crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0,
@@ -3831,6 +3849,7 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                self.future_gen_delegs = staged_future_gen_delegs;
                 accumulate_mir_from_certs(
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
@@ -3939,8 +3958,9 @@ impl LedgerState {
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
+                let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let cert_adj = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -3948,10 +3968,13 @@ impl LedgerState {
                     &mut staged_reward_accounts,
                     &mut staged_deposit_pot,
                     &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
                     &self.governance_actions,
                     &cert_ctx,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
+                    current_slot.0,
+                    self.stability_window,
                 )?;
                 staged.apply_allegra_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -3962,6 +3985,7 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                self.future_gen_delegs = staged_future_gen_delegs;
                 accumulate_mir_from_certs(
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
@@ -4073,8 +4097,9 @@ impl LedgerState {
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
+                let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let cert_adj = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -4082,10 +4107,13 @@ impl LedgerState {
                     &mut staged_reward_accounts,
                     &mut staged_deposit_pot,
                     &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
                     &self.governance_actions,
                     &cert_ctx,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
+                    current_slot.0,
+                    self.stability_window,
                 )?;
                 staged.apply_mary_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -4096,6 +4124,7 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                self.future_gen_delegs = staged_future_gen_delegs;
                 accumulate_mir_from_certs(
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
@@ -4337,8 +4366,9 @@ impl LedgerState {
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
+                let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let cert_adj = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -4346,10 +4376,13 @@ impl LedgerState {
                     &mut staged_reward_accounts,
                     &mut staged_deposit_pot,
                     &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
                     &self.governance_actions,
                     &cert_ctx,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
+                    current_slot.0,
+                    self.stability_window,
                 )?;
                 staged.apply_alonzo_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -4360,6 +4393,7 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                self.future_gen_delegs = staged_future_gen_delegs;
                 accumulate_mir_from_certs(
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
@@ -4618,8 +4652,9 @@ impl LedgerState {
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
+                let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
                 let cert_ctx = self.certificate_validation_context();
-                let cert_adj = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -4627,10 +4662,13 @@ impl LedgerState {
                     &mut staged_reward_accounts,
                     &mut staged_deposit_pot,
                     &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
                     &self.governance_actions,
                     &cert_ctx,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
+                    current_slot.0,
+                    self.stability_window,
                 )?;
                 staged.apply_babbage_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -4641,6 +4679,7 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                self.future_gen_delegs = staged_future_gen_delegs;
                 accumulate_mir_from_certs(
                     &mut self.instantaneous_rewards,
                     tx.body.certificates.as_deref(),
@@ -4955,6 +4994,7 @@ impl LedgerState {
                 let mut staged_reward_accounts = self.reward_accounts.clone();
                 let mut staged_deposit_pot = self.deposit_pot.clone();
                 let mut staged_gen_delegs = self.gen_delegs.clone();
+                let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
                 let mut staged_governance_actions = self.governance_actions.clone();
                 let mut staged_num_dormant = self.num_dormant_epochs;
                 let cert_ctx = self.certificate_validation_context();
@@ -5072,7 +5112,7 @@ impl LedgerState {
                     );
                 }
 
-                let cert_adj = apply_certificates_and_withdrawals(
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
                     &mut staged_pool_state,
                     &mut staged_stake_credentials,
                     &mut staged_committee_state,
@@ -5080,10 +5120,13 @@ impl LedgerState {
                     &mut staged_reward_accounts,
                     &mut staged_deposit_pot,
                     &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
                     &self.governance_actions,
                     &cert_ctx,
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
+                    current_slot.0,
+                    self.stability_window,
                 )?;
                 // Track DRep activity for registration and update certificates.
                 touch_drep_activity_for_certs(
@@ -5119,6 +5162,7 @@ impl LedgerState {
                 self.reward_accounts = staged_reward_accounts;
                 self.deposit_pot = staged_deposit_pot;
                 self.gen_delegs = staged_gen_delegs;
+                self.future_gen_delegs = staged_future_gen_delegs;
                 self.governance_actions = staged_governance_actions;
                 self.num_dormant_epochs = staged_num_dormant;
             }
@@ -5202,6 +5246,14 @@ impl LedgerState {
         }
     }
 
+    fn adopt_scheduled_genesis_delegations(&mut self, current_slot: u64) {
+        apply_scheduled_genesis_delegations(
+            &mut self.gen_delegs,
+            &mut self.future_gen_delegs,
+            current_slot,
+        );
+    }
+
     // -- Private per-era apply helpers --------------------------------------
 
     fn apply_byron_block(
@@ -5259,6 +5311,7 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
+        let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
         // Pre-compute genesis delegate key hash set for MIR quorum validation
         // (uses pre-block gen_delegs per upstream UTXOW rule).
@@ -5346,7 +5399,7 @@ impl LedgerState {
                 &required_scripts,
                 None, // Shelley: no reference inputs
             )?;
-            let cert_adj = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals_with_future(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -5354,10 +5407,13 @@ impl LedgerState {
                 &mut staged_reward_accounts,
                 &mut staged_deposit_pot,
                 &mut staged_gen_delegs,
+                &mut staged_future_gen_delegs,
                 &self.governance_actions,
                 &cert_ctx,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
+                slot,
+                self.stability_window,
             )?;
             staged.apply_tx_with_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
@@ -5370,6 +5426,7 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        self.future_gen_delegs = staged_future_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
         let ppup_ctx = self.ppup_slot_context(slot);
@@ -5412,6 +5469,7 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
+        let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
         // Pre-compute genesis delegate key hash set for MIR quorum validation.
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
@@ -5492,7 +5550,7 @@ impl LedgerState {
                 &required_scripts,
                 None, // Allegra: no reference inputs
             )?;
-            let cert_adj = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals_with_future(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -5500,10 +5558,13 @@ impl LedgerState {
                 &mut staged_reward_accounts,
                 &mut staged_deposit_pot,
                 &mut staged_gen_delegs,
+                &mut staged_future_gen_delegs,
                 &self.governance_actions,
                 &cert_ctx,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
+                slot,
+                self.stability_window,
             )?;
             staged.apply_allegra_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
@@ -5515,6 +5576,7 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        self.future_gen_delegs = staged_future_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
         let ppup_ctx = self.ppup_slot_context(slot);
@@ -5557,6 +5619,7 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
+        let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
@@ -5636,7 +5699,7 @@ impl LedgerState {
                 &required_scripts,
                 None, // Mary: no reference inputs
             )?;
-            let cert_adj = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals_with_future(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -5644,10 +5707,13 @@ impl LedgerState {
                 &mut staged_reward_accounts,
                 &mut staged_deposit_pot,
                 &mut staged_gen_delegs,
+                &mut staged_future_gen_delegs,
                 &self.governance_actions,
                 &cert_ctx,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
+                slot,
+                self.stability_window,
             )?;
             staged.apply_mary_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
@@ -5659,6 +5725,7 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        self.future_gen_delegs = staged_future_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
         let ppup_ctx = self.ppup_slot_context(slot);
@@ -5710,6 +5777,7 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
+        let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
@@ -5933,7 +6001,7 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
-            let cert_adj = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals_with_future(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -5941,10 +6009,13 @@ impl LedgerState {
                 &mut staged_reward_accounts,
                 &mut staged_deposit_pot,
                 &mut staged_gen_delegs,
+                &mut staged_future_gen_delegs,
                 &self.governance_actions,
                 &cert_ctx,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
+                slot,
+                self.stability_window,
             )?;
             staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
             } else {
@@ -5976,6 +6047,7 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        self.future_gen_delegs = staged_future_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
         // Skip is_valid=false transactions — upstream alonzoEvalScriptsTxInvalid
@@ -6031,6 +6103,7 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
+        let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
         for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
@@ -6276,7 +6349,7 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
-            let cert_adj = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals_with_future(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -6284,10 +6357,13 @@ impl LedgerState {
                 &mut staged_reward_accounts,
                 &mut staged_deposit_pot,
                 &mut staged_gen_delegs,
+                &mut staged_future_gen_delegs,
                 &self.governance_actions,
                 &cert_ctx,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
+                slot,
+                self.stability_window,
             )?;
             staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
             } else {
@@ -6320,6 +6396,7 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        self.future_gen_delegs = staged_future_gen_delegs;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
         // Skip is_valid=false transactions — upstream alonzoEvalScriptsTxInvalid
@@ -6396,6 +6473,7 @@ impl LedgerState {
         let mut staged_reward_accounts = self.reward_accounts.clone();
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
+        let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let mut staged_governance_actions = self.governance_actions.clone();
         let mut staged_utxos_donation: u64 = 0;
         let mut staged_num_dormant = self.num_dormant_epochs;
@@ -6806,7 +6884,7 @@ impl LedgerState {
                     &mut staged_governance_actions,
                 );
             }
-            let cert_adj = apply_certificates_and_withdrawals(
+            let cert_adj = apply_certificates_and_withdrawals_with_future(
                 &mut staged_pool_state,
                 &mut staged_stake_credentials,
                 &mut staged_committee_state,
@@ -6814,10 +6892,13 @@ impl LedgerState {
                 &mut staged_reward_accounts,
                 &mut staged_deposit_pot,
                 &mut staged_gen_delegs,
+                &mut staged_future_gen_delegs,
                 &self.governance_actions,
                 &cert_ctx,
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
+                slot,
+                self.stability_window,
             )?;
             // Track DRep activity for registration and update certificates.
             touch_drep_activity_for_certs(
@@ -6874,6 +6955,7 @@ impl LedgerState {
         self.reward_accounts = staged_reward_accounts;
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
+        self.future_gen_delegs = staged_future_gen_delegs;
         self.governance_actions = staged_governance_actions;
         self.utxos_donation = self.utxos_donation.saturating_add(staged_utxos_donation);
         self.num_dormant_epochs = staged_num_dormant;
@@ -7994,6 +8076,35 @@ struct CertBalanceAdjustment {
     total_refunds: u64,
 }
 
+fn apply_scheduled_genesis_delegations(
+    gen_delegs: &mut BTreeMap<GenesisHash, GenesisDelegationState>,
+    future_gen_delegs: &mut BTreeMap<FutureGenesisDelegKey, GenesisDelegationState>,
+    current_slot: u64,
+) {
+    let mut ready: Vec<(FutureGenesisDelegKey, GenesisDelegationState)> = Vec::new();
+    for (key, value) in future_gen_delegs.iter() {
+        if key.0 > current_slot {
+            break;
+        }
+        ready.push((*key, value.clone()));
+    }
+
+    for (key, value) in ready {
+        future_gen_delegs.remove(&key);
+        gen_delegs.insert(key.1, value);
+    }
+}
+
+fn schedule_future_genesis_delegation(
+    future_gen_delegs: &mut BTreeMap<FutureGenesisDelegKey, GenesisDelegationState>,
+    activation_slot: u64,
+    genesis_hash: GenesisHash,
+    delegation: GenesisDelegationState,
+) {
+    future_gen_delegs.retain(|(_, existing_genesis_hash), _| *existing_genesis_hash != genesis_hash);
+    future_gen_delegs.insert((activation_slot, genesis_hash), delegation);
+}
+
 /// Scans a certificate list for `MoveInstantaneousReward` entries and
 /// accumulates their effects into the given `InstantaneousRewards` state.
 ///
@@ -8061,6 +8172,42 @@ fn apply_certificates_and_withdrawals(
     ctx: &CertificateValidationContext,
     certificates: Option<&[DCert]>,
     withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
+) -> Result<CertBalanceAdjustment, LedgerError> {
+    let mut future_gen_delegs = BTreeMap::new();
+    apply_certificates_and_withdrawals_with_future(
+        pool_state,
+        stake_credentials,
+        committee_state,
+        drep_state,
+        reward_accounts,
+        deposit_pot,
+        gen_delegs,
+        &mut future_gen_delegs,
+        governance_actions,
+        ctx,
+        certificates,
+        withdrawals,
+        0,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_certificates_and_withdrawals_with_future(
+    pool_state: &mut PoolState,
+    stake_credentials: &mut StakeCredentials,
+    committee_state: &mut CommitteeState,
+    drep_state: &mut DrepState,
+    reward_accounts: &mut RewardAccounts,
+    deposit_pot: &mut DepositPot,
+    gen_delegs: &mut BTreeMap<GenesisHash, GenesisDelegationState>,
+    future_gen_delegs: &mut BTreeMap<FutureGenesisDelegKey, GenesisDelegationState>,
+    governance_actions: &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
+    ctx: &CertificateValidationContext,
+    certificates: Option<&[DCert]>,
+    withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
+    current_slot: u64,
+    stability_window: Option<u64>,
 ) -> Result<CertBalanceAdjustment, LedgerError> {
     let key_deposit = ctx.key_deposit;
     let pool_deposit = ctx.pool_deposit;
@@ -8422,8 +8569,10 @@ fn apply_certificates_and_withdrawals(
                         });
                     }
                     // DELEG rule: delegate key must not be used by another
-                    // genesis key.
-                    // Upstream: `DuplicateGenesisDelegateDELEG`.
+                    // genesis key in either current (`gen_delegs`) or
+                    // future (`future_gen_delegs`) mappings.
+                    // Upstream: `DuplicateGenesisDelegateDELEG` checks both
+                    // current and future maps.
                     for (other_gk, other_ds) in gen_delegs.iter() {
                         if other_gk != genesis_hash && other_ds.delegate == *delegate_hash {
                             return Err(LedgerError::DuplicateGenesisDelegate {
@@ -8431,9 +8580,17 @@ fn apply_certificates_and_withdrawals(
                             });
                         }
                     }
+                    for ((_, other_gk), other_ds) in future_gen_delegs.iter() {
+                        if other_gk != genesis_hash && other_ds.delegate == *delegate_hash {
+                            return Err(LedgerError::DuplicateGenesisDelegate {
+                                delegate_hash: *delegate_hash,
+                            });
+                        }
+                    }
                     // DELEG rule: VRF key must not be used by another genesis
-                    // key.
-                    // Upstream: `DuplicateGenesisVRFDELEG`.
+                    // key in either current or future mappings.
+                    // Upstream: `DuplicateGenesisVRFDELEG` checks both current
+                    // and future maps.
                     for (other_gk, other_ds) in gen_delegs.iter() {
                         if other_gk != genesis_hash && other_ds.vrf == *vrf_hash {
                             return Err(LedgerError::DuplicateGenesisVrf {
@@ -8441,10 +8598,30 @@ fn apply_certificates_and_withdrawals(
                             });
                         }
                     }
-                    gen_delegs.insert(*genesis_hash, GenesisDelegationState {
+                    for ((_, other_gk), other_ds) in future_gen_delegs.iter() {
+                        if other_gk != genesis_hash && other_ds.vrf == *vrf_hash {
+                            return Err(LedgerError::DuplicateGenesisVrf {
+                                vrf_hash: *vrf_hash,
+                            });
+                        }
+                    }
+
+                    let deleg = GenesisDelegationState {
                         delegate: *delegate_hash,
                         vrf: *vrf_hash,
-                    });
+                    };
+
+                    if let Some(sw) = stability_window {
+                        let activation_slot = current_slot.saturating_add(sw);
+                        schedule_future_genesis_delegation(
+                            future_gen_delegs,
+                            activation_slot,
+                            *genesis_hash,
+                            deleg,
+                        );
+                    } else {
+                        gen_delegs.insert(*genesis_hash, deleg);
+                    }
                 }
                 DCert::MoveInstantaneousReward(_pot, _target) => {
                     // MIR certs are recorded but the actual reserves/treasury
@@ -17150,6 +17327,102 @@ mod tests {
         ).unwrap();
         assert_eq!(gd[&[0xA0; 28]].delegate, [0xB1; 28]);
         assert_eq!(gd[&[0xA0; 28]].vrf, [0xC1; 32]);
+    }
+
+    #[test]
+    fn test_cert_genesis_delegation_scheduled_and_adopted() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut future_gd = std::collections::BTreeMap::new();
+        gd.insert([0xA0; 28], GenesisDelegationState {
+            delegate: [0xB0; 28],
+            vrf: [0xC0; 32],
+        });
+        let ctx = sample_cert_ctx();
+        let certs = vec![DCert::GenesisDelegation([0xA0; 28], [0xB1; 28], [0xC1; 32])];
+
+        apply_certificates_and_withdrawals_with_future(
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut future_gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+        )
+        .unwrap();
+
+        // Not yet adopted before activation slot.
+        assert_eq!(gd[&[0xA0; 28]].delegate, [0xB0; 28]);
+        apply_scheduled_genesis_delegations(&mut gd, &mut future_gd, 104);
+        assert_eq!(gd[&[0xA0; 28]].delegate, [0xB0; 28]);
+
+        // Adopt at activation slot.
+        apply_scheduled_genesis_delegations(&mut gd, &mut future_gd, 105);
+        assert_eq!(gd[&[0xA0; 28]].delegate, [0xB1; 28]);
+        assert!(future_gd.is_empty());
+    }
+
+    #[test]
+    fn test_cert_genesis_delegation_duplicate_checks_future_map() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut future_gd = std::collections::BTreeMap::new();
+        gd.insert([0xA0; 28], GenesisDelegationState {
+            delegate: [0xB0; 28],
+            vrf: [0xC0; 32],
+        });
+        gd.insert([0xA1; 28], GenesisDelegationState {
+            delegate: [0xB1; 28],
+            vrf: [0xC1; 32],
+        });
+        schedule_future_genesis_delegation(
+            &mut future_gd,
+            120,
+            [0xA1; 28],
+            GenesisDelegationState {
+                delegate: [0xB9; 28],
+                vrf: [0xC9; 32],
+            },
+        );
+
+        let ctx = sample_cert_ctx();
+        let certs = vec![DCert::GenesisDelegation([0xA0; 28], [0xB9; 28], [0xCA; 32])];
+        let err = apply_certificates_and_withdrawals_with_future(
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut future_gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LedgerError::DuplicateGenesisDelegate { .. }));
     }
 
     #[test]
