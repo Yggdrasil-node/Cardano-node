@@ -9572,9 +9572,11 @@ impl VoteTally {
     pub fn meets_threshold(&self, threshold: &UnitInterval) -> bool {
         let active = self.total.saturating_sub(self.abstain);
         if active == 0 {
-            // All eligible voters abstained — action is accepted per upstream
-            // convention (vacuous quorum).
-            return true;
+            // Upstream: `a %? b = if b == 0 then 0 else a % b`
+            // (Cardano.Ledger.BaseTypes).  A zero ratio only meets a zero
+            // threshold (`r == minBound` short-circuit in committeeAccepted,
+            // dRepAccepted, spoAccepted).
+            return threshold.numerator == 0;
         }
         // yes * denominator >= threshold_numerator * active
         (self.yes as u128) * (threshold.denominator as u128)
@@ -9936,16 +9938,17 @@ pub(crate) fn accepted_by_dreps(
         return true; // no DRep vote required for this action type
     };
 
-    // AlwaysNoConfidence stake counts as "Yes" for NoConfidence and
-    // UpdateCommittee-in-state-of-no-confidence actions.
+    // AlwaysNoConfidence stake counts as "Yes" only for NoConfidence actions.
+    //
+    // Upstream reference: `dRepAcceptedRatio` in
+    // `Cardano.Ledger.Conway.Rules.Ratify`:
+    //   DRepAlwaysNoConfidence ->
+    //     case govAction of
+    //       NoConfidence _ -> (yes + stake, tot + stake)
+    //       _              -> (yes, tot + stake)
     let count_no_confidence_as_yes = matches!(
         &action.proposal.gov_action,
         crate::eras::conway::GovAction::NoConfidence { .. }
-    ) || (
-        matches!(
-            &action.proposal.gov_action,
-            crate::eras::conway::GovAction::UpdateCommittee { .. }
-        ) && !conway_committee_is_elected(committee_state)
     );
 
     let tally = tally_drep_votes(
@@ -12516,10 +12519,12 @@ mod tests {
     }
 
     #[test]
-    fn tally_vacuous_quorum_all_abstain() {
+    fn tally_all_abstain_fails_positive_threshold() {
+        // All abstain → active = 0 → upstream `%?` returns 0 → fails
+        // any positive threshold (only `r == minBound` passes).
         let tally = VoteTally { yes: 0, no: 0, abstain: 100, total: 100 };
         let threshold = UnitInterval { numerator: 67, denominator: 100 };
-        assert!(tally.meets_threshold(&threshold));
+        assert!(!tally.meets_threshold(&threshold));
     }
 
     #[test]
@@ -12531,9 +12536,18 @@ mod tests {
     }
 
     #[test]
-    fn tally_zero_total_is_vacuous() {
+    fn tally_zero_total_fails_positive_threshold() {
+        // Zero total → active = 0 → upstream `%?` returns 0 → fails.
         let tally = VoteTally { yes: 0, no: 0, abstain: 0, total: 0 };
         let threshold = UnitInterval { numerator: 1, denominator: 2 };
+        assert!(!tally.meets_threshold(&threshold));
+    }
+
+    #[test]
+    fn tally_zero_total_passes_zero_threshold() {
+        // Zero total + zero threshold → upstream `r == minBound` → passes.
+        let tally = VoteTally { yes: 0, no: 0, abstain: 0, total: 0 };
+        let threshold = UnitInterval { numerator: 0, denominator: 1 };
         assert!(tally.meets_threshold(&threshold));
     }
 
@@ -13788,9 +13802,10 @@ mod tests {
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
-        // All abstain → vacuous quorum → passes any threshold.
+        // All abstain → active = 0 → upstream `%?` returns 0 → fails
+        // any positive threshold.
         let threshold = UnitInterval { numerator: 99, denominator: 100 };
-        assert!(tally.meets_threshold(&threshold));
+        assert!(!tally.meets_threshold(&threshold));
     }
 
     // -----------------------------------------------------------------------
@@ -13875,14 +13890,15 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn spo_tally_empty_pool_distribution() {
+    fn spo_tally_empty_pool_distribution_fails_positive_threshold() {
         let action = test_hf_action();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let tally = tally_spo_votes(&action, &pool_dist);
         assert_eq!(tally.total, 0);
-        // Zero total is vacuous → meets any threshold.
+        // Zero total → active = 0 → upstream `%?` returns 0 → fails
+        // any positive threshold.
         let threshold = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(tally.meets_threshold(&threshold));
+        assert!(!tally.meets_threshold(&threshold));
     }
 
     #[test]
@@ -13911,9 +13927,9 @@ mod tests {
         let tally = tally_spo_votes(&action, &pool_dist);
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
-        // All abstain → vacuous quorum.
+        // All abstain → active = 0 → fails positive threshold.
         let threshold = UnitInterval { numerator: 99, denominator: 100 };
-        assert!(tally.meets_threshold(&threshold));
+        assert!(!tally.meets_threshold(&threshold));
     }
 
     // -----------------------------------------------------------------------
@@ -13921,15 +13937,16 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn committee_tally_empty_committee_is_vacuous() {
+    fn committee_tally_empty_committee_fails_positive_threshold() {
         let action = test_hf_action();
         let cs = CommitteeState::default();
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.total, 0);
-        // Vacuous → passes any quorum.
+        // Empty committee → active = 0 → upstream `%?` returns 0 → fails
+        // any positive threshold.
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(tally.meets_threshold(&quorum));
+        assert!(!tally.meets_threshold(&quorum));
     }
 
     #[test]
@@ -14083,17 +14100,17 @@ mod tests {
     }
 
     #[test]
-    fn committee_all_expired_is_vacuous() {
-        // All members expired → total=0 → vacuously passes.
+    fn committee_all_expired_fails_positive_threshold() {
+        // All members expired → total=0 → fails positive threshold.
         let action = test_hf_action();
         let mut cs = CommitteeState::default();
         cs.register_with_term(StakeCredential::AddrKeyHash([1; 28]), 1);
         cs.register_with_term(StakeCredential::AddrKeyHash([2; 28]), 1);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(10));
-        assert_eq!(tally.total, 0, "all expired → vacuous");
+        assert_eq!(tally.total, 0, "all expired");
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(tally.meets_threshold(&quorum));
+        assert!(!tally.meets_threshold(&quorum));
     }
 
     // -----------------------------------------------------------------------
@@ -14727,9 +14744,9 @@ mod tests {
     }
 
     #[test]
-    fn ratify_empty_committee_is_vacuous() {
-        // No CC members → accepted_by_committee returns vacuous pass for
-        // non-Info actions.
+    fn ratify_empty_committee_fails_positive_quorum() {
+        // No CC members → accepted_by_committee fails (positive quorum
+        // threshold with zero active members → upstream `%?` returns 0).
         let mut action = test_hf_action();
         let cs = CommitteeState::default(); // empty
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
@@ -14738,7 +14755,7 @@ mod tests {
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
-        assert!(ratify_action(
+        assert!(!ratify_action(
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
@@ -14747,8 +14764,8 @@ mod tests {
     }
 
     #[test]
-    fn ratify_all_dreps_abstain_is_vacuous_pass() {
-        // All DReps abstain → vacuous quorum → DRep check passes.
+    fn ratify_all_dreps_abstain_fails_positive_threshold() {
+        // All DReps abstain → active = 0 → fails positive DRep threshold.
         let mut action = test_hf_action();
         let (cs, quorum) = setup_cc_one_yes(&mut action);
 
@@ -14763,7 +14780,7 @@ mod tests {
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
-        assert!(ratify_action(
+        assert!(!ratify_action(
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
@@ -14772,8 +14789,9 @@ mod tests {
     }
 
     #[test]
-    fn ratify_no_dreps_registered_is_vacuous() {
-        // No registered DReps → total=0 → vacuous pass.
+    fn ratify_no_dreps_registered_fails_positive_threshold() {
+        // No registered DReps → total=0 → active=0 → fails positive
+        // threshold.
         let mut action = test_hf_action();
         let (cs, quorum) = setup_cc_one_yes(&mut action);
 
@@ -14784,7 +14802,7 @@ mod tests {
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
-        assert!(ratify_action(
+        assert!(!ratify_action(
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
@@ -14793,8 +14811,9 @@ mod tests {
     }
 
     #[test]
-    fn ratify_no_pools_registered_is_vacuous_for_hf() {
-        // HF requires SPO vote. No pools → total=0 → vacuous pass.
+    fn ratify_no_pools_registered_fails_positive_threshold() {
+        // HF requires SPO vote. No pools → total=0 → active=0 → fails
+        // positive threshold.
         let mut action = test_hf_action();
         let (cs, quorum) = setup_cc_one_yes(&mut action);
         let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
@@ -14803,7 +14822,7 @@ mod tests {
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
-        assert!(ratify_action(
+        assert!(!ratify_action(
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
