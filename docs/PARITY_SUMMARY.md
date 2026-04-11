@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4032 workspace tests passing, 56 audit rounds covering 540+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4035 workspace tests passing, 56 audit rounds covering 540+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -67,7 +67,7 @@
 **Consensus**:
 - `verify_praos_header()` — Slot leader validation (VRF + OpCert)
 - `verify_shelley_header()` — Shelley-era header validation
-- `verify_block_vrf()` — VRF proof verification with era-aware leader-value check (TPraos raw-512-bit / Praos range-extended-256-bit)
+- `verify_block_vrf()` — VRF proof verification with era-aware leader-value check (TPraos raw-512-bit / Praos range-extended-256-bit) and TPraos nonce proof verification (upstream `vrfChecks` `bheaderEta`)
 - `validate_block_protocol_version()` — Era/protocol-version consistency (hard-fork combinator parity)
 - `validate_block_body_size()` — Declared vs actual body size (upstream `WrongBlockBodySizeBBODY`)
 - `self_validate_forged_block()` — Local forged-block guardrail before persistence (protocol-version/body-hash/body-size/header-identity checks)

@@ -274,6 +274,62 @@ fn verify_leader_proof_rejects_truncated_proof() {
 }
 
 // ---------------------------------------------------------------------------
+// TPraos nonce VRF proof verification
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_nonce_proof_round_trip() {
+    use yggdrasil_consensus::verify_nonce_proof;
+    // Produce a nonce proof using the TPraos nonce VRF input, then verify it.
+    let seed = [0x44u8; VRF_SEED_SIZE];
+    let sk = VrfSecretKey::from_seed(seed);
+    let vk = sk.verification_key();
+    let slot = SlotNo(200);
+    let epoch_nonce = Nonce::Hash([0xDD; 32]);
+    // Compute the TPraos nonce VRF input and produce a proof.
+    let nonce_input = vrf_input(slot, epoch_nonce, VrfMode::TPraos, VrfUsage::Nonce);
+    let (_, proof) = sk.prove(&nonce_input).expect("prove ok");
+    let proof_bytes = proof.to_bytes();
+    // Verify the nonce proof.
+    let result = verify_nonce_proof(&vk, slot, epoch_nonce, &proof_bytes);
+    assert!(result.is_ok(), "valid nonce proof should verify");
+}
+
+#[test]
+fn verify_nonce_proof_rejects_leader_proof() {
+    use yggdrasil_consensus::verify_nonce_proof;
+    // A leader proof must not pass nonce verification (different VRF input).
+    let seed = [0x55u8; VRF_SEED_SIZE];
+    let sk = VrfSecretKey::from_seed(seed);
+    let vk = sk.verification_key();
+    let slot = SlotNo(300);
+    let epoch_nonce = Nonce::Hash([0xEE; 32]);
+    // Produce a leader proof (not a nonce proof).
+    let leader_input = vrf_input(slot, epoch_nonce, VrfMode::TPraos, VrfUsage::Leader);
+    let (_, proof) = sk.prove(&leader_input).expect("prove ok");
+    let proof_bytes = proof.to_bytes();
+    // Nonce verification should reject the leader proof.
+    let result = verify_nonce_proof(&vk, slot, epoch_nonce, &proof_bytes);
+    assert!(result.is_err(), "leader proof should not verify as nonce proof");
+}
+
+#[test]
+fn verify_nonce_proof_rejects_wrong_slot() {
+    use yggdrasil_consensus::verify_nonce_proof;
+    let seed = [0x66u8; VRF_SEED_SIZE];
+    let sk = VrfSecretKey::from_seed(seed);
+    let vk = sk.verification_key();
+    let slot = SlotNo(400);
+    let epoch_nonce = Nonce::Hash([0xFF; 32]);
+    let nonce_input = vrf_input(slot, epoch_nonce, VrfMode::TPraos, VrfUsage::Nonce);
+    let (_, proof) = sk.prove(&nonce_input).expect("prove ok");
+    let proof_bytes = proof.to_bytes();
+    // Wrong slot should fail.
+    let result = verify_nonce_proof(&vk, SlotNo(401), epoch_nonce, &proof_bytes);
+    assert!(result.is_err(), "nonce proof for slot 400 should not verify at slot 401");
+}
+
+// ---------------------------------------------------------------------------
 // OpCert
 // ---------------------------------------------------------------------------
 

@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof};
+use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof, verify_nonce_proof};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
@@ -2179,28 +2179,34 @@ pub fn verify_block_vrf(
     block: &MultiEraBlock,
     params: &VrfVerificationParams,
 ) -> Result<bool, SyncError> {
-    let (vrf_vkey_bytes, leader_proof, slot, mode) = match block {
+    // Extract VRF fields per era.  TPraos blocks carry two proofs (leader + nonce);
+    // Praos blocks carry a single unified proof.
+    let (vrf_vkey_bytes, leader_proof, nonce_proof, slot, mode) = match block {
         MultiEraBlock::Shelley(s) => (
             s.header.body.vrf_vkey,
             &s.header.body.leader_vrf.proof,
+            Some(&s.header.body.nonce_vrf.proof),
             SlotNo(s.header.body.slot),
             VrfMode::TPraos,
         ),
         MultiEraBlock::Alonzo(a) => (
             a.header.body.vrf_vkey,
             &a.header.body.leader_vrf.proof,
+            Some(&a.header.body.nonce_vrf.proof),
             SlotNo(a.header.body.slot),
             VrfMode::TPraos,
         ),
         MultiEraBlock::Babbage(b) => (
             b.header.body.vrf_vkey,
             &b.header.body.vrf_result.proof,
+            None,
             SlotNo(b.header.body.slot),
             VrfMode::Praos,
         ),
         MultiEraBlock::Conway(c) => (
             c.header.body.vrf_vkey,
             &c.header.body.vrf_result.proof,
+            None,
             SlotNo(c.header.body.slot),
             VrfMode::Praos,
         ),
@@ -2208,7 +2214,9 @@ pub fn verify_block_vrf(
     };
 
     let vk = VrfVerificationKey::from_bytes(vrf_vkey_bytes);
-    verify_leader_proof(
+
+    // 1. Verify leader VRF proof and check leader threshold.
+    let leader_ok = verify_leader_proof(
         &vk,
         slot,
         params.epoch_nonce,
@@ -2218,7 +2226,16 @@ pub fn verify_block_vrf(
         &params.active_slot_coeff,
         mode,
     )
-    .map_err(SyncError::Consensus)
+    .map_err(SyncError::Consensus)?;
+
+    // 2. For TPraos blocks, also verify the nonce VRF proof (upstream `vrfChecks`
+    //    verifies both `bheaderEta` and `bheaderL`).
+    if let Some(np) = nonce_proof {
+        verify_nonce_proof(&vk, slot, params.epoch_nonce, np)
+            .map_err(SyncError::Consensus)?;
+    }
+
+    Ok(leader_ok)
 }
 
 /// Extract the issuer's cold verification key bytes from a multi-era block.

@@ -50,5 +50,5 @@ pub use opcert::{OcertCounters, OpCert, check_kes_period, kes_period_of_slot};
 pub use praos::{
     ActiveSlotCoeff, VrfMode, VrfUsage, check_is_leader, check_leader_value,
     leadership_threshold, praos_vrf_input, tpraos_vrf_seed,
-    verify_leader_proof, vrf_input,
+    verify_leader_proof, verify_nonce_proof, vrf_input,
 };

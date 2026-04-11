@@ -446,6 +446,40 @@ pub fn verify_leader_proof(
     check_leader_value(&output, sigma_num, sigma_den, active_slot_coeff, mode)
 }
 
+/// Verifies a TPraos nonce VRF proof (`bheaderEta`) for a Shelley-through-Alonzo
+/// block header.
+///
+/// For TPraos-era blocks, the header carries a separate nonce VRF proof computed
+/// with `mkSeed seedEta slot eta0`. This function cryptographically verifies that
+/// proof against the block producer's VRF verification key.
+///
+/// For Praos-era blocks (Babbage/Conway), there is no separate nonce proof — the
+/// single unified VRF result covers both leader election and nonce contribution.
+/// Callers should skip this function for Praos blocks.
+///
+/// Reference: `vrfChecks` in `Cardano.Protocol.TPraos.OCert` /
+/// `Cardano.Ledger.Shelley.Rules.Overlay` — verifies `bheaderEta` with
+/// `mkSeed seedEta slot eta0`.
+pub fn verify_nonce_proof(
+    vk: &VrfVerificationKey,
+    slot: SlotNo,
+    epoch_nonce: Nonce,
+    nonce_proof_bytes: &[u8],
+) -> Result<(), ConsensusError> {
+    use yggdrasil_crypto::vrf::{VrfProof, VRF_PROOF_SIZE};
+
+    let proof_arr: [u8; VRF_PROOF_SIZE] = nonce_proof_bytes
+        .try_into()
+        .map_err(|_| ConsensusError::InvalidVrfProof)?;
+    let proof = VrfProof::from_bytes(proof_arr);
+
+    let input = tpraos_vrf_seed(slot, epoch_nonce, VrfUsage::Nonce);
+    vk.verify(&input, &proof)
+        .map_err(|_| ConsensusError::InvalidVrfProof)?;
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
