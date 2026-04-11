@@ -1546,6 +1546,13 @@ pub struct EnactState {
     pub constitution: crate::eras::conway::Constitution,
     /// Committee quorum threshold (ratio of yes-votes needed).
     pub committee_quorum: UnitInterval,
+    /// Whether a committee currently exists.
+    ///
+    /// After `NoConfidence`, upstream sets `ensCommitteeL = SNothing`,
+    /// causing `committeeAccepted` to return `False` for all
+    /// committee-requiring actions.  `UpdateCommittee` re-establishes
+    /// the committee (`SJust`).
+    pub has_committee: bool,
     /// Most recently enacted `ParameterChange` action ID.
     pub prev_pparams_update: Option<crate::eras::conway::GovActionId>,
     /// Most recently enacted `HardForkInitiation` action ID.
@@ -1570,6 +1577,7 @@ impl Default for EnactState {
                 numerator: 0,
                 denominator: 1,
             },
+            has_committee: true,
             prev_pparams_update: None,
             prev_hard_fork: None,
             prev_committee: None,
@@ -1580,9 +1588,10 @@ impl Default for EnactState {
 
 impl CborEncode for EnactState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(6);
+        enc.array(7);
         self.constitution.encode_cbor(enc);
         self.committee_quorum.encode_cbor(enc);
+        enc.bool(self.has_committee);
         encode_optional_gov_action_id(self.prev_pparams_update.as_ref(), enc);
         encode_optional_gov_action_id(self.prev_hard_fork.as_ref(), enc);
         encode_optional_gov_action_id(self.prev_committee.as_ref(), enc);
@@ -1593,14 +1602,15 @@ impl CborEncode for EnactState {
 impl CborDecode for EnactState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 6 {
+        if len != 6 && len != 7 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 6,
+                expected: 7,
                 actual: len as usize,
             });
         }
         let constitution = crate::eras::conway::Constitution::decode_cbor(dec)?;
         let committee_quorum = UnitInterval::decode_cbor(dec)?;
+        let has_committee = if len >= 7 { dec.bool()? } else { true };
         let prev_pparams_update = decode_optional_gov_action_id(dec)?;
         let prev_hard_fork = decode_optional_gov_action_id(dec)?;
         let prev_committee = decode_optional_gov_action_id(dec)?;
@@ -1608,6 +1618,7 @@ impl CborDecode for EnactState {
         Ok(Self {
             constitution,
             committee_quorum,
+            has_committee,
             prev_pparams_update,
             prev_hard_fork,
             prev_committee,
@@ -1776,6 +1787,7 @@ fn enact_gov_action_at_epoch(
                 numerator: 0,
                 denominator: 1,
             };
+            enact.has_committee = false;
             enact.prev_committee = Some(action_id);
             let _ = count; // suppress unused; count is informational
             EnactOutcome::CommitteeRemoved
@@ -1813,6 +1825,7 @@ fn enact_gov_action_at_epoch(
                 }
             }
             enact.committee_quorum = *quorum;
+            enact.has_committee = true;
             enact.prev_committee = Some(action_id);
             EnactOutcome::CommitteeUpdated {
                 members_removed: removed,
@@ -9885,6 +9898,7 @@ pub(crate) fn accepted_by_committee(
     current_epoch: EpochNo,
     min_committee_size: u64,
     is_bootstrap_phase: bool,
+    has_committee: bool,
 ) -> bool {
     use crate::eras::conway::GovAction;
 
@@ -9896,8 +9910,13 @@ pub(crate) fn accepted_by_committee(
         GovAction::InfoAction => false,
 
         // All other actions use the committee quorum threshold,
-        // but only if the committee is large enough.
+        // but only if a committee currently exists and is large enough.
         _ => {
+            if !has_committee {
+                // Upstream: ensCommitteeL == SNothing → NoVotingThreshold
+                // → committeeAccepted returns False.
+                return false;
+            }
             if !is_bootstrap_phase {
                 let active = count_active_committee_members(committee_state, current_epoch);
                 if active < min_committee_size {
@@ -10005,7 +10024,34 @@ pub(crate) fn ratify_action(
     pool_thresholds: &PoolVotingThresholds,
     min_committee_size: u64,
     is_bootstrap_phase: bool,
+    has_committee: bool,
 ) -> bool {
+    // Upstream: during Conway bootstrap phase (PV 9), all DRep thresholds are
+    // zeroed (`def` = minBound for every field).  With zero thresholds the
+    // `r == minBound` short-circuit in `dRepAccepted` makes every non-Info
+    // action pass the DRep gate automatically.
+    //
+    // Reference: `votingDRepThresholdInternal` in
+    // `Cardano.Ledger.Conway.Governance.Internal`:
+    //   | hardforkConwayBootstrapPhase (pp ^. ppProtocolVersionL) = def
+    let zero_drep = DRepVotingThresholds {
+        motion_no_confidence: UnitInterval { numerator: 0, denominator: 1 },
+        committee_normal: UnitInterval { numerator: 0, denominator: 1 },
+        committee_no_confidence: UnitInterval { numerator: 0, denominator: 1 },
+        update_to_constitution: UnitInterval { numerator: 0, denominator: 1 },
+        hard_fork_initiation: UnitInterval { numerator: 0, denominator: 1 },
+        pp_network_group: UnitInterval { numerator: 0, denominator: 1 },
+        pp_economic_group: UnitInterval { numerator: 0, denominator: 1 },
+        pp_technical_group: UnitInterval { numerator: 0, denominator: 1 },
+        pp_gov_group: UnitInterval { numerator: 0, denominator: 1 },
+        treasury_withdrawal: UnitInterval { numerator: 0, denominator: 1 },
+    };
+    let effective_drep_thresholds = if is_bootstrap_phase {
+        &zero_drep
+    } else {
+        drep_thresholds
+    };
+
     accepted_by_committee(
         action,
         committee_state,
@@ -10013,6 +10059,7 @@ pub(crate) fn ratify_action(
         current_epoch,
         min_committee_size,
         is_bootstrap_phase,
+        has_committee,
     ) && accepted_by_dreps(
             action,
             committee_state,
@@ -10020,7 +10067,7 @@ pub(crate) fn ratify_action(
             drep_delegated_stake,
             current_epoch,
             drep_activity,
-            drep_thresholds,
+            effective_drep_thresholds,
         )
         && accepted_by_spo(action, committee_state, pool_stake_dist, pool_thresholds)
 }
@@ -13336,7 +13383,7 @@ mod tests {
         let action = test_info_action();
         let cs = CommitteeState::default();
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
     }
 
     #[test]
@@ -13347,7 +13394,51 @@ mod tests {
         let action = test_no_confidence_action();
         let cs = CommitteeState::default();
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false));
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false, true));
+    }
+
+    #[test]
+    fn no_committee_blocks_positive_threshold_action() {
+        // After NoConfidence enactment, ensCommitteeL == SNothing.
+        // Upstream: committeeAccepted returns False for any action that
+        // requires a positive committee threshold (e.g. HardFork).
+        // Reference: Cardano.Ledger.Conway.Rules.Ratify.committeeAccepted
+        let action = test_hf_action();
+        let cs = CommitteeState::default();
+        let quorum = UnitInterval { numerator: 0, denominator: 1 };
+        // has_committee=false simulates post-NoConfidence state
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, false));
+    }
+
+    #[test]
+    fn no_committee_still_passes_no_confidence() {
+        // Even without a committee, NoConfidence actions pass (NoVotingAllowed).
+        let action = test_no_confidence_action();
+        let cs = CommitteeState::default();
+        let quorum = UnitInterval { numerator: 0, denominator: 1 };
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, false));
+    }
+
+    #[test]
+    fn no_committee_still_passes_update_committee() {
+        // UpdateCommittee still passes without a committee (NoVotingAllowed).
+        let action = GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval { numerator: 1, denominator: 2 },
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        });
+        let cs = CommitteeState::default();
+        let quorum = UnitInterval { numerator: 0, denominator: 1 };
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, false));
     }
 
     #[test]
@@ -13369,7 +13460,7 @@ mod tests {
         });
         let cs = CommitteeState::default();
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false));
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false, true));
     }
 
     #[test]
@@ -13387,7 +13478,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
         // min_committee_size=2, active=1 → rejected
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 2, false));
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 2, false, true));
     }
 
     #[test]
@@ -13403,7 +13494,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
         // min_committee_size=1, active=1 → accepted
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 1, false));
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 1, false, true));
     }
 
     #[test]
@@ -13420,7 +13511,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
         // min_committee_size=10, active=1, but bootstrap → accepted (1/1 >= 1/1)
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 10, true));
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 10, true, true));
     }
 
     #[test]
@@ -13445,7 +13536,7 @@ mod tests {
         // 3 does not vote.
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false)); // 2/3 >= 2/3
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true)); // 2/3 >= 2/3
     }
 
     #[test]
@@ -13469,7 +13560,7 @@ mod tests {
         // Only 1/3 yes.
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false)); // 1/3 < 2/3
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true)); // 1/3 < 2/3
     }
 
     #[test]
@@ -13527,6 +13618,7 @@ mod tests {
             &pvt,
             0,
             false,
+            true,
         ));
     }
 
@@ -13566,6 +13658,7 @@ mod tests {
             &pvt,
             0,
             false,
+            true,
         ));
     }
 
@@ -13611,6 +13704,7 @@ mod tests {
             &pvt,
             0,
             false,
+            true,
         ));
     }
 
@@ -14094,7 +14188,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 2, denominator: 3 };
         assert!(
-            accepted_by_committee(&action, &cs, &quorum, EpochNo(10), 0, false),
+            accepted_by_committee(&action, &cs, &quorum, EpochNo(10), 0, false, true),
             "expired members reduce eligible count, so 1/1 >= 2/3"
         );
     }
@@ -14271,7 +14365,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14296,7 +14390,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14319,7 +14413,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14346,7 +14440,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14368,7 +14462,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14392,7 +14486,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14412,7 +14506,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14437,7 +14531,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14460,7 +14554,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14484,7 +14578,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14510,7 +14604,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14532,7 +14626,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14556,7 +14650,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14578,7 +14672,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14601,7 +14695,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14639,7 +14733,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14671,7 +14765,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14707,7 +14801,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14739,7 +14833,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14759,7 +14853,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14784,7 +14878,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14806,7 +14900,7 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
         ));
     }
 
@@ -14826,7 +14920,43 @@ mod tests {
             &action, &cs, &quorum,
             &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
             &pool_dist, &pvt,
-            0, false,
+            0, false, true,
+        ));
+    }
+
+    #[test]
+    fn ratify_bootstrap_drep_thresholds_zeroed() {
+        // During Conway bootstrap phase (PV 9), upstream zeros all DRep
+        // thresholds so any non-InfoAction passes the DRep gate.
+        // Reference: votingDRepThresholdInternal uses `def` (= minBound).
+        //
+        // Here: a HardFork action with NO DRep votes at all. With real
+        // thresholds (67/100) it would fail. With bootstrap zeroing it passes
+        // the DRep gate (0/0 >= 0 via minBound short-circuit).
+        let mut action = test_hf_action();
+        let (cs, quorum) = setup_cc_one_yes(&mut action);
+        let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
+
+        // NO drep votes — empty DRep state.
+        let drep_state = DrepState::new();
+        let drep_stake = BTreeMap::new();
+        let dvt = DRepVotingThresholds::default(); // real thresholds (67/100 etc)
+        let pvt = PoolVotingThresholds::default();
+
+        // Without bootstrap: fails because 0/0 doesn't meet 67/100.
+        assert!(!ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+            0, false, true,
+        ));
+
+        // With bootstrap (is_bootstrap_phase=true): DRep thresholds zeroed → passes.
+        assert!(ratify_action(
+            &action, &cs, &quorum,
+            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
+            &pool_dist, &pvt,
+            0, true, true,
         ));
     }
 
@@ -15906,7 +16036,7 @@ mod tests {
         action.votes.insert(Voter::CommitteeKeyHash([0x60; 28]), Vote::Yes);
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
+        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
     }
 
     #[test]
@@ -15925,7 +16055,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
         // Should fail — the vote is under the wrong key.
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
     }
 
     #[test]
@@ -15942,7 +16072,7 @@ mod tests {
 
         let quorum = UnitInterval { numerator: 1, denominator: 1 };
         // Unauthorized member — vote not counted.
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false));
+        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
     }
 
     // -----------------------------------------------------------------------

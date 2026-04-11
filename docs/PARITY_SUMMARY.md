@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 59 parity audit rounds completed (545+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 60 parity audit rounds completed (575+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -333,4 +333,6 @@
 | 51 | min_utxo output size, ZeroDonation, Alonzo output datum hash, PPUP slot-of-no-return | 18 | Gap H: `inner_cbor_size()` for min-lovelace measurement; Gap I: zero treasury donation silently accepted; Gap J: Alonzo script-output missing datum hash; Gap K: PPUP slot-of-no-return not wired |
 | 52-57 | VRF mode/usage, nonce derivation, leader value range, VRF proof verification | 30 | Era-aware VRF parity, TPraos nonce VRF proof verification |
 | 58 | TxContext protocol_version + reward calculation precision | 12 | Gap L: all 6 TxContext sites left `protocol_version: None` (broke V3 PV9 bootstrap); Gap M: `max_pool_reward` used 5-floor fixed-point (now exact U256 single-floor); Gap N: `delta_reserves` used double-floor (now single-floor) |
-| **Total** | **All subsystems** | **562** | **17 fix rounds** |
+| 59 | Governance ratification edge cases | 5 | Gap O: `meets_threshold` zero-denominator → `numerator == 0` (upstream `%?` + `r == minBound`); Gap P: `AlwaysNoConfidence` counted YES for UpdateCommittee (upstream only NoConfidence) |
+| 60 | Conway governance: committee existence + DRep bootstrap thresholds | 10 | Gap Q: `EnactState` lacked `has_committee` flag — post-NoConfidence non-HF/non-UC actions incorrectly passed committee gate; Gap R: DRep thresholds not zeroed during Conway bootstrap phase (PV 9) — upstream `votingDRepThresholdInternal` uses `def`/all-zero |
+| **Total** | **All subsystems** | **577** | **19 fix rounds** |

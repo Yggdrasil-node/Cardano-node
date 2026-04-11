@@ -1018,6 +1018,7 @@ fn ratify_and_enact(
         //    Read committee quorum from CURRENT enact state (may have
         //    changed after an earlier UpdateCommittee enactment).
         let committee_quorum = ledger.enact_state().committee_quorum;
+        let has_committee = ledger.enact_state().has_committee;
 
         if !committee_update_meets_min_size(
             action_state,
@@ -1040,6 +1041,7 @@ fn ratify_and_enact(
             &pool_thresholds,
             min_committee_size.unwrap_or(0),
             is_bootstrap_phase,
+            has_committee,
         ) {
             continue;
         }
