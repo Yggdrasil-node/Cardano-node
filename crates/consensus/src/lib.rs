@@ -40,7 +40,10 @@ pub use header::{Header, HeaderBody, verify_header, verify_opcert_only};
 /// Blocks-from-the-future detection types.
 pub use in_future::{ClockSkew, FutureSlotJudgement, judge_header_slot};
 /// Epoch nonce evolution state machine and helpers.
-pub use nonce::{NonceEvolutionConfig, NonceEvolutionState, vrf_output_to_nonce};
+pub use nonce::{
+    NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, derive_vrf_nonce,
+    praos_vrf_output_to_nonce, vrf_output_to_nonce,
+};
 /// Operational certificate type and helpers.
 pub use opcert::{OcertCounters, OpCert, check_kes_period, kes_period_of_slot};
 /// Active slot coefficient wrapper, threshold, and leader check helpers.

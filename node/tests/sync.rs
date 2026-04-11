@@ -2889,7 +2889,7 @@ fn cross_subsystem_rollback_flow() {
 // Nonce evolution integration with MultiEraBlock
 // ---------------------------------------------------------------------------
 
-use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, vrf_output_to_nonce};
+use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, praos_vrf_output_to_nonce, vrf_output_to_nonce};
 
 fn nonce_test_config() -> NonceEvolutionConfig {
     NonceEvolutionConfig {
@@ -3001,7 +3001,8 @@ fn apply_nonce_evolution_babbage_block() {
 
     apply_nonce_evolution(&mut state, &me_block, &config);
 
-    let eta = vrf_output_to_nonce(&block.header.body.vrf_result.output);
+    // Babbage uses Praos derivation: Blake2b-256(Blake2b-256("N" || output))
+    let eta = praos_vrf_output_to_nonce(&block.header.body.vrf_result.output);
     assert_eq!(state.evolving_nonce, init.combine(eta));
     assert_eq!(state.lab_nonce, Nonce::from_header_hash(HeaderHash(prev)));
 }
@@ -3073,7 +3074,8 @@ fn apply_nonce_evolution_mixed_eras() {
     apply_nonce_evolution(&mut state, &MultiEraBlock::Babbage(Box::new(b_block.clone())), &config);
 
     // Evolving nonce should accumulate over both blocks.
-    let eta_b = vrf_output_to_nonce(&b_block.header.body.vrf_result.output);
+    // Babbage uses Praos derivation: Blake2b-256(Blake2b-256("N" || output))
+    let eta_b = praos_vrf_output_to_nonce(&b_block.header.body.vrf_result.output);
     assert_eq!(state.evolving_nonce, nonce_after_shelley.combine(eta_b));
 }
 

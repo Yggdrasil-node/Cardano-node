@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof};
+use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
@@ -2399,12 +2399,17 @@ pub fn verify_block_vrf_with_stake(
 /// Extracts the VRF nonce contribution and `prev_hash` from the block header
 /// and feeds them to [`NonceEvolutionState::apply_block`].
 ///
-/// - TPraos (Shelley–Alonzo): uses the dedicated `nonce_vrf` output.
-/// - Praos (Babbage/Conway): uses the single `vrf_result` output.
+/// - TPraos (Shelley–Alonzo): uses the dedicated `nonce_vrf` output with
+///   `Blake2b-256(output)` derivation (`hashVerifiedVRF`).
+/// - Praos (Babbage/Conway): uses the single `vrf_result` output with
+///   `Blake2b-256(Blake2b-256("N" || output))` derivation (`vrfNonceValue`).
 /// - Byron blocks are skipped (no VRF).
 ///
 /// After this call, the state's `epoch_nonce` reflects any epoch transition
 /// that may have occurred at the block's slot.
+///
+/// Reference: `vrfNonceValue` in `Ouroboros.Consensus.Protocol.Praos.VRF`,
+/// `hashVerifiedVRF` in `Cardano.Ledger.BaseTypes`.
 pub fn apply_nonce_evolution(
     state: &mut NonceEvolutionState,
     block: &MultiEraBlock,
@@ -2414,22 +2419,22 @@ pub fn apply_nonce_evolution(
         MultiEraBlock::Shelley(s) => {
             let slot = SlotNo(s.header.body.slot);
             let prev_hash = s.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &s.header.body.nonce_vrf.output, prev_hash, config);
+            state.apply_block(slot, &s.header.body.nonce_vrf.output, prev_hash, config, NonceDerivation::TPraos);
         }
         MultiEraBlock::Alonzo(a) => {
             let slot = SlotNo(a.header.body.slot);
             let prev_hash = a.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &a.header.body.nonce_vrf.output, prev_hash, config);
+            state.apply_block(slot, &a.header.body.nonce_vrf.output, prev_hash, config, NonceDerivation::TPraos);
         }
         MultiEraBlock::Babbage(b) => {
             let slot = SlotNo(b.header.body.slot);
             let prev_hash = b.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &b.header.body.vrf_result.output, prev_hash, config);
+            state.apply_block(slot, &b.header.body.vrf_result.output, prev_hash, config, NonceDerivation::Praos);
         }
         MultiEraBlock::Conway(c) => {
             let slot = SlotNo(c.header.body.slot);
             let prev_hash = c.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &c.header.body.vrf_result.output, prev_hash, config);
+            state.apply_block(slot, &c.header.body.vrf_result.output, prev_hash, config, NonceDerivation::Praos);
         }
         MultiEraBlock::Byron { .. } => {
             // Byron blocks have no VRF; skip nonce evolution.
