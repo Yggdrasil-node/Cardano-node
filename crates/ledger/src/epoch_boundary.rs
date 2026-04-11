@@ -820,6 +820,27 @@ fn remove_expired_governance_actions(
     (expired_ids, total_refunded, unclaimed)
 }
 
+/// Returns the upstream ratification priority for a governance action.
+///
+/// Proposals are processed in `actionPriority` order so that delaying
+/// actions (priorities 0–3) are enacted before non-delaying actions
+/// (priorities 4–6).  Within the same priority, proposals are processed
+/// in `GovActionId` order.
+///
+/// Upstream reference: `Cardano.Ledger.Conway.Governance.Procedures.actionPriority`.
+fn action_priority(action: &crate::eras::conway::GovAction) -> u8 {
+    use crate::eras::conway::GovAction;
+    match action {
+        GovAction::NoConfidence { .. } => 0,
+        GovAction::UpdateCommittee { .. } => 1,
+        GovAction::NewConstitution { .. } => 2,
+        GovAction::HardForkInitiation { .. } => 3,
+        GovAction::ParameterChange { .. } => 4,
+        GovAction::TreasuryWithdrawals { .. } => 5,
+        GovAction::InfoAction => 6,
+    }
+}
+
 /// Returns `true` if enacting the given action type prevents further
 /// enactments within the same epoch boundary.
 ///
@@ -903,11 +924,14 @@ fn valid_committee_term(
 }
 
 /// Tallies votes for surviving governance actions, enacting them one at
-/// a time in `GovActionId` order with iterative `EnactState` updates.
+/// a time in governance action priority order with iterative `EnactState`
+/// updates.
 ///
 /// This implements the upstream Conway RATIFY rule's iterative semantics:
-/// proposals are processed in `GovActionId` (BTreeMap) order.  For each
-/// proposal, the function checks—against the **current** `EnactState`:
+/// proposals are first sorted by `actionPriority` (upstream
+/// `reorderActions`), then by `GovActionId` within the same priority.
+/// For each proposal, the function checks—against the **current**
+/// `EnactState`:
 ///
 /// 1. `prevActionAsExpected` — lineage chains from the current root.
 /// 2. `validCommitteeTerm` — new committee members within max term.
@@ -955,12 +979,31 @@ fn ratify_and_enact(
     // Compute SPO pool stake distribution from the mark snapshot.
     let pool_stake_dist = snapshots.mark.pool_stake_distribution();
 
-    // Collect sorted proposal IDs so we iterate in GovActionId order.
-    let sorted_ids: Vec<GovActionId> = ledger
+    // Collect proposal IDs sorted by governance action priority, then
+    // by GovActionId within the same priority.  This matches upstream
+    // `reorderActions` which sorts by `actionPriority` before RATIFY
+    // processes the `RatifySignal`.
+    //
+    // Reference: Cardano.Ledger.Conway.Governance.Internal.reorderActions,
+    //            Cardano.Ledger.Conway.Governance.Procedures.actionPriority.
+    let mut sorted_ids: Vec<GovActionId> = ledger
         .governance_actions()
         .keys()
         .cloned()
         .collect();
+    sorted_ids.sort_by(|a, b| {
+        let pa = ledger
+            .governance_actions()
+            .get(a)
+            .map(|s| action_priority(&s.proposal().gov_action))
+            .unwrap_or(u8::MAX);
+        let pb = ledger
+            .governance_actions()
+            .get(b)
+            .map(|s| action_priority(&s.proposal().gov_action))
+            .unwrap_or(u8::MAX);
+        pa.cmp(&pb).then_with(|| a.cmp(b))
+    });
 
     let mut enacted_ids: Vec<GovActionId> = Vec::new();
     let mut outcomes: Vec<EnactOutcome> = Vec::new();
@@ -4185,9 +4228,20 @@ mod tests {
 
     #[test]
     fn test_non_delaying_action_allows_continuation() {
-        // ParameterChange is non-delaying, so a subsequent NoConfidence
-        // should still be enacted in the same epoch.
+        // Two non-delaying actions (ParameterChange priority 4,
+        // TreasuryWithdrawals priority 5) should both be enacted
+        // in the same epoch since neither is delaying.
         let mut ledger = make_auto_pass_ledger();
+
+        // Register a reward account target for the treasury withdrawal.
+        let target_cred = StakeCredential::AddrKeyHash([0xE0; 28]);
+        ledger.stake_credentials_mut().register(target_cred);
+        let target_ra = crate::RewardAccount { network: 1, credential: target_cred };
+        ledger.reward_accounts_mut().insert(
+            target_ra,
+            crate::RewardAccountState::new(0, None),
+        );
+        ledger.accounting_mut().treasury = 100_000_000;
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
@@ -4201,7 +4255,57 @@ mod tests {
         let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
         ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
 
-        // NoConfidence always passes committee; auto_pass_ledger has 0 thresholds.
+        let mut wd = BTreeMap::new();
+        wd.insert(target_ra, 1_000u64);
+        let gai_tw = test_gov_action_id(0x02, 0);
+        let gas_tw = GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals: wd,
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        });
+        ledger.governance_actions_mut().insert(gai_tw.clone(), gas_tw);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Both should be enacted (neither is delaying).
+        assert_eq!(event.governance_actions_enacted, 2);
+        assert!(event.enacted_gov_action_ids.contains(&gai_pc));
+        assert!(event.enacted_gov_action_ids.contains(&gai_tw));
+        assert!(ledger.governance_actions().is_empty());
+    }
+
+    #[test]
+    fn test_priority_ordering_delays_lower_priority_actions() {
+        // Upstream `reorderActions` sorts proposals by `actionPriority`
+        // before RATIFY processes them.  A NoConfidence (priority 0)
+        // with a HIGHER GovActionId must be processed BEFORE a
+        // ParameterChange (priority 4) with a LOWER GovActionId.
+        // Since NoConfidence is delaying, the ParameterChange is skipped.
+        //
+        // Reference: Cardano.Ledger.Conway.Governance.Procedures.actionPriority,
+        //            Cardano.Ledger.Conway.Governance.Internal.reorderActions.
+        let mut ledger = make_auto_pass_ledger();
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot (no proposals yet).
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // ParameterChange has LOWER GovActionId (0x01) — in BTreeMap
+        // key order it would come first.  But priority 4 > 0.
+        let gai_pc = test_gov_action_id(0x01, 0);
+        let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
+        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+
+        // NoConfidence has HIGHER GovActionId (0x02) but priority 0,
+        // so it goes first under priority ordering and delays everything.
         let gai_nc = test_gov_action_id(0x02, 0);
         let gas_nc = GovernanceActionState::new(test_no_confidence_proposal());
         ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
@@ -4209,11 +4313,45 @@ mod tests {
         let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
             .expect("epoch 2");
 
-        // Both should be enacted (ParameterChange doesn't delay).
-        assert_eq!(event.governance_actions_enacted, 2);
-        assert!(event.enacted_gov_action_ids.contains(&gai_pc));
-        assert!(event.enacted_gov_action_ids.contains(&gai_nc));
-        assert!(ledger.governance_actions().is_empty());
+        // Only NoConfidence should be enacted (delaying blocks ParameterChange).
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert_eq!(event.enacted_gov_action_ids, vec![gai_nc]);
+        // ParameterChange should remain pending.
+        assert!(ledger.governance_actions().contains_key(&gai_pc));
+    }
+
+    #[test]
+    fn test_action_priority_values() {
+        // Verify the priority mapping matches upstream actionPriority.
+        use crate::eras::conway::GovAction;
+        assert_eq!(action_priority(&GovAction::NoConfidence { prev_action_id: None }), 0);
+        assert_eq!(action_priority(&GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add: BTreeMap::new(),
+            quorum: UnitInterval { numerator: 0, denominator: 1 },
+        }), 1);
+        assert_eq!(action_priority(&GovAction::NewConstitution {
+            prev_action_id: None,
+            constitution: crate::eras::conway::Constitution {
+                anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+                guardrails_script_hash: None,
+            },
+        }), 2);
+        assert_eq!(action_priority(&GovAction::HardForkInitiation {
+            prev_action_id: None,
+            protocol_version: (10, 0),
+        }), 3);
+        assert_eq!(action_priority(&GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: Default::default(),
+            guardrails_script_hash: None,
+        }), 4);
+        assert_eq!(action_priority(&GovAction::TreasuryWithdrawals {
+            withdrawals: BTreeMap::new(),
+            guardrails_script_hash: None,
+        }), 5);
+        assert_eq!(action_priority(&GovAction::InfoAction), 6);
     }
 
     #[test]
