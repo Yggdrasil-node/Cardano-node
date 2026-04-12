@@ -90,6 +90,7 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
         None,
         None,
         None,
+        None, // protocol_version
     );
     assert!(result.is_ok(), "expected success with matching hash: {:?}", result);
 }
@@ -697,4 +698,58 @@ fn conway_hash_without_redeemers_rejected() {
         "expected UnexpectedScriptIntegrityHash for Conway, got: {:?}",
         result,
     );
+}
+
+// ── ScriptIntegrityHashMismatch PV>=11 split ─────────────────────────
+
+/// At PV < 11, a mismatched script_data_hash returns PPViewHashesDontMatch.
+#[test]
+fn script_data_hash_mismatch_returns_ppview_at_pv10() {
+    let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
+        Some([0xAA; 32]),        // declared (wrong)
+        Some(&minimal_ws_with_redeemer()),
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        Some((10, 0)),           // PV 10 < 11
+    );
+    assert!(
+        matches!(result, Err(LedgerError::PPViewHashesDontMatch { .. })),
+        "expected PPViewHashesDontMatch at PV 10, got: {result:?}",
+    );
+}
+
+/// At PV >= 11, a mismatched script_data_hash returns ScriptIntegrityHashMismatch.
+#[test]
+fn script_data_hash_mismatch_returns_integrity_at_pv11() {
+    let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
+        Some([0xAA; 32]),        // declared (wrong)
+        Some(&minimal_ws_with_redeemer()),
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        Some((11, 0)),           // PV 11 >= 11
+    );
+    assert!(
+        matches!(result, Err(LedgerError::ScriptIntegrityHashMismatch { .. })),
+        "expected ScriptIntegrityHashMismatch at PV 11, got: {result:?}",
+    );
+}
+
+/// Helper: minimal witness set CBOR bytes with one trivial redeemer.
+fn minimal_ws_with_redeemer() -> Vec<u8> {
+    let mut ws = empty_witness_set();
+    ws.redeemers.push(Redeemer {
+        tag: 0,
+        index: 0,
+        data: PlutusData::Integer(0),
+        ex_units: ExUnits { mem: 1_000_000, steps: 1_000_000 },
+    });
+    ws.to_cbor_bytes()
 }

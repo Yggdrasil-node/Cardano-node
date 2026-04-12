@@ -552,3 +552,167 @@ fn alonzo_output_to_vkey_without_datum_hash_accepted() {
         .apply_block_validated(&block, None)
         .expect("VKey address output without datum_hash is fine");
 }
+
+// ── CIP-0069 PlutusV3 datum exemption ─────────────────────────────────
+
+/// Fake Plutus V3 script bytes.
+const FAKE_PLUTUS_V3_SCRIPT: &[u8] = &[0x01];
+
+/// Compute the Plutus V3 script hash for `FAKE_PLUTUS_V3_SCRIPT`.
+fn fake_v3_script_hash() -> [u8; 28] {
+    yggdrasil_ledger::plutus_validation::plutus_script_hash(
+        yggdrasil_ledger::plutus_validation::PlutusVersion::V3,
+        FAKE_PLUTUS_V3_SCRIPT,
+    )
+}
+
+/// CIP-0069: V3-locked input WITHOUT datum is accepted when v3_script_hashes
+/// is provided.
+#[test]
+fn cip0069_v3_script_locked_input_without_datum_accepted() {
+    let v3_hash = fake_v3_script_hash();
+    let addr = script_addr(&v3_hash);
+
+    let spending_input = ShelleyTxIn { transaction_id: [0xCC; 32], index: 0 };
+    let mut utxo = MultiEraUtxo::default();
+    utxo.insert(
+        spending_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(10_000_000),
+            datum_option: None, // ← no datum (CIP-0069 allows this for V3)
+            script_ref: None,
+        }),
+    );
+
+    let mut v3_set = std::collections::HashSet::new();
+    v3_set.insert(v3_hash);
+
+    // With V3 hashes provided, this should pass despite missing datum.
+    yggdrasil_ledger::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+        &utxo,
+        &[spending_input],
+        &std::collections::HashSet::new(), // native_satisfied
+        Some(&v3_set),
+    )
+    .expect("CIP-0069: V3 script-locked input without datum should be accepted");
+}
+
+/// CIP-0069: V1-locked input WITHOUT datum is still rejected even when V3
+/// hashes are provided (V1 is not exempt).
+#[test]
+fn cip0069_v1_script_locked_input_without_datum_rejected() {
+    let v3_hash = fake_v3_script_hash();
+    let addr = script_addr(&FAKE_PLUTUS_SCRIPT_HASH);
+
+    let spending_input = ShelleyTxIn { transaction_id: [0xDD; 32], index: 0 };
+    let mut utxo = MultiEraUtxo::default();
+    utxo.insert(
+        spending_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(10_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+
+    // V3 set includes the V3 hash, but the input is locked by V1 — not exempt.
+    let mut v3_set = std::collections::HashSet::new();
+    v3_set.insert(v3_hash);
+
+    let result = yggdrasil_ledger::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+        &utxo,
+        &[spending_input],
+        &std::collections::HashSet::new(),
+        Some(&v3_set),
+    );
+    assert!(
+        matches!(result, Err(LedgerError::UnspendableUTxONoDatumHash { .. })),
+        "expected UnspendableUTxONoDatumHash for V1, got: {result:?}",
+    );
+}
+
+/// CIP-0069: Without V3 hashes (None), V3-locked input without datum is
+/// rejected (pre-CIP-0069 / Alonzo/Babbage behavior).
+#[test]
+fn cip0069_v3_input_without_v3_set_rejected() {
+    let v3_hash = fake_v3_script_hash();
+    let addr = script_addr(&v3_hash);
+
+    let spending_input = ShelleyTxIn { transaction_id: [0xEE; 32], index: 0 };
+    let mut utxo = MultiEraUtxo::default();
+    utxo.insert(
+        spending_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(10_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+    );
+
+    let result = yggdrasil_ledger::plutus_validation::validate_unspendable_utxo_no_datum_hash(
+        &utxo,
+        &[spending_input],
+        &std::collections::HashSet::new(),
+        None, // no V3 hash set → pre-CIP-0069 behavior
+    );
+    assert!(
+        matches!(result, Err(LedgerError::UnspendableUTxONoDatumHash { .. })),
+        "expected rejection without V3 set, got: {result:?}",
+    );
+}
+
+/// CIP-0069: collect_v3_script_hashes correctly gathers V3 scripts from
+/// witness set and reference inputs.
+#[test]
+fn collect_v3_script_hashes_from_witnesses_and_refs() {
+    let v3_hash = fake_v3_script_hash();
+
+    // From witness set
+    let mut ws = empty_witness_set();
+    ws.plutus_v3_scripts.push(FAKE_PLUTUS_V3_SCRIPT.to_vec());
+
+    let hashes_from_ws = yggdrasil_ledger::plutus_validation::collect_v3_script_hashes(
+        Some(&ws), None, None,
+    );
+    assert!(hashes_from_ws.contains(&v3_hash), "V3 hash from witness set");
+
+    // From reference input
+    let ref_input = ShelleyTxIn { transaction_id: [0xFF; 32], index: 0 };
+    let mut utxo = MultiEraUtxo::default();
+    utxo.insert(
+        ref_input.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: Some(ScriptRef(Script::PlutusV3(FAKE_PLUTUS_V3_SCRIPT.to_vec()))),
+        }),
+    );
+
+    let empty_ws = empty_witness_set();
+    let hashes_from_refs = yggdrasil_ledger::plutus_validation::collect_v3_script_hashes(
+        Some(&empty_ws), Some(&utxo), Some(&[ref_input]),
+    );
+    assert!(hashes_from_refs.contains(&v3_hash), "V3 hash from reference input");
+
+    // V1 reference script should NOT be included
+    let ref_input2 = ShelleyTxIn { transaction_id: [0xFE; 32], index: 0 };
+    let mut utxo2 = MultiEraUtxo::default();
+    utxo2.insert(
+        ref_input2.clone(),
+        MultiEraTxOut::Babbage(BabbageTxOut {
+            address: vkey_addr(),
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: Some(ScriptRef(Script::PlutusV1(FAKE_PLUTUS_V1_SCRIPT.to_vec()))),
+        }),
+    );
+
+    let hashes_v1_only = yggdrasil_ledger::plutus_validation::collect_v3_script_hashes(
+        Some(&empty_ws), Some(&utxo2), Some(&[ref_input2]),
+    );
+    assert!(hashes_v1_only.is_empty(), "V1 ref script should not be in V3 set");
+}

@@ -278,8 +278,14 @@ pub fn compute_script_data_hash(
 /// - When Plutus redeemers are present, the hash MUST be declared and match.
 /// - When no Plutus redeemers exist, the hash MUST be absent.
 ///
+/// At protocol version >= 11 (Conway post-bootstrap) the mismatch error is
+/// reported as `ScriptIntegrityHashMismatch` instead of
+/// `PPViewHashesDontMatch`.  Pre-PV11 or when version is unknown, the
+/// legacy error is returned.
+///
 /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` —
-/// `ppViewHashesDontMatch` / `hashScriptIntegrity`.
+/// `ppViewHashesDontMatch` / `hashScriptIntegrity`;
+/// `Cardano.Ledger.Conway.Rules.Utxo` — `ScriptIntegrityHashMismatch`.
 pub fn validate_script_data_hash(
     declared: Option<[u8; 32]>,
     witness_bytes: Option<&[u8]>,
@@ -289,6 +295,7 @@ pub fn validate_script_data_hash(
     reference_inputs: Option<&[ShelleyTxIn]>,
     spending_inputs: Option<&[ShelleyTxIn]>,
     required_script_hashes: Option<&HashSet<[u8; 28]>>,
+    protocol_version: Option<(u64, u64)>,
 ) -> Result<(), LedgerError> {
     // Determine whether the transaction includes Plutus redeemers.
     // Upstream `hashScriptIntegrity` returns `SNothing` when no languages
@@ -316,6 +323,15 @@ pub fn validate_script_data_hash(
                 required_script_hashes,
             )?;
             if computed != declared_hash {
+                // PV >= 11: ScriptIntegrityHashMismatch
+                // PV < 11 or unknown: PPViewHashesDontMatch
+                let pv_ge_11 = matches!(protocol_version, Some((major, _)) if major >= 11);
+                if pv_ge_11 {
+                    return Err(LedgerError::ScriptIntegrityHashMismatch {
+                        declared: declared_hash,
+                        computed,
+                    });
+                }
                 return Err(LedgerError::PPViewHashesDontMatch {
                     declared: declared_hash,
                     computed,
@@ -809,17 +825,18 @@ pub fn validate_supplemental_datums(
 /// This check is performed AFTER native script validation, so we can skip
 /// inputs whose scripts were satisfied by native scripts.
 ///
-/// Note: CIP-0069 allows PlutusV3 scripts to omit the datum requirement,
-/// but that exemption is checked at script evaluation time. This function
-/// performs the structural check that Plutus-locked inputs have *some*
-/// datum information present.
+/// CIP-0069 / Conway: PlutusV3 spending scripts do NOT require a datum on
+/// the UTxO.  When `v3_script_hashes` is provided and a locking script hash
+/// appears in that set, the datum check is skipped.
 ///
 /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums` and
-/// `Cardano.Ledger.Alonzo.UTxO.getInputDataHashesTxBody`.
+/// `Cardano.Ledger.Alonzo.UTxO.getInputDataHashesTxBody` — Conway branch
+/// filters out `lang >= PlutusV3`.
 pub fn validate_unspendable_utxo_no_datum_hash(
     spending_utxo: &MultiEraUtxo,
     spending_inputs: &[crate::eras::shelley::ShelleyTxIn],
     native_satisfied: &HashSet<[u8; 28]>,
+    v3_script_hashes: Option<&HashSet<[u8; 28]>>,
 ) -> Result<(), LedgerError> {
     for txin in spending_inputs {
         if let Some(txout) = spending_utxo.get(txin) {
@@ -828,6 +845,13 @@ pub fn validate_unspendable_utxo_no_datum_hash(
                 // Skip if this script was satisfied by a native script
                 if native_satisfied.contains(&script_hash) {
                     continue;
+                }
+
+                // CIP-0069: PlutusV3 spending scripts do not require a datum.
+                if let Some(v3) = v3_script_hashes {
+                    if v3.contains(&script_hash) {
+                        continue;
+                    }
                 }
 
                 // For Plutus-locked inputs, verify datum information is present.
@@ -853,6 +877,34 @@ pub fn validate_unspendable_utxo_no_datum_hash(
     }
 
     Ok(())
+}
+
+/// Collects the set of PlutusV3 script hashes from witness-set scripts and
+/// reference scripts.  Used by CIP-0069 to exempt V3 spending inputs from
+/// the datum requirement.
+pub fn collect_v3_script_hashes(
+    ws: Option<&crate::eras::shelley::ShelleyWitnessSet>,
+    utxo: Option<&MultiEraUtxo>,
+    reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+) -> HashSet<[u8; 28]> {
+    let mut v3 = HashSet::new();
+    if let Some(ws) = ws {
+        for s in &ws.plutus_v3_scripts {
+            v3.insert(plutus_script_hash(PlutusVersion::V3, s));
+        }
+    }
+    if let (Some(utxo), Some(ref_inputs)) = (utxo, reference_inputs) {
+        for txin in ref_inputs {
+            if let Some(txout) = utxo.get(txin) {
+                if let Some(sr) = txout.script_ref() {
+                    if matches!(sr.0, crate::plutus::Script::PlutusV3(_)) {
+                        v3.insert(crate::witnesses::script_hash(&sr.0));
+                    }
+                }
+            }
+        }
+    }
+    v3
 }
 
 /// Validates that newly created outputs sent to Alonzo-era Plutus script

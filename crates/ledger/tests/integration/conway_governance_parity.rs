@@ -263,8 +263,9 @@ fn authorize_committee_via_block(
 // -----------------------------------------------------------------------
 
 #[test]
-fn unelected_committee_voter_rejected_at_pv10() {
-    let mut state = conway_state_pv(10, 0, 2_000_000);
+fn unelected_committee_voter_rejected_at_pv11() {
+    // PV > 10 (PV 11) — `harforkConwayDisallowUnelectedCommitteeFromVoting`
+    let mut state = conway_state_pv(11, 0, 2_000_000);
     let gov_action_id = seed_governance_action(&mut state);
 
     // Register a cold committee member and authorize its hot credential.
@@ -305,8 +306,8 @@ fn unelected_committee_voter_rejected_at_pv10() {
 }
 
 #[test]
-fn elected_committee_voter_accepted_at_pv10() {
-    let mut state = conway_state_pv(10, 0, 2_000_000);
+fn elected_committee_voter_accepted_at_pv11() {
+    let mut state = conway_state_pv(11, 0, 2_000_000);
     let gov_action_id = seed_governance_action(&mut state);
 
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
@@ -338,8 +339,8 @@ fn elected_committee_voter_accepted_at_pv10() {
 }
 
 #[test]
-fn unelected_committee_voter_allowed_below_pv10() {
-    // PV 9 — before the hardfork gate.
+fn unelected_committee_voter_allowed_at_pv9() {
+    // PV 9 — before the hardfork gate (PV > 10).
     let mut state = conway_state_pv(9, 0, 2_000_000);
     let gov_action_id = seed_governance_action(&mut state);
 
@@ -371,7 +372,7 @@ fn unelected_committee_voter_allowed_below_pv10() {
 
     let err = state.apply_block(&block).unwrap_err();
     // Should fail with a DIFFERENT error (voter not found), NOT
-    // UnelectedCommitteeVoters — proves the PV < 10 gate works.
+    // UnelectedCommitteeVoters — proves the PV ≤ 10 gate works.
     match err {
         LedgerError::UnelectedCommitteeVoters(_) => {
             panic!("should not get UnelectedCommitteeVoters at PV 9");
@@ -381,8 +382,49 @@ fn unelected_committee_voter_allowed_below_pv10() {
 }
 
 #[test]
-fn resigned_committee_member_hot_cred_rejected_at_pv10() {
+fn unelected_committee_voter_allowed_at_pv10() {
+    // PV 10 — still below the hardfork gate (PV > 10).
+    // Upstream: `harforkConwayDisallowUnelectedCommitteeFromVoting pv = pvMajor pv > natVersion @10`
     let mut state = conway_state_pv(10, 0, 2_000_000);
+    let gov_action_id = seed_governance_action(&mut state);
+
+    let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
+
+    let rogue_hot = [0xEE; 28];
+    let mut procedures = std::collections::BTreeMap::new();
+    let mut votes_for_voter = std::collections::BTreeMap::new();
+    votes_for_voter.insert(
+        gov_action_id,
+        VotingProcedure { vote: Vote::Yes, anchor: None },
+    );
+    procedures.insert(Voter::CommitteeKeyHash(rogue_hot), votes_for_voter);
+    let voting_procedures = VotingProcedures { procedures };
+
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0x07; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: 10_000_000 },
+    );
+
+    let block = make_conway_block(
+        10, 2, 0x07,
+        vec![conway_tx_with_votes([0x07; 32], 10_000_000, 0, voting_procedures)],
+    );
+
+    let err = state.apply_block(&block).unwrap_err();
+    // At PV 10 the unelected-committee check is skipped — we should NOT
+    // see UnelectedCommitteeVoters.
+    match err {
+        LedgerError::UnelectedCommitteeVoters(_) => {
+            panic!("should not get UnelectedCommitteeVoters at PV 10");
+        }
+        _ => {} // any other error is fine
+    }
+}
+
+#[test]
+fn resigned_committee_member_hot_cred_rejected_at_pv11() {
+    let mut state = conway_state_pv(11, 0, 2_000_000);
     let gov_action_id = seed_governance_action(&mut state);
 
     // Register committee member and authorize hot credential via block.

@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 64 parity audit rounds completed (607+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 72 parity audit rounds completed (644+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 4057 workspace tests passing, 64 audit rounds covering 607+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 72 audit rounds covering 644+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -36,6 +36,7 @@
 - `apply_epoch_boundary()` — Stake snapshots, pool retirement, governance ratification+enactment, governance expiry, MIR application
 - `enact_gov_action()` — Conway governance enactment (all 7 action types)
 - `accumulate_mir_from_certs()` — MIR certificate accumulation (Shelley–Babbage, DCert tag 6)
+- MIR certificate admission validation — `MirValidationContext` enforces all 7 upstream DELEG MIR checks: `MIRCertificateTooLateinEpochDELEG` (timing), `MIRNegativesNotCurrentlyAllowed` (pre-Alonzo negative deltas), `MIRProducesNegativeUpdate` (Alonzo+ combined map), `InsufficientForInstantaneousRewardsDELEG` (pot balance), `MIRTransferNotCurrentlyAllowed` (pre-Alonzo transfers), `MIRNegativeTransfer`, `InsufficientForTransferDELEG` (transfer pot balance); era-gated via `hardforkAlonzoAllowMIRTransfer`
 - `InstantaneousRewards` — Per-credential MIR state + pot-to-pot delta tracking with CBOR round-trip
 - `validate_witnesses_if_present()` — Ed25519 signature + hash verification
 - `validate_native_scripts_if_present()` — Timelock script evaluation
@@ -46,10 +47,15 @@
 - `accumulate_donation()` / `flush_donations_to_treasury()` — Conway treasury donation accumulation (UTXOS rule) + epoch-boundary flush (EPOCH rule)
 - `update_dormant_drep_expiries()` — Conway dormant epoch DRep activity bump when proposals appear (upstream `updateDormantDRepExpiries`)
 - `validate_conway_current_treasury_value()` — Conway currentTreasuryValue field validation
-- Conway deposit validation — `IncorrectDepositDELEG`, `IncorrectKeyDepositRefund`, `RefundIncorrectDELEG` (PV ≥ 10 split), `DrepIncorrectDeposit`, `DrepIncorrectRefund`, `WithdrawalNotFullDrain` (exact-drain semantics)
+- Conway deposit validation — `IncorrectDepositDELEG`, `IncorrectKeyDepositRefund`, `DepositIncorrectDELEG` (PV > 10), `RefundIncorrectDELEG` (PV > 10), `DrepIncorrectDeposit`, `DrepIncorrectRefund`, `WithdrawalNotFullDrain` (exact-drain); upstream `harforkConwayDELEGIncorrectDepositsAndRefunds` gate at PV major > 10
+- Conway unelected committee voters — `validate_unelected_committee_voters()` enforced only at PV > 10 (upstream `harforkConwayDisallowUnelectedCommitteeFromVoting`)
+- Withdrawal/cert ordering parity — `apply_certificates_and_withdrawals_with_future()` drains withdrawals BEFORE cert processing, matching upstream CERTS STS base case (`conwayCertsTransition` `Empty` branch); same-tx withdraw+unregister now succeeds
 - Conway committee membership check — `authorize_committee_hot_credential()` and `resign_committee_cold_credential()` unconditionally verify `isCurrentMember || isPotentialFutureMember` (upstream `checkAndOverwriteCommitteeMemberState`)
 - Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
 - `validate_outputs_missing_datum_hash_alonzo()` — Rejects Alonzo-era script-address outputs without `datum_hash` (upstream `validateOutputMissingDatumHashForScriptOutputs`)
+- `validate_unspendable_utxo_no_datum_hash()` — CIP-0069 PlutusV3 datum exemption: V3-locked spending inputs exempt from datum-hash requirement in Conway (upstream `getInputDataHashesTxBody`)
+- `collect_v3_script_hashes()` — Collects V3 script hashes from witness set and reference-input script refs for CIP-0069 datum exemption
+- `validate_script_data_hash()` — PV-aware: returns `ScriptIntegrityHashMismatch` at PV >= 11, `PPViewHashesDontMatch` at PV < 11 (upstream `Cardano.Ledger.Conway.Rules.Utxow`)
 - `ZeroDonation` validation — Rejects Conway `treasury_donation == 0` (upstream `validateZeroDonation`)
 - `inner_cbor_size()` on `MultiEraTxOut` — Measures inner era-specific output size without enum wrapper for correct `coins_per_utxo_byte` calculation (upstream `sizedSize`)
 - `ppup_slot_context()` — Builds `PpupSlotContext` from `LedgerState.stability_window` + `slots_per_epoch`; wired into all 10 `validate_ppup_proposal` call sites (upstream `getTheSlotOfNoReturn`)
@@ -57,6 +63,7 @@
 - `validate_outside_forecast()` — OutsideForecast infrastructure (upstream no-op due to `unsafeLinearExtendEpochInfo`)
 - `delegate_stake_credential()` — Pool-registration check on delegation: all eras (Shelley through Conway) reject delegation to unregistered pools via `DelegateeNotRegisteredDELEG` (upstream `Cardano.Ledger.Shelley.Rules.Deleg`)
 - `PoolState::find_pool_by_vrf_key()` — Conway VRF key uniqueness enforcement: new pool registrations reject duplicate VRF keys, re-registrations allow same pool's own key (upstream `VRFKeyHashAlreadyRegistered` / `hardforkConwayDisallowDuplicatedVRFKeys`)
+- `conway_protocol_param_update_well_formed()` — Exact upstream `ppuWellFormed` check set: 10 unconditional zero-reject fields + bootstrap-gated `coinsPerUTxOByte` + PV11-gated `nOpt` (upstream `Cardano.Ledger.Conway.PParams`)
 - `record_block_producer()` / `take_blocks_made()` — Per-pool block production tracking in LedgerState (upstream `NewEpochState.nesBcur`)
 - `derive_pool_performance()` — Pool performance ratios from internal blocks_made + stake distribution; d>=0.8 early-return gives perf=1 for all block-producing pools (upstream `mkApparentPerformance`)
 - `StakeCredentials::clear_pool_delegations()` — POOLREAP delegation cleanup on pool retirement (upstream `removeStakePoolDelegations`)
@@ -339,4 +346,7 @@
 | 62 | Governance ratification: proposal priority ordering | 8 | Gap W: `ratify_and_enact` iterated proposals in `GovActionId` (BTreeMap key) order instead of upstream `actionPriority` order — delaying actions (NoConfidence=0, UpdateCommittee=1, NewConstitution=2, HardForkInitiation=3) could be preempted by lower-priority non-delaying actions |
 | 63 | Governance expiry descendants, committee guard | 6 | Gap X: expired parent proposals did not transitively remove descendant proposals (upstream `proposalsRemoveWithDescendants`); Gap Y: extra `committee_update_meets_min_size` guard in ratification loop not present in upstream `ratifyTransition` (min_committee_size enforcement is only inside `committeeAccepted` via `votingCommitteeThreshold`) |
 | 64 | Governance ratification/enactment state guards | 6 | Gap Z: ENACT `UpdateCommittee` applied non-upstream local term filters (now removed; apply `members_to_add` verbatim after RATIFY); Gap AA: `withdrawalCanWithdraw` used non-progressive treasury guard across loop (now checked against evolving treasury); Gap AB: `validCommitteeTerm` no longer assumes frozen snapshots and now reads current protocol-parameter view each iteration |
-| **Total** | **All subsystems** | **607** | **24 fix rounds** |
+| 65 | Shelley DELEG future-genesis delegation scheduling | 6 | Gap AC: `GenesisDelegation` applied immediately instead of staging in `dsFutureGenDelegs`; fixed with slot-based scheduling/adoption and duplicate checks across active+future deleg maps |
+| 66 | Conway GOV bootstrap-phase return-account gating | 6 | Gap AD: `ProposalReturnAccountDoesNotExist` and `TreasuryWithdrawalReturnAccountsDoNotExist` enforced unconditionally — upstream gates both inside `unless (hardforkConwayBootstrapPhase ...)` in `conwayGovTransition`; fixed with `past_bootstrap` guard |
+| 67 | Conway DELEG deposit mismatch error phase split | 6 | Gap AE: key-registration deposit mismatches always returned legacy `IncorrectDepositDELEG`; upstream uses `DepositIncorrectDELEG` after `hardforkConwayDELEGIncorrectDepositsAndRefunds` (PV >= 10) while keeping legacy error in bootstrap PV 9; fixed across all Conway registration cert shapes with regression tests |
+| **Total** | **All subsystems** | **625** | **27 fix rounds** |

@@ -3436,6 +3436,31 @@ impl LedgerState {
         })
     }
 
+    /// Builds a [`MirValidationContext`] for MIR certificate validation.
+    ///
+    /// Returns `None` when the protocol parameters are unavailable (no
+    /// validation will occur), which keeps mainnet-sync backward-compatible
+    /// for the rare edges where genesis has not been loaded yet.
+    fn mir_validation_context(&self, slot: u64, alonzo_mir_transfers: bool) -> Option<MirValidationContext<'_>> {
+        let mir_deadline_slot = {
+            let sw = self.stability_window?;
+            if self.slots_per_epoch == 0 {
+                None
+            } else {
+                let first_slot_next_epoch = (self.current_epoch.0 + 1) * self.slots_per_epoch;
+                Some(first_slot_next_epoch.saturating_sub(sw))
+            }
+        };
+        Some(MirValidationContext {
+            current_slot: slot,
+            mir_deadline_slot,
+            alonzo_mir_transfers,
+            reserves: self.accounting.reserves,
+            treasury: self.accounting.treasury,
+            instantaneous_rewards: &self.instantaneous_rewards,
+        })
+    }
+
     /// Sets the current epoch carried by the ledger state.
     pub fn set_current_epoch(&mut self, current_epoch: EpochNo) {
         self.current_epoch = current_epoch;
@@ -3831,6 +3856,7 @@ impl LedgerState {
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
                     self.stability_window,
+                    self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
                 staged.apply_tx_with_withdrawals(
                     crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0,
@@ -3975,6 +4001,7 @@ impl LedgerState {
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
                     self.stability_window,
+                    self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
                 staged.apply_allegra_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -4114,6 +4141,7 @@ impl LedgerState {
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
                     self.stability_window,
+                    self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
                 staged.apply_mary_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -4173,6 +4201,7 @@ impl LedgerState {
                     None,
                     None,
                     Some(&required_scripts),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -4280,6 +4309,7 @@ impl LedgerState {
                     &staged,
                     &tx.body.inputs,
                     &native_satisfied,
+                    None, // Alonzo: no PlutusV3
                 )?;
                 // Output-side datum hash check: Alonzo outputs to script
                 // addresses must carry datum_hash.
@@ -4383,6 +4413,7 @@ impl LedgerState {
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
                     self.stability_window,
+                    self.mir_validation_context(current_slot.0, true).as_ref(),
                 )?;
                 staged.apply_alonzo_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -4455,6 +4486,7 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                     Some(&required_scripts),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -4568,6 +4600,7 @@ impl LedgerState {
                     &staged,
                     &tx.body.inputs,
                     &native_satisfied,
+                    None, // Babbage: no PlutusV3
                 )?;
                 // Supplemental datum check (Babbage submitted — includes reference inputs).
                 {
@@ -4669,6 +4702,7 @@ impl LedgerState {
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
                     self.stability_window,
+                    self.mir_validation_context(current_slot.0, true).as_ref(),
                 )?;
                 staged.apply_babbage_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
                 self.multi_era_utxo = staged;
@@ -4752,6 +4786,7 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                     Some(&required_scripts),
+                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
                     let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
@@ -4879,10 +4914,18 @@ impl LedgerState {
                     if conway_ref_scripts.is_empty() { None } else { Some(&conway_ref_scripts) },
                 )?;
                 // Unspendable UTxO check (Conway — no datum on Plutus-locked input).
+                // CIP-0069: collect PlutusV3 script hashes so V3-locked inputs
+                // are exempt from the datum requirement.
+                let v3_hashes = crate::plutus_validation::collect_v3_script_hashes(
+                    Some(&tx.witness_set),
+                    Some(&staged),
+                    tx.body.reference_inputs.as_deref(),
+                );
                 crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
                     &staged,
                     &tx.body.inputs,
                     &native_satisfied,
+                    if v3_hashes.is_empty() { None } else { Some(&v3_hashes) },
                 )?;
                 // Supplemental datum check (Conway submitted — includes reference inputs).
                 {
@@ -5127,6 +5170,7 @@ impl LedgerState {
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
                     self.stability_window,
+                    None, // Conway: MIR certs rejected as UnsupportedCertificate
                 )?;
                 // Track DRep activity for registration and update certificates.
                 touch_drep_activity_for_certs(
@@ -5177,12 +5221,12 @@ impl LedgerState {
     /// current protocol parameters and ledger state.
     fn certificate_validation_context(&self) -> CertificateValidationContext {
         let is_conway = matches!(self.current_era, Era::Conway);
-        let bootstrap_phase = is_conway
-            && conway_bootstrap_phase(
-                self.protocol_params
-                    .as_ref()
-                    .and_then(|p| p.protocol_version),
-            );
+        let pv = self
+            .protocol_params
+            .as_ref()
+            .and_then(|p| p.protocol_version);
+        let bootstrap_phase = is_conway && conway_bootstrap_phase(pv);
+        let post_pv10 = is_conway && conway_post_pv10(pv);
         match &self.protocol_params {
             Some(p) => CertificateValidationContext {
                 key_deposit: p.key_deposit,
@@ -5194,6 +5238,7 @@ impl LedgerState {
                 drep_deposit: p.drep_deposit,
                 is_conway,
                 bootstrap_phase,
+                post_pv10,
             },
             None => CertificateValidationContext {
                 key_deposit: 0,
@@ -5205,6 +5250,7 @@ impl LedgerState {
                 drep_deposit: None,
                 is_conway,
                 bootstrap_phase,
+                post_pv10,
             },
         }
     }
@@ -5414,6 +5460,7 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
                 slot,
                 self.stability_window,
+                self.mir_validation_context(slot, false).as_ref(),
             )?;
             staged.apply_tx_with_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
@@ -5565,6 +5612,7 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
                 slot,
                 self.stability_window,
+                self.mir_validation_context(slot, false).as_ref(),
             )?;
             staged.apply_allegra_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
@@ -5714,6 +5762,7 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
                 slot,
                 self.stability_window,
+                self.mir_validation_context(slot, false).as_ref(),
             )?;
             staged.apply_mary_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
         }
@@ -5813,6 +5862,7 @@ impl LedgerState {
                 None,
                 None,
                 Some(&required_scripts),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
@@ -5908,6 +5958,7 @@ impl LedgerState {
                 &staged,
                 &body.inputs,
                 &native_satisfied,
+                None, // Alonzo: no PlutusV3
             )?;
             // Output-side datum hash check: Alonzo outputs to script
             // addresses must carry datum_hash.
@@ -6016,6 +6067,7 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
                 slot,
                 self.stability_window,
+                self.mir_validation_context(slot, true).as_ref(),
             )?;
             staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
             } else {
@@ -6156,6 +6208,7 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
                 Some(&required_scripts),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
@@ -6257,6 +6310,7 @@ impl LedgerState {
                 &staged,
                 &body.inputs,
                 &native_satisfied,
+                None, // Babbage: no PlutusV3
             )?;
             // Supplemental datum check (Babbage — includes reference inputs).
             {
@@ -6364,6 +6418,7 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
                 slot,
                 self.stability_window,
+                self.mir_validation_context(slot, true).as_ref(),
             )?;
             staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
             } else {
@@ -6544,6 +6599,7 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
                 Some(&required_scripts),
+                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
@@ -6653,10 +6709,25 @@ impl LedgerState {
                 if conway_blk_ref_scripts.is_empty() { None } else { Some(&conway_blk_ref_scripts) },
             )?;
             // Unspendable UTxO check (Conway block — no datum on Plutus-locked input).
+            // CIP-0069: collect PlutusV3 script hashes for V3 datum exemption.
+            let conway_blk_v3_hashes = {
+                let ws_bytes = witness_bytes.as_deref();
+                let ws_decoded = ws_bytes.map(|wb| crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb));
+                let ws_ref = match &ws_decoded {
+                    Some(Ok(w)) => Some(w),
+                    _ => None,
+                };
+                crate::plutus_validation::collect_v3_script_hashes(
+                    ws_ref,
+                    Some(&staged),
+                    body.reference_inputs.as_deref(),
+                )
+            };
             crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
                 &staged,
                 &body.inputs,
                 &native_satisfied,
+                if conway_blk_v3_hashes.is_empty() { None } else { Some(&conway_blk_v3_hashes) },
             )?;
             // Supplemental datum check (Conway — includes reference inputs).
             {
@@ -6899,6 +6970,7 @@ impl LedgerState {
                 body.withdrawals.as_ref(),
                 slot,
                 self.stability_window,
+                None, // Conway: MIR certs rejected as UnsupportedCertificate
             )?;
             // Track DRep activity for registration and update certificates.
             touch_drep_activity_for_certs(
@@ -7275,6 +7347,18 @@ fn conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {
     matches!(protocol_version, Some((9, _)))
 }
 
+/// `true` when protocol version major > 10 (i.e., PV 11+).
+///
+/// Upstream:
+/// - `hardforkConwayDELEGIncorrectDepositsAndRefunds`
+/// - `hardforkConwayDisallowUnelectedCommitteeFromVoting`
+/// - `hardforkConwayMoveWithdrawalsAndDRepChecksToLedgerRule`
+///
+/// All three are gated on `pvMajor pv > natVersion @10`.
+fn conway_post_pv10(protocol_version: Option<(u64, u64)>) -> bool {
+    matches!(protocol_version, Some((major, _)) if major > 10)
+}
+
 fn conway_bootstrap_action(gov_action: &crate::eras::conway::GovAction) -> bool {
     matches!(
         gov_action,
@@ -7548,16 +7632,15 @@ fn authorized_elected_hot_committee_credentials(
 /// Collects committee voters whose hot credentials are NOT in the set of
 /// authorized-elected hot committee credentials.  Only applies after the
 /// `hardforkConwayDisallowUnelectedCommitteeFromVoting` gate (protocol
-/// version ≥ 10).
+/// version > 10, i.e., PV 11+).
 fn validate_unelected_committee_voters(
     voting_procedures: &crate::eras::conway::VotingProcedures,
     committee_state: &CommitteeState,
     protocol_version: Option<(u64, u64)>,
 ) -> Result<(), LedgerError> {
     // Gate: only enforce after protocol version 10
-    // (upstream `hardforkConwayDisallowUnelectedCommitteeFromVoting`)
-    let pv_major = protocol_version.map(|(major, _)| major).unwrap_or(0);
-    if pv_major < 10 {
+    // (upstream `harforkConwayDisallowUnelectedCommitteeFromVoting pv = pvMajor pv > natVersion @10`)
+    if !conway_post_pv10(protocol_version) {
         return Ok(());
     }
 
@@ -7596,6 +7679,7 @@ fn conway_unit_interval_well_formed(value: &UnitInterval) -> bool {
 fn conway_protocol_param_update_well_formed(
     update: &crate::protocol_params::ProtocolParameterUpdate,
     protocol_params: Option<&crate::protocol_params::ProtocolParameters>,
+    protocol_version: Option<(u64, u64)>,
 ) -> bool {
     let unit_interval_fields = [
         update.a0.as_ref(),
@@ -7655,20 +7739,33 @@ fn conway_protocol_param_update_well_formed(
         return false;
     }
 
+    // Upstream `ppuWellFormed` — exact set of zero-reject fields.
+    // Reference: `Cardano.Ledger.Conway.PParams` — `ppuWellFormed`.
     if update.max_block_body_size == Some(0)
         || update.max_tx_size == Some(0)
         || update.max_block_header_size == Some(0)
         || update.max_val_size == Some(0)
-        || update.max_collateral_inputs == Some(0)
         || update.collateral_percentage == Some(0)
+        || update.committee_term_limit == Some(0)
+        || update.gov_action_lifetime == Some(0)
         || update.pool_deposit == Some(0)
         || update.gov_action_deposit == Some(0)
         || update.drep_deposit == Some(0)
-        || update.min_committee_size == Some(0)
-        || update.committee_term_limit == Some(0)
-        || update.gov_action_lifetime == Some(0)
-        || update.drep_activity == Some(0)
     {
+        return false;
+    }
+
+    // Upstream: `coinsPerUTxOByte /= 0` only enforced outside bootstrap
+    // (hardforkConwayBootstrapPhase pv == False).
+    if !conway_bootstrap_phase(protocol_version)
+        && update.coins_per_utxo_byte == Some(0)
+    {
+        return false;
+    }
+
+    // Upstream: `nOpt /= 0` only enforced at PV >= 11.
+    // (pvMajor pv < natVersion @11 || isValid (/= 0) ppuNOptL)
+    if conway_post_pv10(protocol_version) && update.n_opt == Some(0) {
         return false;
     }
 
@@ -7734,7 +7831,7 @@ fn validate_conway_proposals(
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
 
-            if !conway_protocol_param_update_well_formed(protocol_param_update, protocol_params) {
+            if !conway_protocol_param_update_well_formed(protocol_param_update, protocol_params, protocol_version) {
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
         }
@@ -7846,8 +7943,14 @@ fn validate_conway_proposals(
                 });
             }
         }
-        // Upstream: ProposalReturnAccountDoesNotExist
-        if !stake_credentials.is_registered(&reward_account.credential) {
+        // Upstream: ProposalReturnAccountDoesNotExist is only enforced
+        // post-bootstrap (PV major ≥ 10).  During Conway bootstrap phase (PV 9),
+        // proposals for ParameterChange / HardForkInitiation / InfoAction are
+        // allowed even when the return account is unregistered.
+        // Reference: Cardano.Ledger.Conway.Rules.Gov — conwayGovTransition
+        //   `unless (hardforkConwayBootstrapPhase ...) $ do ...`
+        let past_bootstrap = !conway_bootstrap_phase(protocol_version);
+        if past_bootstrap && !stake_credentials.is_registered(&reward_account.credential) {
             return Err(LedgerError::ProposalReturnAccountDoesNotExist(reward_account));
         }
 
@@ -7863,23 +7966,26 @@ fn validate_conway_proposals(
                 }
             }
 
-            // Upstream: TreasuryWithdrawalReturnAccountsDoNotExist — collect
-            // all non-registered withdrawal target accounts.
-            let non_registered: Vec<RewardAccount> = withdrawals
-                .keys()
-                .filter(|ra| !stake_credentials.is_registered(&ra.credential))
-                .copied()
-                .collect();
-            if !non_registered.is_empty() {
-                return Err(LedgerError::TreasuryWithdrawalReturnAccountsDoNotExist(
-                    non_registered,
-                ));
+            // Upstream: TreasuryWithdrawalReturnAccountsDoNotExist — only
+            // enforced post-bootstrap (PV major ≥ 10), same gate as
+            // ProposalReturnAccountDoesNotExist.
+            // Reference: Cardano.Ledger.Conway.Rules.Gov — conwayGovTransition
+            if past_bootstrap {
+                let non_registered: Vec<RewardAccount> = withdrawals
+                    .keys()
+                    .filter(|ra| !stake_credentials.is_registered(&ra.credential))
+                    .copied()
+                    .collect();
+                if !non_registered.is_empty() {
+                    return Err(LedgerError::TreasuryWithdrawalReturnAccountsDoNotExist(
+                        non_registered,
+                    ));
+                }
             }
 
             // Upstream: `ZeroTreasuryWithdrawals` is only enforced after
             // the Conway bootstrap phase (PV major ≥ 10).
             // `hardforkConwayBootstrapPhase` returns true for PV < 10.
-            let past_bootstrap = protocol_version.map_or(false, |(maj, _)| maj >= 10);
             if past_bootstrap && withdrawals.values().all(|amount| *amount == 0) {
                 return Err(LedgerError::ZeroTreasuryWithdrawals(
                     proposal.gov_action.clone(),
@@ -7945,21 +8051,6 @@ fn validate_conway_proposals(
                 .collect();
             if !invalid_members.is_empty() {
                 return Err(LedgerError::ExpirationEpochTooSmall(invalid_members));
-            }
-
-            if let Some(term_limit) = protocol_params.and_then(|pp| pp.committee_term_limit) {
-                let max_epoch = EpochNo(current_epoch.0.saturating_add(term_limit));
-                let invalid_members: Vec<_> = members_to_add
-                    .iter()
-                    .filter(|(_, epoch)| **epoch > max_epoch.0)
-                    .map(|(member, epoch)| (*member, EpochNo(*epoch)))
-                    .collect();
-                if !invalid_members.is_empty() {
-                    return Err(LedgerError::ExpirationEpochTooLarge {
-                        members: invalid_members,
-                        max_epoch,
-                    });
-                }
             }
         }
 
@@ -8038,6 +8129,29 @@ fn validate_withdrawals_delegated(
     Ok(())
 }
 
+/// Context for MIR certificate validation at admission time.
+///
+/// Upstream DELEG rule enforces seven checks on `MoveInstantaneousReward`
+/// certificates before recording the MIR data.  All fields are optional so
+/// callers that lack the full context can perform a best-effort subset.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` (MIR handling).
+struct MirValidationContext<'a> {
+    /// Current slot number for the timing check.
+    current_slot: u64,
+    /// `firstSlot(current_epoch + 1) - stability_window`: deadline after
+    /// which MIR certs are too late.  Pre-computed by the caller.
+    mir_deadline_slot: Option<u64>,
+    /// Whether the Alonzo MIR-transfer hardfork is active (PV >= 6).
+    alonzo_mir_transfers: bool,
+    /// Current reserves balance.
+    reserves: u64,
+    /// Current treasury balance.
+    treasury: u64,
+    /// Snapshot of accumulated `InstantaneousRewards` so far this block.
+    instantaneous_rewards: &'a InstantaneousRewards,
+}
+
 /// Context for certificate validation, bundling protocol parameters and
 /// ledger state needed during `apply_certificates_and_withdrawals`.
 struct CertificateValidationContext {
@@ -8056,6 +8170,11 @@ struct CertificateValidationContext {
     /// Upstream: `hardforkConwayBootstrapPhase` gates DRep registration
     /// checks in `Cardano.Ledger.Conway.Rules.Deleg`.
     bootstrap_phase: bool,
+    /// `true` when PV major > 10 (PV 11+).
+    ///
+    /// Upstream: `harforkConwayDELEGIncorrectDepositsAndRefunds` gates
+    /// `DepositIncorrectDELEG` / `RefundIncorrectDELEG` error variants.
+    post_pv10: bool,
 }
 
 /// Results of certificate and withdrawal processing for the value preservation
@@ -8189,6 +8308,7 @@ fn apply_certificates_and_withdrawals(
         withdrawals,
         0,
         None,
+        None,
     )
 }
 
@@ -8208,9 +8328,65 @@ fn apply_certificates_and_withdrawals_with_future(
     withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
     current_slot: u64,
     stability_window: Option<u64>,
+    mir_ctx: Option<&MirValidationContext<'_>>,
 ) -> Result<CertBalanceAdjustment, LedgerError> {
     let key_deposit = ctx.key_deposit;
     let pool_deposit = ctx.pool_deposit;
+
+    // ── Withdrawal validation + account draining ──────────────────────
+    // Upstream Conway CERTS rule (STS recursive base case) and Shelley
+    // DELEGS both validate and drain reward-account withdrawals BEFORE
+    // processing any certificates.  At PV >= 11
+    // (`hardforkConwayMoveWithdrawalsAndDRepChecksToLedgerRule`) the
+    // withdrawal draining is lifted from the CERTS base case into LEDGER
+    // but still executes before CERTS, keeping the same relative
+    // ordering.
+    //
+    // This ordering is semantically relevant: a transaction that
+    // unregisters a stake credential AND withdraws from its reward
+    // account succeeds because draining sets the balance to zero before
+    // the unregistration check (`StakeCredentialHasRewards`).
+    //
+    // Reference: `Cardano.Ledger.Conway.Rules.Certs` —
+    // `conwayCertsTransition` base case `Empty`, and
+    // `Cardano.Ledger.Conway.Rules.Ledger` —
+    // `hardforkConwayMoveWithdrawalsAndDRepChecksToLedgerRule`.
+    let mut withdrawal_total = 0u64;
+    if let Some(entries) = withdrawals {
+        for (account, requested) in entries {
+            let Some(state) = reward_accounts.get_mut(account) else {
+                return Err(LedgerError::RewardAccountNotRegistered(*account));
+            };
+
+            let available = state.balance();
+            if *requested > available {
+                return Err(LedgerError::WithdrawalExceedsBalance {
+                    account: *account,
+                    requested: *requested,
+                    available,
+                });
+            }
+
+            // Formal spec: wdrls ⊆ rewards — withdrawal amount must
+            // exactly match the reward account balance for all Shelley+
+            // eras. Upstream: `validateWithdrawals` enforces equal-value
+            // map subset in Shelley through Conway.
+            // Reference: `Cardano.Ledger.Shelley.Rules.Utxo`,
+            // `Cardano.Ledger.Conway.Rules.Certs`.
+            if *requested != available {
+                return Err(LedgerError::WithdrawalNotFullDrain {
+                    account: *account,
+                    requested: *requested,
+                    balance: available,
+                });
+            }
+
+            state.set_balance(available - *requested);
+            withdrawal_total = withdrawal_total.saturating_add(*requested);
+        }
+    }
+
+    // ── Certificate processing ────────────────────────────────────────
     let mut total_deposits: u64 = 0;
     let mut total_refunds: u64 = 0;
     if let Some(certs) = certificates {
@@ -8257,10 +8433,20 @@ fn apply_certificates_and_withdrawals_with_future(
                 }
                 DCert::AccountRegistrationDeposit(credential, deposit) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
+                    // Upstream `hardforkConwayDELEGIncorrectDepositsAndRefunds`:
+                    // PV > 10 uses `DepositIncorrectDELEG`, PV <= 10 keeps
+                    // legacy `IncorrectDepositDELEG`.
                     if ctx.is_conway && *deposit != key_deposit {
-                        return Err(LedgerError::IncorrectDepositDELEG {
-                            supplied: *deposit,
-                            expected: key_deposit,
+                        return Err(if ctx.post_pv10 {
+                            LedgerError::DepositIncorrectDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
+                        } else {
+                            LedgerError::IncorrectDepositDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
                         });
                     }
                     // Conway DELEG rule: `checkStakeKeyNotRegistered` —
@@ -8290,8 +8476,8 @@ fn apply_certificates_and_withdrawals_with_future(
                     // behavior.
                     //
                     // Upstream `hardforkConwayDELEGIncorrectDepositsAndRefunds`:
-                    // PV >= 10 uses `RefundIncorrectDELEG Mismatch`,
-                    // PV < 10 uses the legacy `IncorrectDepositDELEG`.
+                    // PV > 10 uses `RefundIncorrectDELEG Mismatch`,
+                    // PV <= 10 uses the legacy `IncorrectDepositDELEG`.
                     if ctx.is_conway {
                         let raw_stored = stake_credentials
                             .get(credential)
@@ -8299,14 +8485,14 @@ fn apply_certificates_and_withdrawals_with_future(
                             .unwrap_or(0);
                         let expected_deposit = if raw_stored > 0 { raw_stored } else { key_deposit };
                         if *refund != expected_deposit {
-                            return Err(if !ctx.bootstrap_phase {
-                                // PV >= 10: new error variant
+                            return Err(if ctx.post_pv10 {
+                                // PV > 10: new error variant
                                 LedgerError::RefundIncorrectDELEG {
                                     supplied: *refund,
                                     expected: expected_deposit,
                                 }
                             } else {
-                                // PV < 10 (bootstrap): legacy error variant
+                                // PV <= 10 (bootstrap or initial Conway): legacy error variant
                                 LedgerError::IncorrectKeyDepositRefund {
                                     supplied: *refund,
                                     expected: expected_deposit,
@@ -8337,10 +8523,18 @@ fn apply_certificates_and_withdrawals_with_future(
                 }
                 DCert::AccountRegistrationDelegationToStakePool(credential, pool, deposit) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
+                    // PV split follows `hardforkConwayDELEGIncorrectDepositsAndRefunds`.
                     if ctx.is_conway && *deposit != key_deposit {
-                        return Err(LedgerError::IncorrectDepositDELEG {
-                            supplied: *deposit,
-                            expected: key_deposit,
+                        return Err(if ctx.post_pv10 {
+                            LedgerError::DepositIncorrectDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
+                        } else {
+                            LedgerError::IncorrectDepositDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
                         });
                     }
                     // Conway DELEG rule: `checkStakeKeyNotRegistered` —
@@ -8378,10 +8572,18 @@ fn apply_certificates_and_withdrawals_with_future(
                 }
                 DCert::AccountRegistrationDelegationToDrep(credential, drep, deposit) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
+                    // PV split follows `hardforkConwayDELEGIncorrectDepositsAndRefunds`.
                     if ctx.is_conway && *deposit != key_deposit {
-                        return Err(LedgerError::IncorrectDepositDELEG {
-                            supplied: *deposit,
-                            expected: key_deposit,
+                        return Err(if ctx.post_pv10 {
+                            LedgerError::DepositIncorrectDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
+                        } else {
+                            LedgerError::IncorrectDepositDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
                         });
                     }
                     // Conway DELEG rule: `checkStakeKeyNotRegistered` —
@@ -8398,10 +8600,18 @@ fn apply_certificates_and_withdrawals_with_future(
                 }
                 DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, deposit) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
+                    // PV split follows `hardforkConwayDELEGIncorrectDepositsAndRefunds`.
                     if ctx.is_conway && *deposit != key_deposit {
-                        return Err(LedgerError::IncorrectDepositDELEG {
-                            supplied: *deposit,
-                            expected: key_deposit,
+                        return Err(if ctx.post_pv10 {
+                            LedgerError::DepositIncorrectDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
+                        } else {
+                            LedgerError::IncorrectDepositDELEG {
+                                supplied: *deposit,
+                                expected: key_deposit,
+                            }
                         });
                     }
                     // Conway DELEG rule: `checkStakeKeyNotRegistered` —
@@ -8623,48 +8833,147 @@ fn apply_certificates_and_withdrawals_with_future(
                         gen_delegs.insert(*genesis_hash, deleg);
                     }
                 }
-                DCert::MoveInstantaneousReward(_pot, _target) => {
-                    // MIR certs are recorded but the actual reserves/treasury
-                    // transfer is applied at the epoch boundary (TICK rule).
-                    // Accepting the cert here allows mainnet blocks containing
-                    // MIR to be decoded and applied without error.
+                DCert::MoveInstantaneousReward(pot, target) => {
+                    // ── Upstream DELEG MIR validation ──────────────────
+                    // Reference: `Cardano.Ledger.Shelley.Rules.Deleg`
+                    if let Some(mir_ctx) = mir_ctx {
+                        // 1. Timing check: MIR must arrive before the
+                        //    epoch deadline.
+                        //    Upstream: `MIRCertificateTooLateinEpochDELEG`.
+                        if let Some(deadline) = mir_ctx.mir_deadline_slot {
+                            if mir_ctx.current_slot >= deadline {
+                                return Err(LedgerError::MIRCertificateTooLateInEpoch {
+                                    slot: mir_ctx.current_slot,
+                                    deadline,
+                                });
+                            }
+                        }
+
+                        match target {
+                            MirTarget::StakeCredentials(map) => {
+                                if !mir_ctx.alonzo_mir_transfers {
+                                    // 2. Pre-Alonzo: negative deltas
+                                    //    not allowed.
+                                    //    Upstream: `MIRNegativesNotCurrentlyAllowed`.
+                                    for (_, &delta) in map.iter() {
+                                        if delta < 0 {
+                                            return Err(LedgerError::MIRNegativesNotCurrentlyAllowed);
+                                        }
+                                    }
+                                } else {
+                                    // 3. Alonzo+: combined map must
+                                    //    not produce negatives.
+                                    //    Upstream: `MIRProducesNegativeUpdate`.
+                                    let ir_map = match pot {
+                                        MirPot::Reserves => &mir_ctx.instantaneous_rewards.ir_reserves,
+                                        MirPot::Treasury => &mir_ctx.instantaneous_rewards.ir_treasury,
+                                    };
+                                    for (cred, &delta) in map.iter() {
+                                        let existing = ir_map.get(cred).copied().unwrap_or(0);
+                                        if existing.saturating_add(delta) < 0 {
+                                            return Err(LedgerError::MIRProducesNegativeUpdate);
+                                        }
+                                    }
+                                }
+
+                                // 4. Pot sufficiency: total combined rewards
+                                //    must not exceed pot balance.
+                                //    Upstream: `InsufficientForInstantaneousRewardsDELEG`.
+                                let ir_map = match pot {
+                                    MirPot::Reserves => &mir_ctx.instantaneous_rewards.ir_reserves,
+                                    MirPot::Treasury => &mir_ctx.instantaneous_rewards.ir_treasury,
+                                };
+                                // Merge new deltas with existing for total.
+                                let mut combined = ir_map.clone();
+                                for (cred, &delta) in map.iter() {
+                                    *combined.entry(*cred).or_insert(0) += delta;
+                                }
+                                let total_required: u64 = combined
+                                    .values()
+                                    .filter(|&&v| v > 0)
+                                    .map(|&v| v as u64)
+                                    .sum();
+
+                                let pot_balance = match pot {
+                                    MirPot::Reserves => mir_ctx.reserves,
+                                    MirPot::Treasury => mir_ctx.treasury,
+                                };
+                                let available = if mir_ctx.alonzo_mir_transfers {
+                                    // Alonzo+: add delta for this pot.
+                                    let delta = match pot {
+                                        MirPot::Reserves => mir_ctx.instantaneous_rewards.delta_reserves,
+                                        MirPot::Treasury => mir_ctx.instantaneous_rewards.delta_treasury,
+                                    };
+                                    if delta >= 0 {
+                                        pot_balance.saturating_add(delta as u64)
+                                    } else {
+                                        pot_balance.saturating_sub((-delta) as u64)
+                                    }
+                                } else {
+                                    pot_balance
+                                };
+                                if total_required > available {
+                                    return Err(LedgerError::MIRInsufficientPotBalance {
+                                        pot: *pot,
+                                        available,
+                                        required: total_required,
+                                    });
+                                }
+                            }
+                            MirTarget::SendToOppositePot(coin) => {
+                                if !mir_ctx.alonzo_mir_transfers {
+                                    // 5. Pre-Alonzo: transfers not
+                                    //    allowed.
+                                    //    Upstream: `MIRTransferNotCurrentlyAllowed`.
+                                    return Err(LedgerError::MIRTransferNotCurrentlyAllowed);
+                                }
+
+                                // 6. Non-negative transfer.
+                                //    Upstream: `MIRNegativeTransfer`.
+                                // NOTE: Our `SendToOppositePot(u64)` is
+                                // unsigned, so this is inherently satisfied.
+                                // Keep the check as documentation.
+                                let _ = coin;
+
+                                // 7. Transfer <= available after MIR.
+                                //    Upstream: `InsufficientForTransferDELEG`.
+                                //    `availableAfterMIR pot acnt iRewards`:
+                                //    pot_balance + delta - sum(positive combined ir entries)
+                                let ir_map = match pot {
+                                    MirPot::Reserves => &mir_ctx.instantaneous_rewards.ir_reserves,
+                                    MirPot::Treasury => &mir_ctx.instantaneous_rewards.ir_treasury,
+                                };
+                                let pot_balance = match pot {
+                                    MirPot::Reserves => mir_ctx.reserves,
+                                    MirPot::Treasury => mir_ctx.treasury,
+                                };
+                                let delta = match pot {
+                                    MirPot::Reserves => mir_ctx.instantaneous_rewards.delta_reserves,
+                                    MirPot::Treasury => mir_ctx.instantaneous_rewards.delta_treasury,
+                                };
+                                let with_delta = if delta >= 0 {
+                                    pot_balance.saturating_add(delta as u64)
+                                } else {
+                                    pot_balance.saturating_sub((-delta) as u64)
+                                };
+                                let ir_committed: u64 = ir_map
+                                    .values()
+                                    .filter(|&&v| v > 0)
+                                    .map(|&v| v as u64)
+                                    .sum();
+                                let available_after = with_delta.saturating_sub(ir_committed);
+                                if *coin > available_after {
+                                    return Err(LedgerError::MIRInsufficientForTransfer {
+                                        pot: *pot,
+                                        available: available_after,
+                                        required: *coin,
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
-    }
-
-    let mut withdrawal_total = 0u64;
-    if let Some(entries) = withdrawals {
-        for (account, requested) in entries {
-            let Some(state) = reward_accounts.get_mut(account) else {
-                return Err(LedgerError::RewardAccountNotRegistered(*account));
-            };
-
-            let available = state.balance();
-            if *requested > available {
-                return Err(LedgerError::WithdrawalExceedsBalance {
-                    account: *account,
-                    requested: *requested,
-                    available,
-                });
-            }
-
-            // Formal spec: wdrls ⊆ rewards — withdrawal amount must
-            // exactly match the reward account balance for all Shelley+
-            // eras. Upstream: `validateWithdrawals` enforces equal-value
-            // map subset in Shelley through Conway.
-            // Reference: `Cardano.Ledger.Shelley.Rules.Utxo`,
-            // `Cardano.Ledger.Conway.Rules.Certs`.
-            if *requested != available {
-                return Err(LedgerError::WithdrawalNotFullDrain {
-                    account: *account,
-                    requested: *requested,
-                    balance: available,
-                });
-            }
-
-            state.set_balance(available - *requested);
-            withdrawal_total = withdrawal_total.saturating_add(*requested);
         }
     }
 
@@ -8720,11 +9029,15 @@ fn delegate_stake_credential(
     pool: PoolKeyHash,
     check_pool_registered: bool,
 ) -> Result<(), LedgerError> {
-    // Upstream: only Conway DELEG checks `DelegateeStakePoolNotRegisteredDELEG`.
-    // In Shelley through Babbage, delegation to an unregistered pool silently
-    // succeeds — the delegation is recorded but has no effect until the pool
-    // registers.
-    // Reference: `Cardano.Ledger.Conway.Rules.Deleg` — `checkStakeDelegateeRegistered`.
+    // Upstream: both Shelley DELEG (`DelegateeNotRegisteredDELEG`) and
+    // Conway DELEG (`DelegateeStakePoolNotRegisteredDELEG`) enforce that
+    // the target pool must be registered.  The `check_pool_registered`
+    // flag controls whether this crate enforces the check (always true
+    // in practice).
+    //
+    // Reference: `Cardano.Ledger.Shelley.Rules.Deleg` —
+    //   `DelegStakeTxCert cred stakePool -> Map.member stakePool ...`;
+    // `Cardano.Ledger.Conway.Rules.Deleg` — `checkStakeDelegateeRegistered`.
     if check_pool_registered && !pool_state.is_registered(&pool) {
         return Err(LedgerError::PoolNotRegistered(pool));
     }
@@ -11708,95 +12021,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_committee_rejects_expiration_epoch_beyond_term_limit() {
-        let es = EnactState::default();
-        let stake_creds = empty_stake_creds_with(1);
-        let mut members_to_add = std::collections::BTreeMap::new();
-        members_to_add.insert(
-            crate::StakeCredential::AddrKeyHash([0x44; 28]),
-            13,
-        );
-        let proposals = vec![sample_proposal(
-            GovAction::UpdateCommittee {
-                prev_action_id: None,
-                members_to_remove: vec![],
-                members_to_add,
-                quorum: UnitInterval {
-                    numerator: 1,
-                    denominator: 2,
-                },
-            },
-            1,
-            1,
-        )];
-        let protocol_params = crate::protocol_params::ProtocolParameters {
-            committee_term_limit: Some(2),
-            ..Default::default()
-        };
-
-        let result = validate_conway_proposals(
-            crate::types::TxId([0xAA; 32]),
-            &proposals,
-            EpochNo(10),
-            &mut BTreeMap::new(),
-            &stake_creds,
-            None,
-            None,
-            None,
-            Some(&protocol_params),
-            &es,
-            None,
-        );
-        assert!(matches!(
-            result,
-            Err(LedgerError::ExpirationEpochTooLarge { .. })
-        ));
-    }
-
-    #[test]
-    fn test_update_committee_accepts_expiration_epoch_at_term_limit() {
-        let es = EnactState::default();
-        let stake_creds = empty_stake_creds_with(1);
-        let mut members_to_add = std::collections::BTreeMap::new();
-        members_to_add.insert(
-            crate::StakeCredential::AddrKeyHash([0x55; 28]),
-            12,
-        );
-        let proposals = vec![sample_proposal(
-            GovAction::UpdateCommittee {
-                prev_action_id: None,
-                members_to_remove: vec![],
-                members_to_add,
-                quorum: UnitInterval {
-                    numerator: 1,
-                    denominator: 2,
-                },
-            },
-            1,
-            1,
-        )];
-        let protocol_params = crate::protocol_params::ProtocolParameters {
-            committee_term_limit: Some(2),
-            ..Default::default()
-        };
-
-        let result = validate_conway_proposals(
-            crate::types::TxId([0xAA; 32]),
-            &proposals,
-            EpochNo(10),
-            &mut BTreeMap::new(),
-            &stake_creds,
-            None,
-            None,
-            None,
-            Some(&protocol_params),
-            &es,
-            None,
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_hard_fork_rejects_when_current_protocol_version_missing() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
@@ -12645,6 +12869,264 @@ mod tests {
             None,
         );
         assert!(matches!(gov_result, Err(LedgerError::MalformedProposal(_))));
+    }
+
+    /// Upstream ppuWellFormed: `max_collateral_inputs == 0`, `min_committee_size == 0`,
+    /// and `drep_activity == 0` are NOT rejected. Only the exact upstream set of
+    /// zero-reject fields triggers `MalformedProposal`.
+    #[test]
+    fn test_ppu_well_formed_accepts_fields_not_in_upstream_zero_list() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+
+        // max_collateral_inputs == 0 is ACCEPTED (not in upstream ppuWellFormed)
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    max_collateral_inputs: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(result.is_ok(), "max_collateral_inputs=0 should be accepted");
+
+        // min_committee_size == 0 is ACCEPTED (not in upstream ppuWellFormed)
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_committee_size: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(result.is_ok(), "min_committee_size=0 should be accepted");
+
+        // drep_activity == 0 is ACCEPTED (not in upstream ppuWellFormed)
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    drep_activity: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(result.is_ok(), "drep_activity=0 should be accepted");
+    }
+
+    /// Upstream ppuWellFormed: `coinsPerUTxOByte == 0` is rejected only outside
+    /// bootstrap phase (hardforkConwayBootstrapPhase pv == False, i.e. PV >= 10).
+    #[test]
+    fn test_ppu_well_formed_coins_per_utxo_byte_zero_post_bootstrap() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    coins_per_utxo_byte: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+
+        // PV 10 (post-bootstrap): rejected
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((10, 0)),
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::MalformedProposal(_))),
+            "coinsPerUTxOByte=0 rejected at PV 10 (post-bootstrap)"
+        );
+
+        // PV 9 (bootstrap): accepted
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((9, 0)),
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "coinsPerUTxOByte=0 accepted at PV 9 (bootstrap phase)"
+        );
+    }
+
+    /// Upstream ppuWellFormed: `nOpt == 0` is rejected only at PV >= 11.
+    #[test]
+    fn test_ppu_well_formed_n_opt_zero_pv11() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    n_opt: Some(0),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+
+        // PV 11: rejected
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((11, 0)),
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::MalformedProposal(_))),
+            "nOpt=0 rejected at PV 11"
+        );
+
+        // PV 10: accepted
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((10, 0)),
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "nOpt=0 accepted at PV 10 (< 11)"
+        );
+    }
+
+    /// Upstream GOV rule does NOT have `ExpirationEpochTooLarge` — committee member
+    /// expiration epochs beyond the term limit are accepted.
+    #[test]
+    fn test_update_committee_accepts_expiration_beyond_term_limit() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut members_to_add = std::collections::BTreeMap::new();
+        // Expiration 13 with current epoch 10 and term limit 2 => epoch 12 max
+        // This would have been rejected by ExpirationEpochTooLarge, but upstream
+        // GOV only checks ExpirationEpochTooSmall.
+        members_to_add.insert(
+            crate::StakeCredential::AddrKeyHash([0x44; 28]),
+            13,
+        );
+        let proposals = vec![sample_proposal(
+            GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            1,
+            1,
+        )];
+        let protocol_params = crate::protocol_params::ProtocolParameters {
+            committee_term_limit: Some(2),
+            ..Default::default()
+        };
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(10),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            None,
+            None,
+            None,
+            Some(&protocol_params),
+            &es,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "committee term limit is not checked at GOV level — upstream parity"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -15270,8 +15752,9 @@ mod tests {
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
 
+    /// Upstream ppuWellFormed does NOT reject `min_committee_size == 0`.
     #[test]
-    fn proposal_rejects_zero_min_committee_size() {
+    fn proposal_accepts_zero_min_committee_size() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
         let proposals = vec![sample_proposal(
@@ -15299,7 +15782,7 @@ mod tests {
             &es,
             None,
         );
-        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+        assert!(result.is_ok(), "min_committee_size=0 is accepted (upstream parity)");
     }
 
     #[test]
@@ -15334,8 +15817,9 @@ mod tests {
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
 
+    /// Upstream ppuWellFormed does NOT reject `drep_activity == 0`.
     #[test]
-    fn proposal_rejects_zero_drep_activity() {
+    fn proposal_accepts_zero_drep_activity() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
         let proposals = vec![sample_proposal(
@@ -15363,7 +15847,7 @@ mod tests {
             &es,
             None,
         );
-        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+        assert!(result.is_ok(), "drep_activity=0 is accepted (upstream parity)");
     }
 
     #[test]
@@ -15553,6 +16037,91 @@ mod tests {
             result,
             Err(LedgerError::ProposalReturnAccountDoesNotExist(_))
         ));
+    }
+
+    #[test]
+    fn proposal_bootstrap_allows_unregistered_return_account() {
+        // During Conway bootstrap (PV 9), ProposalReturnAccountDoesNotExist
+        // is NOT enforced.  Only checked post-bootstrap (PV ≥ 10).
+        // Reference: Cardano.Ledger.Conway.Rules.Gov — conwayGovTransition
+        //   `unless (hardforkConwayBootstrapPhase ...) $ do ...`
+        let es = EnactState::default();
+        // Return account ra_id=1 is NOT registered — only register ra_id=2.
+        let stake_creds = empty_stake_creds_with(2);
+        let proposals = vec![sample_proposal(GovAction::InfoAction, 1, 1)];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((9, 0)), // bootstrap phase
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(result.is_ok(), "bootstrap should skip return-account registration check: {result:?}");
+    }
+
+    #[test]
+    fn proposal_bootstrap_allows_parameter_change_unregistered_return_account() {
+        // ParameterChange is a bootstrap action; during bootstrap the return-
+        // account registration check is skipped.
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(2); // ra_id=1 NOT registered
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    min_fee_a: Some(1),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((9, 0)), // bootstrap phase
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(result.is_ok(), "bootstrap ParameterChange should skip return-account check: {result:?}");
+    }
+
+    #[test]
+    fn proposal_post_bootstrap_rejects_unregistered_return_account() {
+        // Post-bootstrap (PV 10), ProposalReturnAccountDoesNotExist IS enforced.
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(2); // ra_id=1 NOT registered
+        let proposals = vec![sample_proposal(GovAction::InfoAction, 1, 1)];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((10, 0)), // post-bootstrap
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::ProposalReturnAccountDoesNotExist(_))),
+            "post-bootstrap should reject unregistered return account: {result:?}",
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -16642,6 +17211,7 @@ mod tests {
             drep_deposit: Some(500_000),
             is_conway: false,
             bootstrap_phase: false,
+            post_pv10: false,
         }
     }
 
@@ -16658,6 +17228,7 @@ mod tests {
             drep_deposit: Some(500_000),
             is_conway: true,
             bootstrap_phase: false,
+            post_pv10: false,
         }
     }
 
@@ -17361,6 +17932,7 @@ mod tests {
             None,
             100,
             Some(5),
+            None,
         )
         .unwrap();
 
@@ -17420,6 +17992,7 @@ mod tests {
             None,
             100,
             Some(5),
+            None,
         )
         .unwrap_err();
         assert!(matches!(err, LedgerError::DuplicateGenesisDelegate { .. }));
@@ -17838,7 +18411,7 @@ mod tests {
 
     #[test]
     fn test_refund_incorrect_deleg_post_bootstrap() {
-        // PV >= 10 (post-bootstrap) uses RefundIncorrectDELEG.
+        // PV > 10 (PV 11+) uses RefundIncorrectDELEG.
         let mut pool = PoolState::new();
         let mut sc = StakeCredentials::new();
         let mut cs = CommitteeState::new();
@@ -17849,7 +18422,8 @@ mod tests {
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
 
         // Register first.
-        let ctx = sample_conway_cert_ctx(); // bootstrap_phase = false
+        let mut ctx = sample_conway_cert_ctx();
+        ctx.post_pv10 = true; // PV 11+: new error variant
         let reg = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         apply_certificates_and_withdrawals(
             &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
@@ -18333,6 +18907,81 @@ mod tests {
         assert_eq!(ra.balance(&ra_key), 0);
     }
 
+    /// Upstream Conway CERTS rule drains reward-account withdrawals BEFORE
+    /// processing certificates.  A transaction that withdraws from a reward
+    /// account AND unregisters the same credential must succeed because the
+    /// balance is already zero when `unregister_stake_credential` checks
+    /// `StakeCredentialHasRewards`.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Certs` —
+    /// `conwayCertsTransition` base case `Empty` drains accounts, then the
+    /// inductive step processes individual certificates.
+    #[test]
+    fn test_same_tx_withdraw_then_unregister_succeeds() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xCC; 28]);
+        sc.register_with_deposit(cred, 2_000_000);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let ra_key = RewardAccount { network: 1, credential: cred };
+        let mut ra = RewardAccounts::new();
+        ra.insert(ra_key, RewardAccountState::new(500_000, None));
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        // Withdraw the entire balance AND unregister in a single call.
+        let mut withdrawals = std::collections::BTreeMap::new();
+        withdrawals.insert(ra_key, 500_000);
+        let certs = vec![DCert::AccountUnregistration(cred)];
+
+        let cert_adj = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), Some(&withdrawals),
+        ).expect("same-tx withdraw + unregister must succeed (upstream CERTS base-case ordering)");
+
+        assert_eq!(cert_adj.withdrawal_total, 500_000);
+        // Credential is now unregistered.
+        assert!(!sc.is_registered(&cred));
+        // Reward account entry was removed.
+        assert_eq!(ra.get(&ra_key), None);
+    }
+
+    /// Conway variant: `AccountUnregistrationDeposit` (tag 8) with a
+    /// same-tx withdrawal should also succeed.
+    #[test]
+    fn test_same_tx_withdraw_then_conway_unregister_deposit_succeeds() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::AddrKeyHash([0xDD; 28]);
+        sc.register_with_deposit(cred, 2_000_000);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let ra_key = RewardAccount { network: 1, credential: cred };
+        let mut ra = RewardAccounts::new();
+        ra.insert(ra_key, RewardAccountState::new(300_000, None));
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut ctx = sample_cert_ctx();
+        ctx.is_conway = true;
+
+        let mut withdrawals = std::collections::BTreeMap::new();
+        withdrawals.insert(ra_key, 300_000);
+        let certs = vec![DCert::AccountUnregistrationDeposit(cred, 2_000_000)];
+
+        let cert_adj = apply_certificates_and_withdrawals(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), Some(&withdrawals),
+        ).expect("same-tx withdraw + Conway unregister must succeed");
+
+        assert_eq!(cert_adj.withdrawal_total, 300_000);
+        assert_eq!(cert_adj.total_refunds, 2_000_000);
+        assert!(!sc.is_registered(&cred));
+    }
+
     // -----------------------------------------------------------------------
     // conway_pv_can_follow
     // -----------------------------------------------------------------------
@@ -18714,6 +19363,7 @@ mod tests {
         // Step 2: Simulate key_deposit changing to 3M.
         let mut unreg_ctx = sample_conway_cert_ctx();
         unreg_ctx.key_deposit = 3_000_000;
+        unreg_ctx.post_pv10 = true; // PV 11+: new error variant
 
         // Step 3: Attempt unregistration with refund=3M (current param).
         // Should fail: stored deposit is 2M.
@@ -19084,5 +19734,333 @@ mod tests {
             matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash_b),
             "script B is available via reference, so providing it as witness is extraneous",
         );
+    }
+
+    // ── MIR certificate validation tests ──────────────────────────────
+    // Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — MIR handling.
+
+    fn sample_mir_ctx_alonzo(ir: &InstantaneousRewards) -> MirValidationContext<'_> {
+        MirValidationContext {
+            current_slot: 100,
+            mir_deadline_slot: Some(500),
+            alonzo_mir_transfers: true,
+            reserves: 10_000_000,
+            treasury: 5_000_000,
+            instantaneous_rewards: ir,
+        }
+    }
+
+    fn sample_shelley_cert_ctx_for_mir() -> CertificateValidationContext {
+        CertificateValidationContext {
+            key_deposit: 2_000_000,
+            pool_deposit: 500_000_000,
+            min_pool_cost: 170_000_000,
+            e_max: 18,
+            current_epoch: EpochNo(100),
+            expected_network_id: Some(1),
+            drep_deposit: None,
+            is_conway: false,
+            bootstrap_phase: false,
+            post_pv10: false,
+        }
+    }
+
+    /// Upstream: `MIRCertificateTooLateinEpochDELEG` — slot >= deadline.
+    #[test]
+    fn test_mir_too_late_in_epoch() {
+        let ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        let mir_ctx = MirValidationContext {
+            current_slot: 500,
+            mir_deadline_slot: Some(500),
+            alonzo_mir_transfers: false,
+            reserves: 10_000_000,
+            treasury: 5_000_000,
+            instantaneous_rewards: &ir,
+        };
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(cred, 1_000i64);
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Reserves,
+            MirTarget::StakeCredentials(map),
+        )];
+        let err = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 500, Some(5), Some(&mir_ctx),
+        );
+        assert!(matches!(err, Err(LedgerError::MIRCertificateTooLateInEpoch { slot: 500, deadline: 500 })));
+    }
+
+    /// Upstream: `MIRNegativesNotCurrentlyAllowed` — pre-Alonzo negatives rejected.
+    #[test]
+    fn test_mir_negatives_not_allowed_pre_alonzo() {
+        let ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        let mir_ctx = MirValidationContext {
+            current_slot: 100,
+            mir_deadline_slot: Some(500),
+            alonzo_mir_transfers: false,
+            reserves: 10_000_000,
+            treasury: 5_000_000,
+            instantaneous_rewards: &ir,
+        };
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(cred, -500i64);
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Reserves,
+            MirTarget::StakeCredentials(map),
+        )];
+        let err = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+        );
+        assert!(matches!(err, Err(LedgerError::MIRNegativesNotCurrentlyAllowed)));
+    }
+
+    /// Upstream: `MIRProducesNegativeUpdate` — Alonzo+ combined map negative.
+    #[test]
+    fn test_mir_produces_negative_update_alonzo() {
+        let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
+        let mut ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        ir.ir_reserves.insert(cred, 500);
+        let mir_ctx = sample_mir_ctx_alonzo(&ir);
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(cred, -600i64); // combined = 500 + (-600) = -100 < 0
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Reserves,
+            MirTarget::StakeCredentials(map),
+        )];
+        let err = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+        );
+        assert!(matches!(err, Err(LedgerError::MIRProducesNegativeUpdate)));
+    }
+
+    /// Upstream: `InsufficientForInstantaneousRewardsDELEG` — pot insufficient.
+    #[test]
+    fn test_mir_insufficient_pot_balance() {
+        let ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        let mir_ctx = MirValidationContext {
+            current_slot: 100,
+            mir_deadline_slot: Some(500),
+            alonzo_mir_transfers: false,
+            reserves: 1_000,
+            treasury: 5_000_000,
+            instantaneous_rewards: &ir,
+        };
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(cred, 5_000i64); // 5000 > 1000 reserves
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Reserves,
+            MirTarget::StakeCredentials(map),
+        )];
+        let err = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+        );
+        assert!(matches!(err, Err(LedgerError::MIRInsufficientPotBalance { .. })));
+    }
+
+    /// Upstream: `MIRTransferNotCurrentlyAllowed` — pre-Alonzo transfer rejected.
+    #[test]
+    fn test_mir_transfer_not_allowed_pre_alonzo() {
+        let ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        let mir_ctx = MirValidationContext {
+            current_slot: 100,
+            mir_deadline_slot: Some(500),
+            alonzo_mir_transfers: false,
+            reserves: 10_000_000,
+            treasury: 5_000_000,
+            instantaneous_rewards: &ir,
+        };
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Reserves,
+            MirTarget::SendToOppositePot(1_000_000),
+        )];
+        let err = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+        );
+        assert!(matches!(err, Err(LedgerError::MIRTransferNotCurrentlyAllowed)));
+    }
+
+    /// Upstream: `InsufficientForTransferDELEG` — transfer exceeds available.
+    #[test]
+    fn test_mir_insufficient_for_transfer() {
+        let ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        let mir_ctx = MirValidationContext {
+            current_slot: 100,
+            mir_deadline_slot: Some(500),
+            alonzo_mir_transfers: true,
+            reserves: 1_000,
+            treasury: 5_000_000,
+            instantaneous_rewards: &ir,
+        };
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Reserves,
+            MirTarget::SendToOppositePot(5_000),
+        )];
+        let err = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+        );
+        assert!(matches!(err, Err(LedgerError::MIRInsufficientForTransfer { .. })));
+    }
+
+    /// Alonzo+ MIR StakeCredentials with positive deltas that fit should succeed.
+    #[test]
+    fn test_mir_alonzo_positive_deltas_accepted() {
+        let ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        let mir_ctx = sample_mir_ctx_alonzo(&ir);
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(cred, 1_000i64);
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Reserves,
+            MirTarget::StakeCredentials(map),
+        )];
+        let result = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// Alonzo+ SendToOppositePot that fits in the pot should succeed.
+    #[test]
+    fn test_mir_alonzo_transfer_accepted() {
+        let ir = InstantaneousRewards {
+            ir_reserves: std::collections::BTreeMap::new(),
+            ir_treasury: std::collections::BTreeMap::new(),
+            delta_reserves: 0,
+            delta_treasury: 0,
+        };
+        let mir_ctx = sample_mir_ctx_alonzo(&ir);
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let mut fgd = std::collections::BTreeMap::new();
+        let ctx = sample_shelley_cert_ctx_for_mir();
+        let certs = vec![DCert::MoveInstantaneousReward(
+            MirPot::Treasury,
+            MirTarget::SendToOppositePot(1_000),
+        )];
+        let result = apply_certificates_and_withdrawals_with_future(
+            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
+            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+        );
+        assert!(result.is_ok());
     }
 }

@@ -41,15 +41,38 @@ fn make_conway_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<ConwayTxB
 
 /// Build a Conway `LedgerState` with protocol params requiring specific
 /// `key_deposit` and `drep_deposit` values, and fee enforcement disabled.
+/// Uses PV (10, 0) — post-bootstrap Conway with legacy error variants.
 fn conway_state(key_deposit: u64, drep_deposit: u64) -> LedgerState {
     let mut state = LedgerState::new(Era::Conway);
     let mut pp = ProtocolParameters::default();
+    // PV 10: post-bootstrap Conway but still uses legacy deposit errors.
+    pp.protocol_version = Some((10, 0));
     pp.key_deposit = key_deposit;
     pp.drep_deposit = Some(drep_deposit);
     pp.min_fee_a = 0;
     pp.min_fee_b = 0;
     pp.min_utxo_value = None;
     pp.coins_per_utxo_byte = None;
+    state.set_protocol_params(pp);
+    state
+}
+
+/// Conway state at PV (11, 0) — new `DepositIncorrectDELEG` /
+/// `RefundIncorrectDELEG` error variants activate here.
+///
+/// Upstream: `harforkConwayDELEGIncorrectDepositsAndRefunds pv = pvMajor pv > natVersion @10`
+fn conway_state_pv11(key_deposit: u64, drep_deposit: u64) -> LedgerState {
+    let mut state = conway_state(key_deposit, drep_deposit);
+    let mut pp = state.protocol_params().cloned().unwrap_or_default();
+    pp.protocol_version = Some((11, 0));
+    state.set_protocol_params(pp);
+    state
+}
+
+fn conway_state_bootstrap(key_deposit: u64, drep_deposit: u64) -> LedgerState {
+    let mut state = conway_state(key_deposit, drep_deposit);
+    let mut pp = state.protocol_params().cloned().unwrap_or_default();
+    pp.protocol_version = Some((9, 0));
     state.set_protocol_params(pp);
     state
 }
@@ -91,9 +114,9 @@ fn conway_tx_with_cert(input_hash: [u8; 32], output_coin: u64, fee: u64, cert: D
 // -----------------------------------------------------------------------
 
 #[test]
-fn conway_rejects_incorrect_key_deposit_on_registration() {
+fn conway_pv11_rejects_incorrect_key_deposit_new_error() {
     let key_deposit = 2_000_000u64;
-    let mut state = conway_state(key_deposit, 500_000);
+    let mut state = conway_state_pv11(key_deposit, 500_000);
 
     let consumed = 1_000_000 + 3_000_000; // wrong deposit amount (3M ≠ 2M)
     state.multi_era_utxo_mut().insert_shelley(
@@ -107,6 +130,62 @@ fn conway_rejects_incorrect_key_deposit_on_registration() {
         1_000_000,
         0,
         DCert::AccountRegistrationDeposit(cred, 3_000_000), // wrong deposit
+    )]);
+
+    let err = state.apply_block(&block).unwrap_err();
+    // PV > 10: upstream `DepositIncorrectDELEG`
+    assert_eq!(
+        err,
+        LedgerError::DepositIncorrectDELEG { supplied: 3_000_000, expected: key_deposit }
+    );
+}
+
+#[test]
+fn conway_pv10_rejects_incorrect_key_deposit_legacy_error() {
+    // PV 10 — `harforkConwayDELEGIncorrectDepositsAndRefunds` is NOT active,
+    // so the legacy `IncorrectDepositDELEG` error variant is used.
+    let key_deposit = 2_000_000u64;
+    let mut state = conway_state(key_deposit, 500_000);
+
+    let consumed = 1_000_000 + 3_000_000;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xA9; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let cred = StakeCredential::AddrKeyHash([0xAA; 28]);
+    let block = make_conway_block(10, 1, 0xAB, vec![conway_tx_with_cert(
+        [0xA9; 32],
+        1_000_000,
+        0,
+        DCert::AccountRegistrationDeposit(cred, 3_000_000),
+    )]);
+
+    let err = state.apply_block(&block).unwrap_err();
+    // PV 10 (≤ 10): legacy error variant
+    assert_eq!(
+        err,
+        LedgerError::IncorrectDepositDELEG { supplied: 3_000_000, expected: key_deposit }
+    );
+}
+
+#[test]
+fn conway_bootstrap_uses_legacy_incorrect_deposit_error_on_registration() {
+    let key_deposit = 2_000_000u64;
+    let mut state = conway_state_bootstrap(key_deposit, 500_000);
+
+    let consumed = 1_000_000 + 3_000_000;
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xA6; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: consumed },
+    );
+
+    let cred = StakeCredential::AddrKeyHash([0xA7; 28]);
+    let block = make_conway_block(10, 1, 0xA8, vec![conway_tx_with_cert(
+        [0xA6; 32],
+        1_000_000,
+        0,
+        DCert::AccountRegistrationDeposit(cred, 3_000_000),
     )]);
 
     let err = state.apply_block(&block).unwrap_err();
@@ -144,9 +223,9 @@ fn conway_accepts_correct_key_deposit_on_registration() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn conway_rejects_incorrect_deposit_on_reg_delegation_to_pool() {
+fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool() {
     let key_deposit = 2_000_000u64;
-    let mut state = conway_state(key_deposit, 500_000);
+    let mut state = conway_state_pv11(key_deposit, 500_000);
 
     let consumed = 1_000_000 + 999_999;
     state.multi_era_utxo_mut().insert_shelley(
@@ -181,7 +260,7 @@ fn conway_rejects_incorrect_deposit_on_reg_delegation_to_pool() {
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::IncorrectDepositDELEG { supplied: 999_999, expected: key_deposit }
+        LedgerError::DepositIncorrectDELEG { supplied: 999_999, expected: key_deposit }
     );
 }
 
@@ -190,9 +269,9 @@ fn conway_rejects_incorrect_deposit_on_reg_delegation_to_pool() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn conway_rejects_incorrect_deposit_on_reg_delegation_to_drep() {
+fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_drep() {
     let key_deposit = 2_000_000u64;
-    let mut state = conway_state(key_deposit, 500_000);
+    let mut state = conway_state_pv11(key_deposit, 500_000);
 
     let consumed = 1_000_000 + 1_000_000;
     state.multi_era_utxo_mut().insert_shelley(
@@ -211,7 +290,7 @@ fn conway_rejects_incorrect_deposit_on_reg_delegation_to_drep() {
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::IncorrectDepositDELEG { supplied: 1_000_000, expected: key_deposit }
+        LedgerError::DepositIncorrectDELEG { supplied: 1_000_000, expected: key_deposit }
     );
 }
 
@@ -220,9 +299,9 @@ fn conway_rejects_incorrect_deposit_on_reg_delegation_to_drep() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn conway_rejects_incorrect_deposit_on_reg_delegation_to_pool_and_drep() {
+fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool_and_drep() {
     let key_deposit = 2_000_000u64;
-    let mut state = conway_state(key_deposit, 500_000);
+    let mut state = conway_state_pv11(key_deposit, 500_000);
 
     let consumed = 1_000_000 + 5_000_000;
     state.multi_era_utxo_mut().insert_shelley(
@@ -261,7 +340,7 @@ fn conway_rejects_incorrect_deposit_on_reg_delegation_to_pool_and_drep() {
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::IncorrectDepositDELEG { supplied: 5_000_000, expected: key_deposit }
+        LedgerError::DepositIncorrectDELEG { supplied: 5_000_000, expected: key_deposit }
     );
 }
 
@@ -270,9 +349,9 @@ fn conway_rejects_incorrect_deposit_on_reg_delegation_to_pool_and_drep() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn conway_rejects_incorrect_key_refund_on_unregistration() {
+fn conway_pv11_rejects_incorrect_key_refund_new_error() {
     let key_deposit = 2_000_000u64;
-    let mut state = conway_state(key_deposit, 500_000);
+    let mut state = conway_state_pv11(key_deposit, 500_000);
 
     let cred = StakeCredential::AddrKeyHash([0xE0; 28]);
     state.stake_credentials_mut().register(cred);
@@ -291,10 +370,40 @@ fn conway_rejects_incorrect_key_refund_on_unregistration() {
     )]);
 
     let err = state.apply_block(&block).unwrap_err();
-    // Post-bootstrap (protocol_version != Some((9,_))), upstream uses RefundIncorrectDELEG
+    // PV > 10: upstream uses RefundIncorrectDELEG
     assert_eq!(
         err,
         LedgerError::RefundIncorrectDELEG { supplied: 1_000_000, expected: key_deposit }
+    );
+}
+
+#[test]
+fn conway_pv10_rejects_incorrect_key_refund_legacy_error() {
+    // PV 10 — hardfork gate not active, legacy `IncorrectKeyDepositRefund`
+    let key_deposit = 2_000_000u64;
+    let mut state = conway_state(key_deposit, 500_000);
+
+    let cred = StakeCredential::AddrKeyHash([0xE6; 28]);
+    state.stake_credentials_mut().register(cred);
+    state.deposit_pot_mut().key_deposits += key_deposit;
+
+    state.multi_era_utxo_mut().insert_shelley(
+        ShelleyTxIn { transaction_id: [0xE7; 32], index: 0 },
+        ShelleyTxOut { address: vec![0x01], amount: 200_000 },
+    );
+
+    let block = make_conway_block(10, 1, 0xE8, vec![conway_tx_with_cert(
+        [0xE7; 32],
+        200_000,
+        0,
+        DCert::AccountUnregistrationDeposit(cred, 1_000_000), // wrong refund
+    )]);
+
+    let err = state.apply_block(&block).unwrap_err();
+    // PV 10 (≤ 10): legacy error variant
+    assert_eq!(
+        err,
+        LedgerError::IncorrectKeyDepositRefund { supplied: 1_000_000, expected: key_deposit }
     );
 }
 

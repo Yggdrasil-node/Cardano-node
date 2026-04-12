@@ -253,14 +253,6 @@ pub enum LedgerError {
     #[error("committee update proposal uses expiration epochs that are not after the current epoch: {0:?}")]
     ExpirationEpochTooSmall(Vec<(StakeCredential, EpochNo)>),
 
-    #[error(
-        "committee update proposal uses expiration epochs beyond the committee term limit (max {max_epoch:?}): {members:?}"
-    )]
-    ExpirationEpochTooLarge {
-        members: Vec<(StakeCredential, EpochNo)>,
-        max_epoch: EpochNo,
-    },
-
     #[error("proposal references an invalid previous governance action: {0:?}")]
     InvalidPrevGovActionId(crate::eras::conway::ProposalProcedure),
 
@@ -326,15 +318,24 @@ pub enum LedgerError {
         balance: u64,
     },
 
-    /// Upstream: `IncorrectDepositDELEG` — the deposit amount carried in a
-    /// Conway `RegCert` / `RegDelegCert` / `RegDelegStakeVDelegCert` does
-    /// not match `ppKeyDeposit`.
+    /// Upstream: legacy `IncorrectDepositDELEG` — used for Conway key-deposit
+    /// mismatches during bootstrap phase (PV < 10).
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
     #[error(
         "incorrect key deposit in certificate: supplied {supplied}, expected {expected}"
     )]
     IncorrectDepositDELEG { supplied: u64, expected: u64 },
+
+    /// Upstream: `DepositIncorrectDELEG` — used for Conway key-deposit
+    /// mismatches during post-bootstrap phase (PV >= 10) via
+    /// `hardforkConwayDELEGIncorrectDepositsAndRefunds`.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
+    #[error(
+        "incorrect key deposit (post-bootstrap): supplied {supplied}, expected {expected}"
+    )]
+    DepositIncorrectDELEG { supplied: u64, expected: u64 },
 
     /// Upstream: `IncorrectDepositDELEG` (refund variant) — the refund
     /// amount carried in a Conway `UnRegCert` does not match the credential's
@@ -591,6 +592,19 @@ pub enum LedgerError {
         computed: [u8; 32],
     },
 
+    /// Post-PV11 variant of `PPViewHashesDontMatch`.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Utxo` — at protocol version
+    /// >= 11 the error is reported as `ScriptIntegrityHashMismatch` instead
+    /// of `PPViewHashesDontMatch`.
+    #[error(
+        "script integrity hash mismatch (PV>=11): declared {declared:02x?}, computed {computed:02x?}"
+    )]
+    ScriptIntegrityHashMismatch {
+        declared: [u8; 32],
+        computed: [u8; 32],
+    },
+
     /// Upstream `PPViewHashesDontMatch` direction: transaction includes Plutus
     /// redeemers but does not declare a `script_data_hash`.
     ///
@@ -717,6 +731,54 @@ pub enum LedgerError {
         "MIR certificate requires {required} genesis delegate signatures but only {present} were provided"
     )]
     MIRInsufficientGenesisSigs { required: usize, present: usize },
+
+    /// MIR certificate submitted too late in the epoch — must arrive before
+    /// `firstSlot(nextEpoch) - stabilityWindow`.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `MIRCertificateTooLateinEpochDELEG`.
+    #[error("MIR certificate too late in epoch: slot {slot} >= deadline {deadline}")]
+    MIRCertificateTooLateInEpoch { slot: u64, deadline: u64 },
+
+    /// Pre-Alonzo: negative `DeltaCoin` values in MIR `StakeAddressesMIR`
+    /// are not allowed before the Alonzo hard fork.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `MIRNegativesNotCurrentlyAllowed`.
+    #[error("MIR negative deltas not allowed pre-Alonzo")]
+    MIRNegativesNotCurrentlyAllowed,
+
+    /// Alonzo+: after merging with existing IR map, a credential has a
+    /// combined negative value.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `MIRProducesNegativeUpdate`.
+    #[error("MIR produces negative update for credential")]
+    MIRProducesNegativeUpdate,
+
+    /// The total MIR rewards from a given pot exceed the pot balance
+    /// (adjusted for existing MIR commitments and pot-to-pot deltas in
+    /// Alonzo+).
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `InsufficientForInstantaneousRewardsDELEG`.
+    #[error("MIR insufficient pot balance: {pot:?} has {available} but {required} needed")]
+    MIRInsufficientPotBalance { pot: crate::MirPot, available: u64, required: u64 },
+
+    /// Pre-Alonzo: `SendToOppositePot` MIR transfers are not allowed.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `MIRTransferNotCurrentlyAllowed`.
+    #[error("MIR transfer (SendToOppositePot) not allowed pre-Alonzo")]
+    MIRTransferNotCurrentlyAllowed,
+
+    /// MIR transfer amount is negative.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `MIRNegativeTransfer`.
+    #[error("MIR negative transfer for pot {pot:?}: {amount}")]
+    MIRNegativeTransfer { pot: crate::MirPot, amount: i64 },
+
+    /// MIR transfer amount exceeds the pot balance after accounting for
+    /// existing MIR commitments.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `InsufficientForTransferDELEG`.
+    #[error("MIR insufficient for transfer: {pot:?} has {available} but {required} needed")]
+    MIRInsufficientForTransfer { pot: crate::MirPot, available: u64, required: u64 },
 
     // -- Auxiliary data validation errors ------------------------------------
 
