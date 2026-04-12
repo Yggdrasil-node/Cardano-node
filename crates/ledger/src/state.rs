@@ -6500,17 +6500,68 @@ impl LedgerState {
         }
 
         // Conway BBODY rule: block-level reference-script size limit.
-        // Sum ref-script sizes across all transactions pre-mutation.
         // Reference: `Cardano.Ledger.Conway.Rules.Bbody` — `BodyRefScriptsSizeTooBig`.
+        //
+        // At PV <= 10: sum of `txNonDistinctRefScriptsSize` per tx over the
+        // pre-block UTxO (static).
+        // At PV > 10 (`hardforkConwayRefactorTotalRefScriptsSize`): fold
+        // through txs with a running UTxO that accumulates each tx's outputs
+        // (valid tx → regular outputs, invalid tx → collateral return) before
+        // measuring the next tx's ref-script size.  Spent inputs are NOT
+        // removed.  The current tx is measured against the running UTxO
+        // BEFORE its own outputs are added.
+        // Reference: `Cardano.Ledger.Conway.Rules.Bbody` — `totalRefScriptSizeInBlock`.
         {
+            let pv = self.protocol_params.as_ref().and_then(|p| p.protocol_version);
+            let use_running_utxo = conway_post_pv10(pv);
             let mut block_ref_total: usize = 0;
-            for (_, _, body, _, _, _) in &decoded {
-                block_ref_total = block_ref_total.saturating_add(
-                    self.multi_era_utxo.total_ref_scripts_size(
-                        &body.inputs,
-                        body.reference_inputs.as_deref(),
-                    ),
-                );
+            if use_running_utxo {
+                // PV > 10: fold with a running UTxO overlay that accumulates
+                // newly produced outputs from preceding txs.
+                let mut overlay: std::collections::HashMap<ShelleyTxIn, MultiEraTxOut> = std::collections::HashMap::new();
+                for (tx_id, _, body, _, _, is_valid) in &decoded {
+                    // Measure ref-script size from ORIGINAL utxo + overlay
+                    // (overlay entries take precedence conceptually but won't
+                    // collide with existing entries since they use fresh TxIds).
+                    let mut tx_ref_size: usize = 0;
+                    for input in body.inputs.iter().chain(body.reference_inputs.as_deref().unwrap_or(&[]).iter()) {
+                        // Check overlay first, then original UTxO.
+                        let txout = overlay.get(input)
+                            .or_else(|| self.multi_era_utxo.get(input));
+                        if let Some(out) = txout {
+                            if let Some(sr) = out.script_ref() {
+                                tx_ref_size = tx_ref_size.saturating_add(sr.0.binary_size());
+                            }
+                        }
+                    }
+                    block_ref_total = block_ref_total.saturating_add(tx_ref_size);
+                    // Add this tx's outputs to overlay for the NEXT tx.
+                    let tx_is_valid = is_valid.unwrap_or(true);
+                    if tx_is_valid {
+                        for (idx, out) in body.outputs.iter().enumerate() {
+                            let txin = ShelleyTxIn { transaction_id: tx_id.0, index: idx as u16 };
+                            overlay.insert(txin, MultiEraTxOut::Babbage(out.clone()));
+                        }
+                    } else if let Some(collateral_return) = &body.collateral_return {
+                        // Invalid tx: add collateral return output (upstream `collOuts`).
+                        // Upstream `mkCollateralTxIn`: index = length(outputs).
+                        let txin = ShelleyTxIn {
+                            transaction_id: tx_id.0,
+                            index: body.outputs.len() as u16,
+                        };
+                        overlay.insert(txin, MultiEraTxOut::Babbage(collateral_return.clone()));
+                    }
+                }
+            } else {
+                // PV <= 10: use pre-block UTxO (static) for all txs.
+                for (_, _, body, _, _, _) in &decoded {
+                    block_ref_total = block_ref_total.saturating_add(
+                        self.multi_era_utxo.total_ref_scripts_size(
+                            &body.inputs,
+                            body.reference_inputs.as_deref(),
+                        ),
+                    );
+                }
             }
             if block_ref_total > crate::utxo::MAX_REF_SCRIPT_SIZE_PER_BLOCK {
                 return Err(LedgerError::BodyRefScriptsSizeTooBig {
@@ -8699,11 +8750,11 @@ fn apply_certificates_and_withdrawals_with_future(
                     // but the Haskell implementation omits it. Delegating with an
                     // unregistered owner is harmless — the owner simply cannot claim
                     // rewards until registered.
-                    // Conway POOL rule: VRF key must not already be registered
-                    // by another pool.
+                    // POOL rule: VRF key must not already be registered
+                    // by another pool (PV > 10 only).
                     // Reference: `Cardano.Ledger.Shelley.Rules.Pool` —
-                    // `hardforkConwayDisallowDuplicatedVRFKeys`.
-                    if ctx.is_conway {
+                    // `hardforkConwayDisallowDuplicatedVRFKeys pv = pvMajor pv > natVersion @10`.
+                    if ctx.post_pv10 {
                         let is_new = !pool_state.is_registered(&params.operator);
                         if let Some(existing) = pool_state.find_pool_by_vrf_key(&params.vrf_keyhash) {
                             // For new registration: VRF must not be used at all.
