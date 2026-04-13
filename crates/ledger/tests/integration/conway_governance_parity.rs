@@ -1884,3 +1884,226 @@ fn conway_same_tx_forward_reference_rejected() {
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(err, LedgerError::InvalidPrevGovActionId(proposal_0_fwd));
 }
+
+// -----------------------------------------------------------------------
+// 11. Ratification thresholds evolve after ParameterChange enactment
+// -----------------------------------------------------------------------
+//
+// Upstream `ratifyTransition` recursively passes the updated `RatifyState`
+// (including `ensCurPParams`) so that after a `ParameterChange` enactment,
+// subsequent proposals see updated voting thresholds.
+//
+// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — `ratifyTransition`:
+//   `votingDRepThreshold` reads `rs ^. rsEnactStateL . ensCurPParamsL`
+//   for each proposal evaluated.
+//
+// This test verifies that:
+//   - Proposal A (ParameterChange, priority 4) is ratified first.
+//   - Proposal B (TreasuryWithdrawals, priority 5) would fail under the
+//     original 67% DRep threshold but passes with the zero threshold
+//     enacted by Proposal A.
+
+#[test]
+fn ratification_thresholds_evolve_after_parameter_change() {
+    use yggdrasil_ledger::{
+        apply_epoch_boundary, GovernanceActionState,
+        StakeSnapshot, StakeSnapshots,
+    };
+    use std::collections::BTreeMap;
+
+    // Set up Conway PV 10 state (non-bootstrap).
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+    state.set_current_epoch(EpochNo(100));
+
+    // Configure DRep thresholds — treasury_withdrawal requires 67% stake.
+    {
+        let pp = state.protocol_params_mut().as_mut().unwrap();
+        pp.drep_voting_thresholds = Some(yggdrasil_ledger::DRepVotingThresholds {
+            motion_no_confidence: UnitInterval { numerator: 67, denominator: 100 },
+            committee_normal: UnitInterval { numerator: 67, denominator: 100 },
+            committee_no_confidence: UnitInterval { numerator: 60, denominator: 100 },
+            update_to_constitution: UnitInterval { numerator: 75, denominator: 100 },
+            hard_fork_initiation: UnitInterval { numerator: 60, denominator: 100 },
+            pp_network_group: UnitInterval { numerator: 67, denominator: 100 },
+            pp_economic_group: UnitInterval { numerator: 67, denominator: 100 },
+            pp_technical_group: UnitInterval { numerator: 67, denominator: 100 },
+            pp_gov_group: UnitInterval { numerator: 75, denominator: 100 },
+            treasury_withdrawal: UnitInterval { numerator: 67, denominator: 100 },
+        });
+
+        // SPO pool thresholds default — TreasuryWithdrawals never requires SPO
+        // votes (spo_threshold_for_action returns None), so these are irrelevant.
+        pp.pool_voting_thresholds = Some(yggdrasil_ledger::PoolVotingThresholds::default());
+        pp.drep_activity = Some(100);
+        pp.gov_action_deposit = Some(100_000);
+        pp.gov_action_lifetime = Some(20);
+    }
+
+    // Fund treasury.
+    state.accounting_mut().treasury = 1_000_000;
+
+    // --- Committee (one member, quorum 1/1) ---
+    let cold_cred = StakeCredential::AddrKeyHash([0xC1; 28]);
+    let hot_cred = StakeCredential::AddrKeyHash([0xC2; 28]);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
+    authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xE1);
+    state.enact_state_mut().committee_quorum = UnitInterval { numerator: 1, denominator: 1 };
+    state.enact_state_mut().has_committee = true;
+
+    // --- DRep with 100% delegated stake ---
+    let drep = DRep::KeyHash([0xD1; 28]);
+    state.drep_state_mut().register(
+        drep,
+        RegisteredDrep::new_active(500_000, None, EpochNo(100)),
+    );
+    state.stake_credentials_mut().register(
+        StakeCredential::AddrKeyHash([0xD1; 28]),
+    );
+    if let Some(sc) = state.stake_credentials_mut().get_mut(
+        &StakeCredential::AddrKeyHash([0xD1; 28]),
+    ) {
+        sc.set_delegated_drep(Some(drep));
+    }
+    // Seed reward balance so DRep-attributed stake appears in snapshots.
+    state.reward_accounts_mut().insert(
+        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xD1; 28]) },
+        RewardAccountState::new(1_000_000, None),
+    );
+
+    // Reward account for the withdrawal target.
+    let ra_target = RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xBB; 28]) };
+    state.reward_accounts_mut().insert(
+        ra_target.clone(),
+        RewardAccountState::new(0, None),
+    );
+
+    // Reward accounts for proposal return addresses.
+    state.reward_accounts_mut().insert(
+        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA1; 28]) },
+        RewardAccountState::new(0, None),
+    );
+    state.reward_accounts_mut().insert(
+        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA2; 28]) },
+        RewardAccountState::new(0, None),
+    );
+
+    // --- Proposal A: ParameterChange lowering treasury_withdrawal DRep
+    //     threshold to 0 so all subsequent proposals pass without DRep votes ---
+    let gov_id_a = GovActionId { transaction_id: [0xA1; 32], gov_action_index: 0 };
+    let new_thresholds = yggdrasil_ledger::DRepVotingThresholds {
+        // Keep all at 67% except treasury_withdrawal → 0%.
+        motion_no_confidence: UnitInterval { numerator: 67, denominator: 100 },
+        committee_normal: UnitInterval { numerator: 67, denominator: 100 },
+        committee_no_confidence: UnitInterval { numerator: 60, denominator: 100 },
+        update_to_constitution: UnitInterval { numerator: 75, denominator: 100 },
+        hard_fork_initiation: UnitInterval { numerator: 60, denominator: 100 },
+        pp_network_group: UnitInterval { numerator: 67, denominator: 100 },
+        pp_economic_group: UnitInterval { numerator: 67, denominator: 100 },
+        pp_technical_group: UnitInterval { numerator: 67, denominator: 100 },
+        pp_gov_group: UnitInterval { numerator: 75, denominator: 100 },
+        treasury_withdrawal: UnitInterval { numerator: 0, denominator: 1 },
+    };
+    let proposal_a = ProposalProcedure {
+        deposit: 100_000,
+        reward_account: reward_account_bytes([0xA1; 28]),
+        gov_action: GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: ProtocolParameterUpdate {
+                drep_voting_thresholds: Some(new_thresholds),
+                ..Default::default()
+            },
+            guardrails_script_hash: None,
+        },
+        anchor: Anchor {
+            url: "https://example.com/lower-threshold".to_string(),
+            data_hash: [0xF1; 32],
+        },
+    };
+    let mut action_a = GovernanceActionState::new(proposal_a);
+
+    // DRep votes Yes on proposal A.
+    action_a.record_vote(
+        Voter::DRepKeyHash([0xD1; 28]),
+        Vote::Yes,
+    );
+    // Committee votes Yes on proposal A.
+    action_a.record_vote(
+        Voter::CommitteeKeyHash([0xC2; 28]),
+        Vote::Yes,
+    );
+    state.governance_actions_mut().insert(gov_id_a.clone(), action_a);
+
+    // --- Proposal B: TreasuryWithdrawals — no DRep votes ---
+    let gov_id_b = GovActionId { transaction_id: [0xA2; 32], gov_action_index: 0 };
+    let mut withdrawals = BTreeMap::new();
+    withdrawals.insert(ra_target.clone(), 100u64);
+    let proposal_b = ProposalProcedure {
+        deposit: 100_000,
+        reward_account: reward_account_bytes([0xA2; 28]),
+        gov_action: GovAction::TreasuryWithdrawals {
+            withdrawals,
+            guardrails_script_hash: None,
+        },
+        anchor: Anchor {
+            url: "https://example.com/treasury".to_string(),
+            data_hash: [0xF2; 32],
+        },
+    };
+    let mut action_b = GovernanceActionState::new(proposal_b);
+
+    // Committee votes Yes on proposal B — but NO DRep votes.
+    action_b.record_vote(
+        Voter::CommitteeKeyHash([0xC2; 28]),
+        Vote::Yes,
+    );
+    state.governance_actions_mut().insert(gov_id_b.clone(), action_b);
+
+    assert_eq!(state.governance_actions().len(), 2);
+
+    // Build a mark snapshot with DRep-attributed stake so thresholds
+    // are not vacuously satisfied.
+    let mut mark = StakeSnapshot::default();
+    mark.stake.add(
+        StakeCredential::AddrKeyHash([0xD1; 28]),
+        1_000_000,
+    );
+    let mut snapshots = StakeSnapshots {
+        mark,
+        set: StakeSnapshot::default(),
+        go: StakeSnapshot::default(),
+        fee_pot: 0,
+    };
+
+    // Run epoch boundary — ratification happens inside.
+    let _event = apply_epoch_boundary(
+        &mut state, EpochNo(101), &mut snapshots, &BTreeMap::new(),
+    ).unwrap();
+
+    // Both proposals should have been enacted:
+    // - Proposal A passed (100% DRep Yes > 67% threshold).
+    // - After A enacted, treasury_withdrawal threshold → 0%.
+    // - Proposal B now passes (0% meets 0% threshold).
+    assert!(
+        !state.governance_actions().contains_key(&gov_id_a),
+        "Proposal A (ParameterChange) should have been ratified and removed",
+    );
+    assert!(
+        !state.governance_actions().contains_key(&gov_id_b),
+        "Proposal B (TreasuryWithdrawals) should have been ratified using the \
+         UPDATED zero threshold enacted by Proposal A — upstream ratifyTransition \
+         reads thresholds from the evolving ensCurPParams",
+    );
+
+    // Verify the ParameterChange was actually applied (threshold is now 0).
+    let pp = state.protocol_params().unwrap();
+    assert_eq!(
+        pp.drep_voting_thresholds.as_ref().unwrap().treasury_withdrawal,
+        UnitInterval { numerator: 0, denominator: 1 },
+    );
+
+    // Verify the TreasuryWithdrawal was applied (100 lovelace credited).
+    let ra = state.reward_accounts().get(
+        &RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xBB; 28]) },
+    ).unwrap();
+    assert_eq!(ra.balance(), 100);
+}

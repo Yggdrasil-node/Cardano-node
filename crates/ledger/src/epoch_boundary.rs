@@ -490,6 +490,22 @@ pub fn apply_epoch_boundary(
         acct.treasury = acct.treasury.saturating_add(total_unclaimed);
     }
 
+    // Debit the deposit pot for all returned/unclaimed proposal deposits.
+    // Upstream reconciles via `utxosDepositedL .~ totalObligation certState govState`
+    // which recomputes the full obligation from ground truth.  We track
+    // incrementally, so we debit the total of all refunded + unclaimed
+    // proposal deposits.
+    {
+        let total_proposal_deposit_reduction = governance_deposit_refunds
+            .saturating_add(expired_unclaimed_deposits)
+            .saturating_add(descendant_refunds)
+            .saturating_add(descendant_unclaimed)
+            .saturating_add(ratify_result.enacted_deposit_refunds)
+            .saturating_add(ratify_result.removed_due_to_enactment_deposit_refunds)
+            .saturating_add(ratify_result.unclaimed_deposits);
+        ledger.deposit_pot_mut().return_proposal_deposit(total_proposal_deposit_reduction);
+    }
+
     // -----------------------------------------------------------------------
     // 5c. Dormant epoch counter — if no active (non-expired) governance
     //     proposals remain, increment the dormant counter.  Otherwise
@@ -1042,20 +1058,10 @@ fn ratify_and_enact(
 ) -> RatifyAndEnactResult {
     use crate::state::ratify_action;
 
-    // Extract thresholds from protocol params.  When Conway-specific
-    // threshold fields are absent, fall back to Conway defaults.
-    let (pool_thresholds, drep_thresholds, min_committee_size, committee_max_term, is_bootstrap_phase) =
-        match ledger.protocol_params() {
-            Some(pp) => (
-                pp.pool_voting_thresholds.clone().unwrap_or_default(),
-                pp.drep_voting_thresholds.clone().unwrap_or_default(),
-                pp.min_committee_size,
-                pp.committee_term_limit,
-                // Upstream `hardforkConwayBootstrapPhase`: PV major == 9.
-                matches!(pp.protocol_version, Some((9, _))),
-            ),
-            None => return RatifyAndEnactResult::default(),
-        };
+    // Early exit when protocol params are absent.
+    if ledger.protocol_params().is_none() {
+        return RatifyAndEnactResult::default();
+    }
 
     // Compute DRep delegated stake distribution from the mark snapshot.
     let drep_delegated_stake =
@@ -1120,8 +1126,7 @@ fn ratify_and_enact(
             gov_action,
             ledger
                 .protocol_params()
-                .and_then(|pp| pp.committee_term_limit)
-                .or(committee_max_term),
+                .and_then(|pp| pp.committee_term_limit),
             current_epoch,
         ) {
             continue;
@@ -1141,8 +1146,25 @@ fn ratify_and_enact(
         // 5. acceptedByEveryone — committee + DRep + SPO thresholds.
         //    Read committee quorum from CURRENT enact state (may have
         //    changed after an earlier UpdateCommittee enactment).
+        //
+        //    Upstream `ratifyTransition` recursively passes the updated
+        //    `RatifyState` (including `ensCurPParams` inside the
+        //    `EnactState`) so that after a `ParameterChange` enactment,
+        //    subsequent proposals see updated voting thresholds and
+        //    `min_committee_size`.  We re-read from `protocol_params()`
+        //    each iteration to match.
+        //
+        //    Reference: `votingDRepThreshold`, `votingStakePoolThreshold`,
+        //    `committeeAccepted` — all read from `rs ^. rsEnactStateL . ensCurPParamsL`.
         let committee_quorum = ledger.enact_state().committee_quorum;
         let has_committee = ledger.enact_state().has_committee;
+
+        // Re-read thresholds from the (possibly updated) protocol params.
+        let pp = ledger.protocol_params().expect("checked at entry");
+        let pool_thresholds = pp.pool_voting_thresholds.clone().unwrap_or_default();
+        let drep_thresholds = pp.drep_voting_thresholds.clone().unwrap_or_default();
+        let min_committee_size = pp.min_committee_size.unwrap_or(0);
+        let is_bootstrap_phase = matches!(pp.protocol_version, Some((9, _)));
 
         if !ratify_action(
             action_state,
@@ -1155,7 +1177,7 @@ fn ratify_and_enact(
             &drep_thresholds,
             &pool_stake_dist,
             &pool_thresholds,
-            min_committee_size.unwrap_or(0),
+            min_committee_size,
             is_bootstrap_phase,
             has_committee,
         ) {

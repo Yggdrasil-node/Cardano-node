@@ -2330,11 +2330,14 @@ impl CborDecode for InstantaneousRewards {
 
 /// Aggregate deposit accounting tracked by the ledger.
 ///
-/// Tracks the total lovelace locked in key deposits, pool deposits, and DRep
-/// deposits.  At epoch boundaries deposit refunds (from unregistrations and
-/// pool retirements) are paid out and deducted from this pot.
+/// Tracks the total lovelace locked in key deposits, pool deposits, DRep
+/// deposits, and governance action (proposal) deposits.  At epoch boundaries
+/// deposit refunds (from unregistrations, pool retirements, and expired or
+/// enacted proposals) are paid out and deducted from this pot.
 ///
-/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `utxosDeposited`.
+/// Reference: upstream `Obligations` (`oblStake`, `oblPool`, `oblDRep`,
+/// `oblProposal`) from `Cardano.Ledger.State.CertState`, and
+/// `utxosDeposited` from `Cardano.Ledger.Shelley.LedgerState`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DepositPot {
     /// Total lovelace deposited for key registrations.
@@ -2343,14 +2346,19 @@ pub struct DepositPot {
     pub pool_deposits: u64,
     /// Total lovelace deposited for DRep registrations (Conway+).
     pub drep_deposits: u64,
+    /// Total lovelace deposited for governance action proposals (Conway+).
+    ///
+    /// Reference: upstream `oblProposal` from `Obligations`.
+    pub proposal_deposits: u64,
 }
 
 impl DepositPot {
-    /// Returns the total deposits across all categories.
+    /// Returns the total deposits across all categories (upstream `sumObligation`).
     pub fn total(&self) -> u64 {
         self.key_deposits
             .saturating_add(self.pool_deposits)
             .saturating_add(self.drep_deposits)
+            .saturating_add(self.proposal_deposits)
     }
 
     /// Adds a key deposit.
@@ -2382,31 +2390,49 @@ impl DepositPot {
     pub fn return_drep_deposit(&mut self, amount: u64) {
         self.drep_deposits = self.drep_deposits.saturating_sub(amount);
     }
+
+    /// Adds a governance action proposal deposit (Conway+).
+    pub fn add_proposal_deposit(&mut self, amount: u64) {
+        self.proposal_deposits = self.proposal_deposits.saturating_add(amount);
+    }
+
+    /// Returns a governance action proposal deposit (Conway+).
+    pub fn return_proposal_deposit(&mut self, amount: u64) {
+        self.proposal_deposits = self.proposal_deposits.saturating_sub(amount);
+    }
 }
 
 impl CborEncode for DepositPot {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(3);
+        enc.array(4);
         enc.unsigned(self.key_deposits);
         enc.unsigned(self.pool_deposits);
         enc.unsigned(self.drep_deposits);
+        enc.unsigned(self.proposal_deposits);
     }
 }
 
 impl CborDecode for DepositPot {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 3 {
-            return Err(LedgerError::CborInvalidLength {
-                expected: 3,
+        match len {
+            3 => Ok(Self {
+                key_deposits: dec.unsigned()?,
+                pool_deposits: dec.unsigned()?,
+                drep_deposits: dec.unsigned()?,
+                proposal_deposits: 0,
+            }),
+            4 => Ok(Self {
+                key_deposits: dec.unsigned()?,
+                pool_deposits: dec.unsigned()?,
+                drep_deposits: dec.unsigned()?,
+                proposal_deposits: dec.unsigned()?,
+            }),
+            _ => Err(LedgerError::CborInvalidLength {
+                expected: 4,
                 actual: len as usize,
-            });
+            }),
         }
-        Ok(Self {
-            key_deposits: dec.unsigned()?,
-            pool_deposits: dec.unsigned()?,
-            drep_deposits: dec.unsigned()?,
-        })
     }
 }
 
@@ -5242,6 +5268,8 @@ impl LedgerState {
                     .as_ref()
                     .map(|ps| ps.iter().map(|p| p.deposit).fold(0u64, u64::saturating_add))
                     .unwrap_or(0);
+                // Track proposal deposits in the deposit pot (upstream oblProposal).
+                staged_deposit_pot.add_proposal_deposit(proposal_deposits);
                 let total_deposits = cert_adj.total_deposits.saturating_add(proposal_deposits);
                 staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, total_deposits, cert_adj.total_refunds)?;
                 // Accumulate treasury donation (Conway UTXOS rule).
@@ -7093,6 +7121,8 @@ impl LedgerState {
                 .as_ref()
                 .map(|ps| ps.iter().map(|p| p.deposit).fold(0u64, u64::saturating_add))
                 .unwrap_or(0);
+            // Track proposal deposits in the deposit pot (upstream oblProposal).
+            staged_deposit_pot.add_proposal_deposit(proposal_deposits);
             let total_deposits = cert_adj.total_deposits.saturating_add(proposal_deposits);
             staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, total_deposits, cert_adj.total_refunds)?;
             // Accumulate treasury donation (Conway UTXOS rule).
@@ -17373,7 +17403,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xC1; 28]);
@@ -17401,7 +17431,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -17438,7 +17468,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -17459,7 +17489,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -17498,7 +17528,7 @@ mod tests {
         let drep = DRep::KeyHash([0xD3; 28]);
         ds.register(drep, RegisteredDrep::new(0, None));
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -17532,7 +17562,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
@@ -17556,7 +17586,7 @@ mod tests {
         let mut ds = DrepState::new();
         let drep = DRep::AlwaysAbstain;
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
@@ -17592,7 +17622,7 @@ mod tests {
         let mut ds = DrepState::new();
         let drep = DRep::AlwaysNoConfidence;
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xF2; 28]);
@@ -17616,7 +17646,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
@@ -17648,7 +17678,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
@@ -17678,7 +17708,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17716,7 +17746,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17747,7 +17777,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17779,7 +17809,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17809,7 +17839,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17839,7 +17869,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // expected_network_id = Some(1)
 
@@ -17869,7 +17899,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17914,7 +17944,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
 
@@ -17945,7 +17975,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
 
@@ -17965,7 +17995,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17996,7 +18026,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100
 
@@ -18016,7 +18046,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         // Pre-populate genesis delegate mapping.
         gd.insert([0xA0; 28], GenesisDelegationState {
@@ -18041,7 +18071,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut future_gd = std::collections::BTreeMap::new();
         gd.insert([0xA0; 28], GenesisDelegationState {
@@ -18088,7 +18118,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut future_gd = std::collections::BTreeMap::new();
         gd.insert([0xA0; 28], GenesisDelegationState {
@@ -18139,7 +18169,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -18159,7 +18189,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         gd.insert([0xA0; 28], GenesisDelegationState {
             delegate: [0xB0; 28],
@@ -18187,7 +18217,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         gd.insert([0xA0; 28], GenesisDelegationState {
             delegate: [0xB0; 28],
@@ -18215,7 +18245,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway = false
 
@@ -18256,7 +18286,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx(); // is_conway = true
 
@@ -18298,7 +18328,7 @@ mod tests {
             let mut cs = CommitteeState::new();
             let mut ds = DrepState::new();
             let mut ra = RewardAccounts::new();
-            let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+            let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
             let mut gd = std::collections::BTreeMap::new();
 
             // Tag 0: AccountRegistration.
@@ -18322,7 +18352,7 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18344,7 +18374,7 @@ mod tests {
         let hot = crate::StakeCredential::AddrKeyHash([0xDD; 28]);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18365,7 +18395,7 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18386,7 +18416,7 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18426,7 +18456,7 @@ mod tests {
         cs.register(cold);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18449,7 +18479,7 @@ mod tests {
         cs.register(cold);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18472,7 +18502,7 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18500,7 +18530,7 @@ mod tests {
         // No register — credential not in CommitteeState.
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18551,7 +18581,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
 
@@ -18584,7 +18614,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
 
@@ -18617,7 +18647,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -18637,7 +18667,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -18661,7 +18691,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway: false
 
@@ -18684,7 +18714,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx(); // is_conway: true
 
@@ -18710,7 +18740,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut ctx = sample_conway_cert_ctx();
         ctx.post_pv10 = true; // PV 11+: VRF key uniqueness enforced
@@ -18752,7 +18782,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut ctx = sample_conway_cert_ctx();
         ctx.post_pv10 = true; // PV 11+: VRF key uniqueness enforced
@@ -18790,7 +18820,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx(); // post_pv10: false (PV 9/10)
 
@@ -18986,7 +19016,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway: false
 
@@ -19026,7 +19056,7 @@ mod tests {
         let drep = DRep::KeyHash([0xFD; 28]);
         ds.register(drep, RegisteredDrep::new(500_000, None));
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -19047,7 +19077,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -19072,7 +19102,7 @@ mod tests {
         let ra_key = RewardAccount { network: 1, credential: cred };
         let mut ra = RewardAccounts::new();
         ra.insert(ra_key, RewardAccountState::new(100, None));
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -19107,7 +19137,7 @@ mod tests {
         let ra_key = RewardAccount { network: 1, credential: cred };
         let mut ra = RewardAccounts::new();
         ra.insert(ra_key, RewardAccountState::new(500_000, None));
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -19142,7 +19172,7 @@ mod tests {
         let ra_key = RewardAccount { network: 1, credential: cred };
         let mut ra = RewardAccounts::new();
         ra.insert(ra_key, RewardAccountState::new(300_000, None));
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut ctx = sample_cert_ctx();
         ctx.is_conway = true;
@@ -19525,7 +19555,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
 
         let cred = crate::StakeCredential::AddrKeyHash([0xE1; 28]);
@@ -19568,7 +19598,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
 
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
@@ -19613,7 +19643,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -19639,7 +19669,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway = false
 
@@ -19674,7 +19704,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -19787,7 +19817,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
         let result = apply_certificates_and_withdrawals(
@@ -19967,7 +19997,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20008,7 +20038,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20044,7 +20074,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20084,7 +20114,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20125,7 +20155,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20163,7 +20193,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20194,7 +20224,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20228,7 +20258,7 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20346,5 +20376,78 @@ mod tests {
 
         // Block total at PV > 10: 3 + 5 = 8.
         assert_eq!(tx_a_ref_total + tx_b_ref_total, 8);
+    }
+
+    // -----------------------------------------------------------------------
+    // DepositPot — proposal_deposits parity
+    // Reference: upstream `Obligations` with `oblProposal` from
+    // `Cardano.Ledger.State.CertState`, and `sumObligation` which
+    // sums all four fields.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deposit_pot_total_includes_proposal_deposits() {
+        let pot = DepositPot {
+            key_deposits: 100,
+            pool_deposits: 200,
+            drep_deposits: 300,
+            proposal_deposits: 400,
+        };
+        // upstream sumObligation = oblStake + oblPool + oblDRep + oblProposal
+        assert_eq!(pot.total(), 1_000);
+    }
+
+    #[test]
+    fn deposit_pot_add_return_proposal_deposit() {
+        let mut pot = DepositPot::default();
+        assert_eq!(pot.proposal_deposits, 0);
+        pot.add_proposal_deposit(5_000_000);
+        assert_eq!(pot.proposal_deposits, 5_000_000);
+        pot.add_proposal_deposit(3_000_000);
+        assert_eq!(pot.proposal_deposits, 8_000_000);
+        pot.return_proposal_deposit(2_000_000);
+        assert_eq!(pot.proposal_deposits, 6_000_000);
+        // saturating sub — cannot go negative
+        pot.return_proposal_deposit(100_000_000);
+        assert_eq!(pot.proposal_deposits, 0);
+    }
+
+    #[test]
+    fn deposit_pot_cbor_round_trip_4_element() {
+        let pot = DepositPot {
+            key_deposits: 10,
+            pool_deposits: 20,
+            drep_deposits: 30,
+            proposal_deposits: 40,
+        };
+        let mut enc = Encoder::new();
+        pot.encode_cbor(&mut enc);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let decoded = DepositPot::decode_cbor(&mut dec).unwrap();
+        assert_eq!(pot, decoded);
+    }
+
+    #[test]
+    fn deposit_pot_cbor_backward_compat_3_element() {
+        // Legacy 3-element encoding (before proposal_deposits was added).
+        // Should decode with proposal_deposits = 0.
+        let mut enc = Encoder::new();
+        enc.array(3);
+        enc.unsigned(100);
+        enc.unsigned(200);
+        enc.unsigned(300);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let decoded = DepositPot::decode_cbor(&mut dec).unwrap();
+        assert_eq!(
+            decoded,
+            DepositPot {
+                key_deposits: 100,
+                pool_deposits: 200,
+                drep_deposits: 300,
+                proposal_deposits: 0,
+            }
+        );
     }
 }

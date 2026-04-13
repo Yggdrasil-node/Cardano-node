@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 73 parity audit rounds completed (647+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 75 parity audit rounds completed (659+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 73 audit rounds covering 647+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 75 audit rounds covering 659+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -52,6 +52,7 @@
 - Withdrawal/cert ordering parity — `apply_certificates_and_withdrawals_with_future()` drains withdrawals BEFORE cert processing, matching upstream CERTS STS base case (`conwayCertsTransition` `Empty` branch); same-tx withdraw+unregister now succeeds
 - Conway committee membership check — `authorize_committee_hot_credential()` and `resign_committee_cold_credential()` unconditionally verify `isCurrentMember || isPotentialFutureMember` (upstream `checkAndOverwriteCommitteeMemberState`)
 - Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
+- `DepositPot.proposal_deposits` — Tracks outstanding governance proposal deposits (upstream `oblProposal` in `Obligations`); `total()` matches upstream `sumObligation` across all four obligation categories; epoch-boundary reconciles returned/expired/enacted proposal deposits
 - `validate_outputs_missing_datum_hash_alonzo()` — Rejects Alonzo-era script-address outputs without `datum_hash` (upstream `validateOutputMissingDatumHashForScriptOutputs`)
 - `validate_unspendable_utxo_no_datum_hash()` — CIP-0069 PlutusV3 datum exemption: V3-locked spending inputs exempt from datum-hash requirement in Conway (upstream `getInputDataHashesTxBody`)
 - `collect_v3_script_hashes()` — Collects V3 script hashes from witness set and reference-input script refs for CIP-0069 datum exemption
@@ -350,4 +351,6 @@
 | 66 | Conway GOV bootstrap-phase return-account gating | 6 | Gap AD: `ProposalReturnAccountDoesNotExist` and `TreasuryWithdrawalReturnAccountsDoNotExist` enforced unconditionally — upstream gates both inside `unless (hardforkConwayBootstrapPhase ...)` in `conwayGovTransition`; fixed with `past_bootstrap` guard |
 | 67 | Conway DELEG deposit mismatch error phase split | 6 | Gap AE: key-registration deposit mismatches always returned legacy `IncorrectDepositDELEG`; upstream uses `DepositIncorrectDELEG` after `hardforkConwayDELEGIncorrectDepositsAndRefunds` (PV >= 10) while keeping legacy error in bootstrap PV 9; fixed across all Conway registration cert shapes with regression tests |
 | 68 | Committee resignation state preservation | 6 | Gap AF: `register_with_term()` replaced resigned entries — allowed re-auth after `UpdateCommittee` re-add; `NoConfidence` wiped resignation state; `members_to_remove` destroyed entries; auth/resign check ordering inverted vs upstream; `tally_committee_votes`/`count_active_committee_members` did not filter by enacted membership. Fixed: `register_with_term` preserves authorization via `Entry` API; `clear_all_membership()`/`clear_membership()` only clear `expires_at`; `is_enacted_member()` proxy; check ordering matches upstream `checkAndOverwriteCommitteeMemberState` |
-| **Total** | **All subsystems** | **631** | **28 fix rounds** |
+| 69 | Ratification threshold evolution after ParameterChange enactment | 6 | Gap AG: `ratify_and_enact()` pre-computed `drep_thresholds`, `pool_thresholds`, `min_committee_size`, `is_bootstrap_phase` once before the ratification loop — upstream `ratifyTransition` reads these from `rs ^. rsEnactStateL . ensCurPParamsL` per-proposal recursively. After a ParameterChange enactment, subsequent proposals now see updated thresholds. |
+| 70 | Conway deposit pot: proposal deposit tracking (totalObligation) | 6 | Gap AH: `DepositPot` lacked `proposal_deposits` field (upstream `oblProposal` in `Obligations`); `total()` only summed key+pool+drep deposits — upstream `sumObligation` includes all four including `oblProposal`. Fixed: added `proposal_deposits` to `DepositPot`, wired Conway block-apply and submitted-tx paths to accumulate proposal deposits, epoch-boundary reconciliation debits returned/expired/enacted proposal deposits. Backward-compatible CBOR (3-or-4 element decode). |
+| **Total** | **All subsystems** | **643** | **30 fix rounds** |
