@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 77 parity audit rounds completed (671+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 81 parity audit rounds completed (691+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 77 audit rounds covering 671+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 81 audit rounds covering 691+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -33,8 +33,9 @@
 
 **Ledger**:
 - `apply_block()` — Multi-era block application with UTxO state update
-- `apply_epoch_boundary()` — Stake snapshots, pool retirement, governance ratification+enactment, governance expiry, MIR application
+- `apply_epoch_boundary()` — Stake snapshots, pool retirement, governance ratification+enactment, governance expiry, MIR application, committee state pruning
 - `enact_gov_action()` — Conway governance enactment (all 7 action types)
+- `prune_non_members()` — Epoch-boundary committee state cleanup: removes hot-key authorization entries for cold credentials no longer in the active committee (upstream `updateCommitteeState` via `Map.intersection creds members`)
 - `accumulate_mir_from_certs()` — MIR certificate accumulation (Shelley–Babbage, DCert tag 6)
 - MIR certificate admission validation — `MirValidationContext` enforces all 7 upstream DELEG MIR checks: `MIRCertificateTooLateinEpochDELEG` (timing), `MIRNegativesNotCurrentlyAllowed` (pre-Alonzo negative deltas), `MIRProducesNegativeUpdate` (Alonzo+ combined map), `InsufficientForInstantaneousRewardsDELEG` (pot balance), `MIRTransferNotCurrentlyAllowed` (pre-Alonzo transfers), `MIRNegativeTransfer`, `InsufficientForTransferDELEG` (transfer pot balance); era-gated via `hardforkAlonzoAllowMIRTransfer`
 - `InstantaneousRewards` — Per-credential MIR state + pot-to-pot delta tracking with CBOR round-trip
@@ -58,6 +59,8 @@
 - `validate_unspendable_utxo_no_datum_hash()` — CIP-0069 PlutusV3 datum exemption: V3-locked spending inputs exempt from datum-hash requirement in Conway (upstream `getInputDataHashesTxBody`)
 - `collect_v3_script_hashes()` — Collects V3 script hashes from witness set and reference-input script refs for CIP-0069 datum exemption
 - `validate_script_data_hash()` — PV-aware: returns `ScriptIntegrityHashMismatch` at PV >= 11, `PPViewHashesDontMatch` at PV < 11 (upstream `Cardano.Ledger.Conway.Rules.Utxow`)
+- `validate_reference_input_disjointness()` — PV-gated (upstream `disjointRefInputs`): enforced only at PV 9–10, relaxed at PV 11+ (upstream `pvMajor > eraProtVerHigh @BabbageEra && pvMajor < natVersion @11`)
+- `cleanup_dangling_drep_delegations()` — HARDFORK PV 9→10 one-time cleanup (upstream `updateDRepDelegations`): removes stake-credential delegations that point to unregistered (non-builtin) DReps
 - `ZeroDonation` validation — Rejects Conway `treasury_donation == 0` (upstream `validateZeroDonation`)
 - `inner_cbor_size()` on `MultiEraTxOut` — Measures inner era-specific output size without enum wrapper for correct `coins_per_utxo_byte` calculation (upstream `sizedSize`)
 - `ppup_slot_context()` — Builds `PpupSlotContext` from `LedgerState.stability_window` + `slots_per_epoch`; wired into all 10 `validate_ppup_proposal` call sites (upstream `getTheSlotOfNoReturn`)
@@ -133,7 +136,7 @@
 **Ledger**:
 - `validate_collateral()` — Complete: VKey-locked address enforcement, mandatory when redeemers present, Babbage return/total-collateral checks
 - `compute_epoch_rewards()` — Complete: upstream RUPD→SNAP ordering, delta_reserves-only reserves debit, fee pot not subtracted from reserves
-- `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; CC expired-member term filtering; CC hot/cold credential resolution (votes keyed by HOT credential per Conway CDDL, tally resolves cold→hot); threshold math complete
+- `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; CC expired-member term filtering; CC hot/cold credential resolution (votes keyed by HOT credential per Conway CDDL, tally resolves cold→hot); threshold math complete; `defaultStakePoolVote` post-bootstrap SPO default vote from pool reward-account DRep delegation (AlwaysAbstain→Abstain, AlwaysNoConfidence→auto-Yes on NoConfidence, else implicit No)
 - `validate_conway_proposals()` — Proposal validation includes `WellFormedUnitIntervalRatification` (committee quorum must be valid unit interval: denominator > 0 and numerator ≤ denominator)
 - `ratify_and_enact()` — Enacted+expired+subtree-pruned deposit refunds via returnProposalDeposits; unclaimed→treasury
 - `remove_lineage_conflicting_proposals()` — proposalsApplyEnactment: purpose-root chain validation removes stale proposals
@@ -357,4 +360,6 @@
 | 70 | Conway deposit pot: proposal deposit tracking (totalObligation) | 6 | Gap AH: `DepositPot` lacked `proposal_deposits` field (upstream `oblProposal` in `Obligations`); `total()` only summed key+pool+drep deposits — upstream `sumObligation` includes all four including `oblProposal`. Fixed: added `proposal_deposits` to `DepositPot`, wired Conway block-apply and submitted-tx paths to accumulate proposal deposits, epoch-boundary reconciliation debits returned/expired/enacted proposal deposits. Backward-compatible CBOR (3-or-4 element decode). |
 | 71 | Collateral gating + forged header protocol version source | 6 | Gap AI: collateral validation ran whenever collateral inputs existed; upstream only runs `validateCollateral` when redeemers exist (`feesOK` part 2). Fixed in `validate_alonzo_plus_tx()`. Gap AJ: forged header protocol-version fallback used network handshake versions (13/14/15) instead of protocol versions; fixed fallback to node `max_major_protocol_version` with minor 0 while still preferring ledger protocol parameters when available. |
 | 72 | Babbage/Conway standalone collateral input-count check | 6 | Gap AK: after AI, `validate_alonzo_plus_tx()` unintentionally skipped `max_collateral_inputs` checks when no redeemers were present. Upstream Babbage UTXO enforces `validateTooManyCollateralInputs` as a standalone check independent of redeemers. Fixed with era-aware `enforce_collateral_input_limit` wiring (false in Alonzo, true in Babbage/Conway) and regression coverage. |
-| **Total** | **All subsystems** | **655** | **32 fix rounds** |
+| 73 | Conway `disjointRefInputs` PV gating | 6 | Gap AL: `validate_reference_input_disjointness` enforced unconditionally in both Conway block-apply and submitted-tx paths. Upstream `disjointRefInputs` in `Cardano.Ledger.Babbage.Rules.Utxo` is PV-gated: `pvMajor > eraProtVerHigh @BabbageEra && pvMajor < natVersion @11`, meaning disjointness is only enforced at PV 9–10 (early Conway). At PV 11+ the check is relaxed. Fixed with `disjoint_ref_inputs_enforced()` helper gating both call sites; 3 new PV-gating tests. |
+| 74 | Conway HARDFORK `updateDRepDelegations` cleanup | 6 | Gap AM: protocol-version transition cleanup from bootstrap to post-bootstrap was not covered by regression tests. Upstream HARDFORK rule runs `updateDRepDelegations` when `pvMajor newPv == 10`, clearing dangling delegations to non-existent DReps created during bootstrap (`preserveIncorrectDelegation`). Verified and locked with 4 integration tests covering PV9→10 cleanup, preservation of registered/builtin DReps, non-hardfork no-op, and PV10→11 no-cleanup behavior. |
+| **Total** | **All subsystems** | **667** | **34 fix rounds** |

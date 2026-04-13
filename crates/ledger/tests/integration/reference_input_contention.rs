@@ -1,10 +1,10 @@
 //! Integration tests for reference input contention (disjointness) rule.
 //!
-//! Upstream Conway reference: `Cardano.Ledger.Conway.Rules.Utxo` —
-//! `disjoint (inputs txb) (referenceInputs txb)`.
-//!
-//! Babbage allows overlapping spending and reference inputs; only Conway
-//! introduced the disjointness requirement.
+//! Upstream: `Cardano.Ledger.Babbage.Rules.Utxo` — `disjointRefInputs`.
+//! The check is PV-gated: `pvMajor > eraProtVerHigh @BabbageEra && pvMajor
+//! < natVersion @11`, meaning it is enforced only at PV 9–10 (early Conway).
+//! Babbage (PV ≤ 8) allows overlapping spending and reference inputs;
+//! PV 11+ also relaxes the disjointness requirement.
 
 use super::*;
 
@@ -35,6 +35,18 @@ fn mainnet_params() -> ProtocolParameters {
     let mut p = ProtocolParameters::default();
     p.min_fee_a = 0;
     p.min_fee_b = 0;
+    p
+}
+
+fn conway_params() -> ProtocolParameters {
+    let mut p = mainnet_params();
+    p.protocol_version = Some((9, 0));
+    p
+}
+
+fn conway_pv11_params() -> ProtocolParameters {
+    let mut p = mainnet_params();
+    p.protocol_version = Some((11, 0));
     p
 }
 
@@ -217,7 +229,7 @@ fn conway_submitted_tx_rejects_overlapping_reference_inputs() {
     let signer = TestSigner::new([0xB4; 32]);
     let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
-    state.set_protocol_params(mainnet_params());
+    state.set_protocol_params(conway_params());
     seed_babbage_utxo(&mut state, &addr);
 
     let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
@@ -246,7 +258,7 @@ fn conway_submitted_tx_accepts_disjoint_reference_inputs() {
     let signer = TestSigner::new([0xB5; 32]);
     let addr = signer.enterprise_addr();
     let mut state = LedgerState::new(Era::Conway);
-    state.set_protocol_params(mainnet_params());
+    state.set_protocol_params(conway_params());
     seed_babbage_utxo(&mut state, &addr);
 
     let body = conway_body_with_ref_inputs(
@@ -376,7 +388,7 @@ fn conway_block_rejects_overlapping_reference_inputs() {
     let keyhash = [0xAA; 28];
     let addr = enterprise_addr(1, &keyhash);
     let mut state = LedgerState::new(Era::Conway);
-    state.set_protocol_params(mainnet_params());
+    state.set_protocol_params(conway_params());
     seed_babbage_utxo(&mut state, &addr);
 
     let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
@@ -411,7 +423,7 @@ fn conway_block_accepts_disjoint_reference_inputs() {
     let keyhash = [0xAA; 28];
     let addr = enterprise_addr(1, &keyhash);
     let mut state = LedgerState::new(Era::Conway);
-    state.set_protocol_params(mainnet_params());
+    state.set_protocol_params(conway_params());
     seed_babbage_utxo(&mut state, &addr);
 
     let body = conway_body_with_ref_inputs(
@@ -469,4 +481,103 @@ fn disjointness_check_accepts_empty_ref_inputs() {
         &[],
     );
     assert!(result.is_ok());
+}
+
+// ===========================================================================
+// PV 11+ — disjointness is relaxed (upstream `disjointRefInputs` skipped)
+// ===========================================================================
+
+#[test]
+fn conway_pv11_submitted_tx_accepts_overlapping_reference_inputs() {
+    let signer = TestSigner::new([0xC1; 32]);
+    let addr = signer.enterprise_addr();
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(conway_pv11_params());
+    seed_babbage_utxo(&mut state, &addr);
+
+    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+    let body = conway_body_with_ref_inputs(
+        vec![overlap_input.clone()],
+        Some(vec![overlap_input]),
+        addr,
+    );
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
+    let submitted = MultiEraSubmittedTx::Conway(
+        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
+    );
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        result.is_ok(),
+        "PV 11+ should allow overlapping spending and reference inputs, got: {:?}",
+        result,
+    );
+}
+
+#[test]
+fn conway_pv11_block_accepts_overlapping_reference_inputs() {
+    let keyhash = [0xAA; 28];
+    let addr = enterprise_addr(1, &keyhash);
+    let mut state = LedgerState::new(Era::Conway);
+    state.set_protocol_params(conway_pv11_params());
+    seed_babbage_utxo(&mut state, &addr);
+
+    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+    let body = conway_body_with_ref_inputs(
+        vec![overlap_input.clone()],
+        Some(vec![overlap_input]),
+        addr,
+    );
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+
+    let block = make_conway_block(10, 1, 0x01, vec![
+        yggdrasil_ledger::Tx {
+            id: tx_id,
+            body: body_bytes,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        },
+    ]);
+
+    let result = state.apply_block_validated(&block, None);
+    assert!(
+        result.is_ok(),
+        "PV 11+ block should allow overlapping spending and reference inputs, got: {:?}",
+        result,
+    );
+}
+
+#[test]
+fn conway_pv10_submitted_tx_rejects_overlapping_reference_inputs() {
+    let signer = TestSigner::new([0xC2; 32]);
+    let addr = signer.enterprise_addr();
+    let mut state = LedgerState::new(Era::Conway);
+    let mut params = mainnet_params();
+    params.protocol_version = Some((10, 0));
+    state.set_protocol_params(params);
+    seed_babbage_utxo(&mut state, &addr);
+
+    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+    let body = conway_body_with_ref_inputs(
+        vec![overlap_input.clone()],
+        Some(vec![overlap_input]),
+        addr,
+    );
+    let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
+    let mut ws = empty_witness_set();
+    ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
+    let submitted = MultiEraSubmittedTx::Conway(
+        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
+    );
+
+    let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
+    assert!(
+        matches!(result, Err(LedgerError::ReferenceInputContention)),
+        "PV 10 should still enforce disjointness, got: {:?}",
+        result,
+    );
 }

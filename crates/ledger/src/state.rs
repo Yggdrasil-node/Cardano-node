@@ -876,6 +876,27 @@ impl StakeCredentials {
         }
     }
 
+    /// Clears DRep delegation from stake credentials that point to a
+    /// non-existent (unregistered) DRep.
+    ///
+    /// Upstream: `updateDRepDelegations` in
+    /// `Cardano.Ledger.Conway.Rules.HardFork` — called at the PV 9→10
+    /// transition (bootstrap → post-bootstrap) to remove dangling
+    /// delegations created during bootstrap phase when delegating to
+    /// unregistered DReps was allowed.
+    pub fn cleanup_dangling_drep_delegations(&mut self, drep_state: &DrepState) -> usize {
+        let mut cleaned = 0usize;
+        for state in self.entries.values_mut() {
+            if let Some(ref drep) = state.delegated_drep {
+                if !is_builtin_drep(*drep) && !drep_state.is_registered(drep) {
+                    state.delegated_drep = None;
+                    cleaned += 1;
+                }
+            }
+        }
+        cleaned
+    }
+
     /// Clears pool delegation from all stake credentials delegated to any of
     /// the given retired pools.
     ///
@@ -1575,6 +1596,26 @@ impl CommitteeState {
         for member in self.entries.values_mut() {
             member.expires_at = None;
         }
+    }
+
+    /// Removes all entries whose credential is not a current committee
+    /// member (i.e., `expires_at` is `None`).
+    ///
+    /// This implements upstream `updateCommitteeState` from
+    /// `Cardano.Ledger.Conway.Rules.Epoch`:
+    ///
+    /// ```haskell
+    /// updateCommitteeState committee (CommitteeState creds) =
+    ///   CommitteeState $ Map.intersection creds members
+    ///   where members = foldMap' committeeMembers committee
+    /// ```
+    ///
+    /// Must be called at each epoch boundary after governance enactment
+    /// so that hot-key authorizations for removed committee members are
+    /// cleaned up.  Without this, re-elected members would retain their
+    /// old authorization instead of having to re-register.
+    pub fn prune_non_members(&mut self) {
+        self.entries.retain(|_, m| m.expires_at.is_some());
     }
 
     /// Returns the number of known committee members.
@@ -3317,6 +3358,17 @@ impl LedgerState {
     /// Returns a reference to registered DRep state.
     pub fn drep_state(&self) -> &DrepState {
         &self.drep_state
+    }
+
+    /// Removes DRep delegations from accounts that point to
+    /// non-existent DReps.
+    ///
+    /// Upstream: `updateDRepDelegations` in
+    /// `Cardano.Ledger.Conway.Rules.HardFork` — called at the PV 9→10
+    /// transition.  Returns the number of cleaned delegations.
+    pub fn cleanup_dangling_drep_delegations(&mut self) -> usize {
+        self.stake_credentials
+            .cleanup_dangling_drep_delegations(&self.drep_state)
     }
 
     /// Returns a mutable reference to registered DRep state.
@@ -5097,10 +5149,16 @@ impl LedgerState {
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 if let Some(ref_inputs) = &tx.body.reference_inputs {
                     self.multi_era_utxo.validate_reference_inputs(ref_inputs)?;
-                    MultiEraUtxo::validate_reference_input_disjointness(
-                        &tx.body.inputs,
-                        ref_inputs,
-                    )?;
+                    if disjoint_ref_inputs_enforced(
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|p| p.protocol_version),
+                    ) {
+                        MultiEraUtxo::validate_reference_input_disjointness(
+                            &tx.body.inputs,
+                            ref_inputs,
+                        )?;
+                    }
                 }
                 let mut required_scripts = HashSet::new();
                 crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -7361,7 +7419,16 @@ impl LedgerState {
             }
             if let Some(ref_inputs) = &body.reference_inputs {
                 staged.validate_reference_inputs(ref_inputs)?;
-                MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
+                if disjoint_ref_inputs_enforced(
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
+                ) {
+                    MultiEraUtxo::validate_reference_input_disjointness(
+                        &body.inputs,
+                        ref_inputs,
+                    )?;
+                }
             }
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -8239,6 +8306,16 @@ fn conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {
 /// All three are gated on `pvMajor pv > natVersion @10`.
 fn conway_post_pv10(protocol_version: Option<(u64, u64)>) -> bool {
     matches!(protocol_version, Some((major, _)) if major > 10)
+}
+
+/// `true` when the `disjointRefInputs` check should be enforced.
+///
+/// Upstream: `Cardano.Ledger.Babbage.Rules.Utxo` — `disjointRefInputs` is
+/// gated on `pvMajor > eraProtVerHigh @BabbageEra && pvMajor < natVersion @11`.
+/// Since `eraProtVerHigh @BabbageEra = 8`, this enforces disjointness only
+/// for PV 9–10 (early Conway).  At PV 11+ it is relaxed.
+fn disjoint_ref_inputs_enforced(protocol_version: Option<(u64, u64)>) -> bool {
+    matches!(protocol_version, Some((major, _)) if major > 8 && major < 11)
 }
 
 fn conway_bootstrap_action(gov_action: &crate::eras::conway::GovAction) -> bool {
@@ -11232,6 +11309,48 @@ pub(crate) fn tally_drep_votes(
     }
 }
 
+/// Default vote for a stake pool that did not vote explicitly.
+///
+/// Reference: `Cardano.Ledger.Conway.Governance.DefaultVote`,
+/// `Cardano.Ledger.Conway.Governance.defaultStakePoolVote`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DefaultVote {
+    /// Pool reward account delegates to a DRep key/script or is undelegated.
+    No,
+    /// Pool reward account delegates to `DRepAlwaysAbstain`.
+    Abstain,
+    /// Pool reward account delegates to `DRepAlwaysNoConfidence`.
+    NoConfidence,
+}
+
+/// Determine the default SPO vote from the pool's reward-account DRep delegation.
+///
+/// Upstream: `defaultStakePoolVote poolId poolParams accounts`
+/// 1. Look up the pool's `PoolParams` → `reward_account` → extract credential.
+/// 2. Look up that credential in stake credentials → `delegated_drep`.
+/// 3. Map `AlwaysAbstain → DefaultAbstain`, `AlwaysNoConfidence → DefaultNoConfidence`,
+///    everything else (including undelegated) → `DefaultNo`.
+pub(crate) fn default_stake_pool_vote(
+    pool_hash: &PoolKeyHash,
+    pool_state: &PoolState,
+    stake_credentials: &StakeCredentials,
+) -> DefaultVote {
+    let pool = match pool_state.get(pool_hash) {
+        Some(p) => p,
+        None => return DefaultVote::No,
+    };
+    let cred = &pool.params().reward_account.credential;
+    let drep = match stake_credentials.get(cred) {
+        Some(state) => state.delegated_drep(),
+        None => return DefaultVote::No,
+    };
+    match drep {
+        Some(crate::types::DRep::AlwaysAbstain) => DefaultVote::Abstain,
+        Some(crate::types::DRep::AlwaysNoConfidence) => DefaultVote::NoConfidence,
+        _ => DefaultVote::No,
+    }
+}
+
 /// Tally stake-pool operator (SPO) votes for a governance action, weighted
 /// by delegated pool stake.
 ///
@@ -11240,12 +11359,18 @@ pub(crate) fn tally_spo_votes(
     action: &GovernanceActionState,
     pool_stake_dist: &PoolStakeDistribution,
     is_bootstrap_phase: bool,
+    pool_state: &PoolState,
+    stake_credentials: &StakeCredentials,
 ) -> VoteTally {
     use crate::eras::conway::{Vote, Voter};
 
     let is_hard_fork = matches!(
         &action.proposal.gov_action,
         crate::eras::conway::GovAction::HardForkInitiation { .. }
+    );
+    let is_no_confidence = matches!(
+        &action.proposal.gov_action,
+        crate::eras::conway::GovAction::NoConfidence { .. }
     );
 
     let mut yes: u64 = 0;
@@ -11262,12 +11387,32 @@ pub(crate) fn tally_spo_votes(
                 // Upstream spoAcceptedRatio:
                 // - HardForkInitiation: non-voting → implicit No (always)
                 // - Bootstrap phase: non-voting → implicit Abstain
-                // - Post-bootstrap: uses defaultStakePoolVote (not yet
-                //   implemented — falls through to implicit No).
-                if !is_hard_fork && is_bootstrap_phase {
+                // - Post-bootstrap: uses defaultStakePoolVote
+                //
+                // Reference: Cardano.Ledger.Conway.Governance.defaultStakePoolVote
+                if is_hard_fork {
+                    // Non-voting on HardFork is always implicit No (not counted
+                    // as yes or abstain, falls through to total denominator).
+                } else if is_bootstrap_phase {
                     abstain = abstain.saturating_add(pool_stake);
+                } else {
+                    // Post-bootstrap: derive default vote from pool's reward
+                    // account DRep delegation.
+                    match default_stake_pool_vote(pool_hash, pool_state, stake_credentials) {
+                        DefaultVote::Abstain => {
+                            abstain = abstain.saturating_add(pool_stake);
+                        }
+                        DefaultVote::NoConfidence => {
+                            if is_no_confidence {
+                                yes = yes.saturating_add(pool_stake);
+                            }
+                            // else: implicit No (only counted in total)
+                        }
+                        DefaultVote::No => {
+                            // implicit No (only counted in total)
+                        }
+                    }
                 }
-                // Otherwise: non-voting weight in total only (implicit No).
             }
         }
     }
@@ -11476,13 +11621,15 @@ pub(crate) fn accepted_by_spo(
     pool_stake_dist: &PoolStakeDistribution,
     thresholds: &PoolVotingThresholds,
     is_bootstrap_phase: bool,
+    pool_state: &PoolState,
+    stake_credentials: &StakeCredentials,
 ) -> bool {
     let Some(threshold) =
         spo_threshold_for_action(&action.proposal.gov_action, has_committee, thresholds)
     else {
         return true; // no SPO vote required for this action type
     };
-    let tally = tally_spo_votes(action, pool_stake_dist, is_bootstrap_phase);
+    let tally = tally_spo_votes(action, pool_stake_dist, is_bootstrap_phase, pool_state, stake_credentials);
     tally.meets_threshold(&threshold)
 }
 
@@ -11507,6 +11654,8 @@ pub(crate) fn ratify_action(
     min_committee_size: u64,
     is_bootstrap_phase: bool,
     has_committee: bool,
+    pool_state: &PoolState,
+    stake_credentials: &StakeCredentials,
 ) -> bool {
     // Upstream: during Conway bootstrap phase (PV 9), all DRep thresholds are
     // zeroed (`def` = minBound for every field).  With zero thresholds the
@@ -11586,6 +11735,8 @@ pub(crate) fn ratify_action(
         pool_stake_dist,
         pool_thresholds,
         is_bootstrap_phase,
+        pool_state,
+        stake_credentials,
     )
 }
 
@@ -14544,7 +14695,7 @@ mod tests {
         action.votes.insert(Voter::StakePool(pool_a), Vote::Yes);
         action.votes.insert(Voter::StakePool(pool_b), Vote::No);
 
-        let tally = tally_spo_votes(&action, &pool_dist, false);
+        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
         assert_eq!(tally.yes, 600);
         assert_eq!(tally.no, 400);
         assert_eq!(tally.total, 1000);
@@ -15553,6 +15704,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -15598,6 +15751,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -15649,6 +15804,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -15966,7 +16123,7 @@ mod tests {
     fn spo_tally_empty_pool_distribution_fails_positive_threshold() {
         let action = test_hf_action();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
-        let tally = tally_spo_votes(&action, &pool_dist, false);
+        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
         assert_eq!(tally.total, 0);
         // Zero total → active = 0 → upstream `%?` returns 0 → fails
         // any positive threshold.
@@ -15984,7 +16141,7 @@ mod tests {
         pool_stakes.insert([1u8; 28], 2000u64);
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 2000);
 
-        let tally = tally_spo_votes(&action, &pool_dist, false);
+        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
         assert_eq!(tally.total, 2000);
         assert_eq!(tally.yes, 0);
         // Non-voting pool means 0 yes out of 2000 → does NOT meet 51%.
@@ -16005,7 +16162,7 @@ mod tests {
             .votes
             .insert(Voter::StakePool([1; 28]), Vote::Abstain);
 
-        let tally = tally_spo_votes(&action, &pool_dist, false);
+        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
         // All abstain → active = 0 → fails positive threshold.
@@ -16241,7 +16398,7 @@ mod tests {
         let action = test_treasury_action();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
-        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false));
+        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false, &PoolState::new(), &StakeCredentials::new()));
     }
 
     #[test]
@@ -16260,7 +16417,7 @@ mod tests {
         });
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
-        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false));
+        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false, &PoolState::new(), &StakeCredentials::new()));
     }
 
     #[test]
@@ -16429,6 +16586,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16465,6 +16624,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16497,6 +16658,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16538,6 +16701,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16569,6 +16734,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16602,6 +16769,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16631,6 +16800,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16667,6 +16838,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16699,6 +16872,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16734,6 +16909,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16774,6 +16951,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16805,6 +16984,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16840,6 +17021,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16871,6 +17054,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16903,6 +17088,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -16960,6 +17147,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17011,6 +17200,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17060,6 +17251,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17105,6 +17298,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17137,6 +17332,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17173,6 +17370,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17204,6 +17403,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17233,6 +17434,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
     }
 
@@ -17270,6 +17473,8 @@ mod tests {
             0,
             false,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
 
         // With bootstrap (is_bootstrap_phase=true): DRep thresholds zeroed → passes.
@@ -17287,7 +17492,169 @@ mod tests {
             0,
             true,
             true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // defaultStakePoolVote — post-bootstrap SPO default vote from DRep delegation
+    // Reference: Cardano.Ledger.Conway.Governance.defaultStakePoolVote
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_spo_vote_always_no_confidence_counts_yes_on_no_confidence() {
+        // Pool whose reward account delegates to AlwaysNoConfidence.
+        // Post-bootstrap, non-voting pool should count as Yes on NoConfidence.
+        let pool_hash = [0xB1; 28];
+        let reward_cred = StakeCredential::AddrKeyHash([0xC1; 28]);
+        let reward_account = crate::types::RewardAccount {
+            network: 0,
+            credential: reward_cred,
+        };
+        let params = crate::types::PoolParams {
+            operator: pool_hash,
+            vrf_keyhash: [0; 32],
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account,
+            pool_owners: vec![],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let mut pool_state = PoolState::new();
+        pool_state.register(params);
+        let mut stake_creds = StakeCredentials::new();
+        stake_creds.register(reward_cred);
+        stake_creds.get_mut(&reward_cred).unwrap()
+            .set_delegated_drep(Some(DRep::AlwaysNoConfidence));
+
+        let action = test_no_confidence_action();
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert(pool_hash, 1000u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        // Post-bootstrap (is_bootstrap_phase=false): default vote = NoConfidence → Yes.
+        let tally = tally_spo_votes(&action, &pool_dist, false, &pool_state, &stake_creds);
+        assert_eq!(tally.yes, 1000, "AlwaysNoConfidence should auto-yes on NoConfidence");
+        assert_eq!(tally.abstain, 0);
+    }
+
+    #[test]
+    fn default_spo_vote_always_no_confidence_no_effect_on_hard_fork() {
+        // AlwaysNoConfidence delegation has no effect on HardFork proposals —
+        // non-voting is always implicit No for HardFork.
+        let pool_hash = [0xB2; 28];
+        let reward_cred = StakeCredential::AddrKeyHash([0xC2; 28]);
+        let reward_account = crate::types::RewardAccount {
+            network: 0,
+            credential: reward_cred,
+        };
+        let params = crate::types::PoolParams {
+            operator: pool_hash,
+            vrf_keyhash: [0; 32],
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account,
+            pool_owners: vec![],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let mut pool_state = PoolState::new();
+        pool_state.register(params);
+        let mut stake_creds = StakeCredentials::new();
+        stake_creds.register(reward_cred);
+        stake_creds.get_mut(&reward_cred).unwrap()
+            .set_delegated_drep(Some(DRep::AlwaysNoConfidence));
+
+        let action = test_hf_action();
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert(pool_hash, 1000u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        let tally = tally_spo_votes(&action, &pool_dist, false, &pool_state, &stake_creds);
+        assert_eq!(tally.yes, 0, "HardFork non-voting is always implicit No");
+        assert_eq!(tally.abstain, 0);
+    }
+
+    #[test]
+    fn default_spo_vote_always_abstain_excludes_from_denominator() {
+        // Pool whose reward account delegates to AlwaysAbstain.
+        // Post-bootstrap, non-voting pool should count as Abstain (excluded from active).
+        let pool_hash = [0xB3; 28];
+        let reward_cred = StakeCredential::AddrKeyHash([0xC3; 28]);
+        let reward_account = crate::types::RewardAccount {
+            network: 0,
+            credential: reward_cred,
+        };
+        let params = crate::types::PoolParams {
+            operator: pool_hash,
+            vrf_keyhash: [0; 32],
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account,
+            pool_owners: vec![],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let mut pool_state = PoolState::new();
+        pool_state.register(params);
+        let mut stake_creds = StakeCredentials::new();
+        stake_creds.register(reward_cred);
+        stake_creds.get_mut(&reward_cred).unwrap()
+            .set_delegated_drep(Some(DRep::AlwaysAbstain));
+
+        let action = test_no_confidence_action();
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert(pool_hash, 1000u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        let tally = tally_spo_votes(&action, &pool_dist, false, &pool_state, &stake_creds);
+        assert_eq!(tally.abstain, 1000, "AlwaysAbstain should count as Abstain");
+        assert_eq!(tally.yes, 0);
+    }
+
+    #[test]
+    fn default_spo_vote_no_confidence_implicit_no_on_non_no_confidence_action() {
+        // AlwaysNoConfidence delegation: on ParameterChange (not NoConfidence),
+        // the default vote is just No (counted in total, not in yes/abstain).
+        let pool_hash = [0xB4; 28];
+        let reward_cred = StakeCredential::AddrKeyHash([0xC4; 28]);
+        let reward_account = crate::types::RewardAccount {
+            network: 0,
+            credential: reward_cred,
+        };
+        let params = crate::types::PoolParams {
+            operator: pool_hash,
+            vrf_keyhash: [0; 32],
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account,
+            pool_owners: vec![],
+            relays: vec![],
+            pool_metadata: None,
+        };
+        let mut pool_state = PoolState::new();
+        pool_state.register(params);
+        let mut stake_creds = StakeCredentials::new();
+        stake_creds.register(reward_cred);
+        stake_creds.get_mut(&reward_cred).unwrap()
+            .set_delegated_drep(Some(DRep::AlwaysNoConfidence));
+
+        // Security-group parameter change (SPOs can vote on these)
+        let action = test_param_change_security_action();
+        let mut pool_stakes = BTreeMap::new();
+        pool_stakes.insert(pool_hash, 1000u64);
+        let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
+
+        let tally = tally_spo_votes(&action, &pool_dist, false, &pool_state, &stake_creds);
+        assert_eq!(tally.yes, 0, "NoConfidence default should not auto-yes on ParameterChange");
+        assert_eq!(tally.abstain, 0, "NoConfidence default should not count as abstain");
+        assert_eq!(tally.total, 1000, "Stake still in total");
     }
 
     // -----------------------------------------------------------------------
@@ -17307,13 +17674,13 @@ mod tests {
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
 
         // Without bootstrap: non-voting A2 is in denominator → yes=500/(1000-0) = 50%.
-        let tally_normal = tally_spo_votes(&action, &pool_dist, false);
+        let tally_normal = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
         assert_eq!(tally_normal.yes, 500);
         assert_eq!(tally_normal.abstain, 0);
         assert_eq!(tally_normal.total, 1000);
 
         // With bootstrap: non-voting A2 counts as abstain → yes=500/(1000-500) = 100%.
-        let tally_bootstrap = tally_spo_votes(&action, &pool_dist, true);
+        let tally_bootstrap = tally_spo_votes(&action, &pool_dist, true, &PoolState::new(), &StakeCredentials::new());
         assert_eq!(tally_bootstrap.yes, 500);
         assert_eq!(tally_bootstrap.abstain, 500);
         assert_eq!(tally_bootstrap.total, 1000);
@@ -17335,7 +17702,7 @@ mod tests {
         action.votes.insert(Voter::StakePool([0xA1; 28]), Vote::Yes);
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
 
-        let tally = tally_spo_votes(&action, &pool_dist, true);
+        let tally = tally_spo_votes(&action, &pool_dist, true, &PoolState::new(), &StakeCredentials::new());
         assert_eq!(tally.yes, 500);
         assert_eq!(tally.abstain, 0); // NOT counted as abstain for HF
         assert_eq!(tally.total, 1000);

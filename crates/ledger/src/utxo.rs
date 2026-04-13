@@ -828,10 +828,11 @@ impl MultiEraUtxo {
 
     /// Validates that spending inputs and reference inputs are disjoint.
     ///
-    /// Conway UTXO rule: the sets of spending and reference inputs must not
-    /// overlap.  Babbage allows overlap; only Conway introduced the
-    /// disjointness requirement.  Upstream: `Cardano.Ledger.Conway.Rules.Utxo`
-    /// — `disjoint txins refInputs`.
+    /// Upstream: `Cardano.Ledger.Babbage.Rules.Utxo` — `disjointRefInputs`.
+    /// The check is PV-gated: enforced only when `pvMajor > eraProtVerHigh
+    /// @BabbageEra && pvMajor < natVersion @11`, i.e. PV 9–10 (early Conway).
+    /// At PV 11+ the disjointness requirement is relaxed.  Callers are
+    /// responsible for applying the PV gate before invoking this function.
     pub fn validate_reference_input_disjointness(
         inputs: &[ShelleyTxIn],
         ref_inputs: &[ShelleyTxIn],

@@ -526,6 +526,20 @@ pub fn apply_epoch_boundary(
     // when proposals first appeared.
 
     // -----------------------------------------------------------------------
+    // 5d. Committee state cleanup — prune hot-key authorization entries
+    //     for cold credentials that are no longer active committee members.
+    //
+    //     Upstream `updateCommitteeState` in `Cardano.Ledger.Conway.Rules.Epoch`
+    //     applies `Map.intersection creds members` where `members` is
+    //     `committeeMembers` of the post-enactment committee.  In our
+    //     combined model, non-members have `expires_at = None` after
+    //     enactment (via `clear_membership`/`clear_all_membership`).
+    //     Pruning removes these stale entries so that re-elected members
+    //     must re-authorize their hot key.
+    // -----------------------------------------------------------------------
+    ledger.committee_state_mut().prune_non_members();
+
+    // -----------------------------------------------------------------------
     // 6. DRep inactivity — compute the set of DReps that have exceeded
     //    the `drep_activity` window.  Inactive DReps remain registered
     //    but are excluded from ratification quorum calculations.
@@ -1180,6 +1194,8 @@ fn ratify_and_enact(
             min_committee_size,
             is_bootstrap_phase,
             has_committee,
+            ledger.pool_state(),
+            ledger.stake_credentials(),
         ) {
             continue;
         }
@@ -1195,6 +1211,27 @@ fn ratify_and_enact(
                 state.proposal().deposit,
             ));
             let outcome = ledger.enact_action(id.clone(), &state.proposal().gov_action);
+
+            // ----- HARDFORK rule: one-time state fixups -----
+            //
+            // Upstream `Cardano.Ledger.Conway.Rules.HardFork`:
+            //   pvMajor newPv == natVersion @10 →
+            //     updateDRepDelegations (removes dangling DRep delegations
+            //     from accounts that pointed to non-existent DReps created
+            //     during the bootstrap phase).
+            //   pvMajor newPv == natVersion @11 →
+            //     populateVRFKeyHashes (initializes VRF counting map;
+            //     not needed here — our VRF uniqueness uses linear scan).
+            if let crate::eras::conway::GovAction::HardForkInitiation {
+                protocol_version: (major, _),
+                ..
+            } = state.proposal().gov_action
+            {
+                if major == 10 {
+                    ledger.cleanup_dangling_drep_delegations();
+                }
+            }
+
             outcomes.push(outcome);
             enacted_ids.push(id.clone());
 
@@ -3071,6 +3108,175 @@ mod tests {
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(event.enacted_gov_action_ids.is_empty());
         assert!(event.enact_outcomes.is_empty());
+    }
+
+    // -- updateCommitteeState pruning (Gap AM) ----------------------------
+
+    /// After NoConfidence enactment, hot-key authorizations of removed
+    /// committee members must be pruned at the epoch boundary.
+    ///
+    /// Upstream `updateCommitteeState` (`Cardano.Ledger.Conway.Rules.Epoch`)
+    /// applies `Map.intersection creds members` which removes all entries
+    /// when `committee = SNothing`.  Without this pruning, re-elected
+    /// members would retain their old hot-key authorization.
+    #[test]
+    fn test_no_confidence_prunes_committee_hot_keys() {
+        let mut ledger = make_governance_ledger();
+        let cc_cred = test_cred(0xC0);
+        let cc_hot = test_cred(0xC1);
+
+        // Authorize a hot key for the existing committee member.
+        ledger
+            .committee_state_mut()
+            .get_mut(&cc_cred)
+            .unwrap()
+            .set_authorization(Some(
+                crate::state::CommitteeAuthorization::CommitteeHotCredential(cc_hot),
+            ));
+        assert!(ledger.committee_state().get(&cc_cred).unwrap().hot_credential().is_some());
+
+        // Set DRep/SPO thresholds to 0 so NoConfidence auto-passes.
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        let mut pool_thresholds = PoolVotingThresholds::default();
+        pool_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+            pp.pool_voting_thresholds = Some(pool_thresholds);
+        }
+
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0xE0, 0);
+        ledger
+            .governance_actions_mut()
+            .insert(gai.clone(), GovernanceActionState::new(proposal));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch boundary");
+
+        assert_eq!(event.governance_actions_enacted, 1);
+        // After NoConfidence + prune_non_members, the committee state must
+        // be empty — stale hot-key entries are removed.
+        assert!(
+            ledger.committee_state().is_empty(),
+            "committee state should be pruned after NoConfidence"
+        );
+    }
+
+    /// After UpdateCommittee removes a member, that member's hot-key entry
+    /// must be pruned at the epoch boundary.  Retained members keep their
+    /// authorization.
+    #[test]
+    fn test_update_committee_remove_prunes_hot_key() {
+        use crate::state::CommitteeAuthorization;
+
+        let mut ledger = make_governance_ledger();
+        let cc_cred = test_cred(0xC0);
+        let cc_hot = test_cred(0xC1);
+
+        // Authorize a hot key for the existing committee member.
+        ledger
+            .committee_state_mut()
+            .get_mut(&cc_cred)
+            .unwrap()
+            .set_authorization(Some(
+                CommitteeAuthorization::CommitteeHotCredential(cc_hot),
+            ));
+
+        // Add a second committee member and authorize them too.
+        let cc2_cred = test_cred(0xC2);
+        let cc2_hot = test_cred(0xC3);
+        ledger
+            .committee_state_mut()
+            .register_with_term(cc2_cred, 999);
+        ledger
+            .committee_state_mut()
+            .get_mut(&cc2_cred)
+            .unwrap()
+            .set_authorization(Some(
+                CommitteeAuthorization::CommitteeHotCredential(cc2_hot),
+            ));
+
+        // Set DRep thresholds to 0 so UpdateCommittee auto-passes.
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.committee_normal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        let mut pool_thresholds = PoolVotingThresholds::default();
+        pool_thresholds.committee_normal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+            pp.pool_voting_thresholds = Some(pool_thresholds);
+        }
+
+        // Remove cc_cred, keep cc2_cred.
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![cc_cred],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0xE1, 0);
+        ledger
+            .governance_actions_mut()
+            .insert(gai.clone(), GovernanceActionState::new(proposal));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch boundary");
+
+        assert_eq!(event.governance_actions_enacted, 1);
+
+        // Removed member should be pruned.
+        assert!(
+            ledger.committee_state().get(&cc_cred).is_none(),
+            "removed member's hot-key entry should be pruned"
+        );
+        // Retained member should still have their authorization.
+        let cc2_state = ledger
+            .committee_state()
+            .get(&cc2_cred)
+            .expect("retained member should still exist");
+        assert!(
+            cc2_state.hot_credential().is_some(),
+            "retained member's hot key should be preserved"
+        );
     }
 
     // -- Enacted deposit refund -------------------------------------------

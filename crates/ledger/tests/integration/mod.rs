@@ -118,6 +118,7 @@ mod deposit_preservation;
 mod conway_cert_deposit_validation;
 mod conway_governance_parity;
 mod dormant_epoch;
+mod hardfork_drep_cleanup;
 mod txbody_keys;
 mod types_and_certs;
 mod witness_validation;
