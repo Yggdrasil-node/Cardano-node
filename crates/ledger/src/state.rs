@@ -1295,6 +1295,18 @@ impl CommitteeMemberState {
         )
     }
 
+    /// Returns true when this credential is an enacted committee member.
+    ///
+    /// Upstream: `committeeMembers` stores `Map Credential EpochNo`.
+    /// A credential is an enacted member if and only if it has a term
+    /// epoch (set by `register_with_term` during `UpdateCommittee`
+    /// enactment).  Credentials that only have authorization/resignation
+    /// state but no term (e.g., auto-registered via `isPotentialFutureMember`
+    /// or membership-cleared via `NoConfidence`) are NOT enacted members.
+    pub fn is_enacted_member(&self) -> bool {
+        self.expires_at.is_some()
+    }
+
     pub(crate) fn set_authorization(&mut self, authorization: Option<CommitteeAuthorization>) {
         self.authorization = authorization;
     }
@@ -1499,19 +1511,56 @@ impl CommitteeState {
             .is_none()
     }
 
-    /// Inserts a known committee member with no authorized hot credential
-    /// and a term expiry epoch.
+    /// Sets the term expiry epoch for a committee member, preserving any
+    /// existing authorization/resignation state.
     ///
-    /// Upstream: `committeeMembers` stores `Map Credential EpochNo`.
+    /// Upstream: `committeeMembers` stores `Map Credential EpochNo` which
+    /// is separate from `csCommitteeCreds` (authorization state).  When
+    /// `UpdateCommittee` is enacted, only `committeeMembers` is modified —
+    /// `csCommitteeCreds` is untouched.  In our combined model we preserve
+    /// the existing authorization when the entry already exists.
     pub fn register_with_term(&mut self, credential: StakeCredential, expires_at: u64) -> bool {
-        self.entries
-            .insert(credential, CommitteeMemberState::with_term(expires_at))
-            .is_none()
+        use std::collections::btree_map::Entry;
+        match self.entries.entry(credential) {
+            Entry::Occupied(mut entry) => {
+                // Preserve authorization/resignation — only update term.
+                entry.get_mut().expires_at = Some(expires_at);
+                false
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(CommitteeMemberState::with_term(expires_at));
+                true
+            }
+        }
     }
 
-    /// Removes a known committee member.
+    /// Removes a known committee member entirely (entry + authorization).
     pub fn unregister(&mut self, credential: &StakeCredential) -> Option<CommitteeMemberState> {
         self.entries.remove(credential)
+    }
+
+    /// Clears enacted membership for a single credential by setting
+    /// `expires_at = None`, while preserving its authorization/resignation
+    /// state.
+    ///
+    /// Upstream: removing from `committeeMembers` does not touch
+    /// `csCommitteeCreds`.
+    pub fn clear_membership(&mut self, credential: &StakeCredential) {
+        if let Some(member) = self.entries.get_mut(credential) {
+            member.expires_at = None;
+        }
+    }
+
+    /// Clears enacted membership for all credentials by setting every
+    /// entry's `expires_at = None`, preserving authorization/resignation
+    /// state.
+    ///
+    /// Upstream: `NoConfidence` sets `ensCommittee = SNothing` which removes
+    /// all `committeeMembers` but leaves `csCommitteeCreds` untouched.
+    pub fn clear_all_membership(&mut self) {
+        for member in self.entries.values_mut() {
+            member.expires_at = None;
+        }
     }
 
     /// Returns the number of known committee members.
@@ -1781,10 +1830,13 @@ fn enact_gov_action_at_epoch(
         }
 
         GovAction::NoConfidence { .. } => {
-            // Remove all committee members — upstream ENACT removes
-            // the entire committee on no-confidence.
+            // Upstream sets `ensCommittee = SNothing` which removes all
+            // members from committeeMembers, but csCommitteeCreds (authorization
+            // and resignation state) is preserved in VState.
+            // In our combined model, we clear expires_at (membership) while
+            // preserving authorization/resignation state.
             let count = committee.len();
-            *committee = CommitteeState::new();
+            committee.clear_all_membership();
             enact.committee_quorum = UnitInterval {
                 numerator: 0,
                 denominator: 1,
@@ -1803,7 +1855,10 @@ fn enact_gov_action_at_epoch(
         } => {
             let mut removed = 0usize;
             for cred in members_to_remove {
-                if committee.unregister(cred).is_some() {
+                // Upstream: removes from committeeMembers only — does not
+                // touch csCommitteeCreds (authorization/resignation state).
+                if committee.get(cred).is_some_and(|m| m.expires_at().is_some()) {
+                    committee.clear_membership(cred);
                     removed += 1;
                 }
             }
@@ -9114,16 +9169,25 @@ fn authorize_committee_hot_credential(
     hot_credential: StakeCredential,
 ) -> Result<(), LedgerError> {
     // Upstream `checkAndOverwriteCommitteeMemberState` in
-    // `Cardano.Ledger.Conway.Rules.GovCert`: the cold credential must be
-    // either a current enacted committee member or appear in a pending
-    // `UpdateCommittee` proposal's `newMembers` map
-    // (`isPotentialFutureMember`).
+    // `Cardano.Ledger.Conway.Rules.GovCert`:
     //
-    // Unlike the previous implementation, this ALWAYS checks membership
-    // even when the credential already exists in `committee_state`.
-    // Auto-registered credentials (from `isPotentialFutureMember`) have
-    // `expires_at == None`; properly enacted members (from
-    // `register_with_term`) have `expires_at == Some(epoch)`.
+    // 1. Check csCommitteeCreds for resignation — BEFORE membership check.
+    // 2. Check committeeMembers (enacted) or pending UpdateCommittee proposals.
+    // 3. Insert new authorization state.
+    //
+    // This ordering matters: a resigned member re-added via UpdateCommittee
+    // still gets `ConwayCommitteeHasPreviouslyResigned` because resignation
+    // lives in csCommitteeCreds which is separate from committeeMembers.
+
+    // Step 1: resignation check (upstream checks csCommitteeCreds first).
+    if committee_state
+        .get(&cold_credential)
+        .is_some_and(|m| m.is_resigned())
+    {
+        return Err(LedgerError::CommitteeHasPreviouslyResigned(cold_credential));
+    }
+
+    // Step 2: membership check (enacted member OR potential future member).
     let is_current_member = committee_state
         .get(&cold_credential)
         .is_some_and(|m| m.expires_at().is_some());
@@ -9136,12 +9200,8 @@ fn authorize_committee_hot_credential(
         committee_state.register(cold_credential);
     }
 
+    // Step 3: insert new hot-key authorization.
     let member_state = committee_state.get_mut(&cold_credential).unwrap();
-
-    if member_state.is_resigned() {
-        return Err(LedgerError::CommitteeHasPreviouslyResigned(cold_credential));
-    }
-
     member_state.set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(
         hot_credential,
     )));
@@ -9154,8 +9214,18 @@ fn resign_committee_cold_credential(
     cold_credential: StakeCredential,
     anchor: Option<Anchor>,
 ) -> Result<(), LedgerError> {
-    // Same unconditional `isCurrentMember || isPotentialFutureMember`
-    // check as authorization (upstream `checkAndOverwriteCommitteeMemberState`).
+    // Same upstream `checkAndOverwriteCommitteeMemberState` flow as
+    // authorization: resignation checked BEFORE membership.
+
+    // Step 1: resignation check.
+    if committee_state
+        .get(&cold_credential)
+        .is_some_and(|m| m.is_resigned())
+    {
+        return Err(LedgerError::CommitteeHasPreviouslyResigned(cold_credential));
+    }
+
+    // Step 2: membership check.
     let is_current_member = committee_state
         .get(&cold_credential)
         .is_some_and(|m| m.expires_at().is_some());
@@ -9163,16 +9233,13 @@ fn resign_committee_cold_credential(
         return Err(LedgerError::CommitteeIsUnknown(cold_credential));
     }
 
+    // Auto-register if not yet in the map.
     if committee_state.get(&cold_credential).is_none() {
         committee_state.register(cold_credential);
     }
 
+    // Step 3: insert resignation.
     let member_state = committee_state.get_mut(&cold_credential).unwrap();
-
-    if member_state.is_resigned() {
-        return Err(LedgerError::CommitteeHasPreviouslyResigned(cold_credential));
-    }
-
     member_state.set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(
         anchor,
     )));
@@ -10141,7 +10208,11 @@ fn count_active_committee_members(
 ) -> u64 {
     committee_state
         .iter()
-        .filter(|(_, member)| !member.is_resigned() && !member.is_expired(current_epoch))
+        .filter(|(_, member)| {
+            member.is_enacted_member()
+                && !member.is_resigned()
+                && !member.is_expired(current_epoch)
+        })
         .count() as u64
 }
 
@@ -10167,6 +10238,11 @@ pub(crate) fn tally_committee_votes(
     let mut eligible: u64 = 0;
 
     for (_cold_cred, member_state) in committee_state.iter() {
+        // Non-enacted members (e.g., auto-registered via isPotentialFutureMember
+        // or membership-cleared via NoConfidence) do not count.
+        if !member_state.is_enacted_member() {
+            continue;
+        }
         // Resigned members do not count.
         if member_state.is_resigned() {
             continue;
@@ -10917,7 +10993,7 @@ mod tests {
         let mut es = EnactState::new();
         let mut committee = CommitteeState::new();
         let cred = crate::StakeCredential::AddrKeyHash([0x11; 28]);
-        committee.register(cred);
+        committee.register_with_term(cred, 100);
         assert_eq!(committee.len(), 1);
 
         let mut pp = None;
@@ -10937,7 +11013,11 @@ mod tests {
             &mut acc,
         );
         assert_eq!(outcome, EnactOutcome::CommitteeRemoved);
-        assert_eq!(committee.len(), 0);
+        // Upstream: NoConfidence sets `ensCommittee = SNothing`, removing all
+        // committeeMembers — but csCommitteeCreds entries are preserved.
+        // In our combined model the entry survives with `expires_at = None`.
+        assert_eq!(committee.len(), 1);
+        assert!(committee.get(&cred).unwrap().expires_at().is_none());
         assert_eq!(es.prev_committee(), Some(&action_id));
         // Quorum reset to 0/1.
         assert_eq!(es.committee_quorum().numerator, 0);
@@ -10950,8 +11030,8 @@ mod tests {
         let existing = crate::StakeCredential::AddrKeyHash([0x01; 28]);
         let to_remove = crate::StakeCredential::AddrKeyHash([0x02; 28]);
         let new_member = crate::StakeCredential::AddrKeyHash([0x03; 28]);
-        committee.register(existing);
-        committee.register(to_remove);
+        committee.register_with_term(existing, 200);
+        committee.register_with_term(to_remove, 200);
         assert_eq!(committee.len(), 2);
 
         let mut pp = None;
@@ -10986,10 +11066,13 @@ mod tests {
                 members_added: 1,
             }
         );
-        assert_eq!(committee.len(), 2); // existing + new_member
-        assert!(committee.is_member(&existing));
-        assert!(!committee.is_member(&to_remove));
-        assert!(committee.is_member(&new_member));
+        // Upstream: members_to_remove only clears committeeMembers — the
+        // entry in csCommitteeCreds is preserved.  Combined model: entry
+        // survives with expires_at = None.
+        assert_eq!(committee.len(), 3); // existing + to_remove(cleared) + new_member
+        assert!(committee.get(&existing).unwrap().expires_at().is_some());
+        assert!(committee.get(&to_remove).unwrap().expires_at().is_none());
+        assert!(committee.get(&new_member).unwrap().expires_at().is_some());
         assert_eq!(es.committee_quorum().numerator, 2);
         assert_eq!(es.committee_quorum().denominator, 3);
         assert_eq!(es.prev_committee(), Some(&action_id));
@@ -13319,8 +13402,8 @@ mod tests {
         let cold_b = StakeCredential::AddrKeyHash([2; 28]);
         let hot_a = StakeCredential::AddrKeyHash([11; 28]);
         let hot_b = StakeCredential::AddrKeyHash([12; 28]);
-        cs.register(cold_a);
-        cs.register(cold_b);
+        cs.register_with_term(cold_a, 999);
+        cs.register_with_term(cold_b, 999);
         authorize_cc_hot(&mut cs, cold_a, hot_a);
         authorize_cc_hot(&mut cs, cold_b, hot_b);
 
@@ -13344,8 +13427,8 @@ mod tests {
         let cold_a = StakeCredential::AddrKeyHash([1; 28]);
         let cold_b = StakeCredential::AddrKeyHash([2; 28]);
         let hot_a = StakeCredential::AddrKeyHash([11; 28]);
-        cs.register(cold_a);
-        cs.register(cold_b);
+        cs.register_with_term(cold_a, 999);
+        cs.register_with_term(cold_b, 999);
         authorize_cc_hot(&mut cs, cold_a, hot_a);
         // Resign member B (no hot credential needed for resigned members).
         cs.get_mut(&cold_b).unwrap().set_authorization(Some(
@@ -13363,8 +13446,8 @@ mod tests {
     fn committee_tally_no_votes_fails_threshold() {
         let action = test_hf_action();
         let mut cs = CommitteeState::default();
-        cs.register(StakeCredential::AddrKeyHash([1; 28]));
-        cs.register(StakeCredential::AddrKeyHash([2; 28]));
+        cs.register_with_term(StakeCredential::AddrKeyHash([1; 28]), 999);
+        cs.register_with_term(StakeCredential::AddrKeyHash([2; 28]), 999);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 0);
@@ -14143,7 +14226,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([11; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
@@ -14159,7 +14242,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([11; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
@@ -14176,7 +14259,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([11; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
@@ -14195,9 +14278,9 @@ mod tests {
         let hot_a = StakeCredential::AddrKeyHash([11; 28]);
         let hot_b = StakeCredential::AddrKeyHash([12; 28]);
         let hot_c = StakeCredential::AddrKeyHash([13; 28]);
-        cs.register(cold_a);
-        cs.register(cold_b);
-        cs.register(cold_c);
+        cs.register_with_term(cold_a, 999);
+        cs.register_with_term(cold_b, 999);
+        cs.register_with_term(cold_c, 999);
         authorize_cc_hot(&mut cs, cold_a, hot_a);
         authorize_cc_hot(&mut cs, cold_b, hot_b);
         authorize_cc_hot(&mut cs, cold_c, hot_c);
@@ -14220,9 +14303,9 @@ mod tests {
         let hot_a = StakeCredential::AddrKeyHash([11; 28]);
         let hot_b = StakeCredential::AddrKeyHash([12; 28]);
         let hot_c = StakeCredential::AddrKeyHash([13; 28]);
-        cs.register(cold_a);
-        cs.register(cold_b);
-        cs.register(cold_c);
+        cs.register_with_term(cold_a, 999);
+        cs.register_with_term(cold_b, 999);
+        cs.register_with_term(cold_c, 999);
         authorize_cc_hot(&mut cs, cold_a, hot_a);
         authorize_cc_hot(&mut cs, cold_b, hot_b);
         authorize_cc_hot(&mut cs, cold_c, hot_c);
@@ -14298,7 +14381,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([101; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
 
@@ -14339,7 +14422,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([101; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
 
@@ -14718,7 +14801,7 @@ mod tests {
         let action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cred = StakeCredential::AddrKeyHash([1; 28]);
-        cs.register(cred);
+        cs.register_with_term(cred, 999);
         cs.get_mut(&cred).unwrap().set_authorization(Some(
             CommitteeAuthorization::CommitteeMemberResigned(None),
         ));
@@ -14733,7 +14816,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([11; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
@@ -14751,7 +14834,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([11; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::No);
 
@@ -14823,17 +14906,17 @@ mod tests {
 
     #[test]
     fn committee_tally_no_term_means_never_expires() {
-        // Members registered without term (legacy) are always active.
+        // Members registered with a far-future term are always active.
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([1; 28]);
         let hot = StakeCredential::AddrKeyHash([11; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 1_000_000);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(999_999));
-        assert_eq!(tally.total, 1, "no-term member never expires");
+        assert_eq!(tally.total, 1, "far-future-term member still active");
         assert_eq!(tally.yes, 1);
     }
 
@@ -14985,7 +15068,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
         let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::Yes);
         let quorum = UnitInterval { numerator: 1, denominator: 2 };
@@ -15093,7 +15176,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
         let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
         let quorum = UnitInterval { numerator: 1, denominator: 2 };
@@ -15256,7 +15339,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
         let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
         action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
         let quorum = UnitInterval { numerator: 1, denominator: 2 };
@@ -16855,7 +16938,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0x50; 28]);
         let hot = StakeCredential::AddrKeyHash([0x60; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
 
         // Vote is stored under the HOT credential hash (per Conway CDDL).
@@ -16873,7 +16956,7 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0x50; 28]);
         let hot = StakeCredential::AddrKeyHash([0x60; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
 
         // Incorrectly keyed by cold hash.
@@ -16890,7 +16973,7 @@ mod tests {
         let mut action = test_hf_action();
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0x50; 28]);
-        cs.register(cold);
+        cs.register_with_term(cold, 999);
         // No hot credential authorized.
 
         // Vote under cold hash (the only hash available).
@@ -18614,9 +18697,9 @@ mod tests {
     }
 
     #[test]
-    fn test_conway_pool_registration_duplicate_vrf_key_rejected() {
+    fn test_conway_pool_registration_duplicate_vrf_key_rejected_pv11() {
         // Upstream Conway POOL rule: `VRFKeyHashAlreadyRegistered`.
-        // Two pools cannot register with the same VRF key in Conway.
+        // Two pools cannot register with the same VRF key at PV > 10.
         let mut pool_state = PoolState::new();
         let mut sc = StakeCredentials::new();
         // Register owners for both pools.
@@ -18629,7 +18712,8 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_conway_cert_ctx();
+        let mut ctx = sample_conway_cert_ctx();
+        ctx.post_pv10 = true; // PV 11+: VRF key uniqueness enforced
 
         let shared_vrf: [u8; 32] = [0xCC; 32];
         let pool_a = PoolParams {
@@ -18670,7 +18754,8 @@ mod tests {
         let mut ra = RewardAccounts::new();
         let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
         let mut gd = std::collections::BTreeMap::new();
-        let ctx = sample_conway_cert_ctx();
+        let mut ctx = sample_conway_cert_ctx();
+        ctx.post_pv10 = true; // PV 11+: VRF key uniqueness enforced
 
         let params = PoolParams {
             operator: [0xA1; 28],
@@ -18689,6 +18774,50 @@ mod tests {
             &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
         );
         assert!(result.is_ok(), "re-registration with same VRF key should succeed: {result:?}");
+    }
+
+    #[test]
+    fn test_conway_bootstrap_duplicate_vrf_key_accepted() {
+        // Conway bootstrap (PV 9) and PV 10: duplicate VRF keys are allowed.
+        // Upstream: `hardforkConwayDisallowDuplicatedVRFKeys pv = pvMajor pv > natVersion @10`
+        // — only active at PV 11+.
+        let mut pool_state = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let owner_a = StakeCredential::AddrKeyHash([0xA0; 28]);
+        let owner_b = StakeCredential::AddrKeyHash([0xB0; 28]);
+        sc.register(owner_a);
+        sc.register(owner_b);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0 };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_conway_cert_ctx(); // post_pv10: false (PV 9/10)
+
+        let shared_vrf: [u8; 32] = [0xCC; 32];
+        let pool_a = PoolParams {
+            operator: [0xA1; 28],
+            vrf_keyhash: shared_vrf,
+            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
+            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+        };
+        let pool_b = PoolParams {
+            operator: [0xB1; 28],
+            vrf_keyhash: shared_vrf, // same VRF key — allowed at PV <= 10
+            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
+            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB0; 28]) },
+            pool_owners: vec![[0xB0; 28]], relays: vec![], pool_metadata: None,
+        };
+        let certs = vec![
+            DCert::PoolRegistration(pool_a),
+            DCert::PoolRegistration(pool_b),
+        ];
+        let result = apply_certificates_and_withdrawals(
+            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
+            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+        );
+        assert!(result.is_ok(), "Conway PV9/10 should allow duplicate VRF keys: {result:?}");
     }
 
     #[test]
@@ -20113,5 +20242,109 @@ mod tests {
             Some(&certs), None, 100, Some(5), Some(&mir_ctx),
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_running_utxo_ref_script_size_pv10_static() {
+        // PV <= 10: block-level ref-script size uses static pre-block UTxO.
+        // Tx A produces a ref-script output; Tx B references it.
+        // At PV <= 10, Tx B does NOT see Tx A's new output, so the
+        // block-total only counts Tx A's input ref-script (if any).
+        use crate::eras::shelley::ShelleyTxIn;
+        use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
+
+        let mut utxo = MultiEraUtxo::new();
+        // Existing UTxO entry with a ref-script (from before the block).
+        let existing_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        let script_bytes = vec![0x82, 0x01, 0x87]; // 3 bytes
+        let existing_out = crate::eras::babbage::BabbageTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(script_bytes.clone()))),
+        };
+        utxo.insert(existing_input.clone(), MultiEraTxOut::Babbage(existing_out));
+
+        // Tx A: spends existing_input (with ref-script → 3 bytes).
+        let tx_a_inputs = vec![existing_input];
+        let total_a = utxo.total_ref_scripts_size(&tx_a_inputs, None);
+        assert_eq!(total_a, 3);
+
+        // Tx B: ref_inputs = [TxA output at index 0] — this output doesn't
+        // exist in the pre-block UTxO yet.
+        let tx_b_ref_input = ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 };
+        let total_b = utxo.total_ref_scripts_size(&[], Some(&[tx_b_ref_input]));
+        // PV <= 10: Tx B can't see Tx A's output → 0 bytes.
+        assert_eq!(total_b, 0);
+
+        // Block total at PV <= 10: 3 + 0 = 3.
+        assert_eq!(total_a + total_b, 3);
+    }
+
+    #[test]
+    fn test_running_utxo_ref_script_size_pv11_running() {
+        // PV > 10: block-level ref-script size uses running UTxO.
+        // After each tx, its outputs are added to a running overlay.
+        // This test verifies the running UTxO overlay logic used in
+        // apply_conway_block() at PV > 10.
+        use crate::eras::shelley::ShelleyTxIn;
+        use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
+
+        let mut utxo = MultiEraUtxo::new();
+        // Existing UTxO with a ref-script.
+        let existing_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        let script_bytes = vec![0x82, 0x01, 0x87]; // 3 bytes
+        let existing_out = crate::eras::babbage::BabbageTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(2_000_000),
+            datum_option: None,
+            script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(script_bytes.clone()))),
+        };
+        utxo.insert(existing_input.clone(), MultiEraTxOut::Babbage(existing_out));
+
+        // Simulate running UTxO overlay as in apply_conway_block PV > 10 path.
+        let mut overlay: std::collections::HashMap<ShelleyTxIn, MultiEraTxOut> =
+            std::collections::HashMap::new();
+
+        // --- Tx A: spends existing_input (3 bytes from original UTxO).
+        let tx_a_id = [0xAA; 32];
+        let tx_a_inputs = vec![existing_input];
+        let mut tx_a_ref_total: usize = 0;
+        for input in tx_a_inputs.iter() {
+            let txout = overlay.get(input).or_else(|| utxo.get(input));
+            if let Some(out) = txout {
+                if let Some(sr) = out.script_ref() {
+                    tx_a_ref_total += sr.0.binary_size();
+                }
+            }
+        }
+        assert_eq!(tx_a_ref_total, 3);
+        // Tx A produces a new output with a ref-script (5 bytes).
+        let new_script = vec![0x82, 0x02, 0x83, 0x00, 0x01]; // 5 bytes
+        let tx_a_output = crate::eras::babbage::BabbageTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(new_script))),
+        };
+        let tx_a_out_key = ShelleyTxIn { transaction_id: tx_a_id, index: 0 };
+        overlay.insert(tx_a_out_key.clone(), MultiEraTxOut::Babbage(tx_a_output));
+
+        // --- Tx B: ref_inputs = [Tx A's output at index 0].
+        // With running UTxO overlay, Tx B CAN see Tx A's output.
+        let tx_b_ref_inputs = vec![tx_a_out_key];
+        let mut tx_b_ref_total: usize = 0;
+        for input in tx_b_ref_inputs.iter() {
+            let txout = overlay.get(input).or_else(|| utxo.get(input));
+            if let Some(out) = txout {
+                if let Some(sr) = out.script_ref() {
+                    tx_b_ref_total += sr.0.binary_size();
+                }
+            }
+        }
+        assert_eq!(tx_b_ref_total, 5);
+
+        // Block total at PV > 10: 3 + 5 = 8.
+        assert_eq!(tx_a_ref_total + tx_b_ref_total, 8);
     }
 }

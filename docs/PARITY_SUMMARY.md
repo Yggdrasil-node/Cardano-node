@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 72 parity audit rounds completed (644+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 73 parity audit rounds completed (647+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 72 audit rounds covering 644+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 73 audit rounds covering 647+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -349,4 +349,5 @@
 | 65 | Shelley DELEG future-genesis delegation scheduling | 6 | Gap AC: `GenesisDelegation` applied immediately instead of staging in `dsFutureGenDelegs`; fixed with slot-based scheduling/adoption and duplicate checks across active+future deleg maps |
 | 66 | Conway GOV bootstrap-phase return-account gating | 6 | Gap AD: `ProposalReturnAccountDoesNotExist` and `TreasuryWithdrawalReturnAccountsDoNotExist` enforced unconditionally — upstream gates both inside `unless (hardforkConwayBootstrapPhase ...)` in `conwayGovTransition`; fixed with `past_bootstrap` guard |
 | 67 | Conway DELEG deposit mismatch error phase split | 6 | Gap AE: key-registration deposit mismatches always returned legacy `IncorrectDepositDELEG`; upstream uses `DepositIncorrectDELEG` after `hardforkConwayDELEGIncorrectDepositsAndRefunds` (PV >= 10) while keeping legacy error in bootstrap PV 9; fixed across all Conway registration cert shapes with regression tests |
-| **Total** | **All subsystems** | **625** | **27 fix rounds** |
+| 68 | Committee resignation state preservation | 6 | Gap AF: `register_with_term()` replaced resigned entries — allowed re-auth after `UpdateCommittee` re-add; `NoConfidence` wiped resignation state; `members_to_remove` destroyed entries; auth/resign check ordering inverted vs upstream; `tally_committee_votes`/`count_active_committee_members` did not filter by enacted membership. Fixed: `register_with_term` preserves authorization via `Entry` API; `clear_all_membership()`/`clear_membership()` only clear `expires_at`; `is_enacted_member()` proxy; check ordering matches upstream `checkAndOverwriteCommitteeMemberState` |
+| **Total** | **All subsystems** | **631** | **28 fix rounds** |

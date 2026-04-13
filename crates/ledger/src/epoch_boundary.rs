@@ -1525,7 +1525,7 @@ mod tests {
     fn require_committee_vote_for_ratification(ledger: &mut LedgerState, cold_byte: u8, hot_byte: u8) {
         let cc_cred = test_cred(cold_byte);
         let hot_cred = test_cred(hot_byte);
-        ledger.committee_state_mut().register(cc_cred);
+        ledger.committee_state_mut().register_with_term(cc_cred, 999);
         ledger
             .committee_state_mut()
             .get_mut(&cc_cred)
@@ -2466,7 +2466,7 @@ mod tests {
 
         // Register a CC member and authorize hot key.
         let cc_cred = test_cred(0xC0);
-        ledger.committee_state_mut().register(cc_cred);
+        ledger.committee_state_mut().register_with_term(cc_cred, 999);
         let hot_cred = test_cred(0xC1);
         ledger
             .committee_state_mut()
@@ -3824,7 +3824,8 @@ mod tests {
             .expect("epoch 1");
         if ledger.governance_actions().is_empty() {
             // Enacted at epoch 1.
-            assert_eq!(ledger.committee_state().len(), 0);
+            assert!(ledger.committee_state().iter().all(|(_, m)| !m.is_enacted_member()),
+                "all committee members should have cleared membership after NoConfidence");
             return;
         }
 
@@ -3832,7 +3833,8 @@ mod tests {
             .expect("epoch 2");
 
         assert_eq!(event.governance_actions_enacted, 1);
-        assert_eq!(ledger.committee_state().len(), 0);
+        assert!(ledger.committee_state().iter().all(|(_, m)| !m.is_enacted_member()),
+            "all committee members should have cleared membership after NoConfidence");
         assert_eq!(
             ledger.enact_state().committee_quorum,
             UnitInterval { numerator: 0, denominator: 1 },

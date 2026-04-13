@@ -192,6 +192,14 @@ fn reward_account_bytes(keyhash: [u8; 28]) -> Vec<u8> {
     bytes
 }
 
+/// Shortcut: insert a ShelleyTxOut into the multi-era UTxO set.
+fn add_utxo(state: &mut LedgerState, input: ShelleyTxIn, amount: u64) {
+    state.multi_era_utxo_mut().insert_shelley(
+        input,
+        ShelleyTxOut { address: vec![0x01], amount },
+    );
+}
+
 /// Insert a governance action into the ledger state for vote-target purposes.
 fn seed_governance_action(state: &mut LedgerState) -> GovActionId {
     let gov_action_id = GovActionId {
@@ -930,6 +938,186 @@ fn committee_resign_for_potential_future_member_succeeds() {
     let member = state.committee_state().get(&cold_cred);
     assert!(member.is_some(), "cold credential should be auto-registered");
     assert!(member.unwrap().is_resigned(), "cold credential should be resigned");
+}
+
+// -----------------------------------------------------------------------
+// 5b. Committee resignation preservation (upstream csCommitteeCreds parity)
+//
+// Upstream `checkAndOverwriteCommitteeMemberState` checks resignation in
+// `csCommitteeCreds` BEFORE checking membership in `committeeMembers`.
+// Importantly, `UpdateCommittee` enactment modifies `committeeMembers`
+// but does NOT touch `csCommitteeCreds` — so a resigned member re-added
+// via `UpdateCommittee` remains resigned and gets
+// `ConwayCommitteeHasPreviouslyResigned` on re-authorization attempt.
+//
+// Reference: `Cardano.Ledger.Conway.Rules.GovCert` —
+// `checkAndOverwriteCommitteeMemberState`.
+// -----------------------------------------------------------------------
+
+#[test]
+fn resigned_member_readded_via_update_committee_still_resigned() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    // Register committee member and authorize a hot credential.
+    let cold_cred = StakeCredential::AddrKeyHash([0xE1; 28]);
+    let hot_cred = StakeCredential::AddrKeyHash([0xE2; 28]);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
+    authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xE0);
+
+    // Resign the member through a block.
+    let resign_input = ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 };
+    add_utxo(&mut state, resign_input.clone(), 10_000_000);
+    let resign_block = make_conway_block(10, 2, 0xE1, vec![conway_tx_single_cert(
+        [0xE1; 32], 10_000_000, 0, DCert::CommitteeResignation(cold_cred, None),
+    )]);
+    state.apply_block(&resign_block).expect("resignation block should succeed");
+    assert!(state.committee_state().get(&cold_cred).unwrap().is_resigned());
+
+    // Re-add the resigned member via UpdateCommittee enactment.
+    // This simulates the governance action being enacted — it should only
+    // update committeeMembers (expires_at) without clearing resignation
+    // state in csCommitteeCreds.
+    let action_id = GovActionId { transaction_id: [0xE2; 32], gov_action_index: 0 };
+    let mut members_to_add = std::collections::BTreeMap::new();
+    members_to_add.insert(cold_cred, 300u64); // new term epoch
+    state.enact_action(
+        action_id,
+        &GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add,
+            quorum: UnitInterval { numerator: 2, denominator: 3 },
+        },
+    );
+
+    // Verify: the member has an updated term but is STILL resigned.
+    let member = state.committee_state().get(&cold_cred).unwrap();
+    assert_eq!(member.expires_at(), Some(300), "term should be updated");
+    assert!(member.is_resigned(), "resignation should be preserved");
+
+    // Attempt to re-authorize → should get CommitteeHasPreviouslyResigned.
+    let reauth_input = ShelleyTxIn { transaction_id: [0xE3; 32], index: 0 };
+    add_utxo(&mut state, reauth_input.clone(), 10_000_000);
+    let new_hot = StakeCredential::AddrKeyHash([0xE4; 28]);
+    let reauth_block = make_conway_block(20, 3, 0xE3, vec![conway_tx_single_cert(
+        [0xE3; 32], 10_000_000, 0, DCert::CommitteeAuthorization(cold_cred, new_hot),
+    )]);
+    let err = state.apply_block(&reauth_block).unwrap_err();
+    assert!(
+        matches!(err, LedgerError::CommitteeHasPreviouslyResigned(c) if c == cold_cred),
+        "re-auth of resigned member should fail with CommitteeHasPreviouslyResigned, got: {err:?}"
+    );
+}
+
+#[test]
+fn no_confidence_then_readd_preserves_resignation() {
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    // Register, authorize, then resign a committee member.
+    let cold_cred = StakeCredential::AddrKeyHash([0xF1; 28]);
+    let hot_cred = StakeCredential::AddrKeyHash([0xF2; 28]);
+    state.committee_state_mut().register_with_term(cold_cred, 200);
+    authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF0);
+
+    let resign_input = ShelleyTxIn { transaction_id: [0xF1; 32], index: 0 };
+    add_utxo(&mut state, resign_input.clone(), 10_000_000);
+    let resign_block = make_conway_block(10, 2, 0xF1, vec![conway_tx_single_cert(
+        [0xF1; 32], 10_000_000, 0, DCert::CommitteeResignation(cold_cred, None),
+    )]);
+    state.apply_block(&resign_block).expect("resignation block");
+    assert!(state.committee_state().get(&cold_cred).unwrap().is_resigned());
+
+    // Enact NoConfidence — clears membership but preserves resignation.
+    let nc_id = GovActionId { transaction_id: [0xF2; 32], gov_action_index: 0 };
+    state.enact_action(nc_id, &GovAction::NoConfidence { prev_action_id: None });
+    let member = state.committee_state().get(&cold_cred).unwrap();
+    assert!(member.expires_at().is_none(), "membership cleared by NoConfidence");
+    assert!(member.is_resigned(), "resignation preserved after NoConfidence");
+
+    // Re-add via UpdateCommittee.
+    let uc_id = GovActionId { transaction_id: [0xF3; 32], gov_action_index: 0 };
+    let mut members_to_add = std::collections::BTreeMap::new();
+    members_to_add.insert(cold_cred, 400u64);
+    state.enact_action(uc_id, &GovAction::UpdateCommittee {
+        prev_action_id: None,
+        members_to_remove: vec![],
+        members_to_add,
+        quorum: UnitInterval { numerator: 1, denominator: 2 },
+    });
+
+    // Verify: member re-enrolled but STILL resigned.
+    let member = state.committee_state().get(&cold_cred).unwrap();
+    assert_eq!(member.expires_at(), Some(400));
+    assert!(member.is_resigned(), "resignation preserved after NoConfidence + re-add");
+
+    // Re-auth attempt fails.
+    let reauth_input = ShelleyTxIn { transaction_id: [0xF4; 32], index: 0 };
+    add_utxo(&mut state, reauth_input.clone(), 10_000_000);
+    let new_hot = StakeCredential::AddrKeyHash([0xF5; 28]);
+    let reauth_block = make_conway_block(20, 3, 0xF4, vec![conway_tx_single_cert(
+        [0xF4; 32], 10_000_000, 0, DCert::CommitteeAuthorization(cold_cred, new_hot),
+    )]);
+    let err = state.apply_block(&reauth_block).unwrap_err();
+    assert!(
+        matches!(err, LedgerError::CommitteeHasPreviouslyResigned(c) if c == cold_cred),
+        "re-auth after NoConfidence + re-add should fail, got: {err:?}"
+    );
+}
+
+#[test]
+fn resignation_check_before_unknown_check() {
+    // Upstream ordering: resigned checked BEFORE unknown.
+    // If a credential resigned via `isPotentialFutureMember` path (no
+    // enacted membership) and then the proposal is removed, the FIRST
+    // error should be CommitteeHasPreviouslyResigned, NOT CommitteeIsUnknown.
+    let mut state = conway_state_pv(10, 0, 2_000_000);
+
+    // Seed a pending UpdateCommittee proposal so the credential qualifies
+    // as a potential future member.
+    let cold_cred = StakeCredential::AddrKeyHash([0xA1; 28]);
+    let gov_action_id = GovActionId { transaction_id: [0xAA; 32], gov_action_index: 0 };
+    let mut members_to_add = std::collections::BTreeMap::new();
+    members_to_add.insert(cold_cred, 100u64);
+    state.governance_actions_mut().insert(
+        gov_action_id.clone(),
+        GovernanceActionState::new(ProposalProcedure {
+            deposit: 0,
+            reward_account: reward_account_bytes([0x99; 28]),
+            gov_action: GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add,
+                quorum: UnitInterval { numerator: 1, denominator: 2 },
+            },
+            anchor: Anchor { url: "https://example.com".to_string(), data_hash: [0u8; 32] },
+        }),
+    );
+
+    // Resign via isPotentialFutureMember path.
+    let resign_input = ShelleyTxIn { transaction_id: [0xA1; 32], index: 0 };
+    add_utxo(&mut state, resign_input.clone(), 10_000_000);
+    let resign_block = make_conway_block(10, 1, 0xA1, vec![conway_tx_single_cert(
+        [0xA1; 32], 10_000_000, 0, DCert::CommitteeResignation(cold_cred, None),
+    )]);
+    state.apply_block(&resign_block).expect("resignation via future member path");
+    assert!(state.committee_state().get(&cold_cred).unwrap().is_resigned());
+
+    // Remove the proposal — now the credential is neither enacted nor a
+    // future member, but it IS resigned.
+    state.governance_actions_mut().remove(&gov_action_id);
+
+    // Try to authorize — should get CommitteeHasPreviouslyResigned (not Unknown).
+    let auth_input = ShelleyTxIn { transaction_id: [0xA2; 32], index: 0 };
+    add_utxo(&mut state, auth_input.clone(), 10_000_000);
+    let hot = StakeCredential::AddrKeyHash([0xA3; 28]);
+    let auth_block = make_conway_block(20, 2, 0xA2, vec![conway_tx_single_cert(
+        [0xA2; 32], 10_000_000, 0, DCert::CommitteeAuthorization(cold_cred, hot),
+    )]);
+    let err = state.apply_block(&auth_block).unwrap_err();
+    assert!(
+        matches!(err, LedgerError::CommitteeHasPreviouslyResigned(c) if c == cold_cred),
+        "resigned credential should get CommitteeHasPreviouslyResigned, not CommitteeIsUnknown, got: {err:?}"
+    );
 }
 
 // -----------------------------------------------------------------------
