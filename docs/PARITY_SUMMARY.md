@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 75 parity audit rounds completed (659+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 77 parity audit rounds completed (671+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 75 audit rounds covering 659+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 77 audit rounds covering 671+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -53,6 +53,7 @@
 - Conway committee membership check — `authorize_committee_hot_credential()` and `resign_committee_cold_credential()` unconditionally verify `isCurrentMember || isPotentialFutureMember` (upstream `checkAndOverwriteCommitteeMemberState`)
 - Conway proposal deposits in value preservation — `totalTxDeposits = certDeposits + proposalDeposits`
 - `DepositPot.proposal_deposits` — Tracks outstanding governance proposal deposits (upstream `oblProposal` in `Obligations`); `total()` matches upstream `sumObligation` across all four obligation categories; epoch-boundary reconciles returned/expired/enacted proposal deposits
+- Alonzo/Babbage/Conway collateral gating parity — `validate_alonzo_plus_tx()` validates collateral content only when redeemers are present (upstream `feesOK` part 2: `txrdmrs ≠ ∅ ⇒ validateCollateral`); Babbage/Conway still enforce `max_collateral_inputs` as a standalone UTXO check regardless of redeemers
 - `validate_outputs_missing_datum_hash_alonzo()` — Rejects Alonzo-era script-address outputs without `datum_hash` (upstream `validateOutputMissingDatumHashForScriptOutputs`)
 - `validate_unspendable_utxo_no_datum_hash()` — CIP-0069 PlutusV3 datum exemption: V3-locked spending inputs exempt from datum-hash requirement in Conway (upstream `getInputDataHashesTxBody`)
 - `collect_v3_script_hashes()` — Collects V3 script hashes from witness set and reference-input script refs for CIP-0069 datum exemption
@@ -119,6 +120,7 @@
 **CLI**:
 - `NodeConfigFile` — JSON config parsing + genesis integration
 - `load_topology_file()` — External P2P topology file loading (upstream JSON format)
+- Forged header protocol-version source parity — block producer header `protocol_version` now uses ledger protocol parameters when present, otherwise falls back to node `max_major_protocol_version` (not network handshake versions)
 - `apply_topology_to_config()` — Override inline topology from external file
 - `apply_topology_override()` — CLI `--topology` flag and `TopologyFilePath` config key integration
 - `BasicLocalQueryDispatcher` — 18-tag LocalStateQuery server (wallet queries: UTxOByTxIn, StakePools, DelegationsAndRewards, DRepStakeDistr; Conway governance queries: GetConstitution, GetGovState, GetDRepState, GetCommitteeMembersState, GetStakePoolParams, GetAccountState)
@@ -353,4 +355,6 @@
 | 68 | Committee resignation state preservation | 6 | Gap AF: `register_with_term()` replaced resigned entries — allowed re-auth after `UpdateCommittee` re-add; `NoConfidence` wiped resignation state; `members_to_remove` destroyed entries; auth/resign check ordering inverted vs upstream; `tally_committee_votes`/`count_active_committee_members` did not filter by enacted membership. Fixed: `register_with_term` preserves authorization via `Entry` API; `clear_all_membership()`/`clear_membership()` only clear `expires_at`; `is_enacted_member()` proxy; check ordering matches upstream `checkAndOverwriteCommitteeMemberState` |
 | 69 | Ratification threshold evolution after ParameterChange enactment | 6 | Gap AG: `ratify_and_enact()` pre-computed `drep_thresholds`, `pool_thresholds`, `min_committee_size`, `is_bootstrap_phase` once before the ratification loop — upstream `ratifyTransition` reads these from `rs ^. rsEnactStateL . ensCurPParamsL` per-proposal recursively. After a ParameterChange enactment, subsequent proposals now see updated thresholds. |
 | 70 | Conway deposit pot: proposal deposit tracking (totalObligation) | 6 | Gap AH: `DepositPot` lacked `proposal_deposits` field (upstream `oblProposal` in `Obligations`); `total()` only summed key+pool+drep deposits — upstream `sumObligation` includes all four including `oblProposal`. Fixed: added `proposal_deposits` to `DepositPot`, wired Conway block-apply and submitted-tx paths to accumulate proposal deposits, epoch-boundary reconciliation debits returned/expired/enacted proposal deposits. Backward-compatible CBOR (3-or-4 element decode). |
-| **Total** | **All subsystems** | **643** | **30 fix rounds** |
+| 71 | Collateral gating + forged header protocol version source | 6 | Gap AI: collateral validation ran whenever collateral inputs existed; upstream only runs `validateCollateral` when redeemers exist (`feesOK` part 2). Fixed in `validate_alonzo_plus_tx()`. Gap AJ: forged header protocol-version fallback used network handshake versions (13/14/15) instead of protocol versions; fixed fallback to node `max_major_protocol_version` with minor 0 while still preferring ledger protocol parameters when available. |
+| 72 | Babbage/Conway standalone collateral input-count check | 6 | Gap AK: after AI, `validate_alonzo_plus_tx()` unintentionally skipped `max_collateral_inputs` checks when no redeemers were present. Upstream Babbage UTXO enforces `validateTooManyCollateralInputs` as a standalone check independent of redeemers. Fixed with era-aware `enforce_collateral_input_limit` wiring (false in Alonzo, true in Babbage/Conway) and regression coverage. |
+| **Total** | **All subsystems** | **655** | **32 fix rounds** |

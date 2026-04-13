@@ -909,6 +909,7 @@ fn main() -> Result<()> {
                 base_ledger_state,
                 socket_path: file_cfg.socket_path.map(PathBuf::from),
                 block_producer_credentials,
+                max_major_protocol_version: file_cfg.max_major_protocol_version,
             }))
         }
         #[cfg(unix)]
@@ -1003,6 +1004,16 @@ fn best_effort_base_ledger_state(
 ) -> LedgerState {
     strict_base_ledger_state(file_cfg, config_base_dir)
         .unwrap_or_else(|_| LedgerState::new(Era::Byron))
+}
+
+fn forged_header_protocol_version(
+    base_ledger_state: &LedgerState,
+    max_major_protocol_version: u64,
+) -> (u64, u64) {
+    base_ledger_state
+        .protocol_params()
+        .and_then(|params| params.protocol_version)
+        .unwrap_or((max_major_protocol_version, 0))
 }
 
 fn load_effective_config(
@@ -1522,6 +1533,7 @@ async fn run_node(
         base_ledger_state,
         socket_path,
         block_producer_credentials,
+        max_major_protocol_version,
     } = request;
 
     // Log block producer mode availability.
@@ -1540,20 +1552,19 @@ async fn run_node(
 
     let block_producer_runtime_config = block_producer_credentials.as_ref().and_then(|_| {
         sync_config.active_slot_coeff.clone().map(|active_slot_coeff| {
-            let protocol_version_from_handshake = node_config
-                .protocol_versions
-                .first()
-                .map(|v| (u64::from(v.0), 0))
-                .unwrap_or((0, 0));
+            let protocol_version = forged_header_protocol_version(
+                &base_ledger_state,
+                max_major_protocol_version,
+            );
             let (max_block_body_size, protocol_version) = base_ledger_state
                 .protocol_params()
                 .map(|params| {
                     (
                         params.max_block_body_size,
-                        params.protocol_version.unwrap_or(protocol_version_from_handshake),
+                        params.protocol_version.unwrap_or(protocol_version),
                     )
                 })
-                .unwrap_or((65_536, protocol_version_from_handshake));
+                .unwrap_or((65_536, protocol_version));
 
             yggdrasil_node::RuntimeBlockProducerConfig {
                 slot_length: std::time::Duration::from_secs_f64(
@@ -2037,6 +2048,8 @@ struct RunNodeRequest {
     /// Block producer credentials (VRF key, KES key, operational certificate).
     /// When present the node operates in block-producing mode.
     block_producer_credentials: Option<yggdrasil_node::block_producer::BlockProducerCredentials>,
+    /// Maximum protocol-version major this node supports for forged headers.
+    max_major_protocol_version: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -2104,12 +2117,16 @@ mod tests {
     use super::{
         CHECKPOINT_TRACE_NAMESPACE, apply_topology_override, checkpoint_trace_config_mut,
         configured_fallback_peers, ledger_peer_snapshot_from_ledger_state,
-        load_effective_config, preset_config_base_dir, status_report,
+        forged_header_protocol_version, load_effective_config,
+        preset_config_base_dir, status_report,
         validate_config_report,
     };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use yggdrasil_ledger::{PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval};
+    use yggdrasil_ledger::{
+        Era, LedgerState, PoolParams, Relay, RewardAccount, StakeCredential,
+        UnitInterval,
+    };
     use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
     use yggdrasil_node::config::default_config;
     use yggdrasil_node::tracer::NodeTracer;
@@ -2388,6 +2405,22 @@ mod tests {
 
         std::fs::remove_file(config_path).ok();
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn forged_header_protocol_version_uses_ledger_protocol_when_present() {
+        let mut state = LedgerState::new(Era::Byron);
+        let mut params = yggdrasil_ledger::ProtocolParameters::default();
+        params.protocol_version = Some((9, 1));
+        state.set_protocol_params(params);
+
+        assert_eq!(forged_header_protocol_version(&state, 10), (9, 1));
+    }
+
+    #[test]
+    fn forged_header_protocol_version_falls_back_to_max_major_protocol_version() {
+        let state = LedgerState::new(Era::Byron);
+        assert_eq!(forged_header_protocol_version(&state, 10), (10, 0));
     }
 
     #[test]

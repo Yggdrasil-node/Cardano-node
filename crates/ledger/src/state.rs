@@ -6,9 +6,9 @@ use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyUtxo};
 use crate::types::{
-    Address, Anchor, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, MirPot,
-    MirTarget, Point, PoolKeyHash, PoolParams, RewardAccount, Relay, StakeCredential,
-    UnitInterval, VrfKeyHash,
+    Address, Anchor, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, MirPot, MirTarget,
+    Point, PoolKeyHash, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
+    VrfKeyHash,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
@@ -94,12 +94,10 @@ fn decode_optional_pool_key_hash(
     }
 
     let raw = dec.bytes()?;
-    let hash: [u8; 28] = raw
-        .try_into()
-        .map_err(|_| LedgerError::CborInvalidLength {
-            expected: 28,
-            actual: raw.len(),
-        })?;
+    let hash: [u8; 28] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+        expected: 28,
+        actual: raw.len(),
+    })?;
     Ok(Some(hash))
 }
 
@@ -325,7 +323,10 @@ impl CborDecode for PoolState {
                     }
                 }
             }
-            Ok(Self { entries, future_params })
+            Ok(Self {
+                entries,
+                future_params,
+            })
         } else {
             // Legacy format: bare array of RegisteredPool (no future_params).
             let len = dec.array()?;
@@ -439,9 +440,7 @@ impl PoolState {
         let retiring: Vec<PoolKeyHash> = self
             .entries
             .iter()
-            .filter(|(_, pool)| {
-                pool.retiring_epoch.is_some_and(|e| e <= current_epoch)
-            })
+            .filter(|(_, pool)| pool.retiring_epoch.is_some_and(|e| e <= current_epoch))
             .map(|(k, _)| *k)
             .collect();
         for key in &retiring {
@@ -645,10 +644,7 @@ impl RewardAccounts {
     /// Upstream keys member rewards by `Credential Staking` and resolves
     /// the `RewardAccount` (including network byte) from the DState at
     /// application time.  This method provides the same lookup.
-    pub fn find_account_by_credential(
-        &self,
-        cred: &StakeCredential,
-    ) -> Option<&RewardAccount> {
+    pub fn find_account_by_credential(&self, cred: &StakeCredential) -> Option<&RewardAccount> {
         self.entries.keys().find(|acct| acct.credential == *cred)
     }
 
@@ -731,7 +727,11 @@ impl StakeCredentialState {
     }
 
     /// Creates stake-credential state with the given delegation targets and deposit.
-    pub fn new_with_deposit(delegated_pool: Option<PoolKeyHash>, delegated_drep: Option<DRep>, deposit: u64) -> Self {
+    pub fn new_with_deposit(
+        delegated_pool: Option<PoolKeyHash>,
+        delegated_drep: Option<DRep>,
+        deposit: u64,
+    ) -> Self {
         Self {
             delegated_pool,
             delegated_drep,
@@ -853,8 +853,10 @@ impl StakeCredentials {
         if self.entries.contains_key(&credential) {
             return false;
         }
-        self.entries
-            .insert(credential, StakeCredentialState::new_with_deposit(None, None, deposit));
+        self.entries.insert(
+            credential,
+            StakeCredentialState::new_with_deposit(None, None, deposit),
+        );
         true
     }
 
@@ -951,12 +953,20 @@ impl CborDecode for RegisteredDrep {
 impl RegisteredDrep {
     /// Creates registered DRep state.
     pub fn new(deposit: u64, anchor: Option<Anchor>) -> Self {
-        Self { anchor, deposit, last_active_epoch: None }
+        Self {
+            anchor,
+            deposit,
+            last_active_epoch: None,
+        }
     }
 
     /// Creates registered DRep state with an initial activity epoch.
     pub fn new_active(deposit: u64, anchor: Option<Anchor>, epoch: EpochNo) -> Self {
-        Self { anchor, deposit, last_active_epoch: Some(epoch) }
+        Self {
+            anchor,
+            deposit,
+            last_active_epoch: Some(epoch),
+        }
     }
 
     /// Returns the current DRep anchor, if any.
@@ -1092,11 +1102,7 @@ impl DrepState {
     ///
     /// Upstream reference: `Cardano.Ledger.Conway.Rules.Epoch` — the
     /// `drepExpiry` function used when computing the active voting stake.
-    pub fn inactive_dreps(
-        &self,
-        epoch: EpochNo,
-        drep_activity: u64,
-    ) -> Vec<DRep> {
+    pub fn inactive_dreps(&self, epoch: EpochNo, drep_activity: u64) -> Vec<DRep> {
         self.entries
             .iter()
             .filter(|(_, state)| {
@@ -1147,7 +1153,9 @@ impl CborDecode for CommitteeAuthorization {
         }
 
         match dec.unsigned()? {
-            0 => Ok(Self::CommitteeHotCredential(StakeCredential::decode_cbor(dec)?)),
+            0 => Ok(Self::CommitteeHotCredential(StakeCredential::decode_cbor(
+                dec,
+            )?)),
             1 => Ok(Self::CommitteeMemberResigned(decode_optional_anchor(dec)?)),
             tag => Err(LedgerError::CborInvalidAdditionalInfo(tag as u8)),
         }
@@ -1194,7 +1202,10 @@ impl CborDecode for CommitteeMemberState {
         if major == 7 {
             // Legacy format: bare null → no authorization, no term.
             dec.null()?;
-            return Ok(Self { authorization: None, expires_at: None });
+            return Ok(Self {
+                authorization: None,
+                expires_at: None,
+            });
         }
         // Must be an array.
         let len = dec.array()?;
@@ -1206,12 +1217,15 @@ impl CborDecode for CommitteeMemberState {
                     0 => CommitteeAuthorization::CommitteeHotCredential(
                         StakeCredential::decode_cbor(dec)?,
                     ),
-                    1 => CommitteeAuthorization::CommitteeMemberResigned(
-                        decode_optional_anchor(dec)?,
-                    ),
+                    1 => CommitteeAuthorization::CommitteeMemberResigned(decode_optional_anchor(
+                        dec,
+                    )?),
                     _ => return Err(LedgerError::CborInvalidAdditionalInfo(tag as u8)),
                 };
-                Ok(Self { authorization: Some(auth), expires_at: None })
+                Ok(Self {
+                    authorization: Some(auth),
+                    expires_at: None,
+                })
             }
             3 => {
                 // New format: [version=2, authorization_or_null, expires_at_or_null].
@@ -1228,7 +1242,10 @@ impl CborDecode for CommitteeMemberState {
                 } else {
                     Some(dec.unsigned()?)
                 };
-                Ok(Self { authorization, expires_at })
+                Ok(Self {
+                    authorization,
+                    expires_at,
+                })
             }
             _ => Err(LedgerError::CborInvalidLength {
                 expected: 3,
@@ -1262,8 +1279,7 @@ impl CommitteeMemberState {
     /// Upstream: `currentEpoch <= expirationEpoch` means active.
     /// So expired means `current_epoch > expires_at`.
     pub fn is_expired(&self, current_epoch: EpochNo) -> bool {
-        self.expires_at
-            .is_some_and(|term| current_epoch.0 > term)
+        self.expires_at.is_some_and(|term| current_epoch.0 > term)
     }
 
     /// Returns the member authorization state, if any.
@@ -1420,9 +1436,7 @@ impl GovernanceActionState {
     }
 
     /// Returns the recorded votes keyed by voter.
-    pub fn votes(
-        &self,
-    ) -> &BTreeMap<crate::eras::conway::Voter, crate::eras::conway::Vote> {
+    pub fn votes(&self) -> &BTreeMap<crate::eras::conway::Voter, crate::eras::conway::Vote> {
         &self.votes
     }
 
@@ -1728,8 +1742,7 @@ impl EnactState {
             ConwayGovActionPurpose::Committee => self.prev_committee.as_ref(),
             ConwayGovActionPurpose::Constitution => self.prev_constitution.as_ref(),
             // TreasuryWithdrawals and Info have no lineage.
-            ConwayGovActionPurpose::TreasuryWithdrawals
-            | ConwayGovActionPurpose::Info => None,
+            ConwayGovActionPurpose::TreasuryWithdrawals | ConwayGovActionPurpose::Info => None,
         }
     }
 }
@@ -1754,14 +1767,10 @@ pub enum EnactOutcome {
         members_added: usize,
     },
     /// A hard fork was enacted — the protocol version was updated.
-    HardForkEnacted {
-        new_version: (u64, u64),
-    },
+    HardForkEnacted { new_version: (u64, u64) },
     /// Treasury withdrawals were enacted — lovelace credited to reward
     /// accounts from the treasury.
-    TreasuryWithdrawn {
-        total_withdrawn: u64,
-    },
+    TreasuryWithdrawn { total_withdrawn: u64 },
     /// A parameter change was enacted and applied to protocol parameters.
     ParameterChangeRecorded,
 }
@@ -1821,9 +1830,7 @@ fn enact_gov_action_at_epoch(
     match action {
         GovAction::InfoAction => EnactOutcome::NoEffect,
 
-        GovAction::NewConstitution {
-            constitution, ..
-        } => {
+        GovAction::NewConstitution { constitution, .. } => {
             enact.constitution = constitution.clone();
             enact.prev_constitution = Some(action_id);
             EnactOutcome::ConstitutionUpdated
@@ -1857,7 +1864,10 @@ fn enact_gov_action_at_epoch(
             for cred in members_to_remove {
                 // Upstream: removes from committeeMembers only — does not
                 // touch csCommitteeCreds (authorization/resignation state).
-                if committee.get(cred).is_some_and(|m| m.expires_at().is_some()) {
+                if committee
+                    .get(cred)
+                    .is_some_and(|m| m.expires_at().is_some())
+                {
                     committee.clear_membership(cred);
                     removed += 1;
                 }
@@ -1890,9 +1900,7 @@ fn enact_gov_action_at_epoch(
             }
         }
 
-        GovAction::TreasuryWithdrawals {
-            withdrawals, ..
-        } => {
+        GovAction::TreasuryWithdrawals { withdrawals, .. } => {
             let mut total = 0u64;
             for (ra, &amount) in withdrawals {
                 if amount == 0 {
@@ -2093,7 +2101,10 @@ impl LedgerStateSnapshot {
     ///
     /// Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
     /// `GetUTxOByTxIn`.
-    pub fn query_utxos_by_txin(&self, txins: &[crate::eras::shelley::ShelleyTxIn]) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
+    pub fn query_utxos_by_txin(
+        &self,
+        txins: &[crate::eras::shelley::ShelleyTxIn],
+    ) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
         let mut matched = BTreeMap::new();
         for txin in txins {
             if let Some(txout) = self.multi_era_utxo.get(txin) {
@@ -2170,7 +2181,10 @@ impl LedgerStateSnapshot {
     ///
     /// Entries from the multi-era UTxO set take precedence when the same
     /// `ShelleyTxIn` is visible through both backing stores.
-    pub fn query_utxos_by_address(&self, address: &Address) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
+    pub fn query_utxos_by_address(
+        &self,
+        address: &Address,
+    ) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
         let address_bytes = address.to_bytes();
         let mut matched = BTreeMap::new();
 
@@ -2521,7 +2535,12 @@ pub struct LedgerState {
     enact_state: EnactState,
     /// Shelley genesis UTxO entries to activate when replay first reaches a
     /// Shelley-family block.
-    pending_shelley_genesis_utxo: Option<Vec<(crate::eras::shelley::ShelleyTxIn, crate::eras::shelley::ShelleyTxOut)>>,
+    pending_shelley_genesis_utxo: Option<
+        Vec<(
+            crate::eras::shelley::ShelleyTxIn,
+            crate::eras::shelley::ShelleyTxOut,
+        )>,
+    >,
     /// Shelley genesis stake delegations to activate when replay first
     /// reaches a Shelley-family block.
     pending_shelley_genesis_stake: Option<Vec<(StakeCredential, PoolKeyHash)>>,
@@ -2552,7 +2571,8 @@ pub struct LedgerState {
     /// `gen_delegs`) are merged and applied to `protocol_params`.
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Ppup` — PPUP rule.
-    pending_pparam_updates: BTreeMap<EpochNo, BTreeMap<GenesisHash, crate::protocol_params::ProtocolParameterUpdate>>,
+    pending_pparam_updates:
+        BTreeMap<EpochNo, BTreeMap<GenesisHash, crate::protocol_params::ProtocolParameterUpdate>>,
     /// Accumulated per-transaction treasury donations (Conway `treasuryDonation`).
     ///
     /// Each valid Conway transaction's `treasury_donation` field is added
@@ -2676,7 +2696,9 @@ impl CborEncode for LedgerState {
         // Encode protocol_params as either the params map or CBOR null.
         match &self.protocol_params {
             Some(pp) => pp.encode_cbor(enc),
-            None => { enc.null(); }
+            None => {
+                enc.null();
+            }
         }
         self.deposit_pot.encode_cbor(enc);
         self.accounting.encode_cbor(enc);
@@ -2766,7 +2788,9 @@ impl CborDecode for LedgerState {
                 dec.skip()?;
                 None
             } else {
-                Some(crate::protocol_params::ProtocolParameters::decode_cbor(dec)?)
+                Some(crate::protocol_params::ProtocolParameters::decode_cbor(
+                    dec,
+                )?)
             }
         } else {
             None
@@ -2856,11 +2880,7 @@ impl CborDecode for LedgerState {
             BTreeMap::new()
         };
 
-        let utxos_donation = if len >= 19 {
-            dec.unsigned()?
-        } else {
-            0
-        };
+        let utxos_donation = if len >= 19 { dec.unsigned()? } else { 0 };
 
         let instantaneous_rewards = if len >= 20 {
             InstantaneousRewards::decode_cbor(dec)?
@@ -2874,11 +2894,7 @@ impl CborDecode for LedgerState {
             5 // upstream default (mainnet)
         };
 
-        let num_dormant_epochs = if len >= 22 {
-            dec.unsigned()?
-        } else {
-            0
-        };
+        let num_dormant_epochs = if len >= 22 { dec.unsigned()? } else { 0 };
 
         let blocks_made = if len >= 23 {
             let map_len = dec.map()?;
@@ -2926,7 +2942,10 @@ impl CborDecode for LedgerState {
             // Runtime-only fields — not serialized, re-set from genesis.
             max_lovelace_supply: 0,
             slots_per_epoch: 0,
-            active_slot_coeff: UnitInterval { numerator: 0, denominator: 1 },
+            active_slot_coeff: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             stability_window: None,
         })
     }
@@ -3006,7 +3025,10 @@ impl LedgerState {
             blocks_made: BTreeMap::new(),
             max_lovelace_supply: 0,
             slots_per_epoch: 0,
-            active_slot_coeff: UnitInterval { numerator: 0, denominator: 1 },
+            active_slot_coeff: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             stability_window: None,
         }
     }
@@ -3020,7 +3042,10 @@ impl LedgerState {
     /// only when replay first reaches a Shelley-family block.
     pub fn configure_pending_shelley_genesis_utxo(
         &mut self,
-        entries: Vec<(crate::eras::shelley::ShelleyTxIn, crate::eras::shelley::ShelleyTxOut)>,
+        entries: Vec<(
+            crate::eras::shelley::ShelleyTxIn,
+            crate::eras::shelley::ShelleyTxOut,
+        )>,
     ) {
         self.pending_shelley_genesis_utxo = if entries.is_empty() {
             None
@@ -3103,7 +3128,9 @@ impl LedgerState {
         // 1. NonGenesisUpdatePPUP — every proposer must be a genesis delegate.
         for proposer in update.proposed_protocol_parameter_updates.keys() {
             if !self.gen_delegs.contains_key(proposer) {
-                return Err(LedgerError::NonGenesisUpdatePPUP { proposer: *proposer });
+                return Err(LedgerError::NonGenesisUpdatePPUP {
+                    proposer: *proposer,
+                });
             }
         }
 
@@ -3234,7 +3261,8 @@ impl LedgerState {
         // Group identical proposals and find the one with the most votes.
         // We compare proposals by their Debug representation as a simple
         // equality check (ProtocolParameterUpdate derives Eq).
-        let mut vote_counts: Vec<(&crate::protocol_params::ProtocolParameterUpdate, usize)> = Vec::new();
+        let mut vote_counts: Vec<(&crate::protocol_params::ProtocolParameterUpdate, usize)> =
+            Vec::new();
         for proposal in &valid_proposals {
             if let Some(entry) = vote_counts.iter_mut().find(|(p, _)| *p == *proposal) {
                 entry.1 += 1;
@@ -3374,7 +3402,9 @@ impl LedgerState {
     }
 
     /// Returns a mutable reference to the protocol parameters slot.
-    pub fn protocol_params_mut(&mut self) -> &mut Option<crate::protocol_params::ProtocolParameters> {
+    pub fn protocol_params_mut(
+        &mut self,
+    ) -> &mut Option<crate::protocol_params::ProtocolParameters> {
         &mut self.protocol_params
     }
 
@@ -3522,7 +3552,11 @@ impl LedgerState {
     /// Returns `None` when the protocol parameters are unavailable (no
     /// validation will occur), which keeps mainnet-sync backward-compatible
     /// for the rare edges where genesis has not been loaded yet.
-    fn mir_validation_context(&self, slot: u64, alonzo_mir_transfers: bool) -> Option<MirValidationContext<'_>> {
+    fn mir_validation_context(
+        &self,
+        slot: u64,
+        alonzo_mir_transfers: bool,
+    ) -> Option<MirValidationContext<'_>> {
         let mir_deadline_slot = {
             let sw = self.stability_window?;
             if self.slots_per_epoch == 0 {
@@ -3689,7 +3723,10 @@ impl LedgerState {
     }
 
     /// Returns all UTxO entries paying to `address`.
-    pub fn query_utxos_by_address(&self, address: &Address) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
+    pub fn query_utxos_by_address(
+        &self,
+        address: &Address,
+    ) -> Vec<(crate::eras::shelley::ShelleyTxIn, MultiEraTxOut)> {
         self.snapshot().query_utxos_by_address(address)
     }
 
@@ -3755,7 +3792,7 @@ impl LedgerState {
         }
 
         self.maybe_activate_pending_shelley_genesis(block.era);
-    self.adopt_scheduled_genesis_delegations(slot);
+        self.adopt_scheduled_genesis_delegations(slot);
 
         // Block-level size validation when protocol parameters are available.
         if let Some(params) = &self.protocol_params {
@@ -3825,20 +3862,26 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Shelley(o.clone()))
                         .collect();
                     let tx_size = tx.to_cbor_bytes().len();
-                    validate_pre_alonzo_tx(
-                        params, tx_size, tx.body.fee, &outputs,
-                    )?;
+                    validate_pre_alonzo_tx(params, tx_size, tx.body.fee, &outputs)?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal)
                 if let Some(expected_net) = self.expected_network_id {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Shelley(o.clone()))
                         .collect();
                     validate_output_network_ids(expected_net, &outputs)?;
@@ -3850,7 +3893,9 @@ impl LedgerState {
                 {
                     let mut required = HashSet::new();
                     crate::witnesses::required_vkey_hashes_from_inputs_shelley(
-                        &tx.body.inputs, &self.shelley_utxo, &mut required,
+                        &tx.body.inputs,
+                        &self.shelley_utxo,
+                        &mut required,
                     );
                     if let Some(certs) = &tx.body.certificates {
                         for cert in certs {
@@ -3858,11 +3903,18 @@ impl LedgerState {
                         }
                     }
                     if let Some(withdrawals) = &tx.body.withdrawals {
-                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(
+                            withdrawals,
+                            &mut required,
+                        );
                     }
                     // Upstream propWits: proposer genesis key hashes.
                     if let Some(update) = &tx.body.update {
-                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_ppup(
+                            update,
+                            &self.gen_delegs,
+                            &mut required,
+                        );
                     }
                     let tx_body_hash = crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0;
                     validate_witnesses_typed(&tx.witness_set, &required, &tx_body_hash)?;
@@ -3877,15 +3929,23 @@ impl LedgerState {
                 {
                     let mut required_scripts = HashSet::new();
                     crate::witnesses::required_script_hashes_from_inputs_shelley(
-                        &tx.body.inputs, &self.shelley_utxo, &mut required_scripts,
+                        &tx.body.inputs,
+                        &self.shelley_utxo,
+                        &mut required_scripts,
                     );
                     if let Some(certs) = &tx.body.certificates {
                         for cert in certs {
-                            crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                            crate::witnesses::required_script_hashes_from_cert(
+                                cert,
+                                &mut required_scripts,
+                            );
                         }
                     }
                     if let Some(withdrawals) = &tx.body.withdrawals {
-                        crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                        crate::witnesses::required_script_hashes_from_withdrawals(
+                            withdrawals,
+                            &mut required_scripts,
+                        );
                     }
                     if !required_scripts.is_empty() {
                         let ws_bytes = tx.witness_set.to_cbor_bytes();
@@ -3963,7 +4023,10 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Shelley submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
+                    self.validate_ppup_proposal(
+                        update,
+                        self.ppup_slot_context(current_slot.0).as_ref(),
+                    )?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -3971,19 +4034,25 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Shelley(o.clone()))
                         .collect();
-                    validate_pre_alonzo_tx(
-                        params, tx.raw_cbor.len(), tx.body.fee, &outputs,
-                    )?;
+                    validate_pre_alonzo_tx(params, tx.raw_cbor.len(), tx.body.fee, &outputs)?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal)
                 if let Some(expected_net) = self.expected_network_id {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Shelley(o.clone()))
                         .collect();
                     validate_output_network_ids(expected_net, &outputs)?;
@@ -3995,7 +4064,9 @@ impl LedgerState {
                 {
                     let mut required = HashSet::new();
                     crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                        &tx.body.inputs,
+                        &self.multi_era_utxo,
+                        &mut required,
                     );
                     if let Some(certs) = &tx.body.certificates {
                         for cert in certs {
@@ -4003,11 +4074,18 @@ impl LedgerState {
                         }
                     }
                     if let Some(withdrawals) = &tx.body.withdrawals {
-                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(
+                            withdrawals,
+                            &mut required,
+                        );
                     }
                     // Upstream propWits: proposer genesis key hashes.
                     if let Some(update) = &tx.body.update {
-                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_ppup(
+                            update,
+                            &self.gen_delegs,
+                            &mut required,
+                        );
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
@@ -4084,7 +4162,14 @@ impl LedgerState {
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
-                staged.apply_allegra_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+                staged.apply_allegra_tx_withdrawals(
+                    tx.tx_id().0,
+                    &tx.body,
+                    current_slot.0,
+                    cert_adj.withdrawal_total,
+                    cert_adj.total_deposits,
+                    cert_adj.total_refunds,
+                )?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -4100,7 +4185,10 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Allegra submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
+                    self.validate_ppup_proposal(
+                        update,
+                        self.ppup_slot_context(current_slot.0).as_ref(),
+                    )?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -4108,19 +4196,25 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Mary(o.clone()))
                         .collect();
-                    validate_pre_alonzo_tx(
-                        params, tx.raw_cbor.len(), tx.body.fee, &outputs,
-                    )?;
+                    validate_pre_alonzo_tx(params, tx.raw_cbor.len(), tx.body.fee, &outputs)?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal)
                 if let Some(expected_net) = self.expected_network_id {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Mary(o.clone()))
                         .collect();
                     validate_output_network_ids(expected_net, &outputs)?;
@@ -4132,7 +4226,9 @@ impl LedgerState {
                 {
                     let mut required = HashSet::new();
                     crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                        &tx.body.inputs,
+                        &self.multi_era_utxo,
+                        &mut required,
                     );
                     if let Some(certs) = &tx.body.certificates {
                         for cert in certs {
@@ -4140,11 +4236,18 @@ impl LedgerState {
                         }
                     }
                     if let Some(withdrawals) = &tx.body.withdrawals {
-                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(
+                            withdrawals,
+                            &mut required,
+                        );
                     }
                     // Upstream propWits: proposer genesis key hashes.
                     if let Some(update) = &tx.body.update {
-                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_ppup(
+                            update,
+                            &self.gen_delegs,
+                            &mut required,
+                        );
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
@@ -4224,7 +4327,14 @@ impl LedgerState {
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
-                staged.apply_mary_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+                staged.apply_mary_tx_withdrawals(
+                    tx.tx_id().0,
+                    &tx.body,
+                    current_slot.0,
+                    cert_adj.withdrawal_total,
+                    cert_adj.total_deposits,
+                    cert_adj.total_refunds,
+                )?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -4240,7 +4350,10 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Mary submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
+                    self.validate_ppup_proposal(
+                        update,
+                        self.ppup_slot_context(current_slot.0).as_ref(),
+                    )?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -4253,7 +4366,9 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 let mut required_scripts = HashSet::new();
@@ -4264,11 +4379,17 @@ impl LedgerState {
                 );
                 if let Some(certs) = &tx.body.certificates {
                     for cert in certs {
-                        crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
                     }
                 }
                 if let Some(withdrawals) = &tx.body.withdrawals {
-                    crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
                 }
                 if let Some(mint) = &tx.body.mint {
                     crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -4282,28 +4403,42 @@ impl LedgerState {
                     None,
                     None,
                     Some(&required_scripts),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                         .collect();
                     let total_eu = sum_redeemer_ex_units(&tx.witness_set);
                     let has_redeemers = !tx.witness_set.redeemers.is_empty();
                     validate_alonzo_plus_tx(
-                        params, &self.multi_era_utxo,
-                        tx.raw_cbor.len(), tx.body.fee, &outputs,
-                        tx.body.collateral.as_deref(), total_eu.as_ref(),
-                        None, None, has_redeemers, 0,
+                        params,
+                        &self.multi_era_utxo,
+                        tx.raw_cbor.len(),
+                        tx.body.fee,
+                        &outputs,
+                        tx.body.collateral.as_deref(),
+                        total_eu.as_ref(),
+                        None,
+                        None,
+                        has_redeemers,
+                        0,
+                        false,
                     )?;
                     // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
-                    validate_per_redeemer_ex_units_from_witness_set(
-                        &tx.witness_set, params,
-                    )?;
+                    validate_per_redeemer_ex_units_from_witness_set(&tx.witness_set, params)?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
                 if let Some(expected_net) = self.expected_network_id {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                         .collect();
                     validate_output_network_ids(expected_net, &outputs)?;
@@ -4316,7 +4451,9 @@ impl LedgerState {
                 {
                     let mut required = HashSet::new();
                     crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                        &tx.body.inputs,
+                        &self.multi_era_utxo,
+                        &mut required,
                     );
                     if let Some(certs) = &tx.body.certificates {
                         for cert in certs {
@@ -4324,7 +4461,10 @@ impl LedgerState {
                         }
                     }
                     if let Some(withdrawals) = &tx.body.withdrawals {
-                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(
+                            withdrawals,
+                            &mut required,
+                        );
                     }
                     if let Some(signers) = &tx.body.required_signers {
                         for signer in signers {
@@ -4333,7 +4473,11 @@ impl LedgerState {
                     }
                     // Upstream propWits: proposer genesis key hashes.
                     if let Some(update) = &tx.body.update {
-                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_ppup(
+                            update,
+                            &self.gen_delegs,
+                            &mut required,
+                        );
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
@@ -4401,7 +4545,10 @@ impl LedgerState {
                 )?;
                 // Supplemental datum check (Alonzo submitted — no reference inputs).
                 {
-                    let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let tx_outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                         .collect();
                     crate::plutus_validation::validate_supplemental_datums(
@@ -4416,11 +4563,17 @@ impl LedgerState {
                 {
                     let mut sorted_inputs = tx.body.inputs.clone();
                     sorted_inputs.sort();
-                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                    let sorted_policies: Vec<[u8; 28]> = tx
+                        .body
+                        .mint
+                        .as_ref()
                         .map(|m| m.keys().copied().collect())
                         .unwrap_or_default();
                     let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
-                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                    let sorted_rewards: Vec<Vec<u8>> = tx
+                        .body
+                        .withdrawals
+                        .as_ref()
                         .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                         .unwrap_or_default();
                     crate::plutus_validation::validate_no_extra_redeemers(
@@ -4441,17 +4594,26 @@ impl LedgerState {
                 {
                     let mut sorted_inputs = tx.body.inputs.clone();
                     sorted_inputs.sort();
-                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                    let sorted_policies: Vec<[u8; 28]> = tx
+                        .body
+                        .mint
+                        .as_ref()
                         .map(|m| m.keys().copied().collect())
                         .unwrap_or_default();
                     let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
-                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                    let sorted_rewards: Vec<Vec<u8>> = tx
+                        .body
+                        .withdrawals
+                        .as_ref()
                         .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                         .unwrap_or_default();
                     let tx_ctx = crate::plutus_validation::TxContext {
                         tx_hash: tx.tx_id().0,
                         fee: tx.body.fee,
-                        outputs: tx.body.outputs.iter()
+                        outputs: tx
+                            .body
+                            .outputs
+                            .iter()
                             .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                             .collect(),
                         validity_start: tx.body.validity_interval_start,
@@ -4459,15 +4621,27 @@ impl LedgerState {
                         required_signers: tx.body.required_signers.clone().unwrap_or_default(),
                         mint: tx.body.mint.clone().unwrap_or_default(),
                         withdrawals: tx.body.withdrawals.clone().unwrap_or_default(),
-                        protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                        protocol_version: self
+                            .protocol_params
+                            .as_ref()
+                            .and_then(|p| p.protocol_version),
                         ..Default::default()
                     };
                     crate::plutus_validation::validate_plutus_scripts(
-                        evaluator, Some(&witness_bytes), &required_scripts,
+                        evaluator,
+                        Some(&witness_bytes),
+                        &required_scripts,
                         &staged,
-                        &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
                         &tx_ctx,
-                        self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|p| p.cost_models.as_ref()),
                     )?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
@@ -4496,7 +4670,14 @@ impl LedgerState {
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, true).as_ref(),
                 )?;
-                staged.apply_alonzo_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+                staged.apply_alonzo_tx_withdrawals(
+                    tx.tx_id().0,
+                    &tx.body,
+                    current_slot.0,
+                    cert_adj.withdrawal_total,
+                    cert_adj.total_deposits,
+                    cert_adj.total_refunds,
+                )?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -4512,7 +4693,10 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Alonzo submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
+                    self.validate_ppup_proposal(
+                        update,
+                        self.ppup_slot_context(current_slot.0).as_ref(),
+                    )?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -4524,7 +4708,9 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 // Babbage UTXOW: validateScriptsWellFormed.
                 if let Some(eval) = evaluator {
@@ -4549,11 +4735,17 @@ impl LedgerState {
                 );
                 if let Some(certs) = &tx.body.certificates {
                     for cert in certs {
-                        crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
                     }
                 }
                 if let Some(withdrawals) = &tx.body.withdrawals {
-                    crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
                 }
                 if let Some(mint) = &tx.body.mint {
                     crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -4567,29 +4759,47 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                     Some(&required_scripts),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
                     let total_eu = sum_redeemer_ex_units(&tx.witness_set);
                     let has_redeemers = !tx.witness_set.redeemers.is_empty();
-                    let coll_ret = tx.body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
+                    let coll_ret = tx
+                        .body
+                        .collateral_return
+                        .as_ref()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()));
                     validate_alonzo_plus_tx(
-                        params, &self.multi_era_utxo,
-                        tx.raw_cbor.len(), tx.body.fee, &outputs,
-                        tx.body.collateral.as_deref(), total_eu.as_ref(),
-                        coll_ret.as_ref(), tx.body.total_collateral, has_redeemers, 0,
+                        params,
+                        &self.multi_era_utxo,
+                        tx.raw_cbor.len(),
+                        tx.body.fee,
+                        &outputs,
+                        tx.body.collateral.as_deref(),
+                        total_eu.as_ref(),
+                        coll_ret.as_ref(),
+                        tx.body.total_collateral,
+                        has_redeemers,
+                        0,
+                        true,
                     )?;
                     // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
-                    validate_per_redeemer_ex_units_from_witness_set(
-                        &tx.witness_set, params,
-                    )?;
+                    validate_per_redeemer_ex_units_from_witness_set(&tx.witness_set, params)?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
                 if let Some(expected_net) = self.expected_network_id {
-                    let mut outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let mut outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
                     // Upstream allSizedOutputsTxBodyF includes collateral_return.
@@ -4606,7 +4816,9 @@ impl LedgerState {
                 {
                     let mut required = HashSet::new();
                     crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                        &tx.body.inputs,
+                        &self.multi_era_utxo,
+                        &mut required,
                     );
                     if let Some(certs) = &tx.body.certificates {
                         for cert in certs {
@@ -4614,7 +4826,10 @@ impl LedgerState {
                         }
                     }
                     if let Some(withdrawals) = &tx.body.withdrawals {
-                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(
+                            withdrawals,
+                            &mut required,
+                        );
                     }
                     if let Some(signers) = &tx.body.required_signers {
                         for signer in signers {
@@ -4623,7 +4838,11 @@ impl LedgerState {
                     }
                     // Upstream propWits: proposer genesis key hashes.
                     if let Some(update) = &tx.body.update {
-                        crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_ppup(
+                            update,
+                            &self.gen_delegs,
+                            &mut required,
+                        );
                     }
                     validate_witnesses_typed(&tx.witness_set, &required, &tx.tx_id().0)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
@@ -4670,11 +4889,16 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                 )?;
-                let babbage_ref_scripts = collect_reference_script_hashes(&staged, tx.body.reference_inputs.as_deref());
+                let babbage_ref_scripts =
+                    collect_reference_script_hashes(&staged, tx.body.reference_inputs.as_deref());
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
-                    if babbage_ref_scripts.is_empty() { None } else { Some(&babbage_ref_scripts) },
+                    if babbage_ref_scripts.is_empty() {
+                        None
+                    } else {
+                        Some(&babbage_ref_scripts)
+                    },
                 )?;
                 // Unspendable UTxO check (Babbage — no datum on Plutus-locked input).
                 crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -4685,14 +4909,21 @@ impl LedgerState {
                 )?;
                 // Supplemental datum check (Babbage submitted — includes reference inputs).
                 {
-                    let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let tx_outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
-                    let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx.body.reference_inputs
+                    let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx
+                        .body
+                        .reference_inputs
                         .as_deref()
                         .unwrap_or(&[])
                         .iter()
-                        .filter_map(|txin| staged.get(txin).map(|txout| (txin.clone(), txout.clone())))
+                        .filter_map(|txin| {
+                            staged.get(txin).map(|txout| (txin.clone(), txout.clone()))
+                        })
                         .collect();
                     crate::plutus_validation::validate_supplemental_datums(
                         Some(&witness_bytes),
@@ -4706,11 +4937,17 @@ impl LedgerState {
                 {
                     let mut sorted_inputs = tx.body.inputs.clone();
                     sorted_inputs.sort();
-                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                    let sorted_policies: Vec<[u8; 28]> = tx
+                        .body
+                        .mint
+                        .as_ref()
                         .map(|m| m.keys().copied().collect())
                         .unwrap_or_default();
                     let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
-                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                    let sorted_rewards: Vec<Vec<u8>> = tx
+                        .body
+                        .withdrawals
+                        .as_ref()
                         .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                         .unwrap_or_default();
                     crate::plutus_validation::validate_no_extra_redeemers(
@@ -4729,17 +4966,26 @@ impl LedgerState {
                 {
                     let mut sorted_inputs = tx.body.inputs.clone();
                     sorted_inputs.sort();
-                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                    let sorted_policies: Vec<[u8; 28]> = tx
+                        .body
+                        .mint
+                        .as_ref()
                         .map(|m| m.keys().copied().collect())
                         .unwrap_or_default();
                     let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
-                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                    let sorted_rewards: Vec<Vec<u8>> = tx
+                        .body
+                        .withdrawals
+                        .as_ref()
                         .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                         .unwrap_or_default();
                     let tx_ctx = crate::plutus_validation::TxContext {
                         tx_hash: tx.tx_id().0,
                         fee: tx.body.fee,
-                        outputs: tx.body.outputs.iter()
+                        outputs: tx
+                            .body
+                            .outputs
+                            .iter()
                             .map(|o| MultiEraTxOut::Babbage(o.clone()))
                             .collect(),
                         validity_start: tx.body.validity_interval_start,
@@ -4748,15 +4994,27 @@ impl LedgerState {
                         mint: tx.body.mint.clone().unwrap_or_default(),
                         withdrawals: tx.body.withdrawals.clone().unwrap_or_default(),
                         reference_inputs: tx.body.reference_inputs.clone().unwrap_or_default(),
-                        protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                        protocol_version: self
+                            .protocol_params
+                            .as_ref()
+                            .and_then(|p| p.protocol_version),
                         ..Default::default()
                     };
                     crate::plutus_validation::validate_plutus_scripts(
-                        evaluator, Some(&witness_bytes), &required_scripts,
+                        evaluator,
+                        Some(&witness_bytes),
+                        &required_scripts,
                         &staged,
-                        &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
                         &tx_ctx,
-                        self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|p| p.cost_models.as_ref()),
                     )?;
                 }
                 let mut staged_pool_state = self.pool_state.clone();
@@ -4785,7 +5043,14 @@ impl LedgerState {
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, true).as_ref(),
                 )?;
-                staged.apply_babbage_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+                staged.apply_babbage_tx_withdrawals(
+                    tx.tx_id().0,
+                    &tx.body,
+                    current_slot.0,
+                    cert_adj.withdrawal_total,
+                    cert_adj.total_deposits,
+                    cert_adj.total_refunds,
+                )?;
                 self.multi_era_utxo = staged;
                 self.pool_state = staged_pool_state;
                 self.stake_credentials = staged_stake_credentials;
@@ -4801,7 +5066,10 @@ impl LedgerState {
                 );
                 // PPUP validation + collection (Babbage submitted).
                 if let Some(ref update) = tx.body.update {
-                    self.validate_ppup_proposal(update, self.ppup_slot_context(current_slot.0).as_ref())?;
+                    self.validate_ppup_proposal(
+                        update,
+                        self.ppup_slot_context(current_slot.0).as_ref(),
+                    )?;
                     self.collect_pparam_proposals(update);
                 }
             }
@@ -4813,7 +5081,9 @@ impl LedgerState {
                 validate_auxiliary_data(
                     tx.body.auxiliary_data_hash.as_ref(),
                     tx.auxiliary_data.as_deref(),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 // Conway UTXOW: validateScriptsWellFormed.
                 if let Some(eval) = evaluator {
@@ -4827,7 +5097,10 @@ impl LedgerState {
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
                 if let Some(ref_inputs) = &tx.body.reference_inputs {
                     self.multi_era_utxo.validate_reference_inputs(ref_inputs)?;
-                    MultiEraUtxo::validate_reference_input_disjointness(&tx.body.inputs, ref_inputs)?;
+                    MultiEraUtxo::validate_reference_input_disjointness(
+                        &tx.body.inputs,
+                        ref_inputs,
+                    )?;
                 }
                 let mut required_scripts = HashSet::new();
                 crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -4837,11 +5110,17 @@ impl LedgerState {
                 );
                 if let Some(certs) = &tx.body.certificates {
                     for cert in certs {
-                        crate::witnesses::required_script_hashes_from_cert(cert, &mut required_scripts);
+                        crate::witnesses::required_script_hashes_from_cert(
+                            cert,
+                            &mut required_scripts,
+                        );
                     }
                 }
                 if let Some(withdrawals) = &tx.body.withdrawals {
-                    crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                    crate::witnesses::required_script_hashes_from_withdrawals(
+                        withdrawals,
+                        &mut required_scripts,
+                    );
                 }
                 if let Some(mint) = &tx.body.mint {
                     crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -4867,34 +5146,51 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                     Some(&required_scripts),
-                    self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                    self.protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version),
                 )?;
                 if let Some(params) = &self.protocol_params {
-                    let outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
                     let total_eu = sum_redeemer_ex_units(&tx.witness_set);
                     let has_redeemers = !tx.witness_set.redeemers.is_empty();
-                    let coll_ret = tx.body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
+                    let coll_ret = tx
+                        .body
+                        .collateral_return
+                        .as_ref()
+                        .map(|o| MultiEraTxOut::Babbage(o.clone()));
                     let ref_scripts_size = self.multi_era_utxo.total_ref_scripts_size(
                         &tx.body.inputs,
                         tx.body.reference_inputs.as_deref(),
                     );
                     validate_alonzo_plus_tx(
-                        params, &self.multi_era_utxo,
-                        tx.raw_cbor.len(), tx.body.fee, &outputs,
-                        tx.body.collateral.as_deref(), total_eu.as_ref(),
-                        coll_ret.as_ref(), tx.body.total_collateral, has_redeemers,
+                        params,
+                        &self.multi_era_utxo,
+                        tx.raw_cbor.len(),
+                        tx.body.fee,
+                        &outputs,
+                        tx.body.collateral.as_deref(),
+                        total_eu.as_ref(),
+                        coll_ret.as_ref(),
+                        tx.body.total_collateral,
+                        has_redeemers,
                         ref_scripts_size,
+                        true,
                     )?;
                     // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
-                    validate_per_redeemer_ex_units_from_witness_set(
-                        &tx.witness_set, params,
-                    )?;
+                    validate_per_redeemer_ex_units_from_witness_set(&tx.witness_set, params)?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal / WrongNetworkInTxBody)
                 if let Some(expected_net) = self.expected_network_id {
-                    let mut outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let mut outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
                     // Upstream allSizedOutputsTxBodyF includes collateral_return.
@@ -4911,7 +5207,9 @@ impl LedgerState {
                 {
                     let mut required = HashSet::new();
                     crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                        &tx.body.inputs, &self.multi_era_utxo, &mut required,
+                        &tx.body.inputs,
+                        &self.multi_era_utxo,
+                        &mut required,
                     );
                     if let Some(certs) = &tx.body.certificates {
                         for cert in certs {
@@ -4919,7 +5217,10 @@ impl LedgerState {
                         }
                     }
                     if let Some(withdrawals) = &tx.body.withdrawals {
-                        crate::witnesses::required_vkey_hashes_from_withdrawals(withdrawals, &mut required);
+                        crate::witnesses::required_vkey_hashes_from_withdrawals(
+                            withdrawals,
+                            &mut required,
+                        );
                     }
                     if let Some(signers) = &tx.body.required_signers {
                         for signer in signers {
@@ -4988,11 +5289,16 @@ impl LedgerState {
                     tx.body.reference_inputs.as_deref(),
                     Some(&tx.body.inputs),
                 )?;
-                let conway_ref_scripts = collect_reference_script_hashes(&staged, tx.body.reference_inputs.as_deref());
+                let conway_ref_scripts =
+                    collect_reference_script_hashes(&staged, tx.body.reference_inputs.as_deref());
                 validate_no_extraneous_script_witnesses_typed(
                     &tx.witness_set,
                     &required_scripts,
-                    if conway_ref_scripts.is_empty() { None } else { Some(&conway_ref_scripts) },
+                    if conway_ref_scripts.is_empty() {
+                        None
+                    } else {
+                        Some(&conway_ref_scripts)
+                    },
                 )?;
                 // Unspendable UTxO check (Conway — no datum on Plutus-locked input).
                 // CIP-0069: collect PlutusV3 script hashes so V3-locked inputs
@@ -5006,18 +5312,29 @@ impl LedgerState {
                     &staged,
                     &tx.body.inputs,
                     &native_satisfied,
-                    if v3_hashes.is_empty() { None } else { Some(&v3_hashes) },
+                    if v3_hashes.is_empty() {
+                        None
+                    } else {
+                        Some(&v3_hashes)
+                    },
                 )?;
                 // Supplemental datum check (Conway submitted — includes reference inputs).
                 {
-                    let tx_outputs: Vec<MultiEraTxOut> = tx.body.outputs.iter()
+                    let tx_outputs: Vec<MultiEraTxOut> = tx
+                        .body
+                        .outputs
+                        .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
-                    let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx.body.reference_inputs
+                    let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx
+                        .body
+                        .reference_inputs
                         .as_deref()
                         .unwrap_or(&[])
                         .iter()
-                        .filter_map(|txin| staged.get(txin).map(|txout| (txin.clone(), txout.clone())))
+                        .filter_map(|txin| {
+                            staged.get(txin).map(|txout| (txin.clone(), txout.clone()))
+                        })
                         .collect();
                     crate::plutus_validation::validate_supplemental_datums(
                         Some(&witness_bytes),
@@ -5031,21 +5348,32 @@ impl LedgerState {
                 {
                     let mut sorted_inputs = tx.body.inputs.clone();
                     sorted_inputs.sort();
-                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                    let sorted_policies: Vec<[u8; 28]> = tx
+                        .body
+                        .mint
+                        .as_ref()
                         .map(|m| m.keys().copied().collect())
                         .unwrap_or_default();
                     let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
-                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                    let sorted_rewards: Vec<Vec<u8>> = tx
+                        .body
+                        .withdrawals
+                        .as_ref()
                         .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                         .unwrap_or_default();
-                    let sorted_voters: Vec<crate::eras::conway::Voter> = tx.body.voting_procedures.as_ref()
+                    let sorted_voters: Vec<crate::eras::conway::Voter> = tx
+                        .body
+                        .voting_procedures
+                        .as_ref()
                         .map(|vp| {
                             let mut vs: Vec<_> = vp.procedures.keys().cloned().collect();
                             vs.sort();
                             vs
                         })
                         .unwrap_or_default();
-                    let proposal_slice: Vec<crate::eras::conway::ProposalProcedure> = tx.body.proposal_procedures
+                    let proposal_slice: Vec<crate::eras::conway::ProposalProcedure> = tx
+                        .body
+                        .proposal_procedures
                         .as_deref()
                         .unwrap_or(&[])
                         .to_vec();
@@ -5065,27 +5393,42 @@ impl LedgerState {
                 // Phase-1 check — runs BEFORE Plutus evaluation, matching upstream UTXO rule ordering
                 // and block-apply path placement (reference: Cardano.Ledger.Conway.Rules.Utxo).
                 let current_treasury = self.accounting.treasury;
-                validate_conway_current_treasury_value(tx.body.current_treasury_value, current_treasury)?;
+                validate_conway_current_treasury_value(
+                    tx.body.current_treasury_value,
+                    current_treasury,
+                )?;
 
                 // Phase-2 Plutus script validation (Conway submitted).
                 {
                     let mut sorted_inputs = tx.body.inputs.clone();
                     sorted_inputs.sort();
-                    let sorted_policies: Vec<[u8; 28]> = tx.body.mint.as_ref()
+                    let sorted_policies: Vec<[u8; 28]> = tx
+                        .body
+                        .mint
+                        .as_ref()
                         .map(|m| m.keys().copied().collect())
                         .unwrap_or_default();
                     let certs_slice = tx.body.certificates.as_deref().unwrap_or(&[]);
-                    let sorted_rewards: Vec<Vec<u8>> = tx.body.withdrawals.as_ref()
+                    let sorted_rewards: Vec<Vec<u8>> = tx
+                        .body
+                        .withdrawals
+                        .as_ref()
                         .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                         .unwrap_or_default();
-                    let sorted_voters: Vec<crate::eras::conway::Voter> = tx.body.voting_procedures.as_ref()
+                    let sorted_voters: Vec<crate::eras::conway::Voter> = tx
+                        .body
+                        .voting_procedures
+                        .as_ref()
                         .map(|v| v.procedures.keys().cloned().collect())
                         .unwrap_or_default();
                     let proposal_slice = tx.body.proposal_procedures.as_deref().unwrap_or(&[]);
                     let tx_ctx = crate::plutus_validation::TxContext {
                         tx_hash: tx.tx_id().0,
                         fee: tx.body.fee,
-                        outputs: tx.body.outputs.iter()
+                        outputs: tx
+                            .body
+                            .outputs
+                            .iter()
                             .map(|o| MultiEraTxOut::Babbage(o.clone()))
                             .collect(),
                         validity_start: tx.body.validity_interval_start,
@@ -5098,16 +5441,27 @@ impl LedgerState {
                         treasury_donation: tx.body.treasury_donation,
                         voting_procedures: tx.body.voting_procedures.clone(),
                         proposal_procedures: proposal_slice.to_vec(),
-                        protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                        protocol_version: self
+                            .protocol_params
+                            .as_ref()
+                            .and_then(|p| p.protocol_version),
                         ..Default::default()
                     };
                     crate::plutus_validation::validate_plutus_scripts(
-                        evaluator, Some(&witness_bytes), &required_scripts,
+                        evaluator,
+                        Some(&witness_bytes),
+                        &required_scripts,
                         &staged,
-                        &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
-                        &sorted_voters, proposal_slice,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &sorted_voters,
+                        proposal_slice,
                         &tx_ctx,
-                        self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|p| p.cost_models.as_ref()),
                     )?;
                 }
 
@@ -5125,12 +5479,16 @@ impl LedgerState {
 
                 // Upstream `updateDormantDRepExpiries` — bump all DRep
                 // expiries and reset dormant counter when tx has proposals.
-                let drep_activity = self.protocol_params
+                let drep_activity = self
+                    .protocol_params
                     .as_ref()
                     .and_then(|pp| pp.drep_activity)
                     .unwrap_or(0);
                 update_dormant_drep_expiries(
-                    tx.body.proposal_procedures.as_ref().map_or(false, |p| !p.is_empty()),
+                    tx.body
+                        .proposal_procedures
+                        .as_ref()
+                        .map_or(false, |p| !p.is_empty()),
                     &mut staged_drep_state,
                     &mut staged_num_dormant,
                     self.current_epoch,
@@ -5146,9 +5504,8 @@ impl LedgerState {
                 )?;
 
                 // Conway governance validation (voters, proposals, votes).
-                let unregistered_drep_voters = collect_conway_unregistered_drep_voters(
-                    tx.body.certificates.as_deref(),
-                );
+                let unregistered_drep_voters =
+                    collect_conway_unregistered_drep_voters(tx.body.certificates.as_deref());
 
                 if tx.body.voting_procedures.is_some()
                     || tx.body.proposal_procedures.is_some()
@@ -5215,7 +5572,10 @@ impl LedgerState {
                     }
 
                     if let Some(voting_procedures) = &tx.body.voting_procedures {
-                        validate_conway_vote_targets(voting_procedures, &governance_actions_for_tx)?;
+                        validate_conway_vote_targets(
+                            voting_procedures,
+                            &governance_actions_for_tx,
+                        )?;
                         validate_conway_voter_permissions(
                             self.current_epoch,
                             voting_procedures,
@@ -5228,7 +5588,14 @@ impl LedgerState {
 
                     staged_governance_actions = governance_actions_for_tx;
                     if let Some(voting_procedures) = &tx.body.voting_procedures {
-                        apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch, staged_num_dormant, cert_ctx.bootstrap_phase);
+                        apply_conway_votes(
+                            voting_procedures,
+                            &mut staged_governance_actions,
+                            &mut staged_drep_state,
+                            self.current_epoch,
+                            staged_num_dormant,
+                            cert_ctx.bootstrap_phase,
+                        );
                     }
                     remove_conway_drep_votes(
                         &unregistered_drep_voters,
@@ -5264,14 +5631,23 @@ impl LedgerState {
                 // Conway UTXO rule: totalTxDeposits includes both certificate
                 // deposits and proposal procedure deposits.
                 // Reference: Cardano.Ledger.Conway.TxInfo — totalTxDeposits.
-                let proposal_deposits: u64 = tx.body.proposal_procedures
+                let proposal_deposits: u64 = tx
+                    .body
+                    .proposal_procedures
                     .as_ref()
                     .map(|ps| ps.iter().map(|p| p.deposit).fold(0u64, u64::saturating_add))
                     .unwrap_or(0);
                 // Track proposal deposits in the deposit pot (upstream oblProposal).
                 staged_deposit_pot.add_proposal_deposit(proposal_deposits);
                 let total_deposits = cert_adj.total_deposits.saturating_add(proposal_deposits);
-                staged.apply_conway_tx_withdrawals(tx.tx_id().0, &tx.body, current_slot.0, cert_adj.withdrawal_total, total_deposits, cert_adj.total_refunds)?;
+                staged.apply_conway_tx_withdrawals(
+                    tx.tx_id().0,
+                    &tx.body,
+                    current_slot.0,
+                    cert_adj.withdrawal_total,
+                    total_deposits,
+                    cert_adj.total_refunds,
+                )?;
                 // Accumulate treasury donation (Conway UTXOS rule).
                 // Reference: Cardano.Ledger.Conway.Rules.Utxos — utxosDonationL.
                 // Reference: Cardano.Ledger.Conway.Rules.Utxo — validateZeroDonation.
@@ -5362,9 +5738,10 @@ impl LedgerState {
                 match self.stake_credentials.get_mut(&credential) {
                     Some(state) => state.set_delegated_pool(Some(pool)),
                     None => {
-                        self.stake_credentials
-                            .entries
-                            .insert(credential, StakeCredentialState::new_with_deposit(Some(pool), None, 0));
+                        self.stake_credentials.entries.insert(
+                            credential,
+                            StakeCredentialState::new_with_deposit(Some(pool), None, 0),
+                        );
                     }
                 }
             }
@@ -5419,12 +5796,24 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, ShelleyTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
+        let decoded: Vec<(
+            crate::types::TxId,
+            usize,
+            ShelleyTxBody,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+        )> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = ShelleyTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((
+                    tx.id,
+                    tx.serialized_size(),
+                    body,
+                    tx.witnesses.clone(),
+                    tx.auxiliary_data.clone(),
+                ))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -5449,17 +5838,23 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             if let Some(params) = &self.protocol_params {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
             }
             // Network validation (Shelley UTXO rule: WrongNetwork / WrongNetworkWithdrawal)
             if let Some(expected_net) = self.expected_network_id {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
                     .collect();
                 validate_output_network_ids(expected_net, &outputs)?;
@@ -5470,7 +5865,9 @@ impl LedgerState {
             // Witness validation: compute required VKey hashes and check
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_shelley(
-                &body.inputs, &staged, &mut required,
+                &body.inputs,
+                &staged,
+                &mut required,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -5482,7 +5879,11 @@ impl LedgerState {
             }
             // Upstream propWits: proposer genesis key hashes.
             if let Some(update) = &body.update {
-                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                crate::witnesses::required_vkey_hashes_from_ppup(
+                    update,
+                    &self.gen_delegs,
+                    &mut required,
+                );
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -5497,7 +5898,9 @@ impl LedgerState {
             // extraneousScriptWitnessesUTXOW).
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_shelley(
-                &body.inputs, &staged, &mut required_scripts,
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -5505,7 +5908,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             let native_satisfied = validate_native_scripts_if_present(
                 witness_bytes.as_deref(),
@@ -5545,7 +5951,14 @@ impl LedgerState {
                 self.stability_window,
                 self.mir_validation_context(slot, false).as_ref(),
             )?;
-            staged.apply_tx_with_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+            staged.apply_tx_with_withdrawals(
+                tx_id.0,
+                body,
+                slot,
+                cert_adj.withdrawal_total,
+                cert_adj.total_deposits,
+                cert_adj.total_refunds,
+            )?;
         }
         self.shelley_utxo = staged;
         self.multi_era_utxo = MultiEraUtxo::from_shelley_utxo(&self.shelley_utxo);
@@ -5582,12 +5995,24 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, AllegraTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
+        let decoded: Vec<(
+            crate::types::TxId,
+            usize,
+            AllegraTxBody,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+        )> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = AllegraTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((
+                    tx.id,
+                    tx.serialized_size(),
+                    body,
+                    tx.witnesses.clone(),
+                    tx.auxiliary_data.clone(),
+                ))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -5607,17 +6032,23 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             if let Some(params) = &self.protocol_params {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
             }
             // Network validation (Allegra UTXO rule)
             if let Some(expected_net) = self.expected_network_id {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Shelley(o.clone()))
                     .collect();
                 validate_output_network_ids(expected_net, &outputs)?;
@@ -5627,7 +6058,9 @@ impl LedgerState {
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required,
+                &body.inputs,
+                &staged,
+                &mut required,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -5639,7 +6072,11 @@ impl LedgerState {
             }
             // Upstream propWits: proposer genesis key hashes.
             if let Some(update) = &body.update {
-                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                crate::witnesses::required_vkey_hashes_from_ppup(
+                    update,
+                    &self.gen_delegs,
+                    &mut required,
+                );
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -5652,7 +6089,9 @@ impl LedgerState {
             // Native script validation (Allegra+)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required_scripts,
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -5660,7 +6099,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             let native_satisfied = validate_native_scripts_if_present(
                 witness_bytes.as_deref(),
@@ -5697,7 +6139,14 @@ impl LedgerState {
                 self.stability_window,
                 self.mir_validation_context(slot, false).as_ref(),
             )?;
-            staged.apply_allegra_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+            staged.apply_allegra_tx_withdrawals(
+                tx_id.0,
+                body,
+                slot,
+                cert_adj.withdrawal_total,
+                cert_adj.total_deposits,
+                cert_adj.total_refunds,
+            )?;
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
@@ -5724,21 +6173,29 @@ impl LedgerState {
         Ok(())
     }
 
-    fn apply_mary_block(
-        &mut self,
-        block: &crate::tx::Block,
-        slot: u64,
-    ) -> Result<(), LedgerError> {
+    fn apply_mary_block(&mut self, block: &crate::tx::Block, slot: u64) -> Result<(), LedgerError> {
         if block.transactions.is_empty() {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, crate::eras::mary::MaryTxBody, Option<Vec<u8>>, Option<Vec<u8>>)> = block
+        let decoded: Vec<(
+            crate::types::TxId,
+            usize,
+            crate::eras::mary::MaryTxBody,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+        )> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = crate::eras::mary::MaryTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone()))
+                Ok((
+                    tx.id,
+                    tx.serialized_size(),
+                    body,
+                    tx.witnesses.clone(),
+                    tx.auxiliary_data.clone(),
+                ))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
@@ -5757,17 +6214,23 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             if let Some(params) = &self.protocol_params {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Mary(o.clone()))
                     .collect();
                 validate_pre_alonzo_tx(params, *tx_size, body.fee, &outputs)?;
             }
             // Network validation (Mary UTXO rule)
             if let Some(expected_net) = self.expected_network_id {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Mary(o.clone()))
                     .collect();
                 validate_output_network_ids(expected_net, &outputs)?;
@@ -5777,7 +6240,9 @@ impl LedgerState {
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required,
+                &body.inputs,
+                &staged,
+                &mut required,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -5789,7 +6254,11 @@ impl LedgerState {
             }
             // Upstream propWits: proposer genesis key hashes.
             if let Some(update) = &body.update {
-                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                crate::witnesses::required_vkey_hashes_from_ppup(
+                    update,
+                    &self.gen_delegs,
+                    &mut required,
+                );
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -5802,7 +6271,9 @@ impl LedgerState {
             // Native script validation (Mary)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required_scripts,
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -5810,7 +6281,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             let native_satisfied = validate_native_scripts_if_present(
                 witness_bytes.as_deref(),
@@ -5847,7 +6321,14 @@ impl LedgerState {
                 self.stability_window,
                 self.mir_validation_context(slot, false).as_ref(),
             )?;
-            staged.apply_mary_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+            staged.apply_mary_tx_withdrawals(
+                tx_id.0,
+                body,
+                slot,
+                cert_adj.withdrawal_total,
+                cert_adj.total_deposits,
+                cert_adj.total_refunds,
+            )?;
         }
         self.multi_era_utxo = staged;
         self.pool_state = staged_pool_state;
@@ -5884,18 +6365,33 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, AlonzoTxBody, Option<Vec<u8>>, Option<Vec<u8>>, Option<bool>)> = block
+        let decoded: Vec<(
+            crate::types::TxId,
+            usize,
+            AlonzoTxBody,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            Option<bool>,
+        )> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = AlonzoTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
+                Ok((
+                    tx.id,
+                    tx.serialized_size(),
+                    body,
+                    tx.witnesses.clone(),
+                    tx.auxiliary_data.clone(),
+                    tx.is_valid,
+                ))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         // BBODY rule: block-level ExUnits limit.
         {
-            let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
+            let wb_refs: Vec<Option<&[u8]>> = decoded
+                .iter()
                 .map(|(_, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
@@ -5917,7 +6413,9 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
@@ -5931,7 +6429,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -5945,26 +6446,39 @@ impl LedgerState {
                 None,
                 None,
                 Some(&required_scripts),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                     .collect();
                 validate_alonzo_plus_tx(
-                    params, &staged, *tx_size, body.fee, &outputs,
-                    body.collateral.as_deref(), total_eu.as_ref(),
-                    None, None, total_eu.is_some(), 0,
+                    params,
+                    &staged,
+                    *tx_size,
+                    body.fee,
+                    &outputs,
+                    body.collateral.as_deref(),
+                    total_eu.as_ref(),
+                    None,
+                    None,
+                    total_eu.is_some(),
+                    0,
+                    false,
                 )?;
                 // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
-                validate_per_redeemer_ex_units_from_bytes(
-                    witness_bytes.as_deref(), params,
-                )?;
+                validate_per_redeemer_ex_units_from_bytes(witness_bytes.as_deref(), params)?;
             }
             // Network validation (Alonzo UTXO rule: WrongNetwork + WrongNetworkInTxBody)
             if let Some(expected_net) = self.expected_network_id {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                     .collect();
                 validate_output_network_ids(expected_net, &outputs)?;
@@ -5975,7 +6489,9 @@ impl LedgerState {
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required,
+                &body.inputs,
+                &staged,
+                &mut required,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -5992,7 +6508,11 @@ impl LedgerState {
             }
             // Upstream propWits: proposer genesis key hashes.
             if let Some(update) = &body.update {
-                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                crate::witnesses::required_vkey_hashes_from_ppup(
+                    update,
+                    &self.gen_delegs,
+                    &mut required,
+                );
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -6005,7 +6525,9 @@ impl LedgerState {
             // Native script validation (Alonzo)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required_scripts,
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -6013,7 +6535,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -6047,12 +6572,12 @@ impl LedgerState {
             // addresses must carry datum_hash.
             // Reference: Cardano.Ledger.Alonzo.Rules.Utxo —
             //   validateOutputMissingDatumHashForScriptOutputs.
-            crate::plutus_validation::validate_outputs_missing_datum_hash_alonzo(
-                &body.outputs,
-            )?;
+            crate::plutus_validation::validate_outputs_missing_datum_hash_alonzo(&body.outputs)?;
             // Supplemental datum check (Alonzo — no reference inputs).
             {
-                let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let tx_outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Alonzo(o.clone()))
                     .collect();
                 crate::plutus_validation::validate_supplemental_datums(
@@ -6069,11 +6594,15 @@ impl LedgerState {
             {
                 let mut sorted_inputs = body.inputs.clone();
                 sorted_inputs.sort();
-                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                let sorted_policies: Vec<[u8; 28]> = body
+                    .mint
+                    .as_ref()
                     .map(|m| m.keys().copied().collect())
                     .unwrap_or_default();
                 let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
-                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                let sorted_rewards: Vec<Vec<u8>> = body
+                    .withdrawals
+                    .as_ref()
                     .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                     .unwrap_or_default();
                 crate::plutus_validation::validate_no_extra_redeemers(
@@ -6090,39 +6619,57 @@ impl LedgerState {
             }
             // ── is_valid bifurcation (Phase-2 / collateral-only) ──
             let run_phase2 = || -> Result<(), LedgerError> {
-            // Plutus script validation (Alonzo)
-            {
-                let mut sorted_inputs = body.inputs.clone();
-                sorted_inputs.sort();
-                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
-                    .map(|m| m.keys().copied().collect())
-                    .unwrap_or_default();
-                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
-                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
-                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
-                    .unwrap_or_default();
-                let tx_ctx = crate::plutus_validation::TxContext {
-                    tx_hash: tx_id.0,
-                    fee: body.fee,
-                    outputs: body.outputs.iter()
-                        .map(|o| MultiEraTxOut::Alonzo(o.clone()))
-                        .collect(),
-                    validity_start: body.validity_interval_start,
-                    ttl: body.ttl,
-                    required_signers: body.required_signers.clone().unwrap_or_default(),
-                    mint: body.mint.clone().unwrap_or_default(),
-                    withdrawals: body.withdrawals.clone().unwrap_or_default(),
-                    protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
-                    ..Default::default()
-                };
-                crate::plutus_validation::validate_plutus_scripts(
-                    evaluator, witness_bytes.as_deref(), &required_scripts,
-                    &staged,
-                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
-                    &tx_ctx,
-                    self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
-                )
-            }
+                // Plutus script validation (Alonzo)
+                {
+                    let mut sorted_inputs = body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = body
+                        .mint
+                        .as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = body
+                        .withdrawals
+                        .as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    let tx_ctx = crate::plutus_validation::TxContext {
+                        tx_hash: tx_id.0,
+                        fee: body.fee,
+                        outputs: body
+                            .outputs
+                            .iter()
+                            .map(|o| MultiEraTxOut::Alonzo(o.clone()))
+                            .collect(),
+                        validity_start: body.validity_interval_start,
+                        ttl: body.ttl,
+                        required_signers: body.required_signers.clone().unwrap_or_default(),
+                        mint: body.mint.clone().unwrap_or_default(),
+                        withdrawals: body.withdrawals.clone().unwrap_or_default(),
+                        protocol_version: self
+                            .protocol_params
+                            .as_ref()
+                            .and_then(|p| p.protocol_version),
+                        ..Default::default()
+                    };
+                    crate::plutus_validation::validate_plutus_scripts(
+                        evaluator,
+                        witness_bytes.as_deref(),
+                        &required_scripts,
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
+                        &tx_ctx,
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|p| p.cost_models.as_ref()),
+                    )
+                }
             };
             if tx_is_valid {
                 match run_phase2() {
@@ -6135,24 +6682,31 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
-            let cert_adj = apply_certificates_and_withdrawals_with_future(
-                &mut staged_pool_state,
-                &mut staged_stake_credentials,
-                &mut staged_committee_state,
-                &mut staged_drep_state,
-                &mut staged_reward_accounts,
-                &mut staged_deposit_pot,
-                &mut staged_gen_delegs,
-                &mut staged_future_gen_delegs,
-                &self.governance_actions,
-                &cert_ctx,
-                body.certificates.as_deref(),
-                body.withdrawals.as_ref(),
-                slot,
-                self.stability_window,
-                self.mir_validation_context(slot, true).as_ref(),
-            )?;
-            staged.apply_alonzo_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
+                    &mut staged_pool_state,
+                    &mut staged_stake_credentials,
+                    &mut staged_committee_state,
+                    &mut staged_drep_state,
+                    &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
+                    &self.governance_actions,
+                    &cert_ctx,
+                    body.certificates.as_deref(),
+                    body.withdrawals.as_ref(),
+                    slot,
+                    self.stability_window,
+                    self.mir_validation_context(slot, true).as_ref(),
+                )?;
+                staged.apply_alonzo_tx_withdrawals(
+                    tx_id.0,
+                    body,
+                    slot,
+                    cert_adj.withdrawal_total,
+                    cert_adj.total_deposits,
+                    cert_adj.total_refunds,
+                )?;
             } else {
                 if evaluator.is_some() {
                     match run_phase2() {
@@ -6169,8 +6723,10 @@ impl LedgerState {
                 // is_valid = false: collateral-only transition.
                 // Alonzo has no collateral_return, so only consume collateral inputs.
                 crate::utxo::apply_collateral_only(
-                    &mut staged, tx_id.0,
-                    body.collateral.as_deref(), None,
+                    &mut staged,
+                    tx_id.0,
+                    body.collateral.as_deref(),
+                    None,
                 );
             }
         }
@@ -6213,18 +6769,33 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, BabbageTxBody, Option<Vec<u8>>, Option<Vec<u8>>, Option<bool>)> = block
+        let decoded: Vec<(
+            crate::types::TxId,
+            usize,
+            BabbageTxBody,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            Option<bool>,
+        )> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = BabbageTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
+                Ok((
+                    tx.id,
+                    tx.serialized_size(),
+                    body,
+                    tx.witnesses.clone(),
+                    tx.auxiliary_data.clone(),
+                    tx.is_valid,
+                ))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         // BBODY rule: block-level ExUnits limit.
         {
-            let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
+            let wb_refs: Vec<Option<&[u8]>> = decoded
+                .iter()
                 .map(|(_, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
@@ -6246,7 +6817,9 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             // Babbage UTXOW: validateScriptsWellFormed.
             if let Some(eval) = evaluator {
@@ -6277,7 +6850,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -6291,27 +6867,43 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
                 Some(&required_scripts),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
-                let coll_ret = body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
+                let coll_ret = body
+                    .collateral_return
+                    .as_ref()
+                    .map(|o| MultiEraTxOut::Babbage(o.clone()));
                 validate_alonzo_plus_tx(
-                    params, &staged, *tx_size, body.fee, &outputs,
-                    body.collateral.as_deref(), total_eu.as_ref(),
-                    coll_ret.as_ref(), body.total_collateral, total_eu.is_some(), 0,
+                    params,
+                    &staged,
+                    *tx_size,
+                    body.fee,
+                    &outputs,
+                    body.collateral.as_deref(),
+                    total_eu.as_ref(),
+                    coll_ret.as_ref(),
+                    body.total_collateral,
+                    total_eu.is_some(),
+                    0,
+                    true,
                 )?;
                 // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
-                validate_per_redeemer_ex_units_from_bytes(
-                    witness_bytes.as_deref(), params,
-                )?;
+                validate_per_redeemer_ex_units_from_bytes(witness_bytes.as_deref(), params)?;
             }
             // Network validation (Babbage UTXO rule: WrongNetwork + WrongNetworkInTxBody)
             if let Some(expected_net) = self.expected_network_id {
-                let mut outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let mut outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
                 // Upstream allSizedOutputsTxBodyF includes collateral_return.
@@ -6326,7 +6918,9 @@ impl LedgerState {
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required,
+                &body.inputs,
+                &staged,
+                &mut required,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -6343,7 +6937,11 @@ impl LedgerState {
             }
             // Upstream propWits: proposer genesis key hashes.
             if let Some(update) = &body.update {
-                crate::witnesses::required_vkey_hashes_from_ppup(update, &self.gen_delegs, &mut required);
+                crate::witnesses::required_vkey_hashes_from_ppup(
+                    update,
+                    &self.gen_delegs,
+                    &mut required,
+                );
             }
             validate_witnesses_if_present(witness_bytes.as_deref(), &required, &tx_id.0)?;
             // MIR genesis quorum check (validateMIRInsufficientGenesisSigs).
@@ -6356,7 +6954,9 @@ impl LedgerState {
             // Native script validation (Babbage)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required_scripts,
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -6364,7 +6964,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -6382,11 +6985,16 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
             )?;
-            let babbage_blk_ref_scripts = collect_reference_script_hashes(&staged, body.reference_inputs.as_deref());
+            let babbage_blk_ref_scripts =
+                collect_reference_script_hashes(&staged, body.reference_inputs.as_deref());
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
-                if babbage_blk_ref_scripts.is_empty() { None } else { Some(&babbage_blk_ref_scripts) },
+                if babbage_blk_ref_scripts.is_empty() {
+                    None
+                } else {
+                    Some(&babbage_blk_ref_scripts)
+                },
             )?;
             // Unspendable UTxO check (Babbage block — no datum on Plutus-locked input).
             crate::plutus_validation::validate_unspendable_utxo_no_datum_hash(
@@ -6397,10 +7005,13 @@ impl LedgerState {
             )?;
             // Supplemental datum check (Babbage — includes reference inputs).
             {
-                let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let tx_outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
-                let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body.reference_inputs
+                let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body
+                    .reference_inputs
                     .as_deref()
                     .unwrap_or(&[])
                     .iter()
@@ -6420,11 +7031,15 @@ impl LedgerState {
             {
                 let mut sorted_inputs = body.inputs.clone();
                 sorted_inputs.sort();
-                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                let sorted_policies: Vec<[u8; 28]> = body
+                    .mint
+                    .as_ref()
                     .map(|m| m.keys().copied().collect())
                     .unwrap_or_default();
                 let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
-                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                let sorted_rewards: Vec<Vec<u8>> = body
+                    .withdrawals
+                    .as_ref()
                     .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                     .unwrap_or_default();
                 crate::plutus_validation::validate_no_extra_redeemers(
@@ -6440,40 +7055,58 @@ impl LedgerState {
                 )?;
             }
             let run_phase2 = || -> Result<(), LedgerError> {
-            // Plutus script validation (Babbage)
-            {
-                let mut sorted_inputs = body.inputs.clone();
-                sorted_inputs.sort();
-                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
-                    .map(|m| m.keys().copied().collect())
-                    .unwrap_or_default();
-                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
-                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
-                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
-                    .unwrap_or_default();
-                let tx_ctx = crate::plutus_validation::TxContext {
-                    tx_hash: tx_id.0,
-                    fee: body.fee,
-                    outputs: body.outputs.iter()
-                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
-                        .collect(),
-                    validity_start: body.validity_interval_start,
-                    ttl: body.ttl,
-                    required_signers: body.required_signers.clone().unwrap_or_default(),
-                    mint: body.mint.clone().unwrap_or_default(),
-                    withdrawals: body.withdrawals.clone().unwrap_or_default(),
-                    reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
-                    protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
-                    ..Default::default()
-                };
-                crate::plutus_validation::validate_plutus_scripts(
-                    evaluator, witness_bytes.as_deref(), &required_scripts,
-                    &staged,
-                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards, &[], &[],
-                    &tx_ctx,
-                    self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
-                )
-            }
+                // Plutus script validation (Babbage)
+                {
+                    let mut sorted_inputs = body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = body
+                        .mint
+                        .as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = body
+                        .withdrawals
+                        .as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    let tx_ctx = crate::plutus_validation::TxContext {
+                        tx_hash: tx_id.0,
+                        fee: body.fee,
+                        outputs: body
+                            .outputs
+                            .iter()
+                            .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                            .collect(),
+                        validity_start: body.validity_interval_start,
+                        ttl: body.ttl,
+                        required_signers: body.required_signers.clone().unwrap_or_default(),
+                        mint: body.mint.clone().unwrap_or_default(),
+                        withdrawals: body.withdrawals.clone().unwrap_or_default(),
+                        reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
+                        protocol_version: self
+                            .protocol_params
+                            .as_ref()
+                            .and_then(|p| p.protocol_version),
+                        ..Default::default()
+                    };
+                    crate::plutus_validation::validate_plutus_scripts(
+                        evaluator,
+                        witness_bytes.as_deref(),
+                        &required_scripts,
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
+                        &tx_ctx,
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|p| p.cost_models.as_ref()),
+                    )
+                }
             };
             if tx_is_valid {
                 match run_phase2() {
@@ -6486,24 +7119,31 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
-            let cert_adj = apply_certificates_and_withdrawals_with_future(
-                &mut staged_pool_state,
-                &mut staged_stake_credentials,
-                &mut staged_committee_state,
-                &mut staged_drep_state,
-                &mut staged_reward_accounts,
-                &mut staged_deposit_pot,
-                &mut staged_gen_delegs,
-                &mut staged_future_gen_delegs,
-                &self.governance_actions,
-                &cert_ctx,
-                body.certificates.as_deref(),
-                body.withdrawals.as_ref(),
-                slot,
-                self.stability_window,
-                self.mir_validation_context(slot, true).as_ref(),
-            )?;
-            staged.apply_babbage_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, cert_adj.total_deposits, cert_adj.total_refunds)?;
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
+                    &mut staged_pool_state,
+                    &mut staged_stake_credentials,
+                    &mut staged_committee_state,
+                    &mut staged_drep_state,
+                    &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
+                    &self.governance_actions,
+                    &cert_ctx,
+                    body.certificates.as_deref(),
+                    body.withdrawals.as_ref(),
+                    slot,
+                    self.stability_window,
+                    self.mir_validation_context(slot, true).as_ref(),
+                )?;
+                staged.apply_babbage_tx_withdrawals(
+                    tx_id.0,
+                    body,
+                    slot,
+                    cert_adj.withdrawal_total,
+                    cert_adj.total_deposits,
+                    cert_adj.total_refunds,
+                )?;
             } else {
                 if evaluator.is_some() {
                     match run_phase2() {
@@ -6565,18 +7205,33 @@ impl LedgerState {
             return Ok(());
         }
 
-        let decoded: Vec<(crate::types::TxId, usize, ConwayTxBody, Option<Vec<u8>>, Option<Vec<u8>>, Option<bool>)> = block
+        let decoded: Vec<(
+            crate::types::TxId,
+            usize,
+            ConwayTxBody,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            Option<bool>,
+        )> = block
             .transactions
             .iter()
             .map(|tx| {
                 let body = ConwayTxBody::from_cbor_bytes(&tx.body)?;
-                Ok((tx.id, tx.serialized_size(), body, tx.witnesses.clone(), tx.auxiliary_data.clone(), tx.is_valid))
+                Ok((
+                    tx.id,
+                    tx.serialized_size(),
+                    body,
+                    tx.witnesses.clone(),
+                    tx.auxiliary_data.clone(),
+                    tx.is_valid,
+                ))
             })
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         // BBODY rule: block-level ExUnits limit.
         {
-            let wb_refs: Vec<Option<&[u8]>> = decoded.iter()
+            let wb_refs: Vec<Option<&[u8]>> = decoded
+                .iter()
                 .map(|(_, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
@@ -6595,21 +7250,30 @@ impl LedgerState {
         // BEFORE its own outputs are added.
         // Reference: `Cardano.Ledger.Conway.Rules.Bbody` — `totalRefScriptSizeInBlock`.
         {
-            let pv = self.protocol_params.as_ref().and_then(|p| p.protocol_version);
+            let pv = self
+                .protocol_params
+                .as_ref()
+                .and_then(|p| p.protocol_version);
             let use_running_utxo = conway_post_pv10(pv);
             let mut block_ref_total: usize = 0;
             if use_running_utxo {
                 // PV > 10: fold with a running UTxO overlay that accumulates
                 // newly produced outputs from preceding txs.
-                let mut overlay: std::collections::HashMap<ShelleyTxIn, MultiEraTxOut> = std::collections::HashMap::new();
+                let mut overlay: std::collections::HashMap<ShelleyTxIn, MultiEraTxOut> =
+                    std::collections::HashMap::new();
                 for (tx_id, _, body, _, _, is_valid) in &decoded {
                     // Measure ref-script size from ORIGINAL utxo + overlay
                     // (overlay entries take precedence conceptually but won't
                     // collide with existing entries since they use fresh TxIds).
                     let mut tx_ref_size: usize = 0;
-                    for input in body.inputs.iter().chain(body.reference_inputs.as_deref().unwrap_or(&[]).iter()) {
+                    for input in body
+                        .inputs
+                        .iter()
+                        .chain(body.reference_inputs.as_deref().unwrap_or(&[]).iter())
+                    {
                         // Check overlay first, then original UTxO.
-                        let txout = overlay.get(input)
+                        let txout = overlay
+                            .get(input)
                             .or_else(|| self.multi_era_utxo.get(input));
                         if let Some(out) = txout {
                             if let Some(sr) = out.script_ref() {
@@ -6622,7 +7286,10 @@ impl LedgerState {
                     let tx_is_valid = is_valid.unwrap_or(true);
                     if tx_is_valid {
                         for (idx, out) in body.outputs.iter().enumerate() {
-                            let txin = ShelleyTxIn { transaction_id: tx_id.0, index: idx as u16 };
+                            let txin = ShelleyTxIn {
+                                transaction_id: tx_id.0,
+                                index: idx as u16,
+                            };
                             overlay.insert(txin, MultiEraTxOut::Babbage(out.clone()));
                         }
                     } else if let Some(collateral_return) = &body.collateral_return {
@@ -6639,10 +7306,8 @@ impl LedgerState {
                 // PV <= 10: use pre-block UTxO (static) for all txs.
                 for (_, _, body, _, _, _) in &decoded {
                     block_ref_total = block_ref_total.saturating_add(
-                        self.multi_era_utxo.total_ref_scripts_size(
-                            &body.inputs,
-                            body.reference_inputs.as_deref(),
-                        ),
+                        self.multi_era_utxo
+                            .total_ref_scripts_size(&body.inputs, body.reference_inputs.as_deref()),
                     );
                 }
             }
@@ -6666,7 +7331,8 @@ impl LedgerState {
         let mut staged_governance_actions = self.governance_actions.clone();
         let mut staged_utxos_donation: u64 = 0;
         let mut staged_num_dormant = self.num_dormant_epochs;
-        let drep_activity = self.protocol_params
+        let drep_activity = self
+            .protocol_params
             .as_ref()
             .and_then(|pp| pp.drep_activity)
             .unwrap_or(0);
@@ -6677,7 +7343,9 @@ impl LedgerState {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             // Conway UTXOW: validateScriptsWellFormed.
             if let Some(eval) = evaluator {
@@ -6707,7 +7375,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -6733,32 +7404,45 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
                 Some(&required_scripts),
-                self.protocol_params.as_ref().and_then(|p| p.protocol_version),
+                self.protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version),
             )?;
             let total_eu = sum_redeemer_ex_units_from_bytes(witness_bytes.as_deref());
             if let Some(params) = &self.protocol_params {
-                let outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
-                let coll_ret = body.collateral_return.as_ref().map(|o| MultiEraTxOut::Babbage(o.clone()));
-                let ref_scripts_size = staged.total_ref_scripts_size(
-                    &body.inputs,
-                    body.reference_inputs.as_deref(),
-                );
+                let coll_ret = body
+                    .collateral_return
+                    .as_ref()
+                    .map(|o| MultiEraTxOut::Babbage(o.clone()));
+                let ref_scripts_size =
+                    staged.total_ref_scripts_size(&body.inputs, body.reference_inputs.as_deref());
                 validate_alonzo_plus_tx(
-                    params, &staged, *tx_size, body.fee, &outputs,
-                    body.collateral.as_deref(), total_eu.as_ref(),
-                    coll_ret.as_ref(), body.total_collateral, total_eu.is_some(),
+                    params,
+                    &staged,
+                    *tx_size,
+                    body.fee,
+                    &outputs,
+                    body.collateral.as_deref(),
+                    total_eu.as_ref(),
+                    coll_ret.as_ref(),
+                    body.total_collateral,
+                    total_eu.is_some(),
                     ref_scripts_size,
+                    true,
                 )?;
                 // Per-redeemer ExUnits check (upstream validateExUnitsTooBigUTxO).
-                validate_per_redeemer_ex_units_from_bytes(
-                    witness_bytes.as_deref(), params,
-                )?;
+                validate_per_redeemer_ex_units_from_bytes(witness_bytes.as_deref(), params)?;
             }
             // Network validation (Conway UTXO rule: WrongNetwork + WrongNetworkInTxBody)
             if let Some(expected_net) = self.expected_network_id {
-                let mut outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let mut outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
                 // Upstream allSizedOutputsTxBodyF includes collateral_return.
@@ -6773,7 +7457,9 @@ impl LedgerState {
             }
             let mut required = HashSet::new();
             crate::witnesses::required_vkey_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required,
+                &body.inputs,
+                &staged,
+                &mut required,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -6798,7 +7484,9 @@ impl LedgerState {
             // Native script validation (Conway)
             let mut required_scripts = HashSet::new();
             crate::witnesses::required_script_hashes_from_inputs_multi_era(
-                &body.inputs, &staged, &mut required_scripts,
+                &body.inputs,
+                &staged,
+                &mut required_scripts,
             );
             if let Some(certs) = &body.certificates {
                 for cert in certs {
@@ -6806,7 +7494,10 @@ impl LedgerState {
                 }
             }
             if let Some(withdrawals) = &body.withdrawals {
-                crate::witnesses::required_script_hashes_from_withdrawals(withdrawals, &mut required_scripts);
+                crate::witnesses::required_script_hashes_from_withdrawals(
+                    withdrawals,
+                    &mut required_scripts,
+                );
             }
             if let Some(mint) = &body.mint {
                 crate::witnesses::required_script_hashes_from_mint(mint, &mut required_scripts);
@@ -6836,17 +7527,23 @@ impl LedgerState {
                 body.reference_inputs.as_deref(),
                 Some(&body.inputs),
             )?;
-            let conway_blk_ref_scripts = collect_reference_script_hashes(&staged, body.reference_inputs.as_deref());
+            let conway_blk_ref_scripts =
+                collect_reference_script_hashes(&staged, body.reference_inputs.as_deref());
             validate_no_extraneous_script_witnesses(
                 witness_bytes.as_deref(),
                 &required_scripts,
-                if conway_blk_ref_scripts.is_empty() { None } else { Some(&conway_blk_ref_scripts) },
+                if conway_blk_ref_scripts.is_empty() {
+                    None
+                } else {
+                    Some(&conway_blk_ref_scripts)
+                },
             )?;
             // Unspendable UTxO check (Conway block — no datum on Plutus-locked input).
             // CIP-0069: collect PlutusV3 script hashes for V3 datum exemption.
             let conway_blk_v3_hashes = {
                 let ws_bytes = witness_bytes.as_deref();
-                let ws_decoded = ws_bytes.map(|wb| crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb));
+                let ws_decoded =
+                    ws_bytes.map(|wb| crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb));
                 let ws_ref = match &ws_decoded {
                     Some(Ok(w)) => Some(w),
                     _ => None,
@@ -6861,14 +7558,21 @@ impl LedgerState {
                 &staged,
                 &body.inputs,
                 &native_satisfied,
-                if conway_blk_v3_hashes.is_empty() { None } else { Some(&conway_blk_v3_hashes) },
+                if conway_blk_v3_hashes.is_empty() {
+                    None
+                } else {
+                    Some(&conway_blk_v3_hashes)
+                },
             )?;
             // Supplemental datum check (Conway — includes reference inputs).
             {
-                let tx_outputs: Vec<MultiEraTxOut> = body.outputs.iter()
+                let tx_outputs: Vec<MultiEraTxOut> = body
+                    .outputs
+                    .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
-                let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body.reference_inputs
+                let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body
+                    .reference_inputs
                     .as_deref()
                     .unwrap_or(&[])
                     .iter()
@@ -6888,24 +7592,28 @@ impl LedgerState {
             {
                 let mut sorted_inputs = body.inputs.clone();
                 sorted_inputs.sort();
-                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
+                let sorted_policies: Vec<[u8; 28]> = body
+                    .mint
+                    .as_ref()
                     .map(|m| m.keys().copied().collect())
                     .unwrap_or_default();
                 let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
-                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
+                let sorted_rewards: Vec<Vec<u8>> = body
+                    .withdrawals
+                    .as_ref()
                     .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
                     .unwrap_or_default();
-                let sorted_voters: Vec<crate::eras::conway::Voter> = body.voting_procedures.as_ref()
+                let sorted_voters: Vec<crate::eras::conway::Voter> = body
+                    .voting_procedures
+                    .as_ref()
                     .map(|vp| {
                         let mut vs: Vec<_> = vp.procedures.keys().cloned().collect();
                         vs.sort();
                         vs
                     })
                     .unwrap_or_default();
-                let proposal_slice: Vec<crate::eras::conway::ProposalProcedure> = body.proposal_procedures
-                    .as_deref()
-                    .unwrap_or(&[])
-                    .to_vec();
+                let proposal_slice: Vec<crate::eras::conway::ProposalProcedure> =
+                    body.proposal_procedures.as_deref().unwrap_or(&[]).to_vec();
                 crate::plutus_validation::validate_no_extra_redeemers(
                     witness_bytes.as_deref(),
                     &staged,
@@ -6919,49 +7627,68 @@ impl LedgerState {
                 )?;
             }
             let run_phase2 = || -> Result<(), LedgerError> {
-            // Plutus script validation (Conway)
-            {
-                let mut sorted_inputs = body.inputs.clone();
-                sorted_inputs.sort();
-                let sorted_policies: Vec<[u8; 28]> = body.mint.as_ref()
-                    .map(|m| m.keys().copied().collect())
-                    .unwrap_or_default();
-                let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
-                let sorted_rewards: Vec<Vec<u8>> = body.withdrawals.as_ref()
-                    .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
-                    .unwrap_or_default();
-                let sorted_voters: Vec<crate::eras::conway::Voter> = body.voting_procedures.as_ref()
-                    .map(|v| v.procedures.keys().cloned().collect())
-                    .unwrap_or_default();
-                let proposal_slice = body.proposal_procedures.as_deref().unwrap_or(&[]);
-                let tx_ctx = crate::plutus_validation::TxContext {
-                    tx_hash: tx_id.0,
-                    fee: body.fee,
-                    outputs: body.outputs.iter()
-                        .map(|o| MultiEraTxOut::Babbage(o.clone()))
-                        .collect(),
-                    validity_start: body.validity_interval_start,
-                    ttl: body.ttl,
-                    required_signers: body.required_signers.clone().unwrap_or_default(),
-                    mint: body.mint.clone().unwrap_or_default(),
-                    withdrawals: body.withdrawals.clone().unwrap_or_default(),
-                    reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
-                    current_treasury_value: body.current_treasury_value,
-                    treasury_donation: body.treasury_donation,
-                    voting_procedures: body.voting_procedures.clone(),
-                    proposal_procedures: proposal_slice.to_vec(),
-                    protocol_version: self.protocol_params.as_ref().and_then(|p| p.protocol_version),
-                    ..Default::default()
-                };
-                crate::plutus_validation::validate_plutus_scripts(
-                    evaluator, witness_bytes.as_deref(), &required_scripts,
-                    &staged,
-                    &sorted_inputs, &sorted_policies, certs_slice, &sorted_rewards,
-                    &sorted_voters, proposal_slice,
-                    &tx_ctx,
-                    self.protocol_params.as_ref().and_then(|p| p.cost_models.as_ref()),
-                )
-            }
+                // Plutus script validation (Conway)
+                {
+                    let mut sorted_inputs = body.inputs.clone();
+                    sorted_inputs.sort();
+                    let sorted_policies: Vec<[u8; 28]> = body
+                        .mint
+                        .as_ref()
+                        .map(|m| m.keys().copied().collect())
+                        .unwrap_or_default();
+                    let certs_slice = body.certificates.as_deref().unwrap_or(&[]);
+                    let sorted_rewards: Vec<Vec<u8>> = body
+                        .withdrawals
+                        .as_ref()
+                        .map(|w| w.keys().map(|ra| ra.to_bytes().to_vec()).collect())
+                        .unwrap_or_default();
+                    let sorted_voters: Vec<crate::eras::conway::Voter> = body
+                        .voting_procedures
+                        .as_ref()
+                        .map(|v| v.procedures.keys().cloned().collect())
+                        .unwrap_or_default();
+                    let proposal_slice = body.proposal_procedures.as_deref().unwrap_or(&[]);
+                    let tx_ctx = crate::plutus_validation::TxContext {
+                        tx_hash: tx_id.0,
+                        fee: body.fee,
+                        outputs: body
+                            .outputs
+                            .iter()
+                            .map(|o| MultiEraTxOut::Babbage(o.clone()))
+                            .collect(),
+                        validity_start: body.validity_interval_start,
+                        ttl: body.ttl,
+                        required_signers: body.required_signers.clone().unwrap_or_default(),
+                        mint: body.mint.clone().unwrap_or_default(),
+                        withdrawals: body.withdrawals.clone().unwrap_or_default(),
+                        reference_inputs: body.reference_inputs.clone().unwrap_or_default(),
+                        current_treasury_value: body.current_treasury_value,
+                        treasury_donation: body.treasury_donation,
+                        voting_procedures: body.voting_procedures.clone(),
+                        proposal_procedures: proposal_slice.to_vec(),
+                        protocol_version: self
+                            .protocol_params
+                            .as_ref()
+                            .and_then(|p| p.protocol_version),
+                        ..Default::default()
+                    };
+                    crate::plutus_validation::validate_plutus_scripts(
+                        evaluator,
+                        witness_bytes.as_deref(),
+                        &required_scripts,
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &sorted_voters,
+                        proposal_slice,
+                        &tx_ctx,
+                        self.protocol_params
+                            .as_ref()
+                            .and_then(|p| p.cost_models.as_ref()),
+                    )
+                }
             };
             if tx_is_valid {
                 match run_phase2() {
@@ -6974,165 +7701,185 @@ impl LedgerState {
                     }
                     Err(e) => return Err(e),
                 }
-            // Conway LEDGER rule: total reference script size limit
-            // (upstream runs inside IsValid True branch).
-            staged.validate_tx_ref_scripts_size(
-                &body.inputs,
-                body.reference_inputs.as_deref(),
-            )?;
-            // Conway LEDGER rule: treasury value consistency
-            // (upstream `validateTreasuryValue`, inside IsValid True branch).
-            validate_conway_current_treasury_value(body.current_treasury_value, current_treasury)?;
-            // Conway LEDGER rule: withdrawal credentials must be delegated
-            // to a DRep (post-bootstrap only, uses pre-CERTS state).
-            validate_withdrawals_delegated(
-                body.withdrawals.as_ref(),
-                &staged_stake_credentials,
-                cert_ctx.bootstrap_phase,
-            )?;
-            let unregistered_drep_voters = collect_conway_unregistered_drep_voters(
-                body.certificates.as_deref(),
-            );
-
-            // Upstream `updateDormantDRepExpiries` — bump all DRep
-            // expiries and reset dormant counter when tx has proposals.
-            update_dormant_drep_expiries(
-                body.proposal_procedures.as_ref().map_or(false, |p| !p.is_empty()),
-                &mut staged_drep_state,
-                &mut staged_num_dormant,
-                self.current_epoch,
-                drep_activity,
-            );
-
-            if body.voting_procedures.is_some()
-                || body.proposal_procedures.is_some()
-                || !unregistered_drep_voters.is_empty()
-            {
-                let (
-                    governance_pool_state,
-                    governance_stake_credentials,
-                    governance_committee_state,
-                    governance_drep_state,
-                ) = conway_governance_state_after_certificates(
-                    &staged_pool_state,
+                // Conway LEDGER rule: total reference script size limit
+                // (upstream runs inside IsValid True branch).
+                staged
+                    .validate_tx_ref_scripts_size(&body.inputs, body.reference_inputs.as_deref())?;
+                // Conway LEDGER rule: treasury value consistency
+                // (upstream `validateTreasuryValue`, inside IsValid True branch).
+                validate_conway_current_treasury_value(
+                    body.current_treasury_value,
+                    current_treasury,
+                )?;
+                // Conway LEDGER rule: withdrawal credentials must be delegated
+                // to a DRep (post-bootstrap only, uses pre-CERTS state).
+                validate_withdrawals_delegated(
+                    body.withdrawals.as_ref(),
                     &staged_stake_credentials,
-                    &staged_committee_state,
-                    &staged_drep_state,
-                    &staged_reward_accounts,
-                    &staged_deposit_pot,
-                    &staged_gen_delegs,
-                    &staged_governance_actions,
+                    cert_ctx.bootstrap_phase,
+                )?;
+                let unregistered_drep_voters =
+                    collect_conway_unregistered_drep_voters(body.certificates.as_deref());
+
+                // Upstream `updateDormantDRepExpiries` — bump all DRep
+                // expiries and reset dormant counter when tx has proposals.
+                update_dormant_drep_expiries(
+                    body.proposal_procedures
+                        .as_ref()
+                        .map_or(false, |p| !p.is_empty()),
+                    &mut staged_drep_state,
+                    &mut staged_num_dormant,
+                    self.current_epoch,
+                    drep_activity,
+                );
+
+                if body.voting_procedures.is_some()
+                    || body.proposal_procedures.is_some()
+                    || !unregistered_drep_voters.is_empty()
+                {
+                    let (
+                        governance_pool_state,
+                        governance_stake_credentials,
+                        governance_committee_state,
+                        governance_drep_state,
+                    ) = conway_governance_state_after_certificates(
+                        &staged_pool_state,
+                        &staged_stake_credentials,
+                        &staged_committee_state,
+                        &staged_drep_state,
+                        &staged_reward_accounts,
+                        &staged_deposit_pot,
+                        &staged_gen_delegs,
+                        &staged_governance_actions,
+                        &cert_ctx,
+                        body.certificates.as_deref(),
+                    )?;
+
+                    let mut governance_actions_for_tx = staged_governance_actions.clone();
+
+                    if let Some(voting_procedures) = &body.voting_procedures {
+                        // Upstream: UnelectedCommitteeVoters check runs first
+                        // (hardforkConwayDisallowUnelectedCommitteeFromVoting).
+                        validate_unelected_committee_voters(
+                            voting_procedures,
+                            &governance_committee_state,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.protocol_version),
+                        )?;
+                        validate_conway_voters(
+                            voting_procedures,
+                            &governance_pool_state,
+                            &governance_committee_state,
+                            &governance_drep_state,
+                        )?;
+                    }
+
+                    if let Some(proposal_procedures) = &body.proposal_procedures {
+                        validate_conway_proposals(
+                            *tx_id,
+                            proposal_procedures,
+                            self.current_epoch,
+                            &mut governance_actions_for_tx,
+                            &governance_stake_credentials,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.protocol_version),
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.gov_action_deposit),
+                            self.expected_network_id,
+                            self.protocol_params.as_ref(),
+                            &self.enact_state,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.gov_action_lifetime),
+                        )?;
+                    }
+
+                    if let Some(voting_procedures) = &body.voting_procedures {
+                        validate_conway_vote_targets(
+                            voting_procedures,
+                            &governance_actions_for_tx,
+                        )?;
+                        validate_conway_voter_permissions(
+                            self.current_epoch,
+                            voting_procedures,
+                            &governance_actions_for_tx,
+                            self.protocol_params
+                                .as_ref()
+                                .and_then(|params| params.protocol_version),
+                        )?;
+                    }
+
+                    staged_governance_actions = governance_actions_for_tx;
+                    if let Some(voting_procedures) = &body.voting_procedures {
+                        apply_conway_votes(
+                            voting_procedures,
+                            &mut staged_governance_actions,
+                            &mut staged_drep_state,
+                            self.current_epoch,
+                            staged_num_dormant,
+                            cert_ctx.bootstrap_phase,
+                        );
+                    }
+                    remove_conway_drep_votes(
+                        &unregistered_drep_voters,
+                        &mut staged_governance_actions,
+                    );
+                }
+                let cert_adj = apply_certificates_and_withdrawals_with_future(
+                    &mut staged_pool_state,
+                    &mut staged_stake_credentials,
+                    &mut staged_committee_state,
+                    &mut staged_drep_state,
+                    &mut staged_reward_accounts,
+                    &mut staged_deposit_pot,
+                    &mut staged_gen_delegs,
+                    &mut staged_future_gen_delegs,
+                    &self.governance_actions,
                     &cert_ctx,
                     body.certificates.as_deref(),
+                    body.withdrawals.as_ref(),
+                    slot,
+                    self.stability_window,
+                    None, // Conway: MIR certs rejected as UnsupportedCertificate
                 )?;
-
-                let mut governance_actions_for_tx = staged_governance_actions.clone();
-
-                if let Some(voting_procedures) = &body.voting_procedures {
-                    // Upstream: UnelectedCommitteeVoters check runs first
-                    // (hardforkConwayDisallowUnelectedCommitteeFromVoting).
-                    validate_unelected_committee_voters(
-                        voting_procedures,
-                        &governance_committee_state,
-                        self.protocol_params
-                            .as_ref()
-                            .and_then(|params| params.protocol_version),
-                    )?;
-                    validate_conway_voters(
-                        voting_procedures,
-                        &governance_pool_state,
-                        &governance_committee_state,
-                        &governance_drep_state,
-                    )?;
-                }
-
-                if let Some(proposal_procedures) = &body.proposal_procedures {
-                    validate_conway_proposals(
-                        *tx_id,
-                        proposal_procedures,
-                        self.current_epoch,
-                        &mut governance_actions_for_tx,
-                        &governance_stake_credentials,
-                        self.protocol_params
-                            .as_ref()
-                            .and_then(|params| params.protocol_version),
-                        self.protocol_params
-                            .as_ref()
-                            .and_then(|params| params.gov_action_deposit),
-                        self.expected_network_id,
-                        self.protocol_params.as_ref(),
-                        &self.enact_state,
-                        self.protocol_params
-                            .as_ref()
-                            .and_then(|params| params.gov_action_lifetime),
-                    )?;
-                }
-
-                if let Some(voting_procedures) = &body.voting_procedures {
-                    validate_conway_vote_targets(voting_procedures, &governance_actions_for_tx)?;
-                    validate_conway_voter_permissions(
-                        self.current_epoch,
-                        voting_procedures,
-                        &governance_actions_for_tx,
-                        self.protocol_params
-                            .as_ref()
-                            .and_then(|params| params.protocol_version),
-                    )?;
-                }
-
-                staged_governance_actions = governance_actions_for_tx;
-                if let Some(voting_procedures) = &body.voting_procedures {
-                    apply_conway_votes(voting_procedures, &mut staged_governance_actions, &mut staged_drep_state, self.current_epoch, staged_num_dormant, cert_ctx.bootstrap_phase);
-                }
-                remove_conway_drep_votes(
-                    &unregistered_drep_voters,
-                    &mut staged_governance_actions,
+                // Track DRep activity for registration and update certificates.
+                touch_drep_activity_for_certs(
+                    body.certificates.as_deref(),
+                    &mut staged_drep_state,
+                    self.current_epoch,
+                    staged_num_dormant,
+                    cert_ctx.bootstrap_phase,
                 );
-            }
-            let cert_adj = apply_certificates_and_withdrawals_with_future(
-                &mut staged_pool_state,
-                &mut staged_stake_credentials,
-                &mut staged_committee_state,
-                &mut staged_drep_state,
-                &mut staged_reward_accounts,
-                &mut staged_deposit_pot,
-                &mut staged_gen_delegs,
-                &mut staged_future_gen_delegs,
-                &self.governance_actions,
-                &cert_ctx,
-                body.certificates.as_deref(),
-                body.withdrawals.as_ref(),
-                slot,
-                self.stability_window,
-                None, // Conway: MIR certs rejected as UnsupportedCertificate
-            )?;
-            // Track DRep activity for registration and update certificates.
-            touch_drep_activity_for_certs(
-                body.certificates.as_deref(),
-                &mut staged_drep_state,
-                self.current_epoch,
-                staged_num_dormant,
-                cert_ctx.bootstrap_phase,
-            );
-            // Conway UTXO rule: totalTxDeposits includes both certificate
-            // deposits and proposal procedure deposits.
-            // Reference: Cardano.Ledger.Conway.TxInfo — totalTxDeposits.
-            let proposal_deposits: u64 = body.proposal_procedures
-                .as_ref()
-                .map(|ps| ps.iter().map(|p| p.deposit).fold(0u64, u64::saturating_add))
-                .unwrap_or(0);
-            // Track proposal deposits in the deposit pot (upstream oblProposal).
-            staged_deposit_pot.add_proposal_deposit(proposal_deposits);
-            let total_deposits = cert_adj.total_deposits.saturating_add(proposal_deposits);
-            staged.apply_conway_tx_withdrawals(tx_id.0, body, slot, cert_adj.withdrawal_total, total_deposits, cert_adj.total_refunds)?;
-            // Accumulate treasury donation (Conway UTXOS rule).
-            // Reference: Cardano.Ledger.Conway.Rules.Utxo — validateZeroDonation.
-            if let Some(donation) = body.treasury_donation {
-                if donation == 0 {
-                    return Err(LedgerError::ZeroDonation);
+                // Conway UTXO rule: totalTxDeposits includes both certificate
+                // deposits and proposal procedure deposits.
+                // Reference: Cardano.Ledger.Conway.TxInfo — totalTxDeposits.
+                let proposal_deposits: u64 = body
+                    .proposal_procedures
+                    .as_ref()
+                    .map(|ps| ps.iter().map(|p| p.deposit).fold(0u64, u64::saturating_add))
+                    .unwrap_or(0);
+                // Track proposal deposits in the deposit pot (upstream oblProposal).
+                staged_deposit_pot.add_proposal_deposit(proposal_deposits);
+                let total_deposits = cert_adj.total_deposits.saturating_add(proposal_deposits);
+                staged.apply_conway_tx_withdrawals(
+                    tx_id.0,
+                    body,
+                    slot,
+                    cert_adj.withdrawal_total,
+                    total_deposits,
+                    cert_adj.total_refunds,
+                )?;
+                // Accumulate treasury donation (Conway UTXOS rule).
+                // Reference: Cardano.Ledger.Conway.Rules.Utxo — validateZeroDonation.
+                if let Some(donation) = body.treasury_donation {
+                    if donation == 0 {
+                        return Err(LedgerError::ZeroDonation);
+                    }
+                    staged_utxos_donation = staged_utxos_donation.saturating_add(donation);
                 }
-                staged_utxos_donation = staged_utxos_donation.saturating_add(donation);
-            }
             } else {
                 if evaluator.is_some() {
                     match run_phase2() {
@@ -7315,15 +8062,14 @@ fn conway_voter_is_allowed_for_action(
 ) -> bool {
     match voter {
         crate::eras::conway::Voter::CommitteeKeyHash(_)
-        | crate::eras::conway::Voter::CommitteeScript(_) => {
-            !matches!(
-                gov_action,
-                crate::eras::conway::GovAction::NoConfidence { .. }
-                    | crate::eras::conway::GovAction::UpdateCommittee { .. }
-            )
+        | crate::eras::conway::Voter::CommitteeScript(_) => !matches!(
+            gov_action,
+            crate::eras::conway::GovAction::NoConfidence { .. }
+                | crate::eras::conway::GovAction::UpdateCommittee { .. }
+        ),
+        crate::eras::conway::Voter::DRepKeyHash(_) | crate::eras::conway::Voter::DRepScript(_) => {
+            true
         }
-        crate::eras::conway::Voter::DRepKeyHash(_)
-        | crate::eras::conway::Voter::DRepScript(_) => true,
         crate::eras::conway::Voter::StakePool(_) => match gov_action {
             crate::eras::conway::GovAction::NoConfidence { .. }
             | crate::eras::conway::GovAction::UpdateCommittee { .. }
@@ -7509,8 +8255,7 @@ fn conway_bootstrap_vote_is_allowed(
     gov_action: &crate::eras::conway::GovAction,
 ) -> bool {
     match voter {
-        crate::eras::conway::Voter::DRepKeyHash(_)
-        | crate::eras::conway::Voter::DRepScript(_) => {
+        crate::eras::conway::Voter::DRepKeyHash(_) | crate::eras::conway::Voter::DRepScript(_) => {
             matches!(gov_action, crate::eras::conway::GovAction::InfoAction)
         }
         crate::eras::conway::Voter::CommitteeKeyHash(_)
@@ -7531,7 +8276,11 @@ fn conway_expected_previous_hard_fork_version(
     proposal: &crate::eras::conway::ProposalProcedure,
     governance_actions: &BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
     current_protocol_version: Option<(u64, u64)>,
-) -> Option<(Option<crate::eras::conway::GovActionId>, (u64, u64), (u64, u64))> {
+) -> Option<(
+    Option<crate::eras::conway::GovActionId>,
+    (u64, u64),
+    (u64, u64),
+)> {
     use crate::eras::conway::GovAction;
 
     match &proposal.gov_action {
@@ -7647,7 +8396,9 @@ fn apply_conway_votes(
     for (voter, votes) in &voting_procedures.procedures {
         for (gov_action_id, voting_procedure) in votes {
             if let Some(action_state) = governance_actions.get_mut(gov_action_id) {
-                action_state.votes.insert(voter.clone(), voting_procedure.vote);
+                action_state
+                    .votes
+                    .insert(voter.clone(), voting_procedure.vote);
             }
         }
         // Mark DRep as active in the current epoch when it casts any vote.
@@ -7658,7 +8409,11 @@ fn apply_conway_votes(
         // During bootstrap: last_active_epoch = currentEpoch (no dormant).
         if let Some(drep) = voter_to_drep(voter) {
             if let Some(entry) = drep_state.get_mut(&drep) {
-                let dormant = if bootstrap_phase { 0 } else { num_dormant_epochs };
+                let dormant = if bootstrap_phase {
+                    0
+                } else {
+                    num_dormant_epochs
+                };
                 entry.touch_activity(EpochNo(current_epoch.0.saturating_sub(dormant)));
             }
         }
@@ -7685,7 +8440,9 @@ fn collect_conway_unregistered_drep_voters(
     for certificate in certificates {
         if let DCert::DrepUnregistration(credential, _) = certificate {
             let voter = match credential {
-                StakeCredential::AddrKeyHash(hash) => crate::eras::conway::Voter::DRepKeyHash(*hash),
+                StakeCredential::AddrKeyHash(hash) => {
+                    crate::eras::conway::Voter::DRepKeyHash(*hash)
+                }
                 StakeCredential::ScriptHash(hash) => crate::eras::conway::Voter::DRepScript(*hash),
             };
             if !unregistered.contains(&voter) {
@@ -7721,14 +8478,12 @@ fn conway_voter_exists(
     use crate::eras::conway::Voter;
 
     match voter {
-        Voter::CommitteeKeyHash(hash) => committee_hot_credential_exists(
-            committee_state,
-            StakeCredential::AddrKeyHash(*hash),
-        ),
-        Voter::CommitteeScript(hash) => committee_hot_credential_exists(
-            committee_state,
-            StakeCredential::ScriptHash(*hash),
-        ),
+        Voter::CommitteeKeyHash(hash) => {
+            committee_hot_credential_exists(committee_state, StakeCredential::AddrKeyHash(*hash))
+        }
+        Voter::CommitteeScript(hash) => {
+            committee_hot_credential_exists(committee_state, StakeCredential::ScriptHash(*hash))
+        }
         Voter::DRepKeyHash(hash) => drep_state.is_registered(&DRep::KeyHash(*hash)),
         Voter::DRepScript(hash) => drep_state.is_registered(&DRep::ScriptHash(*hash)),
         Voter::StakePool(hash) => pool_state.is_registered(hash),
@@ -7780,8 +8535,7 @@ fn validate_unelected_committee_voters(
         return Ok(());
     }
 
-    let authorized =
-        authorized_elected_hot_committee_credentials(committee_state);
+    let authorized = authorized_elected_hot_committee_credentials(committee_state);
 
     let mut unelected: Vec<StakeCredential> = Vec::new();
     for voter in voting_procedures.procedures.keys() {
@@ -7893,9 +8647,7 @@ fn conway_protocol_param_update_well_formed(
 
     // Upstream: `coinsPerUTxOByte /= 0` only enforced outside bootstrap
     // (hardforkConwayBootstrapPhase pv == False).
-    if !conway_bootstrap_phase(protocol_version)
-        && update.coins_per_utxo_byte == Some(0)
-    {
+    if !conway_bootstrap_phase(protocol_version) && update.coins_per_utxo_byte == Some(0) {
         return false;
     }
 
@@ -7967,7 +8719,11 @@ fn validate_conway_proposals(
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
 
-            if !conway_protocol_param_update_well_formed(protocol_param_update, protocol_params, protocol_version) {
+            if !conway_protocol_param_update_well_formed(
+                protocol_param_update,
+                protocol_params,
+                protocol_version,
+            ) {
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
         }
@@ -8010,8 +8766,8 @@ fn validate_conway_proposals(
                         return Err(LedgerError::InvalidPrevGovActionId(proposal.clone()));
                     }
                 }
-                ConwayGovActionPurpose::TreasuryWithdrawals
-                | ConwayGovActionPurpose::Info => { /* no lineage */ }
+                ConwayGovActionPurpose::TreasuryWithdrawals | ConwayGovActionPurpose::Info => { /* no lineage */
+                }
             }
         }
 
@@ -8069,8 +8825,10 @@ fn validate_conway_proposals(
             }
         }
 
-        let reward_account = RewardAccount::from_bytes(&proposal.reward_account)
-            .ok_or_else(|| LedgerError::InvalidRewardAccountBytes(proposal.reward_account.clone()))?;
+        let reward_account =
+            RewardAccount::from_bytes(&proposal.reward_account).ok_or_else(|| {
+                LedgerError::InvalidRewardAccountBytes(proposal.reward_account.clone())
+            })?;
         if let Some(expected_network) = expected_network_id {
             if reward_account.network != expected_network {
                 return Err(LedgerError::ProposalProcedureNetworkIdMismatch {
@@ -8087,10 +8845,16 @@ fn validate_conway_proposals(
         //   `unless (hardforkConwayBootstrapPhase ...) $ do ...`
         let past_bootstrap = !conway_bootstrap_phase(protocol_version);
         if past_bootstrap && !stake_credentials.is_registered(&reward_account.credential) {
-            return Err(LedgerError::ProposalReturnAccountDoesNotExist(reward_account));
+            return Err(LedgerError::ProposalReturnAccountDoesNotExist(
+                reward_account,
+            ));
         }
 
-        if let GovAction::TreasuryWithdrawals { withdrawals, guardrails_script_hash } = &proposal.gov_action {
+        if let GovAction::TreasuryWithdrawals {
+            withdrawals,
+            guardrails_script_hash,
+        } = &proposal.gov_action
+        {
             for wdrl_account in withdrawals.keys() {
                 if let Some(expected_network) = expected_network_id {
                     if wdrl_account.network != expected_network {
@@ -8139,7 +8903,11 @@ fn validate_conway_proposals(
             }
         }
 
-        if let GovAction::ParameterChange { guardrails_script_hash, .. } = &proposal.gov_action {
+        if let GovAction::ParameterChange {
+            guardrails_script_hash,
+            ..
+        } = &proposal.gov_action
+        {
             // Upstream: checkGuardrailsScriptHash — the proposal's policy
             // hash must match the constitution's guardrails script hash.
             let constitution_hash = enact_state.constitution.guardrails_script_hash;
@@ -8175,9 +8943,7 @@ fn validate_conway_proposals(
                 .filter(|member| members_to_remove.contains(member))
                 .collect();
             if !conflicting_members.is_empty() {
-                return Err(LedgerError::ConflictingCommitteeUpdate(
-                    conflicting_members,
-                ));
+                return Err(LedgerError::ConflictingCommitteeUpdate(conflicting_members));
             }
 
             let invalid_members: Vec<_> = members_to_add
@@ -8255,9 +9021,7 @@ fn validate_withdrawals_delegated(
                 .and_then(|state| state.delegated_drep())
                 .is_some();
             if !has_drep {
-                return Err(LedgerError::WithdrawalNotDelegatedToDRep {
-                    credential: *kh,
-                });
+                return Err(LedgerError::WithdrawalNotDelegatedToDRep { credential: *kh });
             }
         }
         // Script-hash credentials are not checked (upstream filters with `credKeyHash`).
@@ -8356,7 +9120,8 @@ fn schedule_future_genesis_delegation(
     genesis_hash: GenesisHash,
     delegation: GenesisDelegationState,
 ) {
-    future_gen_delegs.retain(|(_, existing_genesis_hash), _| *existing_genesis_hash != genesis_hash);
+    future_gen_delegs
+        .retain(|(_, existing_genesis_hash), _| *existing_genesis_hash != genesis_hash);
     future_gen_delegs.insert((activation_slot, genesis_hash), delegation);
 }
 
@@ -8375,10 +9140,7 @@ fn schedule_future_genesis_delegation(
 /// are absent in Conway.
 ///
 /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — DELEG MIR handling.
-pub fn accumulate_mir_from_certs(
-    ir: &mut InstantaneousRewards,
-    certs: Option<&[DCert]>,
-) {
+pub fn accumulate_mir_from_certs(ir: &mut InstantaneousRewards, certs: Option<&[DCert]>) {
     let Some(certs) = certs else { return };
     for cert in certs {
         if let DCert::MoveInstantaneousReward(pot, target) = cert {
@@ -8396,16 +9158,12 @@ pub fn accumulate_mir_from_certs(
                     let signed_coin = *coin as i64;
                     match pot {
                         MirPot::Reserves => {
-                            ir.delta_reserves =
-                                ir.delta_reserves.saturating_sub(signed_coin);
-                            ir.delta_treasury =
-                                ir.delta_treasury.saturating_add(signed_coin);
+                            ir.delta_reserves = ir.delta_reserves.saturating_sub(signed_coin);
+                            ir.delta_treasury = ir.delta_treasury.saturating_add(signed_coin);
                         }
                         MirPot::Treasury => {
-                            ir.delta_reserves =
-                                ir.delta_reserves.saturating_add(signed_coin);
-                            ir.delta_treasury =
-                                ir.delta_treasury.saturating_sub(signed_coin);
+                            ir.delta_reserves = ir.delta_reserves.saturating_add(signed_coin);
+                            ir.delta_treasury = ir.delta_treasury.saturating_sub(signed_coin);
                         }
                     }
                 }
@@ -8619,7 +9377,11 @@ fn apply_certificates_and_withdrawals_with_future(
                             .get(credential)
                             .map(|s| s.deposit())
                             .unwrap_or(0);
-                        let expected_deposit = if raw_stored > 0 { raw_stored } else { key_deposit };
+                        let expected_deposit = if raw_stored > 0 {
+                            raw_stored
+                        } else {
+                            key_deposit
+                        };
                         if *refund != expected_deposit {
                             return Err(if ctx.post_pv10 {
                                 // PV > 10: new error variant
@@ -8693,7 +9455,13 @@ fn apply_certificates_and_withdrawals_with_future(
                     )?;
                 }
                 DCert::DelegationToDrep(credential, drep) => {
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
+                    delegate_drep(
+                        stake_credentials,
+                        drep_state,
+                        *credential,
+                        *drep,
+                        ctx.bootstrap_phase,
+                    )?;
                 }
                 DCert::DelegationToStakePoolAndDrep(credential, pool, drep) => {
                     delegate_stake_credential(
@@ -8704,7 +9472,13 @@ fn apply_certificates_and_withdrawals_with_future(
                         *pool,
                         true, // Conway-only cert — always check
                     )?;
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
+                    delegate_drep(
+                        stake_credentials,
+                        drep_state,
+                        *credential,
+                        *drep,
+                        ctx.bootstrap_phase,
+                    )?;
                 }
                 DCert::AccountRegistrationDelegationToDrep(credential, drep, deposit) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
@@ -8732,9 +9506,20 @@ fn apply_certificates_and_withdrawals_with_future(
                         deposit_pot.add_key_deposit(*deposit);
                         total_deposits = total_deposits.saturating_add(*deposit);
                     }
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
+                    delegate_drep(
+                        stake_credentials,
+                        drep_state,
+                        *credential,
+                        *drep,
+                        ctx.bootstrap_phase,
+                    )?;
                 }
-                DCert::AccountRegistrationDelegationToStakePoolAndDrep(credential, pool, drep, deposit) => {
+                DCert::AccountRegistrationDelegationToStakePoolAndDrep(
+                    credential,
+                    pool,
+                    drep,
+                    deposit,
+                ) => {
                     // Conway DELEG rule: deposit must match ppKeyDeposit.
                     // PV split follows `hardforkConwayDELEGIncorrectDepositsAndRefunds`.
                     if ctx.is_conway && *deposit != key_deposit {
@@ -8768,7 +9553,13 @@ fn apply_certificates_and_withdrawals_with_future(
                         *pool,
                         true, // Conway-only cert — always check
                     )?;
-                    delegate_drep(stake_credentials, drep_state, *credential, *drep, ctx.bootstrap_phase)?;
+                    delegate_drep(
+                        stake_credentials,
+                        drep_state,
+                        *credential,
+                        *drep,
+                        ctx.bootstrap_phase,
+                    )?;
                 }
                 DCert::CommitteeAuthorization(cold_credential, hot_credential) => {
                     authorize_committee_hot_credential(
@@ -8841,7 +9632,8 @@ fn apply_certificates_and_withdrawals_with_future(
                     // `hardforkConwayDisallowDuplicatedVRFKeys pv = pvMajor pv > natVersion @10`.
                     if ctx.post_pv10 {
                         let is_new = !pool_state.is_registered(&params.operator);
-                        if let Some(existing) = pool_state.find_pool_by_vrf_key(&params.vrf_keyhash) {
+                        if let Some(existing) = pool_state.find_pool_by_vrf_key(&params.vrf_keyhash)
+                        {
                             // For new registration: VRF must not be used at all.
                             // For re-registration: VRF may be the same pool's own key.
                             if is_new || existing != params.operator {
@@ -8993,7 +9785,9 @@ fn apply_certificates_and_withdrawals_with_future(
                                     //    Upstream: `MIRNegativesNotCurrentlyAllowed`.
                                     for (_, &delta) in map.iter() {
                                         if delta < 0 {
-                                            return Err(LedgerError::MIRNegativesNotCurrentlyAllowed);
+                                            return Err(
+                                                LedgerError::MIRNegativesNotCurrentlyAllowed,
+                                            );
                                         }
                                     }
                                 } else {
@@ -9001,8 +9795,12 @@ fn apply_certificates_and_withdrawals_with_future(
                                     //    not produce negatives.
                                     //    Upstream: `MIRProducesNegativeUpdate`.
                                     let ir_map = match pot {
-                                        MirPot::Reserves => &mir_ctx.instantaneous_rewards.ir_reserves,
-                                        MirPot::Treasury => &mir_ctx.instantaneous_rewards.ir_treasury,
+                                        MirPot::Reserves => {
+                                            &mir_ctx.instantaneous_rewards.ir_reserves
+                                        }
+                                        MirPot::Treasury => {
+                                            &mir_ctx.instantaneous_rewards.ir_treasury
+                                        }
                                     };
                                     for (cred, &delta) in map.iter() {
                                         let existing = ir_map.get(cred).copied().unwrap_or(0);
@@ -9037,8 +9835,12 @@ fn apply_certificates_and_withdrawals_with_future(
                                 let available = if mir_ctx.alonzo_mir_transfers {
                                     // Alonzo+: add delta for this pot.
                                     let delta = match pot {
-                                        MirPot::Reserves => mir_ctx.instantaneous_rewards.delta_reserves,
-                                        MirPot::Treasury => mir_ctx.instantaneous_rewards.delta_treasury,
+                                        MirPot::Reserves => {
+                                            mir_ctx.instantaneous_rewards.delta_reserves
+                                        }
+                                        MirPot::Treasury => {
+                                            mir_ctx.instantaneous_rewards.delta_treasury
+                                        }
                                     };
                                     if delta >= 0 {
                                         pot_balance.saturating_add(delta as u64)
@@ -9084,19 +9886,20 @@ fn apply_certificates_and_withdrawals_with_future(
                                     MirPot::Treasury => mir_ctx.treasury,
                                 };
                                 let delta = match pot {
-                                    MirPot::Reserves => mir_ctx.instantaneous_rewards.delta_reserves,
-                                    MirPot::Treasury => mir_ctx.instantaneous_rewards.delta_treasury,
+                                    MirPot::Reserves => {
+                                        mir_ctx.instantaneous_rewards.delta_reserves
+                                    }
+                                    MirPot::Treasury => {
+                                        mir_ctx.instantaneous_rewards.delta_treasury
+                                    }
                                 };
                                 let with_delta = if delta >= 0 {
                                     pot_balance.saturating_add(delta as u64)
                                 } else {
                                     pot_balance.saturating_sub((-delta) as u64)
                                 };
-                                let ir_committed: u64 = ir_map
-                                    .values()
-                                    .filter(|&&v| v > 0)
-                                    .map(|&v| v as u64)
-                                    .sum();
+                                let ir_committed: u64 =
+                                    ir_map.values().filter(|&&v| v > 0).map(|&v| v as u64).sum();
                                 let available_after = with_delta.saturating_sub(ir_committed);
                                 if *coin > available_after {
                                     return Err(LedgerError::MIRInsufficientForTransfer {
@@ -9113,7 +9916,11 @@ fn apply_certificates_and_withdrawals_with_future(
         }
     }
 
-    Ok(CertBalanceAdjustment { withdrawal_total, total_deposits, total_refunds })
+    Ok(CertBalanceAdjustment {
+        withdrawal_total,
+        total_deposits,
+        total_refunds,
+    })
 }
 
 fn register_stake_credential(
@@ -9405,8 +10212,7 @@ fn touch_drep_activity_for_certs(
     };
     for cert in certs {
         let credential = match cert {
-            DCert::DrepRegistration(c, _, _)
-            | DCert::DrepUpdate(c, _) => *c,
+            DCert::DrepRegistration(c, _, _) | DCert::DrepUpdate(c, _) => *c,
             _ => continue,
         };
         let drep = drep_from_credential(credential);
@@ -9417,7 +10223,11 @@ fn touch_drep_activity_for_certs(
             // In our model: last_active_epoch = currentEpoch - dormant
             //
             // During bootstrap: last_active_epoch = currentEpoch (no dormant).
-            let dormant = if bootstrap_phase { 0 } else { num_dormant_epochs };
+            let dormant = if bootstrap_phase {
+                0
+            } else {
+                num_dormant_epochs
+            };
             entry.touch_activity(EpochNo(current_epoch.0.saturating_sub(dormant)));
         }
     }
@@ -9479,13 +10289,18 @@ fn validate_alonzo_plus_tx(
     total_collateral: Option<u64>,
     has_redeemers: bool,
     ref_scripts_size: usize,
+    enforce_collateral_input_limit: bool,
 ) -> Result<(), LedgerError> {
     crate::fees::validate_tx_size(params, tx_body_size)?;
     // Conway adds the tiered reference-script fee to the minimum.
     // For pre-Conway eras, ref_scripts_size is 0 so this is equivalent
     // to the standard `validate_fee`.
     crate::fees::validate_conway_fee(
-        params, tx_body_size, total_ex_units, ref_scripts_size, declared_fee,
+        params,
+        tx_body_size,
+        total_ex_units,
+        ref_scripts_size,
+        declared_fee,
     )?;
     if let Some(eu) = total_ex_units {
         crate::fees::validate_tx_ex_units(params, eu)?;
@@ -9506,6 +10321,20 @@ fn validate_alonzo_plus_tx(
     crate::min_utxo::validate_no_zero_valued_multi_asset(all_outputs)?;
     crate::min_utxo::validate_output_boot_addr_attrs(all_outputs)?;
 
+    // Babbage/Conway apply this as a standalone UTXO check, independent of
+    // redeemer presence.
+    // Reference: Cardano.Ledger.Babbage.Rules.Utxo — validateTooManyCollateralInputs.
+    if enforce_collateral_input_limit {
+        if let Some(collateral) = collateral_inputs {
+            if let Some(max) = params.max_collateral_inputs {
+                let count = collateral.len();
+                if count > max as usize {
+                    return Err(LedgerError::TooManyCollateralInputs { count, max });
+                }
+            }
+        }
+    }
+
     // When the transaction carries phase-2 scripts (redeemers ≠ ∅),
     // collateral is mandatory.
     // Reference: Cardano.Ledger.Alonzo.Rules.Utxo — feesOK Part 2.
@@ -9516,12 +10345,20 @@ fn validate_alonzo_plus_tx(
         }
     }
 
-    if let Some(collateral) = collateral_inputs {
-        if !collateral.is_empty() {
-            crate::collateral::validate_collateral(
-                params, utxo, collateral, declared_fee,
-                collateral_return, total_collateral,
-            )?;
+    // Upstream `feesOK` only validates collateral when redeemers are present.
+    // Reference: Cardano.Ledger.Alonzo.Rules.Utxo `feesOK` part 2.
+    if has_redeemers {
+        if let Some(collateral) = collateral_inputs {
+            if !collateral.is_empty() {
+                crate::collateral::validate_collateral(
+                    params,
+                    utxo,
+                    collateral,
+                    declared_fee,
+                    collateral_return,
+                    total_collateral,
+                )?;
+            }
         }
     }
     Ok(())
@@ -10075,15 +10912,15 @@ fn shelley_address_network_id(addr_bytes: &[u8]) -> Option<u8> {
 /// Shelley sense.
 ///
 /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetwork`.
-fn validate_output_network_ids(
-    expected: u8,
-    outputs: &[MultiEraTxOut],
-) -> Result<(), LedgerError> {
+fn validate_output_network_ids(expected: u8, outputs: &[MultiEraTxOut]) -> Result<(), LedgerError> {
     for output in outputs {
         let addr_bytes = output.address();
         if let Some(net) = shelley_address_network_id(addr_bytes) {
             if net != expected {
-                return Err(LedgerError::WrongNetwork { expected, found: net });
+                return Err(LedgerError::WrongNetwork {
+                    expected,
+                    found: net,
+                });
             }
         }
     }
@@ -10094,10 +10931,7 @@ fn validate_output_network_ids(
 /// ID.
 ///
 /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetworkWithdrawal`.
-fn validate_withdrawal_network_ids<'a, I>(
-    expected: u8,
-    withdrawals: I,
-) -> Result<(), LedgerError>
+fn validate_withdrawal_network_ids<'a, I>(expected: u8, withdrawals: I) -> Result<(), LedgerError>
 where
     I: IntoIterator<Item = (&'a RewardAccount, &'a u64)>,
 {
@@ -10116,10 +10950,7 @@ where
 /// (Alonzo+) matches the expected network.
 ///
 /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `WrongNetworkInTxBody`.
-fn validate_tx_body_network_id(
-    expected: u8,
-    declared: Option<u8>,
-) -> Result<(), LedgerError> {
+fn validate_tx_body_network_id(expected: u8, declared: Option<u8>) -> Result<(), LedgerError> {
     if let Some(net) = declared {
         if net != expected {
             return Err(LedgerError::WrongNetworkInTxBody {
@@ -10232,16 +11063,11 @@ impl VoteTally {
 ///
 /// This matches the upstream `activeCommitteeSize` calculation inside
 /// `votingCommitteeThresholdInternal`.
-fn count_active_committee_members(
-    committee_state: &CommitteeState,
-    current_epoch: EpochNo,
-) -> u64 {
+fn count_active_committee_members(committee_state: &CommitteeState, current_epoch: EpochNo) -> u64 {
     committee_state
         .iter()
         .filter(|(_, member)| {
-            member.is_enacted_member()
-                && !member.is_resigned()
-                && !member.is_expired(current_epoch)
+            member.is_enacted_member() && !member.is_resigned() && !member.is_expired(current_epoch)
         })
         .count() as u64
 }
@@ -10293,10 +11119,12 @@ pub(crate) fn tally_committee_votes(
         // iterates `committeeMembers`, resolves each cold credential to its
         // hot credential via `votingCommitteeCredentials`, and then looks up
         // the vote keyed by the hot credential.
-        let hot_voter = member_state.hot_credential().map(|hot_cred| match hot_cred {
-            StakeCredential::AddrKeyHash(h) => Voter::CommitteeKeyHash(h),
-            StakeCredential::ScriptHash(h) => Voter::CommitteeScript(h),
-        });
+        let hot_voter = member_state
+            .hot_credential()
+            .map(|hot_cred| match hot_cred {
+                StakeCredential::AddrKeyHash(h) => Voter::CommitteeKeyHash(h),
+                StakeCredential::ScriptHash(h) => Voter::CommitteeScript(h),
+            });
 
         match hot_voter.and_then(|v| action.votes.get(&v)) {
             Some(Vote::Yes) => yes += 1,
@@ -10306,7 +11134,12 @@ pub(crate) fn tally_committee_votes(
         }
     }
 
-    VoteTally { yes, no, abstain, total: eligible }
+    VoteTally {
+        yes,
+        no,
+        abstain,
+        total: eligible,
+    }
 }
 
 /// Tally DRep votes for a governance action, weighted by delegated stake.
@@ -10367,9 +11200,10 @@ pub(crate) fn tally_drep_votes(
             continue;
         };
         // Check activity window.
-        if reg.last_active_epoch.is_some_and(|e| {
-            e.0.saturating_add(drep_activity) < current_epoch.0
-        }) {
+        if reg
+            .last_active_epoch
+            .is_some_and(|e| e.0.saturating_add(drep_activity) < current_epoch.0)
+        {
             continue; // inactive — excluded from quorum
         }
 
@@ -10390,7 +11224,12 @@ pub(crate) fn tally_drep_votes(
         }
     }
 
-    VoteTally { yes, no, abstain, total }
+    VoteTally {
+        yes,
+        no,
+        abstain,
+        total,
+    }
 }
 
 /// Tally stake-pool operator (SPO) votes for a governance action, weighted
@@ -10595,11 +11434,9 @@ pub(crate) fn accepted_by_dreps(
     drep_activity: u64,
     thresholds: &DRepVotingThresholds,
 ) -> bool {
-    let Some(threshold) = drep_threshold_for_action(
-        &action.proposal.gov_action,
-        has_committee,
-        thresholds,
-    ) else {
+    let Some(threshold) =
+        drep_threshold_for_action(&action.proposal.gov_action, has_committee, thresholds)
+    else {
         return true; // no DRep vote required for this action type
     };
 
@@ -10640,11 +11477,9 @@ pub(crate) fn accepted_by_spo(
     thresholds: &PoolVotingThresholds,
     is_bootstrap_phase: bool,
 ) -> bool {
-    let Some(threshold) = spo_threshold_for_action(
-        &action.proposal.gov_action,
-        has_committee,
-        thresholds,
-    ) else {
+    let Some(threshold) =
+        spo_threshold_for_action(&action.proposal.gov_action, has_committee, thresholds)
+    else {
         return true; // no SPO vote required for this action type
     };
     let tally = tally_spo_votes(action, pool_stake_dist, is_bootstrap_phase);
@@ -10682,16 +11517,46 @@ pub(crate) fn ratify_action(
     // `Cardano.Ledger.Conway.Governance.Internal`:
     //   | hardforkConwayBootstrapPhase (pp ^. ppProtocolVersionL) = def
     let zero_drep = DRepVotingThresholds {
-        motion_no_confidence: UnitInterval { numerator: 0, denominator: 1 },
-        committee_normal: UnitInterval { numerator: 0, denominator: 1 },
-        committee_no_confidence: UnitInterval { numerator: 0, denominator: 1 },
-        update_to_constitution: UnitInterval { numerator: 0, denominator: 1 },
-        hard_fork_initiation: UnitInterval { numerator: 0, denominator: 1 },
-        pp_network_group: UnitInterval { numerator: 0, denominator: 1 },
-        pp_economic_group: UnitInterval { numerator: 0, denominator: 1 },
-        pp_technical_group: UnitInterval { numerator: 0, denominator: 1 },
-        pp_gov_group: UnitInterval { numerator: 0, denominator: 1 },
-        treasury_withdrawal: UnitInterval { numerator: 0, denominator: 1 },
+        motion_no_confidence: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        committee_normal: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        committee_no_confidence: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        update_to_constitution: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        hard_fork_initiation: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        pp_network_group: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        pp_economic_group: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        pp_technical_group: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        pp_gov_group: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        treasury_withdrawal: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
     };
     let effective_drep_thresholds = if is_bootstrap_phase {
         &zero_drep
@@ -10708,15 +11573,20 @@ pub(crate) fn ratify_action(
         is_bootstrap_phase,
         has_committee,
     ) && accepted_by_dreps(
-            action,
-            has_committee,
-            drep_state,
-            drep_delegated_stake,
-            current_epoch,
-            drep_activity,
-            effective_drep_thresholds,
-        )
-        && accepted_by_spo(action, has_committee, pool_stake_dist, pool_thresholds, is_bootstrap_phase)
+        action,
+        has_committee,
+        drep_state,
+        drep_delegated_stake,
+        current_epoch,
+        drep_activity,
+        effective_drep_thresholds,
+    ) && accepted_by_spo(
+        action,
+        has_committee,
+        pool_stake_dist,
+        pool_thresholds,
+        is_bootstrap_phase,
+    )
 }
 
 #[cfg(test)]
@@ -10782,7 +11652,10 @@ mod tests {
     fn pool_state_relay_access_points_deduplicate_across_pools() {
         let mut pool_state = PoolState::new();
         pool_state.register(sample_pool_params(
-            vec![Relay::SingleHostName(Some(3001), "shared.example".to_owned())],
+            vec![Relay::SingleHostName(
+                Some(3001),
+                "shared.example".to_owned(),
+            )],
             1,
         ));
         pool_state.register(sample_pool_params(
@@ -10836,7 +11709,13 @@ mod tests {
 
         let checkpoint = state.checkpoint();
         let restored = checkpoint.restore();
-        assert_eq!(restored.governance_action(&gov_action_id).unwrap().proposal(), &proposal);
+        assert_eq!(
+            restored
+                .governance_action(&gov_action_id)
+                .unwrap()
+                .proposal(),
+            &proposal
+        );
 
         let round_trip = LedgerStateCheckpoint::from_cbor_bytes(&checkpoint.to_cbor_bytes())
             .expect("checkpoint round-trip");
@@ -11313,7 +12192,7 @@ mod tests {
         assert_eq!(ra.balance(&ra1), 1200); // 1000 + 200
         assert_eq!(ra.balance(&ra2), 600); // 500 + 100
         assert_eq!(acc.treasury, 4700); // 5000 - 300
-        // No lineage tracked for treasury withdrawals.
+                                        // No lineage tracked for treasury withdrawals.
         assert!(es.prev_pparams_update().is_none());
     }
 
@@ -11430,7 +12309,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![ghost],
                 members_to_add: std::collections::BTreeMap::new(),
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
             &mut committee,
             &mut pp,
@@ -11439,7 +12321,10 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            EnactOutcome::CommitteeUpdated { members_removed: 0, members_added: 0 }
+            EnactOutcome::CommitteeUpdated {
+                members_removed: 0,
+                members_added: 0
+            }
         );
         assert_eq!(committee.len(), 1);
         assert!(committee.is_member(&existing));
@@ -11459,7 +12344,9 @@ mod tests {
         let outcome = enact_gov_action(
             &mut es,
             action_id.clone(),
-            &GovAction::NoConfidence { prev_action_id: None },
+            &GovAction::NoConfidence {
+                prev_action_id: None,
+            },
             &mut committee,
             &mut pp,
             &mut ra,
@@ -11520,7 +12407,10 @@ mod tests {
         let ra1 = sample_reward_account(10);
         let mut ra = RewardAccounts::new();
         ra.insert(ra1, RewardAccountState::new(500, None));
-        let mut acc = AccountingState { treasury: 1000, reserves: 0 };
+        let mut acc = AccountingState {
+            treasury: 1000,
+            reserves: 0,
+        };
 
         let mut withdrawals = std::collections::BTreeMap::new();
         withdrawals.insert(ra1, 0);
@@ -11537,7 +12427,10 @@ mod tests {
             &mut ra,
             &mut acc,
         );
-        assert_eq!(outcome, EnactOutcome::TreasuryWithdrawn { total_withdrawn: 0 });
+        assert_eq!(
+            outcome,
+            EnactOutcome::TreasuryWithdrawn { total_withdrawn: 0 }
+        );
         assert_eq!(ra.balance(&ra1), 500); // unchanged
         assert_eq!(acc.treasury, 1000); // unchanged
     }
@@ -11554,7 +12447,10 @@ mod tests {
         let mut ra = RewardAccounts::new();
         ra.insert(ra1, RewardAccountState::new(0, None));
         ra.insert(ra2, RewardAccountState::new(0, None));
-        let mut acc = AccountingState { treasury: 100, reserves: 0 };
+        let mut acc = AccountingState {
+            treasury: 100,
+            reserves: 0,
+        };
 
         let mut withdrawals = std::collections::BTreeMap::new();
         withdrawals.insert(ra1, 80);
@@ -11572,7 +12468,12 @@ mod tests {
             &mut ra,
             &mut acc,
         );
-        assert_eq!(outcome, EnactOutcome::TreasuryWithdrawn { total_withdrawn: 160 });
+        assert_eq!(
+            outcome,
+            EnactOutcome::TreasuryWithdrawn {
+                total_withdrawn: 160
+            }
+        );
         assert_eq!(ra.balance(&ra1), 80);
         assert_eq!(ra.balance(&ra2), 80);
         assert_eq!(acc.treasury, 0); // saturated to 0
@@ -11600,7 +12501,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add,
-                quorum: UnitInterval { numerator: 1, denominator: 1 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 1,
+                },
             },
             &mut committee,
             &mut pp,
@@ -11609,7 +12513,10 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            EnactOutcome::CommitteeUpdated { members_removed: 0, members_added: 0 }
+            EnactOutcome::CommitteeUpdated {
+                members_removed: 0,
+                members_added: 0
+            }
         );
         assert_eq!(committee.len(), 1);
     }
@@ -11638,7 +12545,12 @@ mod tests {
             &mut ra,
             &mut acc,
         );
-        assert_eq!(outcome1, EnactOutcome::HardForkEnacted { new_version: (10, 0) });
+        assert_eq!(
+            outcome1,
+            EnactOutcome::HardForkEnacted {
+                new_version: (10, 0)
+            }
+        );
         assert_eq!(es.prev_hard_fork(), Some(&id1));
 
         let outcome2 = enact_gov_action(
@@ -11653,7 +12565,12 @@ mod tests {
             &mut ra,
             &mut acc,
         );
-        assert_eq!(outcome2, EnactOutcome::HardForkEnacted { new_version: (11, 0) });
+        assert_eq!(
+            outcome2,
+            EnactOutcome::HardForkEnacted {
+                new_version: (11, 0)
+            }
+        );
         assert_eq!(es.prev_hard_fork(), Some(&id2));
         assert_eq!(pp.unwrap().protocol_version, Some((11, 0)));
     }
@@ -11826,10 +12743,7 @@ mod tests {
                     data_hash: [0xDD; 32],
                 },
             };
-            map.insert(
-                id,
-                GovernanceActionState::new(proposal),
-            );
+            map.insert(id, GovernanceActionState::new(proposal));
         }
         map
     }
@@ -12065,7 +12979,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(matches!(invalid_result, Err(LedgerError::ProposalCantFollow { .. })));
+        assert!(matches!(
+            invalid_result,
+            Err(LedgerError::ProposalCantFollow { .. })
+        ));
     }
 
     #[test]
@@ -12319,11 +13236,7 @@ mod tests {
     fn test_bootstrap_allows_info_action_proposal() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
-        let proposals = vec![sample_proposal(
-            GovAction::InfoAction,
-            1,
-            1,
-        )];
+        let proposals = vec![sample_proposal(GovAction::InfoAction, 1, 1)];
 
         let result = validate_conway_proposals(
             crate::types::TxId([0xAA; 32]),
@@ -12345,15 +13258,13 @@ mod tests {
     fn test_bootstrap_rejects_drep_vote_on_non_info_action() {
         let drep_voter = Voter::DRepKeyHash([0x66; 28]);
         let action_id = sample_gov_action_id(71);
-        let governance_actions = sample_governance_actions_with(vec![
-            (
-                action_id.clone(),
-                GovAction::HardForkInitiation {
-                    prev_action_id: None,
-                    protocol_version: (10, 0),
-                },
-            ),
-        ]);
+        let governance_actions = sample_governance_actions_with(vec![(
+            action_id.clone(),
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+        )]);
 
         let mut inner = BTreeMap::new();
         inner.insert(
@@ -12458,10 +13369,8 @@ mod tests {
     fn test_bootstrap_allows_drep_vote_on_info_action() {
         let drep_voter = Voter::DRepKeyHash([0x69; 28]);
         let action_id = sample_gov_action_id(74);
-        let governance_actions = sample_governance_actions_with(vec![(
-            action_id.clone(),
-            GovAction::InfoAction,
-        )]);
+        let governance_actions =
+            sample_governance_actions_with(vec![(action_id.clone(), GovAction::InfoAction)]);
 
         let mut inner = BTreeMap::new();
         inner.insert(
@@ -12628,10 +13537,8 @@ mod tests {
     fn test_bootstrap_allows_committee_vote_on_info_action() {
         let committee_voter = Voter::CommitteeKeyHash([0x6E; 28]);
         let action_id = sample_gov_action_id(79);
-        let governance_actions = sample_governance_actions_with(vec![(
-            action_id.clone(),
-            GovAction::InfoAction,
-        )]);
+        let governance_actions =
+            sample_governance_actions_with(vec![(action_id.clone(), GovAction::InfoAction)]);
 
         let mut inner = BTreeMap::new();
         inner.insert(
@@ -12658,10 +13565,8 @@ mod tests {
     fn test_bootstrap_allows_spo_vote_on_info_action() {
         let spo_voter = Voter::StakePool([0x6F; 28]);
         let action_id = sample_gov_action_id(80);
-        let governance_actions = sample_governance_actions_with(vec![(
-            action_id.clone(),
-            GovAction::InfoAction,
-        )]);
+        let governance_actions =
+            sample_governance_actions_with(vec![(action_id.clone(), GovAction::InfoAction)]);
 
         let mut inner = BTreeMap::new();
         inner.insert(
@@ -13017,7 +13922,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(matches!(pool_result, Err(LedgerError::MalformedProposal(_))));
+        assert!(matches!(
+            pool_result,
+            Err(LedgerError::MalformedProposal(_))
+        ));
 
         let gov_result = validate_conway_proposals(
             crate::types::TxId([0xAA; 32]),
@@ -13237,10 +14145,7 @@ mod tests {
             &es,
             None,
         );
-        assert!(
-            result.is_ok(),
-            "nOpt=0 accepted at PV 10 (< 11)"
-        );
+        assert!(result.is_ok(), "nOpt=0 accepted at PV 10 (< 11)");
     }
 
     /// Upstream GOV rule does NOT have `ExpirationEpochTooLarge` — committee member
@@ -13253,10 +14158,7 @@ mod tests {
         // Expiration 13 with current epoch 10 and term limit 2 => epoch 12 max
         // This would have been rejected by ExpirationEpochTooLarge, but upstream
         // GOV only checks ExpirationEpochTooSmall.
-        members_to_add.insert(
-            crate::StakeCredential::AddrKeyHash([0x44; 28]),
-            13,
-        );
+        members_to_add.insert(crate::StakeCredential::AddrKeyHash([0x44; 28]), 13);
         let proposals = vec![sample_proposal(
             GovAction::UpdateCommittee {
                 prev_action_id: None,
@@ -13343,7 +14245,9 @@ mod tests {
         GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
             deposit: 0,
             reward_account: vec![],
-            gov_action: GovAction::NoConfidence { prev_action_id: None },
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: None,
+            },
             anchor: crate::types::Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -13360,31 +14264,53 @@ mod tests {
     fn authorize_cc_hot(cs: &mut CommitteeState, cold: StakeCredential, hot: StakeCredential) {
         cs.get_mut(&cold)
             .expect("cold credential not registered")
-            .set_authorization(Some(
-                CommitteeAuthorization::CommitteeHotCredential(hot),
-            ));
+            .set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(hot)));
     }
 
     // -- VoteTally::meets_threshold ---
 
     #[test]
     fn tally_meets_threshold_exact() {
-        let tally = VoteTally { yes: 67, no: 33, abstain: 0, total: 100 };
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let tally = VoteTally {
+            yes: 67,
+            no: 33,
+            abstain: 0,
+            total: 100,
+        };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_below_threshold() {
-        let tally = VoteTally { yes: 66, no: 34, abstain: 0, total: 100 };
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let tally = VoteTally {
+            yes: 66,
+            no: 34,
+            abstain: 0,
+            total: 100,
+        };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_above_threshold() {
-        let tally = VoteTally { yes: 80, no: 20, abstain: 0, total: 100 };
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let tally = VoteTally {
+            yes: 80,
+            no: 20,
+            abstain: 0,
+            total: 100,
+        };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
@@ -13392,32 +14318,64 @@ mod tests {
     fn tally_all_abstain_fails_positive_threshold() {
         // All abstain → active = 0 → upstream `%?` returns 0 → fails
         // any positive threshold (only `r == minBound` passes).
-        let tally = VoteTally { yes: 0, no: 0, abstain: 100, total: 100 };
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let tally = VoteTally {
+            yes: 0,
+            no: 0,
+            abstain: 100,
+            total: 100,
+        };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_with_abstentions_excluded() {
         // 60 yes, 20 no, 20 abstain. Active = 80. 60/80 = 75% >= 67%.
-        let tally = VoteTally { yes: 60, no: 20, abstain: 20, total: 100 };
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let tally = VoteTally {
+            yes: 60,
+            no: 20,
+            abstain: 20,
+            total: 100,
+        };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_zero_total_fails_positive_threshold() {
         // Zero total → active = 0 → upstream `%?` returns 0 → fails.
-        let tally = VoteTally { yes: 0, no: 0, abstain: 0, total: 0 };
-        let threshold = UnitInterval { numerator: 1, denominator: 2 };
+        let tally = VoteTally {
+            yes: 0,
+            no: 0,
+            abstain: 0,
+            total: 0,
+        };
+        let threshold = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_zero_total_passes_zero_threshold() {
         // Zero total + zero threshold → upstream `r == minBound` → passes.
-        let tally = VoteTally { yes: 0, no: 0, abstain: 0, total: 0 };
-        let threshold = UnitInterval { numerator: 0, denominator: 1 };
+        let tally = VoteTally {
+            yes: 0,
+            no: 0,
+            abstain: 0,
+            total: 0,
+        };
+        let threshold = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
@@ -13438,14 +14396,21 @@ mod tests {
         authorize_cc_hot(&mut cs, cold_b, hot_b);
 
         // Both vote yes (votes keyed by HOT credential hash).
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
-        action.votes.insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 2);
         assert_eq!(tally.no, 0);
         assert_eq!(tally.total, 2);
-        let quorum = UnitInterval { numerator: 2, denominator: 3 };
+        let quorum = UnitInterval {
+            numerator: 2,
+            denominator: 3,
+        };
         assert!(tally.meets_threshold(&quorum));
     }
 
@@ -13461,11 +14426,13 @@ mod tests {
         cs.register_with_term(cold_b, 999);
         authorize_cc_hot(&mut cs, cold_a, hot_a);
         // Resign member B (no hot credential needed for resigned members).
-        cs.get_mut(&cold_b).unwrap().set_authorization(Some(
-            CommitteeAuthorization::CommitteeMemberResigned(None),
-        ));
+        cs.get_mut(&cold_b)
+            .unwrap()
+            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
 
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 1);
@@ -13482,7 +14449,10 @@ mod tests {
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 0);
         assert_eq!(tally.total, 2);
-        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
         assert!(!tally.meets_threshold(&quorum));
     }
 
@@ -13508,7 +14478,10 @@ mod tests {
         assert_eq!(tally.yes, 700);
         assert_eq!(tally.no, 300);
         assert_eq!(tally.total, 1000);
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(tally.meets_threshold(&threshold)); // 700/1000 = 70% >= 67%
     }
 
@@ -13534,7 +14507,10 @@ mod tests {
         // Only DRep B counted (active). A is inactive and excluded.
         assert_eq!(tally.yes, 500);
         assert_eq!(tally.total, 500);
-        let threshold = UnitInterval { numerator: 1, denominator: 2 };
+        let threshold = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
@@ -13572,7 +14548,10 @@ mod tests {
         assert_eq!(tally.yes, 600);
         assert_eq!(tally.no, 400);
         assert_eq!(tally.total, 1000);
-        let threshold = UnitInterval { numerator: 51, denominator: 100 };
+        let threshold = UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        };
         assert!(tally.meets_threshold(&threshold)); // 600/1000 = 60% >= 51%
     }
 
@@ -13815,7 +14794,10 @@ mod tests {
     fn pparam_groups_max_tx_ex_units_is_network_only() {
         // Upstream: PPGroups 'NetworkGroup 'NoStakePoolGroup
         let update = crate::protocol_params::ProtocolParameterUpdate {
-            max_tx_ex_units: Some(crate::eras::alonzo::ExUnits { mem: 14_000_000, steps: 10_000_000 }),
+            max_tx_ex_units: Some(crate::eras::alonzo::ExUnits {
+                mem: 14_000_000,
+                steps: 10_000_000,
+            }),
             ..Default::default()
         };
         let g = conway_modified_pparam_groups(&update);
@@ -14037,10 +15019,22 @@ mod tests {
     #[test]
     fn drep_threshold_for_security_only_parameter_change_returns_none() {
         let thresholds = DRepVotingThresholds {
-            pp_network_group: UnitInterval { numerator: 1, denominator: 2 },
-            pp_economic_group: UnitInterval { numerator: 2, denominator: 3 },
-            pp_technical_group: UnitInterval { numerator: 3, denominator: 4 },
-            pp_gov_group: UnitInterval { numerator: 4, denominator: 5 },
+            pp_network_group: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
+            pp_economic_group: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            pp_technical_group: UnitInterval {
+                numerator: 3,
+                denominator: 4,
+            },
+            pp_gov_group: UnitInterval {
+                numerator: 4,
+                denominator: 5,
+            },
             ..DRepVotingThresholds::default()
         };
         // protocol_version is security-only — no DRep group, threshold should be None
@@ -14060,10 +15054,22 @@ mod tests {
     #[test]
     fn drep_threshold_for_single_economic_group_returns_economic_threshold() {
         let thresholds = DRepVotingThresholds {
-            pp_network_group: UnitInterval { numerator: 1, denominator: 10 },
-            pp_economic_group: UnitInterval { numerator: 2, denominator: 3 },
-            pp_technical_group: UnitInterval { numerator: 1, denominator: 10 },
-            pp_gov_group: UnitInterval { numerator: 1, denominator: 10 },
+            pp_network_group: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            pp_economic_group: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            pp_technical_group: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            pp_gov_group: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
             ..DRepVotingThresholds::default()
         };
         // key_deposit is economic-only
@@ -14153,7 +15159,10 @@ mod tests {
             guardrails_script_hash: None,
         };
 
-        assert!(!conway_voter_is_allowed_for_action(&voter, &non_security_action));
+        assert!(!conway_voter_is_allowed_for_action(
+            &voter,
+            &non_security_action
+        ));
         assert!(conway_voter_is_allowed_for_action(&voter, &security_action));
     }
 
@@ -14166,8 +15175,19 @@ mod tests {
         // for InfoAction, which maps to SNothing → committeeAccepted = False.
         let action = test_info_action();
         let cs = CommitteeState::default();
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        assert!(!accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -14177,8 +15197,19 @@ mod tests {
         // which maps to SJust minBound → committeeAccepted = True.
         let action = test_no_confidence_action();
         let cs = CommitteeState::default();
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false, true));
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            100,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -14189,9 +15220,20 @@ mod tests {
         // Reference: Cardano.Ledger.Conway.Rules.Ratify.committeeAccepted
         let action = test_hf_action();
         let cs = CommitteeState::default();
-        let quorum = UnitInterval { numerator: 0, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         // has_committee=false simulates post-NoConfidence state
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, false));
+        assert!(!accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -14199,8 +15241,19 @@ mod tests {
         // Even without a committee, NoConfidence actions pass (NoVotingAllowed).
         let action = test_no_confidence_action();
         let cs = CommitteeState::default();
-        let quorum = UnitInterval { numerator: 0, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, false));
+        let quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -14213,7 +15266,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add: BTreeMap::new(),
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
             anchor: crate::types::Anchor {
                 url: String::new(),
@@ -14221,8 +15277,19 @@ mod tests {
             },
         });
         let cs = CommitteeState::default();
-        let quorum = UnitInterval { numerator: 0, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, false));
+        let quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -14235,7 +15302,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add: BTreeMap::new(),
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
             anchor: crate::types::Anchor {
                 url: String::new(),
@@ -14243,8 +15313,19 @@ mod tests {
             },
         });
         let cs = CommitteeState::default();
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 100, false, true));
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            100,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -14258,11 +15339,24 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         // min_committee_size=2, active=1 → rejected
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 2, false, true));
+        assert!(!accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            2,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -14274,11 +15368,24 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         // min_committee_size=1, active=1 → accepted
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 1, false, true));
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            1,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -14291,11 +15398,24 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         // min_committee_size=10, active=1, but bootstrap → accepted (1/1 >= 1/1)
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 10, true, true));
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            10,
+            true,
+            true
+        ));
     }
 
     #[test]
@@ -14315,12 +15435,27 @@ mod tests {
         authorize_cc_hot(&mut cs, cold_b, hot_b);
         authorize_cc_hot(&mut cs, cold_c, hot_c);
 
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
-        action.votes.insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
         // 3 does not vote.
 
-        let quorum = UnitInterval { numerator: 2, denominator: 3 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true)); // 2/3 >= 2/3
+        let quorum = UnitInterval {
+            numerator: 2,
+            denominator: 3,
+        };
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            true
+        )); // 2/3 >= 2/3
     }
 
     #[test]
@@ -14340,11 +15475,24 @@ mod tests {
         authorize_cc_hot(&mut cs, cold_b, hot_b);
         authorize_cc_hot(&mut cs, cold_c, hot_c);
 
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
         // Only 1/3 yes.
 
-        let quorum = UnitInterval { numerator: 2, denominator: 3 };
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true)); // 1/3 < 2/3
+        let quorum = UnitInterval {
+            numerator: 2,
+            denominator: 3,
+        };
+        assert!(!accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            true
+        )); // 1/3 < 2/3
     }
 
     #[test]
@@ -14381,7 +15529,10 @@ mod tests {
         // never enacted; it exists only to collect votes.
         let action = test_info_action();
         let cs = CommitteeState::default();
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         let drep_state = DrepState::new();
         let drep_stake = BTreeMap::new();
         let dvt = DRepVotingThresholds::default();
@@ -14413,7 +15564,9 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([101; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
 
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
@@ -14426,7 +15579,10 @@ mod tests {
         let dvt = DRepVotingThresholds::default();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
-        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
 
         assert!(!ratify_action(
             &action,
@@ -14454,7 +15610,9 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([101; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([101; 28]), Vote::Yes);
 
         // DRep: 1 drep, votes yes.
         let mut drep_state = DrepState::new();
@@ -14470,7 +15628,10 @@ mod tests {
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
         action.votes.insert(Voter::StakePool([3; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
@@ -14557,7 +15718,10 @@ mod tests {
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
 
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(101), 10, false);
-        assert_eq!(tally.total, 0, "DRep should be inactive one epoch past boundary");
+        assert_eq!(
+            tally.total, 0,
+            "DRep should be inactive one epoch past boundary"
+        );
         assert_eq!(tally.yes, 0);
     }
 
@@ -14574,7 +15738,10 @@ mod tests {
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
 
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(999), 10, false);
-        assert_eq!(tally.total, 500, "DRep with no last_active_epoch should be counted");
+        assert_eq!(
+            tally.total, 500,
+            "DRep with no last_active_epoch should be counted"
+        );
         assert_eq!(tally.yes, 500);
     }
 
@@ -14591,11 +15758,17 @@ mod tests {
         action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
 
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(50), 0, false);
-        assert_eq!(tally.total, 1000, "DRep active when sum == current with zero window");
+        assert_eq!(
+            tally.total, 1000,
+            "DRep active when sum == current with zero window"
+        );
 
         // current=51: 50+0=50 < 51 → true → INACTIVE.
         let tally2 = tally_drep_votes(&action, &drep_state, &stake, EpochNo(51), 0, false);
-        assert_eq!(tally2.total, 0, "DRep inactive when sum < current with zero window");
+        assert_eq!(
+            tally2.total, 0,
+            "DRep inactive when sum < current with zero window"
+        );
     }
 
     #[test]
@@ -14604,7 +15777,10 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep = DRep::KeyHash([1; 28]);
-        drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(u64::MAX - 5)));
+        drep_state.register(
+            drep,
+            RegisteredDrep::new_active(0, None, EpochNo(u64::MAX - 5)),
+        );
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
@@ -14642,8 +15818,14 @@ mod tests {
         stake.insert(DRep::AlwaysNoConfidence, 5000);
 
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
-        assert_eq!(tally.total, 5000, "AlwaysNoConfidence stake included in total");
-        assert_eq!(tally.yes, 0, "Not counted as Yes for non-NoConfidence action");
+        assert_eq!(
+            tally.total, 5000,
+            "AlwaysNoConfidence stake included in total"
+        );
+        assert_eq!(
+            tally.yes, 0,
+            "Not counted as Yes for non-NoConfidence action"
+        );
     }
 
     #[test]
@@ -14674,14 +15856,19 @@ mod tests {
 
         let mut stake = BTreeMap::new();
         stake.insert(drep, 1000);
-        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Abstain);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([1; 28]), Vote::Abstain);
 
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
         // All abstain → active = 0 → upstream `%?` returns 0 → fails
         // any positive threshold.
-        let threshold = UnitInterval { numerator: 99, denominator: 100 };
+        let threshold = UnitInterval {
+            numerator: 99,
+            denominator: 100,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
@@ -14698,7 +15885,10 @@ mod tests {
         stake.insert(DRep::AlwaysNoConfidence, 5000);
 
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, true);
-        assert_eq!(tally.total, 5000, "AlwaysNoConfidence stake included in total");
+        assert_eq!(
+            tally.total, 5000,
+            "AlwaysNoConfidence stake included in total"
+        );
         assert_eq!(tally.yes, 5000, "AlwaysNoConfidence stake counted as Yes");
     }
 
@@ -14736,7 +15926,10 @@ mod tests {
         assert_eq!(tally.no, 6000, "explicit No from DRep A");
 
         // 4000/10000 = 40% vs threshold 67% → does NOT pass.
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
@@ -14758,7 +15951,10 @@ mod tests {
         let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, true);
         assert_eq!(tally.yes, 10000);
         assert_eq!(tally.total, 10000);
-        let threshold = UnitInterval { numerator: 67, denominator: 100 };
+        let threshold = UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
@@ -14774,7 +15970,10 @@ mod tests {
         assert_eq!(tally.total, 0);
         // Zero total → active = 0 → upstream `%?` returns 0 → fails
         // any positive threshold.
-        let threshold = UnitInterval { numerator: 1, denominator: 1 };
+        let threshold = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
@@ -14789,7 +15988,10 @@ mod tests {
         assert_eq!(tally.total, 2000);
         assert_eq!(tally.yes, 0);
         // Non-voting pool means 0 yes out of 2000 → does NOT meet 51%.
-        let threshold = UnitInterval { numerator: 51, denominator: 100 };
+        let threshold = UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
@@ -14799,13 +16001,18 @@ mod tests {
         let mut pool_stakes = BTreeMap::new();
         pool_stakes.insert([1u8; 28], 1000u64);
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
-        action.votes.insert(Voter::StakePool([1; 28]), Vote::Abstain);
+        action
+            .votes
+            .insert(Voter::StakePool([1; 28]), Vote::Abstain);
 
         let tally = tally_spo_votes(&action, &pool_dist, false);
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
         // All abstain → active = 0 → fails positive threshold.
-        let threshold = UnitInterval { numerator: 99, denominator: 100 };
+        let threshold = UnitInterval {
+            numerator: 99,
+            denominator: 100,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
@@ -14822,7 +16029,10 @@ mod tests {
         assert_eq!(tally.total, 0);
         // Empty committee → active = 0 → upstream `%?` returns 0 → fails
         // any positive threshold.
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         assert!(!tally.meets_threshold(&quorum));
     }
 
@@ -14832,12 +16042,15 @@ mod tests {
         let mut cs = CommitteeState::default();
         let cred = StakeCredential::AddrKeyHash([1; 28]);
         cs.register_with_term(cred, 999);
-        cs.get_mut(&cred).unwrap().set_authorization(Some(
-            CommitteeAuthorization::CommitteeMemberResigned(None),
-        ));
+        cs.get_mut(&cred)
+            .unwrap()
+            .set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(None)));
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
-        assert_eq!(tally.total, 0, "all-resigned committee has zero eligible members");
+        assert_eq!(
+            tally.total, 0,
+            "all-resigned committee has zero eligible members"
+        );
     }
 
     #[test]
@@ -14848,13 +16061,18 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.yes, 1);
         assert_eq!(tally.total, 1);
         // 1/1 >= 100% quorum.
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         assert!(tally.meets_threshold(&quorum));
     }
 
@@ -14866,13 +16084,18 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::No);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::No);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(0));
         assert_eq!(tally.no, 1);
         assert_eq!(tally.yes, 0);
         assert_eq!(tally.total, 1);
-        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
         assert!(!tally.meets_threshold(&quorum));
     }
 
@@ -14889,7 +16112,9 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 10);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(11));
         assert_eq!(tally.total, 0, "expired member excluded from eligible");
@@ -14906,7 +16131,9 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 10);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(10));
         assert_eq!(tally.total, 1, "member active at boundary epoch");
@@ -14926,8 +16153,12 @@ mod tests {
         cs.register_with_term(cold_active, 100);
         authorize_cc_hot(&mut cs, cold_expired, hot_expired);
         authorize_cc_hot(&mut cs, cold_active, hot_active);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
-        action.votes.insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([12; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(10));
         assert_eq!(tally.total, 1, "only active member in eligible");
@@ -14943,7 +16174,9 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([11; 28]);
         cs.register_with_term(cold, 1_000_000);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([11; 28]), Vote::Yes);
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(999_999));
         assert_eq!(tally.total, 1, "far-future-term member still active");
@@ -14967,9 +16200,14 @@ mod tests {
         authorize_cc_hot(&mut cs, cold_a, hot_a);
         authorize_cc_hot(&mut cs, cold_b, hot_b);
         authorize_cc_hot(&mut cs, cold_c, hot_c);
-        action.votes.insert(Voter::CommitteeKeyHash([13; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([13; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 2, denominator: 3 };
+        let quorum = UnitInterval {
+            numerator: 2,
+            denominator: 3,
+        };
         assert!(
             accepted_by_committee(&action, &cs, &quorum, EpochNo(10), 0, false, true),
             "expired members reduce eligible count, so 1/1 >= 2/3"
@@ -14986,7 +16224,10 @@ mod tests {
 
         let tally = tally_committee_votes(&action, &cs, EpochNo(10));
         assert_eq!(tally.total, 0, "all expired");
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         assert!(!tally.meets_threshold(&quorum));
     }
 
@@ -15012,7 +16253,10 @@ mod tests {
                 prev_action_id: None,
                 constitution: sample_constitution("test"),
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         });
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
@@ -15026,7 +16270,15 @@ mod tests {
         let drep_state = DrepState::new();
         let drep_stake = BTreeMap::new();
         let dvt = DRepVotingThresholds::default();
-        assert!(accepted_by_dreps(&action, true, &drep_state, &drep_stake, EpochNo(1), 100, &dvt));
+        assert!(accepted_by_dreps(
+            &action,
+            true,
+            &drep_state,
+            &drep_stake,
+            EpochNo(1),
+            100,
+            &dvt
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -15045,7 +16297,10 @@ mod tests {
                 },
                 guardrails_script_hash: None,
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         })
     }
 
@@ -15061,7 +16316,10 @@ mod tests {
                 },
                 guardrails_script_hash: None,
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         })
     }
 
@@ -15073,9 +16331,15 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add: BTreeMap::new(),
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         })
     }
 
@@ -15087,21 +16351,27 @@ mod tests {
                 prev_action_id: None,
                 constitution: sample_constitution("ratify-test"),
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         })
     }
 
     /// Helper: minimal committee with one member who votes yes.
-    fn setup_cc_one_yes(
-        action: &mut GovernanceActionState,
-    ) -> (CommitteeState, UnitInterval) {
+    fn setup_cc_one_yes(action: &mut GovernanceActionState) -> (CommitteeState, UnitInterval) {
         let mut cs = CommitteeState::default();
         let cold = StakeCredential::AddrKeyHash([0xCC; 28]);
         let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::Yes);
-        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::Yes);
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
         (cs, quorum)
     }
 
@@ -15116,7 +16386,9 @@ mod tests {
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut stake = BTreeMap::new();
         stake.insert(drep, stake_amount);
-        action.votes.insert(Voter::DRepKeyHash([drep_id; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([drep_id; 28]), Vote::Yes);
         (drep_state, stake)
     }
 
@@ -15128,7 +16400,9 @@ mod tests {
     ) -> crate::stake::PoolStakeDistribution {
         let mut pool_stakes = BTreeMap::new();
         pool_stakes.insert([pool_id; 28], pool_stake);
-        action.votes.insert(Voter::StakePool([pool_id; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::StakePool([pool_id; 28]), Vote::Yes);
         crate::stake::PoolStakeDistribution::from_raw(pool_stakes, pool_stake)
     }
 
@@ -15142,10 +16416,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15160,17 +16443,28 @@ mod tests {
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
 
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15190,10 +16484,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15208,8 +16511,13 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
-        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
 
         let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
@@ -15217,10 +16525,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15239,10 +16556,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15263,10 +16589,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15283,10 +16618,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15301,17 +16645,28 @@ mod tests {
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
 
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15331,10 +16686,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15348,17 +16712,28 @@ mod tests {
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
 
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15371,8 +16746,13 @@ mod tests {
         let hot = StakeCredential::AddrKeyHash([0xDC; 28]);
         cs.register_with_term(cold, 999);
         authorize_cc_hot(&mut cs, cold, hot);
-        action.votes.insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
-        let quorum = UnitInterval { numerator: 1, denominator: 2 };
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([0xDC; 28]), Vote::No);
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
 
         let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
 
@@ -15381,10 +16761,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15403,10 +16792,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15420,17 +16818,28 @@ mod tests {
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
 
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15449,10 +16858,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15472,10 +16890,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15493,16 +16920,26 @@ mod tests {
         // BUT: let's add a second DRep that is active and votes No.
         let mut drep_state = DrepState::new();
         let drep_inactive = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep_inactive, RegisteredDrep::new_active(0, None, EpochNo(10)));
+        drep_state.register(
+            drep_inactive,
+            RegisteredDrep::new_active(0, None, EpochNo(10)),
+        );
         let drep_active = DRep::KeyHash([0xD2; 28]);
-        drep_state.register(drep_active, RegisteredDrep::new_active(0, None, EpochNo(20)));
+        drep_state.register(
+            drep_active,
+            RegisteredDrep::new_active(0, None, EpochNo(20)),
+        );
 
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep_inactive, 1000);
         drep_stake.insert(drep_active, 1000);
 
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes); // inactive, excluded
-        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);  // active, counted
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes); // inactive, excluded
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No); // active, counted
 
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
         let dvt = DRepVotingThresholds::default();
@@ -15510,10 +16947,19 @@ mod tests {
 
         // Only active DRep voted No → 0/1000 yes → fails DRep threshold.
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(25),
+            10,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15525,16 +16971,26 @@ mod tests {
         // Inactive DRep with large NO stake is excluded; active DRep votes yes.
         let mut drep_state = DrepState::new();
         let drep_inactive = DRep::KeyHash([0xD1; 28]);
-        drep_state.register(drep_inactive, RegisteredDrep::new_active(0, None, EpochNo(10)));
+        drep_state.register(
+            drep_inactive,
+            RegisteredDrep::new_active(0, None, EpochNo(10)),
+        );
         let drep_active = DRep::KeyHash([0xD2; 28]);
-        drep_state.register(drep_active, RegisteredDrep::new_active(0, None, EpochNo(20)));
+        drep_state.register(
+            drep_active,
+            RegisteredDrep::new_active(0, None, EpochNo(20)),
+        );
 
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep_inactive, 9000);
         drep_stake.insert(drep_active, 1000);
 
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No); // inactive, excluded
-        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No); // inactive, excluded
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD2; 28]), Vote::Yes);
 
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
         let dvt = DRepVotingThresholds::default();
@@ -15542,10 +16998,19 @@ mod tests {
 
         // Active DRep: 1000 yes / 1000 total = 100% >= 67%. Passes.
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(25), 10, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(25),
+            10,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15569,8 +17034,12 @@ mod tests {
         drep_stake.insert(drep_a, 400);
         drep_stake.insert(drep_b, 600);
 
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
-        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);
 
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
         let dvt = DRepVotingThresholds::default();
@@ -15578,10 +17047,19 @@ mod tests {
 
         // 400/1000 = 40% < 67% → fails.
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15602,18 +17080,31 @@ mod tests {
         drep_stake.insert(drep_a, 500);
         drep_stake.insert(drep_b, 500);
 
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
-        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::Abstain);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD2; 28]), Vote::Abstain);
 
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15623,17 +17114,29 @@ mod tests {
         // threshold with zero active members → upstream `%?` returns 0).
         let mut action = test_hf_action();
         let cs = CommitteeState::default(); // empty
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         let (drep_state, drep_stake) = setup_drep_one_yes(&mut action, 0xD1, 1000);
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15648,17 +17151,28 @@ mod tests {
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
         let mut drep_stake = BTreeMap::new();
         drep_stake.insert(drep, 1000);
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Abstain);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Abstain);
 
         let pool_dist = setup_spo_one_yes(&mut action, 0xA1, 1000);
         let dvt = DRepVotingThresholds::default();
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15677,10 +17191,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15697,10 +17220,19 @@ mod tests {
         let pvt = PoolVotingThresholds::default();
 
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
     }
 
@@ -15725,18 +17257,36 @@ mod tests {
 
         // Without bootstrap: fails because 0/0 doesn't meet 67/100.
         assert!(!ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, false, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            false,
+            true,
         ));
 
         // With bootstrap (is_bootstrap_phase=true): DRep thresholds zeroed → passes.
         assert!(ratify_action(
-            &action, &cs, &quorum,
-            &drep_state, &drep_stake, EpochNo(5), 100, &dvt,
-            &pool_dist, &pvt,
-            0, true, true,
+            &action,
+            &cs,
+            &quorum,
+            &drep_state,
+            &drep_stake,
+            EpochNo(5),
+            100,
+            &dvt,
+            &pool_dist,
+            &pvt,
+            0,
+            true,
+            true,
         ));
     }
 
@@ -15768,7 +17318,10 @@ mod tests {
         assert_eq!(tally_bootstrap.abstain, 500);
         assert_eq!(tally_bootstrap.total, 1000);
         // Effective ratio: 500 / (1000-500) = 100%.
-        assert!(tally_bootstrap.meets_threshold(&UnitInterval { numerator: 1, denominator: 1 }));
+        assert!(tally_bootstrap.meets_threshold(&UnitInterval {
+            numerator: 1,
+            denominator: 1
+        }));
     }
 
     #[test]
@@ -15800,7 +17353,10 @@ mod tests {
             prev_action_id: None,
             members_to_remove: vec![],
             members_to_add: BTreeMap::new(),
-            quorum: UnitInterval { numerator: 1, denominator: 2 },
+            quorum: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
         };
 
         // has_committee=true → normal threshold
@@ -15820,34 +17376,71 @@ mod tests {
     fn tally_fractional_threshold_cross_multiply() {
         // Verify cross-multiplication works for non-trivial fractions.
         // 3 yes out of 7 active. Threshold 2/5. 3*5 = 15 >= 2*7 = 14 → passes.
-        let tally = VoteTally { yes: 3, no: 4, abstain: 0, total: 7 };
-        let threshold = UnitInterval { numerator: 2, denominator: 5 };
+        let tally = VoteTally {
+            yes: 3,
+            no: 4,
+            abstain: 0,
+            total: 7,
+        };
+        let threshold = UnitInterval {
+            numerator: 2,
+            denominator: 5,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_fractional_threshold_just_below() {
         // 2 yes out of 7 active. Threshold 2/5. 2*5 = 10 < 2*7 = 14 → fails.
-        let tally = VoteTally { yes: 2, no: 5, abstain: 0, total: 7 };
-        let threshold = UnitInterval { numerator: 2, denominator: 5 };
+        let tally = VoteTally {
+            yes: 2,
+            no: 5,
+            abstain: 0,
+            total: 7,
+        };
+        let threshold = UnitInterval {
+            numerator: 2,
+            denominator: 5,
+        };
         assert!(!tally.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_100_percent_threshold_requires_unanimity() {
-        let tally = VoteTally { yes: 99, no: 1, abstain: 0, total: 100 };
-        let threshold = UnitInterval { numerator: 1, denominator: 1 };
+        let tally = VoteTally {
+            yes: 99,
+            no: 1,
+            abstain: 0,
+            total: 100,
+        };
+        let threshold = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         assert!(!tally.meets_threshold(&threshold));
 
-        let tally_unanimous = VoteTally { yes: 100, no: 0, abstain: 0, total: 100 };
+        let tally_unanimous = VoteTally {
+            yes: 100,
+            no: 0,
+            abstain: 0,
+            total: 100,
+        };
         assert!(tally_unanimous.meets_threshold(&threshold));
     }
 
     #[test]
     fn tally_zero_numerator_threshold_always_passes() {
         // 0% threshold → 0 yes suffices.
-        let tally = VoteTally { yes: 0, no: 100, abstain: 0, total: 100 };
-        let threshold = UnitInterval { numerator: 0, denominator: 1 };
+        let tally = VoteTally {
+            yes: 0,
+            no: 100,
+            abstain: 0,
+            total: 100,
+        };
+        let threshold = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         assert!(tally.meets_threshold(&threshold));
     }
 
@@ -15946,7 +17539,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(result.is_ok(), "min_committee_size=0 is accepted (upstream parity)");
+        assert!(
+            result.is_ok(),
+            "min_committee_size=0 is accepted (upstream parity)"
+        );
     }
 
     #[test]
@@ -16011,7 +17607,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(result.is_ok(), "drep_activity=0 is accepted (upstream parity)");
+        assert!(
+            result.is_ok(),
+            "drep_activity=0 is accepted (upstream parity)"
+        );
     }
 
     #[test]
@@ -16056,7 +17655,10 @@ mod tests {
                 protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
                     pool_voting_thresholds: Some(crate::protocol_params::PoolVotingThresholds {
                         // numerator > denominator → invalid
-                        motion_no_confidence: UnitInterval { numerator: 3, denominator: 2 },
+                        motion_no_confidence: UnitInterval {
+                            numerator: 3,
+                            denominator: 2,
+                        },
                         ..crate::protocol_params::PoolVotingThresholds::default()
                     }),
                     ..Default::default()
@@ -16092,7 +17694,10 @@ mod tests {
                 protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
                     drep_voting_thresholds: Some(DRepVotingThresholds {
                         // zero denominator → invalid
-                        treasury_withdrawal: UnitInterval { numerator: 0, denominator: 0 },
+                        treasury_withdrawal: UnitInterval {
+                            numerator: 0,
+                            denominator: 0,
+                        },
                         ..DRepVotingThresholds::default()
                     }),
                     ..Default::default()
@@ -16174,7 +17779,10 @@ mod tests {
         );
         assert!(matches!(
             result,
-            Err(LedgerError::ProposalDepositIncorrect { supplied: 500, expected: 1000 })
+            Err(LedgerError::ProposalDepositIncorrect {
+                supplied: 500,
+                expected: 1000
+            })
         ));
     }
 
@@ -16226,7 +17834,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(result.is_ok(), "bootstrap should skip return-account registration check: {result:?}");
+        assert!(
+            result.is_ok(),
+            "bootstrap should skip return-account registration check: {result:?}"
+        );
     }
 
     #[test]
@@ -16260,7 +17871,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(result.is_ok(), "bootstrap ParameterChange should skip return-account check: {result:?}");
+        assert!(
+            result.is_ok(),
+            "bootstrap ParameterChange should skip return-account check: {result:?}"
+        );
     }
 
     #[test]
@@ -16283,7 +17897,10 @@ mod tests {
             None,
         );
         assert!(
-            matches!(result, Err(LedgerError::ProposalReturnAccountDoesNotExist(_))),
+            matches!(
+                result,
+                Err(LedgerError::ProposalReturnAccountDoesNotExist(_))
+            ),
             "post-bootstrap should reject unregistered return account: {result:?}",
         );
     }
@@ -16368,7 +17985,10 @@ mod tests {
         // Register the treasury withdrawal target credential.
         let cred = crate::StakeCredential::AddrKeyHash([0x77; 28]);
         stake_creds.register(cred);
-        let ra = RewardAccount { network: 0, credential: cred };
+        let ra = RewardAccount {
+            network: 0,
+            credential: cred,
+        };
 
         let mut withdrawals = BTreeMap::new();
         withdrawals.insert(ra, 1_000_000);
@@ -16689,7 +18309,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![conflicting_cred],
                 members_to_add,
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
             1,
             1,
@@ -16719,16 +18342,16 @@ mod tests {
         let stake_creds = empty_stake_creds_with(1);
         let mut members_to_add = BTreeMap::new();
         // Epoch 10 — member expiring at epoch 10 is not strictly after.
-        members_to_add.insert(
-            crate::StakeCredential::AddrKeyHash([0xAA; 28]),
-            10,
-        );
+        members_to_add.insert(crate::StakeCredential::AddrKeyHash([0xAA; 28]), 10);
         let proposals = vec![sample_proposal(
             GovAction::UpdateCommittee {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add,
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
             1,
             1,
@@ -16865,7 +18488,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add: members,
-                quorum: UnitInterval { numerator: 1, denominator: 0 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 0,
+                },
             },
             1,
             1,
@@ -16900,7 +18526,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add: members,
-                quorum: UnitInterval { numerator: 5, denominator: 3 },
+                quorum: UnitInterval {
+                    numerator: 5,
+                    denominator: 3,
+                },
             },
             1,
             1,
@@ -16935,7 +18564,10 @@ mod tests {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add: members,
-                quorum: UnitInterval { numerator: 2, denominator: 3 },
+                quorum: UnitInterval {
+                    numerator: 2,
+                    denominator: 3,
+                },
             },
             1,
             1,
@@ -16972,10 +18604,23 @@ mod tests {
         authorize_cc_hot(&mut cs, cold, hot);
 
         // Vote is stored under the HOT credential hash (per Conway CDDL).
-        action.votes.insert(Voter::CommitteeKeyHash([0x60; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([0x60; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
-        assert!(accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        assert!(accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -16990,11 +18635,24 @@ mod tests {
         authorize_cc_hot(&mut cs, cold, hot);
 
         // Incorrectly keyed by cold hash.
-        action.votes.insert(Voter::CommitteeKeyHash([0x50; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([0x50; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         // Should fail — the vote is under the wrong key.
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
+        assert!(!accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -17007,11 +18665,24 @@ mod tests {
         // No hot credential authorized.
 
         // Vote under cold hash (the only hash available).
-        action.votes.insert(Voter::CommitteeKeyHash([0x50; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::CommitteeKeyHash([0x50; 28]), Vote::Yes);
 
-        let quorum = UnitInterval { numerator: 1, denominator: 1 };
+        let quorum = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         // Unauthorized member — vote not counted.
-        assert!(!accepted_by_committee(&action, &cs, &quorum, EpochNo(0), 0, false, true));
+        assert!(!accepted_by_committee(
+            &action,
+            &cs,
+            &quorum,
+            EpochNo(0),
+            0,
+            false,
+            true
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -17029,17 +18700,32 @@ mod tests {
 
         let voter = Voter::DRepKeyHash([0xD1; 28]);
         let mut drep_state = DrepState::new();
-        drep_state.register(DRep::KeyHash([0xD1; 28]), RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(
+            DRep::KeyHash([0xD1; 28]),
+            RegisteredDrep::new_active(0, None, EpochNo(1)),
+        );
 
         // First vote: Yes
-        let mut procedures = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
+        let mut procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::new(),
+        };
         let mut votes = BTreeMap::new();
-        votes.insert(gov_id.clone(), crate::eras::conway::VotingProcedure {
-            vote: Vote::Yes,
-            anchor: None,
-        });
+        votes.insert(
+            gov_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
         procedures.procedures.insert(voter.clone(), votes);
-        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(5), 0, false);
+        apply_conway_votes(
+            &procedures,
+            &mut governance_actions,
+            &mut drep_state,
+            EpochNo(5),
+            0,
+            false,
+        );
         assert_eq!(
             governance_actions[&gov_id].votes.get(&voter),
             Some(&Vote::Yes),
@@ -17047,13 +18733,25 @@ mod tests {
 
         // Second vote: changes to No → overwrites.
         let mut votes2 = BTreeMap::new();
-        votes2.insert(gov_id.clone(), crate::eras::conway::VotingProcedure {
-            vote: Vote::No,
-            anchor: None,
-        });
-        let mut procedures2 = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
+        votes2.insert(
+            gov_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::No,
+                anchor: None,
+            },
+        );
+        let mut procedures2 = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::new(),
+        };
         procedures2.procedures.insert(voter.clone(), votes2);
-        apply_conway_votes(&procedures2, &mut governance_actions, &mut drep_state, EpochNo(5), 0, false);
+        apply_conway_votes(
+            &procedures2,
+            &mut governance_actions,
+            &mut drep_state,
+            EpochNo(5),
+            0,
+            false,
+        );
         assert_eq!(
             governance_actions[&gov_id].votes.get(&voter),
             Some(&Vote::No),
@@ -17073,14 +18771,28 @@ mod tests {
         let drep = DRep::KeyHash([0xD1; 28]);
         drep_state.register(drep, RegisteredDrep::new_active(0, None, EpochNo(1)));
 
-        let mut procedures = crate::eras::conway::VotingProcedures { procedures: BTreeMap::new() };
+        let mut procedures = crate::eras::conway::VotingProcedures {
+            procedures: BTreeMap::new(),
+        };
         let mut votes = BTreeMap::new();
-        votes.insert(gov_id.clone(), crate::eras::conway::VotingProcedure {
-            vote: Vote::Yes,
-            anchor: None,
-        });
-        procedures.procedures.insert(Voter::DRepKeyHash([0xD1; 28]), votes);
-        apply_conway_votes(&procedures, &mut governance_actions, &mut drep_state, EpochNo(42), 0, false);
+        votes.insert(
+            gov_id.clone(),
+            crate::eras::conway::VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
+        procedures
+            .procedures
+            .insert(Voter::DRepKeyHash([0xD1; 28]), votes);
+        apply_conway_votes(
+            &procedures,
+            &mut governance_actions,
+            &mut drep_state,
+            EpochNo(42),
+            0,
+            false,
+        );
 
         assert_eq!(
             drep_state.get(&drep).unwrap().last_active_epoch(),
@@ -17096,8 +18808,12 @@ mod tests {
         };
         let mut governance_actions = BTreeMap::new();
         let mut action = test_info_action();
-        action.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
-        action.votes.insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        action
+            .votes
+            .insert(Voter::DRepKeyHash([0xD2; 28]), Vote::No);
         governance_actions.insert(gov_id.clone(), action);
 
         // Simulate DRep [D1] unregistering.
@@ -17105,45 +18821,57 @@ mod tests {
         remove_conway_drep_votes(&unregistered, &mut governance_actions);
 
         // D1's vote removed, D2's vote preserved.
-        assert!(!governance_actions[&gov_id].votes.contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+        assert!(!governance_actions[&gov_id]
+            .votes
+            .contains_key(&Voter::DRepKeyHash([0xD1; 28])));
         assert_eq!(
-            governance_actions[&gov_id].votes.get(&Voter::DRepKeyHash([0xD2; 28])),
+            governance_actions[&gov_id]
+                .votes
+                .get(&Voter::DRepKeyHash([0xD2; 28])),
             Some(&Vote::No),
         );
     }
 
     #[test]
     fn drep_unregistration_removes_votes_across_multiple_actions() {
-        let gov_id_1 = crate::eras::conway::GovActionId { transaction_id: [1; 32], gov_action_index: 0 };
-        let gov_id_2 = crate::eras::conway::GovActionId { transaction_id: [2; 32], gov_action_index: 0 };
+        let gov_id_1 = crate::eras::conway::GovActionId {
+            transaction_id: [1; 32],
+            gov_action_index: 0,
+        };
+        let gov_id_2 = crate::eras::conway::GovActionId {
+            transaction_id: [2; 32],
+            gov_action_index: 0,
+        };
         let mut governance_actions = BTreeMap::new();
 
         let mut action_1 = test_info_action();
-        action_1.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
+        action_1
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
         governance_actions.insert(gov_id_1.clone(), action_1);
 
         let mut action_2 = test_hf_action();
-        action_2.votes.insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
+        action_2
+            .votes
+            .insert(Voter::DRepKeyHash([0xD1; 28]), Vote::No);
         governance_actions.insert(gov_id_2.clone(), action_2);
 
         let unregistered = vec![Voter::DRepKeyHash([0xD1; 28])];
         remove_conway_drep_votes(&unregistered, &mut governance_actions);
 
-        assert!(!governance_actions[&gov_id_1].votes.contains_key(&Voter::DRepKeyHash([0xD1; 28])));
-        assert!(!governance_actions[&gov_id_2].votes.contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+        assert!(!governance_actions[&gov_id_1]
+            .votes
+            .contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+        assert!(!governance_actions[&gov_id_2]
+            .votes
+            .contains_key(&Voter::DRepKeyHash([0xD1; 28])));
     }
 
     #[test]
     fn collect_unregistered_drep_voters_from_certs() {
         let certificates = vec![
-            DCert::DrepUnregistration(
-                StakeCredential::AddrKeyHash([0xD1; 28]),
-                0,
-            ),
-            DCert::DrepUnregistration(
-                StakeCredential::ScriptHash([0xD2; 28]),
-                0,
-            ),
+            DCert::DrepUnregistration(StakeCredential::AddrKeyHash([0xD1; 28]), 0),
+            DCert::DrepUnregistration(StakeCredential::ScriptHash([0xD2; 28]), 0),
         ];
         let unregistered = collect_conway_unregistered_drep_voters(Some(&certificates));
         assert_eq!(unregistered.len(), 2);
@@ -17174,10 +18902,20 @@ mod tests {
         drep_state.register(DRep::ScriptHash([0xAB; 28]), RegisteredDrep::new(0, None));
 
         let voter = Voter::DRepScript([0xAB; 28]);
-        assert!(conway_voter_exists(&voter, &pool_state, &committee_state, &drep_state));
+        assert!(conway_voter_exists(
+            &voter,
+            &pool_state,
+            &committee_state,
+            &drep_state
+        ));
 
         let unknown_voter = Voter::DRepScript([0xCD; 28]);
-        assert!(!conway_voter_exists(&unknown_voter, &pool_state, &committee_state, &drep_state));
+        assert!(!conway_voter_exists(
+            &unknown_voter,
+            &pool_state,
+            &committee_state,
+            &drep_state
+        ));
     }
 
     #[test]
@@ -17196,36 +18934,57 @@ mod tests {
         let drep_state = DrepState::new();
 
         let voter = Voter::CommitteeScript([0xEE; 28]);
-        assert!(conway_voter_exists(&voter, &pool_state, &committee_state, &drep_state));
+        assert!(conway_voter_exists(
+            &voter,
+            &pool_state,
+            &committee_state,
+            &drep_state
+        ));
 
         let unknown_voter = Voter::CommitteeScript([0xFF; 28]);
-        assert!(!conway_voter_exists(&unknown_voter, &pool_state, &committee_state, &drep_state));
+        assert!(!conway_voter_exists(
+            &unknown_voter,
+            &pool_state,
+            &committee_state,
+            &drep_state
+        ));
     }
 
     #[test]
     fn voter_exists_spo() {
         let mut pool_state = PoolState::new();
-        pool_state.register(
-            crate::types::PoolParams {
-                operator: [0x01; 28],
-                vrf_keyhash: [0; 32],
-                pledge: 0,
-                cost: 0,
-                margin: UnitInterval { numerator: 0, denominator: 1 },
-                reward_account: sample_reward_account(1),
-                pool_owners: vec![],
-                relays: vec![],
-                pool_metadata: None,
+        pool_state.register(crate::types::PoolParams {
+            operator: [0x01; 28],
+            vrf_keyhash: [0; 32],
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
             },
-        );
+            reward_account: sample_reward_account(1),
+            pool_owners: vec![],
+            relays: vec![],
+            pool_metadata: None,
+        });
         let committee_state = CommitteeState::default();
         let drep_state = DrepState::new();
 
         let voter = Voter::StakePool([0x01; 28]);
-        assert!(conway_voter_exists(&voter, &pool_state, &committee_state, &drep_state));
+        assert!(conway_voter_exists(
+            &voter,
+            &pool_state,
+            &committee_state,
+            &drep_state
+        ));
 
         let unknown_voter = Voter::StakePool([0x02; 28]);
-        assert!(!conway_voter_exists(&unknown_voter, &pool_state, &committee_state, &drep_state));
+        assert!(!conway_voter_exists(
+            &unknown_voter,
+            &pool_state,
+            &committee_state,
+            &drep_state
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -17245,7 +19004,9 @@ mod tests {
     #[test]
     fn post_bootstrap_spo_accepted_on_no_confidence() {
         let voter = Voter::StakePool([9; 28]);
-        let action = GovAction::NoConfidence { prev_action_id: None };
+        let action = GovAction::NoConfidence {
+            prev_action_id: None,
+        };
         assert!(conway_voter_is_allowed_for_action(&voter, &action));
     }
 
@@ -17266,7 +19027,10 @@ mod tests {
             prev_action_id: None,
             members_to_remove: vec![],
             members_to_add: BTreeMap::new(),
-            quorum: UnitInterval { numerator: 1, denominator: 2 },
+            quorum: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
         };
         assert!(conway_voter_is_allowed_for_action(&voter, &action));
     }
@@ -17285,61 +19049,110 @@ mod tests {
     fn post_bootstrap_committee_accepted_on_most_actions() {
         let voter = Voter::CommitteeKeyHash([9; 28]);
         // Committee can vote on everything except NoConfidence per Conway rules.
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::InfoAction));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::HardForkInitiation {
-            prev_action_id: None, protocol_version: (11, 0),
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::TreasuryWithdrawals {
-            withdrawals: BTreeMap::new(), guardrails_script_hash: None,
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::NewConstitution {
-            prev_action_id: None, constitution: sample_constitution("cc"),
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::ParameterChange {
-            prev_action_id: None,
-            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
-                key_deposit: Some(1), ..Default::default()
-            },
-            guardrails_script_hash: None,
-        }));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::InfoAction
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (11, 0),
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::TreasuryWithdrawals {
+                withdrawals: BTreeMap::new(),
+                guardrails_script_hash: None,
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("cc"),
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    key_deposit: Some(1),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            }
+        ));
     }
 
     #[test]
     fn post_bootstrap_committee_rejected_on_no_confidence() {
         let voter = Voter::CommitteeKeyHash([9; 28]);
-        let action = GovAction::NoConfidence { prev_action_id: None };
+        let action = GovAction::NoConfidence {
+            prev_action_id: None,
+        };
         assert!(!conway_voter_is_allowed_for_action(&voter, &action));
     }
 
     #[test]
     fn post_bootstrap_drep_accepted_on_all_actions() {
         let voter = Voter::DRepKeyHash([9; 28]);
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::InfoAction));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::NoConfidence {
-            prev_action_id: None,
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::HardForkInitiation {
-            prev_action_id: None, protocol_version: (11, 0),
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::TreasuryWithdrawals {
-            withdrawals: BTreeMap::new(), guardrails_script_hash: None,
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::NewConstitution {
-            prev_action_id: None, constitution: sample_constitution("drep"),
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::UpdateCommittee {
-            prev_action_id: None,
-            members_to_remove: vec![],
-            members_to_add: BTreeMap::new(),
-            quorum: UnitInterval { numerator: 1, denominator: 2 },
-        }));
-        assert!(conway_voter_is_allowed_for_action(&voter, &GovAction::ParameterChange {
-            prev_action_id: None,
-            protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
-                key_deposit: Some(1), ..Default::default()
-            },
-            guardrails_script_hash: None,
-        }));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::InfoAction
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::NoConfidence {
+                prev_action_id: None,
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (11, 0),
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::TreasuryWithdrawals {
+                withdrawals: BTreeMap::new(),
+                guardrails_script_hash: None,
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: sample_constitution("drep"),
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2
+                },
+            }
+        ));
+        assert!(conway_voter_is_allowed_for_action(
+            &voter,
+            &GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    key_deposit: Some(1),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            }
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -17348,17 +19161,32 @@ mod tests {
 
     #[test]
     fn unit_interval_well_formed_valid() {
-        assert!(conway_unit_interval_well_formed(&UnitInterval { numerator: 0, denominator: 1 }));
-        assert!(conway_unit_interval_well_formed(&UnitInterval { numerator: 1, denominator: 1 }));
-        assert!(conway_unit_interval_well_formed(&UnitInterval { numerator: 2, denominator: 3 }));
+        assert!(conway_unit_interval_well_formed(&UnitInterval {
+            numerator: 0,
+            denominator: 1
+        }));
+        assert!(conway_unit_interval_well_formed(&UnitInterval {
+            numerator: 1,
+            denominator: 1
+        }));
+        assert!(conway_unit_interval_well_formed(&UnitInterval {
+            numerator: 2,
+            denominator: 3
+        }));
     }
 
     #[test]
     fn unit_interval_well_formed_invalid() {
         // Zero denominator.
-        assert!(!conway_unit_interval_well_formed(&UnitInterval { numerator: 0, denominator: 0 }));
+        assert!(!conway_unit_interval_well_formed(&UnitInterval {
+            numerator: 0,
+            denominator: 0
+        }));
         // Numerator > denominator.
-        assert!(!conway_unit_interval_well_formed(&UnitInterval { numerator: 2, denominator: 1 }));
+        assert!(!conway_unit_interval_well_formed(&UnitInterval {
+            numerator: 2,
+            denominator: 1
+        }));
     }
 
     // ── Certificate processing unit tests ──────────────────────────
@@ -17403,16 +19231,31 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xC1; 28]);
 
         let certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(dp.key_deposits, 2_000_000);
@@ -17431,17 +19274,34 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         // AccountRegistrationDeposit (tag 7) — must fail.
         let certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         let res = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
         );
-        assert!(matches!(res, Err(LedgerError::StakeCredentialAlreadyRegistered(_))));
+        assert!(matches!(
+            res,
+            Err(LedgerError::StakeCredentialAlreadyRegistered(_))
+        ));
     }
 
     /// Conway DELEG rule: `checkStakeKeyNotRegistered` for
@@ -17455,8 +19315,14 @@ mod tests {
             vrf_keyhash: [0xE1; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xE1; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xE1; 28]),
+            },
             pool_owners: vec![[0xE1; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -17468,16 +19334,35 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
-        let certs = vec![DCert::AccountRegistrationDelegationToStakePool(cred, operator, 2_000_000)];
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePool(
+            cred, operator, 2_000_000,
+        )];
         let res = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
         );
-        assert!(matches!(res, Err(LedgerError::StakeCredentialAlreadyRegistered(_))));
+        assert!(matches!(
+            res,
+            Err(LedgerError::StakeCredentialAlreadyRegistered(_))
+        ));
     }
 
     #[test]
@@ -17489,15 +19374,30 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 2_000_000,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::AccountUnregistrationDeposit(cred, 2_000_000)];
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(!sc.is_registered(&cred));
         assert_eq!(dp.key_deposits, 0);
@@ -17512,8 +19412,14 @@ mod tests {
             vrf_keyhash: [0xD1; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xD1; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xD1; 28]),
+            },
             pool_owners: vec![[0xD1; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -17528,15 +19434,30 @@ mod tests {
         let drep = DRep::KeyHash([0xD3; 28]);
         ds.register(drep, RegisteredDrep::new(0, None));
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::DelegationToStakePoolAndDrep(cred, operator, drep)];
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 0);
         let sc_state = sc.get(&cred).unwrap();
         assert_eq!(sc_state.delegated_pool(), Some(operator));
@@ -17552,8 +19473,14 @@ mod tests {
             vrf_keyhash: [0xE1; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xE1; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xE1; 28]),
+            },
             pool_owners: vec![[0xE1; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -17562,16 +19489,33 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
 
-        let certs = vec![DCert::AccountRegistrationDelegationToStakePool(cred, operator, 2_000_000)];
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePool(
+            cred, operator, 2_000_000,
+        )];
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(operator));
@@ -17586,16 +19530,33 @@ mod tests {
         let mut ds = DrepState::new();
         let drep = DRep::AlwaysAbstain;
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
 
-        let certs = vec![DCert::AccountRegistrationDelegationToDrep(cred, drep, 2_000_000)];
+        let certs = vec![DCert::AccountRegistrationDelegationToDrep(
+            cred, drep, 2_000_000,
+        )];
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(sc.get(&cred).unwrap().delegated_drep(), Some(drep));
@@ -17611,8 +19572,14 @@ mod tests {
             vrf_keyhash: [0xF1; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xF1; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xF1; 28]),
+            },
             pool_owners: vec![[0xF1; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -17622,16 +19589,33 @@ mod tests {
         let mut ds = DrepState::new();
         let drep = DRep::AlwaysNoConfidence;
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xF2; 28]);
 
-        let certs = vec![DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, operator, drep, 2_000_000)];
+        let certs = vec![DCert::AccountRegistrationDelegationToStakePoolAndDrep(
+            cred, operator, drep, 2_000_000,
+        )];
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 0);
         assert!(sc.is_registered(&cred));
         assert_eq!(sc.get(&cred).unwrap().delegated_pool(), Some(operator));
@@ -17646,7 +19630,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xA0; 28]);
@@ -17654,9 +19643,19 @@ mod tests {
         // Register DRep.
         let reg_certs = vec![DCert::DrepRegistration(cred, 500_000, None)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&reg_certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&reg_certs),
+            None,
+        )
+        .unwrap();
         let drep = DRep::KeyHash([0xA0; 28]);
         assert!(ds.is_registered(&drep));
         assert_eq!(dp.drep_deposits, 500_000);
@@ -17664,9 +19663,19 @@ mod tests {
         // Unregister DRep.
         let unreg_certs = vec![DCert::DrepUnregistration(cred, 500_000)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&unreg_certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&unreg_certs),
+            None,
+        )
+        .unwrap();
         assert!(!ds.is_registered(&drep));
         assert_eq!(dp.drep_deposits, 0);
     }
@@ -17678,7 +19687,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
         let cred = crate::StakeCredential::AddrKeyHash([0xA1; 28]);
@@ -17686,17 +19700,40 @@ mod tests {
         // Register first.
         let reg_certs = vec![DCert::DrepRegistration(cred, 500_000, None)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&reg_certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&reg_certs),
+            None,
+        )
+        .unwrap();
 
         // Update with anchor.
-        let anchor = Some(Anchor { url: "https://drep.example".to_string(), data_hash: [0xBB; 32] });
+        let anchor = Some(Anchor {
+            url: "https://drep.example".to_string(),
+            data_hash: [0xBB; 32],
+        });
         let upd_certs = vec![DCert::DrepUpdate(cred, anchor.clone())];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&upd_certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&upd_certs),
+            None,
+        )
+        .unwrap();
         let drep = DRep::KeyHash([0xA1; 28]);
         assert!(ds.is_registered(&drep));
     }
@@ -17708,7 +19745,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17721,17 +19763,33 @@ mod tests {
             vrf_keyhash: [0xAA; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 1, denominator: 10 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xAA; 28]) },
+            margin: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xAA; 28]),
+            },
             pool_owners: vec![[0xAA; 28]],
             relays: vec![],
             pool_metadata: None,
         };
         let certs = vec![DCert::PoolRegistration(params.clone())];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert!(pool.is_registered(&[0xAA; 28]));
         assert_eq!(dp.pool_deposits, 500_000_000);
     }
@@ -17746,7 +19804,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17756,17 +19819,33 @@ mod tests {
             vrf_keyhash: [0xBB; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 1, denominator: 10 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]) },
+            margin: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]),
+            },
             pool_owners: vec![[0xBB; 28]],
             relays: vec![],
             pool_metadata: None,
         };
         let certs = vec![DCert::PoolRegistration(params)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert!(pool.is_registered(&[0xBB; 28]));
     }
 
@@ -17777,7 +19856,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17788,17 +19872,33 @@ mod tests {
             vrf_keyhash: [0xAA; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 1, denominator: 10 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xAA; 28]) },
+            margin: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xAA; 28]),
+            },
             pool_owners: vec![[0xAA; 28], [0xAA; 28]], // duplicate owner
             relays: vec![],
             pool_metadata: None,
         };
         let certs = vec![DCert::PoolRegistration(params)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::DuplicatePoolOwner { .. }));
     }
 
@@ -17809,7 +19909,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17818,17 +19923,33 @@ mod tests {
             vrf_keyhash: [0xBB; 32],
             pledge: 1_000,
             cost: 1_000, // below min_pool_cost (170_000_000)
-            margin: UnitInterval { numerator: 1, denominator: 10 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]) },
+            margin: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]),
+            },
             pool_owners: vec![[0xBB; 28]],
             relays: vec![],
             pool_metadata: None,
         };
         let certs = vec![DCert::PoolRegistration(params)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolCostTooLow { .. }));
     }
 
@@ -17839,7 +19960,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17848,17 +19974,33 @@ mod tests {
             vrf_keyhash: [0xBC; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 2, denominator: 1 }, // invalid: num > denom
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBC; 28]) },
+            margin: UnitInterval {
+                numerator: 2,
+                denominator: 1,
+            }, // invalid: num > denom
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xBC; 28]),
+            },
             pool_owners: vec![[0xBC; 28]],
             relays: vec![],
             pool_metadata: None,
         };
         let certs = vec![DCert::PoolRegistration(params)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolMarginInvalid { .. }));
     }
 
@@ -17869,7 +20011,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // expected_network_id = Some(1)
 
@@ -17878,18 +20025,37 @@ mod tests {
             vrf_keyhash: [0xBD; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 0, credential: crate::StakeCredential::AddrKeyHash([0xBD; 28]) }, // network 0 != 1
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 0,
+                credential: crate::StakeCredential::AddrKeyHash([0xBD; 28]),
+            }, // network 0 != 1
             pool_owners: vec![[0xBD; 28]],
             relays: vec![],
             pool_metadata: None,
         };
         let certs = vec![DCert::PoolRegistration(params)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
-        assert!(matches!(err, LedgerError::PoolRewardAccountNetworkMismatch { .. }));
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LedgerError::PoolRewardAccountNetworkMismatch { .. }
+        ));
     }
 
     #[test]
@@ -17899,7 +20065,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -17908,8 +20079,14 @@ mod tests {
             vrf_keyhash: [0xBE; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBE; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xBE; 28]),
+            },
             pool_owners: vec![[0xBE; 28]],
             relays: vec![],
             pool_metadata: Some(crate::types::PoolMetadata {
@@ -17919,9 +20096,19 @@ mod tests {
         };
         let certs = vec![DCert::PoolRegistration(params)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolMetadataUrlTooLong { .. }));
     }
 
@@ -17934,8 +20121,14 @@ mod tests {
             vrf_keyhash: [0xCC; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xCC; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xCC; 28]),
+            },
             pool_owners: vec![[0xCC; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -17944,16 +20137,31 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 500_000_000,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
 
         // Retire at epoch 110 (within 100+18=118).
         let certs = vec![DCert::PoolRetirement(operator, EpochNo(110))];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -17965,8 +20173,14 @@ mod tests {
             vrf_keyhash: [0xCD; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xCD; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xCD; 28]),
+            },
             pool_owners: vec![[0xCD; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -17975,16 +20189,31 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 500_000_000,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
 
         // Retire at epoch 200 — beyond 100+18=118.
         let certs = vec![DCert::PoolRetirement(operator, EpochNo(200))];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolRetirementTooFar { .. }));
     }
 
@@ -17995,15 +20224,30 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
         let certs = vec![DCert::PoolRetirement([0xDE; 28], EpochNo(110))];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolNotRegistered(_)));
     }
 
@@ -18016,8 +20260,14 @@ mod tests {
             vrf_keyhash: [0xCF; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xCF; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xCF; 28]),
+            },
             pool_owners: vec![[0xCF; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -18026,16 +20276,31 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 500_000_000,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100
 
         // Retire at current epoch (100) — upstream requires cEpoch < e (strictly future).
         let certs = vec![DCert::PoolRetirement(operator, EpochNo(100))];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolRetirementTooEarly { .. }));
     }
 
@@ -18046,20 +20311,38 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         // Pre-populate genesis delegate mapping.
-        gd.insert([0xA0; 28], GenesisDelegationState {
-            delegate: [0xB0; 28],
-            vrf: [0xC0; 32],
-        });
+        gd.insert(
+            [0xA0; 28],
+            GenesisDelegationState {
+                delegate: [0xB0; 28],
+                vrf: [0xC0; 32],
+            },
+        );
         let ctx = sample_cert_ctx();
 
         let certs = vec![DCert::GenesisDelegation([0xA0; 28], [0xB1; 28], [0xC1; 32])];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(gd[&[0xA0; 28]].delegate, [0xB1; 28]);
         assert_eq!(gd[&[0xA0; 28]].vrf, [0xC1; 32]);
     }
@@ -18071,13 +20354,21 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut future_gd = std::collections::BTreeMap::new();
-        gd.insert([0xA0; 28], GenesisDelegationState {
-            delegate: [0xB0; 28],
-            vrf: [0xC0; 32],
-        });
+        gd.insert(
+            [0xA0; 28],
+            GenesisDelegationState {
+                delegate: [0xB0; 28],
+                vrf: [0xC0; 32],
+            },
+        );
         let ctx = sample_cert_ctx();
         let certs = vec![DCert::GenesisDelegation([0xA0; 28], [0xB1; 28], [0xC1; 32])];
 
@@ -18118,17 +20409,28 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut future_gd = std::collections::BTreeMap::new();
-        gd.insert([0xA0; 28], GenesisDelegationState {
-            delegate: [0xB0; 28],
-            vrf: [0xC0; 32],
-        });
-        gd.insert([0xA1; 28], GenesisDelegationState {
-            delegate: [0xB1; 28],
-            vrf: [0xC1; 32],
-        });
+        gd.insert(
+            [0xA0; 28],
+            GenesisDelegationState {
+                delegate: [0xB0; 28],
+                vrf: [0xC0; 32],
+            },
+        );
+        gd.insert(
+            [0xA1; 28],
+            GenesisDelegationState {
+                delegate: [0xB1; 28],
+                vrf: [0xC1; 32],
+            },
+        );
         schedule_future_genesis_delegation(
             &mut future_gd,
             120,
@@ -18169,16 +20471,31 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
         // Genesis key [0xA1..] is NOT in the delegate mapping.
         let certs = vec![DCert::GenesisDelegation([0xA1; 28], [0xB1; 28], [0xC1; 32])];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::GenesisKeyNotInMapping { .. }));
     }
 
@@ -18189,24 +20506,45 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
-        gd.insert([0xA0; 28], GenesisDelegationState {
-            delegate: [0xB0; 28],
-            vrf: [0xC0; 32],
-        });
-        gd.insert([0xA1; 28], GenesisDelegationState {
-            delegate: [0xB1; 28],
-            vrf: [0xC1; 32],
-        });
+        gd.insert(
+            [0xA0; 28],
+            GenesisDelegationState {
+                delegate: [0xB0; 28],
+                vrf: [0xC0; 32],
+            },
+        );
+        gd.insert(
+            [0xA1; 28],
+            GenesisDelegationState {
+                delegate: [0xB1; 28],
+                vrf: [0xC1; 32],
+            },
+        );
         let ctx = sample_cert_ctx();
 
         // Try to delegate [0xA1..] to [0xB0..] which is already used by [0xA0..].
         let certs = vec![DCert::GenesisDelegation([0xA1; 28], [0xB0; 28], [0xC9; 32])];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::DuplicateGenesisDelegate { .. }));
     }
 
@@ -18217,24 +20555,45 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
-        gd.insert([0xA0; 28], GenesisDelegationState {
-            delegate: [0xB0; 28],
-            vrf: [0xC0; 32],
-        });
-        gd.insert([0xA1; 28], GenesisDelegationState {
-            delegate: [0xB1; 28],
-            vrf: [0xC1; 32],
-        });
+        gd.insert(
+            [0xA0; 28],
+            GenesisDelegationState {
+                delegate: [0xB0; 28],
+                vrf: [0xC0; 32],
+            },
+        );
+        gd.insert(
+            [0xA1; 28],
+            GenesisDelegationState {
+                delegate: [0xB1; 28],
+                vrf: [0xC1; 32],
+            },
+        );
         let ctx = sample_cert_ctx();
 
         // Try to delegate [0xA1..] with VRF [0xC0..] which is already used by [0xA0..].
         let certs = vec![DCert::GenesisDelegation([0xA1; 28], [0xB9; 28], [0xC0; 32])];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::DuplicateGenesisVrf { .. }));
     }
 
@@ -18245,20 +20604,51 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway = false
 
         // All Conway-only cert variants (CDDL tags 7–18) must be rejected.
         let conway_certs: Vec<DCert> = vec![
             DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash([0x01; 28]), 2_000_000),
-            DCert::AccountUnregistrationDeposit(StakeCredential::AddrKeyHash([0x02; 28]), 2_000_000),
-            DCert::DelegationToDrep(StakeCredential::AddrKeyHash([0x03; 28]), DRep::AlwaysAbstain),
-            DCert::DelegationToStakePoolAndDrep(StakeCredential::AddrKeyHash([0x04; 28]), [0x00; 28], DRep::AlwaysAbstain),
-            DCert::AccountRegistrationDelegationToStakePool(StakeCredential::AddrKeyHash([0x05; 28]), [0x00; 28], 2_000_000),
-            DCert::AccountRegistrationDelegationToDrep(StakeCredential::AddrKeyHash([0x06; 28]), DRep::AlwaysAbstain, 2_000_000),
-            DCert::AccountRegistrationDelegationToStakePoolAndDrep(StakeCredential::AddrKeyHash([0x07; 28]), [0x00; 28], DRep::AlwaysAbstain, 2_000_000),
-            DCert::CommitteeAuthorization(StakeCredential::AddrKeyHash([0x08; 28]), StakeCredential::AddrKeyHash([0x09; 28])),
+            DCert::AccountUnregistrationDeposit(
+                StakeCredential::AddrKeyHash([0x02; 28]),
+                2_000_000,
+            ),
+            DCert::DelegationToDrep(
+                StakeCredential::AddrKeyHash([0x03; 28]),
+                DRep::AlwaysAbstain,
+            ),
+            DCert::DelegationToStakePoolAndDrep(
+                StakeCredential::AddrKeyHash([0x04; 28]),
+                [0x00; 28],
+                DRep::AlwaysAbstain,
+            ),
+            DCert::AccountRegistrationDelegationToStakePool(
+                StakeCredential::AddrKeyHash([0x05; 28]),
+                [0x00; 28],
+                2_000_000,
+            ),
+            DCert::AccountRegistrationDelegationToDrep(
+                StakeCredential::AddrKeyHash([0x06; 28]),
+                DRep::AlwaysAbstain,
+                2_000_000,
+            ),
+            DCert::AccountRegistrationDelegationToStakePoolAndDrep(
+                StakeCredential::AddrKeyHash([0x07; 28]),
+                [0x00; 28],
+                DRep::AlwaysAbstain,
+                2_000_000,
+            ),
+            DCert::CommitteeAuthorization(
+                StakeCredential::AddrKeyHash([0x08; 28]),
+                StakeCredential::AddrKeyHash([0x09; 28]),
+            ),
             DCert::CommitteeResignation(StakeCredential::AddrKeyHash([0x0A; 28]), None),
             DCert::DrepRegistration(StakeCredential::AddrKeyHash([0x0B; 28]), 500_000, None),
             DCert::DrepUnregistration(StakeCredential::AddrKeyHash([0x0C; 28]), 500_000),
@@ -18268,13 +20658,24 @@ mod tests {
         for cert in &conway_certs {
             let single = vec![cert.clone()];
             let err = apply_certificates_and_withdrawals(
-                &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-                &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&single), None,
-            ).unwrap_err();
+                &mut pool,
+                &mut sc,
+                &mut cs,
+                &mut ds,
+                &mut ra,
+                &mut dp,
+                &mut gd,
+                &std::collections::BTreeMap::new(),
+                &ctx,
+                Some(&single),
+                None,
+            )
+            .unwrap_err();
             assert!(
                 matches!(err, LedgerError::UnsupportedCertificate(msg) if msg.contains("Conway")),
                 "Expected UnsupportedCertificate for {:?}, got {:?}",
-                cert, err,
+                cert,
+                err,
             );
         }
     }
@@ -18286,16 +20687,31 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx(); // is_conway = true
 
         // GenesisDelegation (tag 5) must be rejected in Conway.
         let certs = vec![DCert::GenesisDelegation([0xA0; 28], [0xB0; 28], [0xC0; 32])];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(
             matches!(err, LedgerError::UnsupportedCertificate(msg) if msg.contains("pre-Conway")),
         );
@@ -18306,9 +20722,19 @@ mod tests {
             crate::types::MirTarget::StakeCredentials(std::collections::BTreeMap::new()),
         )];
         let err2 = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs2), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs2),
+            None,
+        )
+        .unwrap_err();
         assert!(
             matches!(err2, LedgerError::UnsupportedCertificate(msg) if msg.contains("pre-Conway")),
         );
@@ -18328,16 +20754,31 @@ mod tests {
             let mut cs = CommitteeState::new();
             let mut ds = DrepState::new();
             let mut ra = RewardAccounts::new();
-            let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+            let mut dp = DepositPot {
+                key_deposits: 0,
+                pool_deposits: 0,
+                drep_deposits: 0,
+                proposal_deposits: 0,
+            };
             let mut gd = std::collections::BTreeMap::new();
 
             // Tag 0: AccountRegistration.
             let cred = StakeCredential::AddrKeyHash([0x01; 28]);
             let certs = vec![DCert::AccountRegistration(cred)];
             apply_certificates_and_withdrawals(
-                &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-                &mut gd, &std::collections::BTreeMap::new(), ctx, Some(&certs), None,
-            ).unwrap();
+                &mut pool,
+                &mut sc,
+                &mut cs,
+                &mut ds,
+                &mut ra,
+                &mut dp,
+                &mut gd,
+                &std::collections::BTreeMap::new(),
+                ctx,
+                Some(&certs),
+                None,
+            )
+            .unwrap();
             assert!(sc.is_registered(&cred));
         }
     }
@@ -18352,15 +20793,30 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         let ms = cs.get(&cold).unwrap();
         assert!(!ms.is_resigned());
     }
@@ -18374,15 +20830,30 @@ mod tests {
         let hot = crate::StakeCredential::AddrKeyHash([0xDD; 28]);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::CommitteeIsUnknown(_)));
     }
 
@@ -18395,15 +20866,30 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeResignation(cold, None)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         assert!(cs.get(&cold).unwrap().is_resigned());
     }
 
@@ -18416,24 +20902,52 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         // First resign.
         let certs1 = vec![DCert::CommitteeResignation(cold, None)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs1), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs1),
+            None,
+        )
+        .unwrap();
 
         // Second resign should fail.
         let certs2 = vec![DCert::CommitteeResignation(cold, None)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs2), None,
-        ).unwrap_err();
-        assert!(matches!(err, LedgerError::CommitteeHasPreviouslyResigned(_)));
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs2),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LedgerError::CommitteeHasPreviouslyResigned(_)
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -18456,16 +20970,31 @@ mod tests {
         cs.register(cold);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         // No governance actions → credential is NOT a future member either.
         let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::CommitteeIsUnknown(_)));
     }
 
@@ -18479,15 +21008,30 @@ mod tests {
         cs.register(cold);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeResignation(cold, None)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::CommitteeIsUnknown(_)));
     }
 
@@ -18502,15 +21046,30 @@ mod tests {
         cs.register_with_term(cold, 200);
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         let ms = cs.get(&cold).unwrap();
         assert!(matches!(
             ms.authorization(),
@@ -18530,7 +21089,12 @@ mod tests {
         // No register — credential not in CommitteeState.
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -18542,28 +21106,42 @@ mod tests {
             gov_action_index: 0,
         };
         let mut gov = std::collections::BTreeMap::new();
-        gov.insert(action_id, GovernanceActionState::new(
-            crate::eras::conway::ProposalProcedure {
+        gov.insert(
+            action_id,
+            GovernanceActionState::new(crate::eras::conway::ProposalProcedure {
                 deposit: 0,
                 reward_account: vec![0x00],
                 gov_action: crate::eras::conway::GovAction::UpdateCommittee {
                     prev_action_id: None,
                     members_to_remove: vec![],
                     members_to_add,
-                    quorum: UnitInterval { numerator: 1, denominator: 2 },
+                    quorum: UnitInterval {
+                        numerator: 1,
+                        denominator: 2,
+                    },
                 },
                 anchor: crate::types::Anchor {
                     url: String::new(),
                     data_hash: [0; 32],
                 },
-            },
-        ));
+            }),
+        );
 
         let certs = vec![DCert::CommitteeAuthorization(cold, hot)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &gov, &ctx, Some(&certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &gov,
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap();
         // Credential was auto-registered in CommitteeState.
         assert!(cs.is_member(&cold));
     }
@@ -18581,7 +21159,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
 
@@ -18590,20 +21173,43 @@ mod tests {
         ctx.post_pv10 = true; // PV 11+: new error variant
         let reg = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&reg), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&reg),
+            None,
+        )
+        .unwrap();
 
         // Attempt wrong refund.
         let unreg = vec![DCert::AccountUnregistrationDeposit(cred, 9_999_999)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&unreg), None,
-        ).unwrap_err();
-        assert!(matches!(err, LedgerError::RefundIncorrectDELEG {
-            supplied: 9_999_999,
-            expected: 2_000_000,
-        }));
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&unreg),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LedgerError::RefundIncorrectDELEG {
+                supplied: 9_999_999,
+                expected: 2_000_000,
+            }
+        ));
     }
 
     #[test]
@@ -18614,7 +21220,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let cred = crate::StakeCredential::AddrKeyHash([0xE3; 28]);
 
@@ -18623,19 +21234,42 @@ mod tests {
 
         let reg = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&reg), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&reg),
+            None,
+        )
+        .unwrap();
 
         let unreg = vec![DCert::AccountUnregistrationDeposit(cred, 7_777_777)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&unreg), None,
-        ).unwrap_err();
-        assert!(matches!(err, LedgerError::IncorrectKeyDepositRefund {
-            supplied: 7_777_777,
-            expected: 2_000_000,
-        }));
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&unreg),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LedgerError::IncorrectKeyDepositRefund {
+                supplied: 7_777_777,
+                expected: 2_000_000,
+            }
+        ));
     }
 
     #[test]
@@ -18647,16 +21281,34 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
         let certs = vec![DCert::AccountRegistration(cred)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
-        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LedgerError::StakeCredentialAlreadyRegistered(_)
+        ));
     }
 
     #[test]
@@ -18667,15 +21319,30 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
         let certs = vec![DCert::AccountUnregistration(cred)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::StakeCredentialNotRegistered(_)));
     }
 
@@ -18691,15 +21358,30 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway: false
 
         let certs = vec![DCert::DelegationToStakePool(cred, [0x00; 28])]; // pool not registered
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolNotRegistered(_)));
     }
 
@@ -18714,15 +21396,30 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx(); // is_conway: true
 
         let certs = vec![DCert::DelegationToStakePool(cred, [0x00; 28])]; // pool not registered
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::PoolNotRegistered(_)));
     }
 
@@ -18740,7 +21437,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut ctx = sample_conway_cert_ctx();
         ctx.post_pv10 = true; // PV 11+: VRF key uniqueness enforced
@@ -18749,16 +21451,36 @@ mod tests {
         let pool_a = PoolParams {
             operator: [0xA1; 28],
             vrf_keyhash: shared_vrf,
-            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
-            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: crate::RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xA0; 28]),
+            },
+            pool_owners: vec![[0xA0; 28]],
+            relays: vec![],
+            pool_metadata: None,
         };
         let pool_b = PoolParams {
             operator: [0xB1; 28],
             vrf_keyhash: shared_vrf, // same VRF key
-            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB0; 28]) },
-            pool_owners: vec![[0xB0; 28]], relays: vec![], pool_metadata: None,
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: crate::RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xB0; 28]),
+            },
+            pool_owners: vec![[0xB0; 28]],
+            relays: vec![],
+            pool_metadata: None,
         };
         // Register pool A first, then try pool B with same VRF key.
         let certs = vec![
@@ -18766,9 +21488,19 @@ mod tests {
             DCert::PoolRegistration(pool_b),
         ];
         let err = apply_certificates_and_withdrawals(
-            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool_state,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::VrfKeyAlreadyRegistered { .. }));
     }
 
@@ -18782,7 +21514,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut ctx = sample_conway_cert_ctx();
         ctx.post_pv10 = true; // PV 11+: VRF key uniqueness enforced
@@ -18790,9 +21527,19 @@ mod tests {
         let params = PoolParams {
             operator: [0xA1; 28],
             vrf_keyhash: [0xDD; 32],
-            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
-            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: crate::RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xA0; 28]),
+            },
+            pool_owners: vec![[0xA0; 28]],
+            relays: vec![],
+            pool_metadata: None,
         };
         // Register pool, then re-register with same params (same VRF key).
         let certs = vec![
@@ -18800,10 +21547,22 @@ mod tests {
             DCert::PoolRegistration(params),
         ];
         let result = apply_certificates_and_withdrawals(
-            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+            &mut pool_state,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
         );
-        assert!(result.is_ok(), "re-registration with same VRF key should succeed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "re-registration with same VRF key should succeed: {result:?}"
+        );
     }
 
     #[test]
@@ -18820,7 +21579,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx(); // post_pv10: false (PV 9/10)
 
@@ -18828,26 +21592,58 @@ mod tests {
         let pool_a = PoolParams {
             operator: [0xA1; 28],
             vrf_keyhash: shared_vrf,
-            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
-            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: crate::RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xA0; 28]),
+            },
+            pool_owners: vec![[0xA0; 28]],
+            relays: vec![],
+            pool_metadata: None,
         };
         let pool_b = PoolParams {
             operator: [0xB1; 28],
             vrf_keyhash: shared_vrf, // same VRF key — allowed at PV <= 10
-            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB0; 28]) },
-            pool_owners: vec![[0xB0; 28]], relays: vec![], pool_metadata: None,
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: crate::RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xB0; 28]),
+            },
+            pool_owners: vec![[0xB0; 28]],
+            relays: vec![],
+            pool_metadata: None,
         };
         let certs = vec![
             DCert::PoolRegistration(pool_a),
             DCert::PoolRegistration(pool_b),
         ];
         let result = apply_certificates_and_withdrawals(
-            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+            &mut pool_state,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
         );
-        assert!(result.is_ok(), "Conway PV9/10 should allow duplicate VRF keys: {result:?}");
+        assert!(
+            result.is_ok(),
+            "Conway PV9/10 should allow duplicate VRF keys: {result:?}"
+        );
     }
 
     #[test]
@@ -18861,8 +21657,14 @@ mod tests {
             vrf_keyhash: [0x01; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFA; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xFA; 28]),
+            },
             pool_owners: vec![[0xFA; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -18893,8 +21695,14 @@ mod tests {
             vrf_keyhash: [0x01; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFB; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xFB; 28]),
+            },
             pool_owners: vec![[0xFB; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -18925,8 +21733,14 @@ mod tests {
             vrf_keyhash: [op[0]; 32],
             pledge,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash(op) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash(op),
+            },
             pool_owners: vec![op],
             relays: vec![],
             pool_metadata: None,
@@ -18944,7 +21758,7 @@ mod tests {
         let decoded = PoolState::decode_cbor(&mut dec).unwrap();
 
         assert_eq!(decoded.get(&op1).unwrap().params.pledge, 100); // current
-        assert_eq!(decoded.future_params()[&op1].pledge, 999);     // staged
+        assert_eq!(decoded.future_params()[&op1].pledge, 999); // staged
         assert_eq!(decoded.get(&op2).unwrap().params.pledge, 200);
         assert!(decoded.future_params().get(&op2).is_none());
     }
@@ -18960,15 +21774,27 @@ mod tests {
             vrf_keyhash: [0x01; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFC; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xFC; 28]),
+            },
             pool_owners: vec![[0xFC; 28]],
             relays: vec![],
             pool_metadata: None,
         };
         pool.register_with_deposit(original.clone(), 500_000_000);
         // Stage re-registration.
-        pool.register_with_deposit(PoolParams { pledge: 9_999, ..original }, 0);
+        pool.register_with_deposit(
+            PoolParams {
+                pledge: 9_999,
+                ..original
+            },
+            0,
+        );
         assert!(pool.future_params().contains_key(&operator));
         // Schedule retirement.
         pool.retire(operator, EpochNo(5));
@@ -18989,8 +21815,14 @@ mod tests {
             vrf_keyhash: [0x01; 32],
             pledge: 1_000,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xFD; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xFD; 28]),
+            },
             pool_owners: vec![[0xFD; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -19000,7 +21832,13 @@ mod tests {
         assert!(pool.get(&operator).unwrap().retiring_epoch.is_some());
 
         // Re-register → retirement should be cleared.
-        pool.register_with_deposit(PoolParams { pledge: 2_000, ..params }, 0);
+        pool.register_with_deposit(
+            PoolParams {
+                pledge: 2_000,
+                ..params
+            },
+            0,
+        );
         assert!(pool.get(&operator).unwrap().retiring_epoch.is_none());
     }
 
@@ -19016,7 +21854,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway: false
 
@@ -19024,26 +21867,58 @@ mod tests {
         let pool_a = PoolParams {
             operator: [0xA1; 28],
             vrf_keyhash: shared_vrf,
-            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA0; 28]) },
-            pool_owners: vec![[0xA0; 28]], relays: vec![], pool_metadata: None,
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: crate::RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xA0; 28]),
+            },
+            pool_owners: vec![[0xA0; 28]],
+            relays: vec![],
+            pool_metadata: None,
         };
         let pool_b = PoolParams {
             operator: [0xB1; 28],
             vrf_keyhash: shared_vrf, // same VRF key — should be allowed pre-Conway
-            pledge: 0, cost: 170_000_000, margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: crate::RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB0; 28]) },
-            pool_owners: vec![[0xB0; 28]], relays: vec![], pool_metadata: None,
+            pledge: 0,
+            cost: 170_000_000,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: crate::RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0xB0; 28]),
+            },
+            pool_owners: vec![[0xB0; 28]],
+            relays: vec![],
+            pool_metadata: None,
         };
         let certs = vec![
             DCert::PoolRegistration(pool_a),
             DCert::PoolRegistration(pool_b),
         ];
         let result = apply_certificates_and_withdrawals(
-            &mut pool_state, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+            &mut pool_state,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
         );
-        assert!(result.is_ok(), "Shelley-era duplicate VRF keys should be allowed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "Shelley-era duplicate VRF keys should be allowed: {result:?}"
+        );
     }
 
     #[test]
@@ -19056,15 +21931,30 @@ mod tests {
         let drep = DRep::KeyHash([0xFD; 28]);
         ds.register(drep, RegisteredDrep::new(500_000, None));
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         let certs = vec![DCert::DrepRegistration(cred, 500_000, None)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::DrepAlreadyRegistered(_)));
     }
 
@@ -19077,7 +21967,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -19085,9 +21980,19 @@ mod tests {
         let drep = DRep::KeyHash([0x99; 28]);
         let certs = vec![DCert::DelegationToDrep(cred, drep)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, LedgerError::DelegateeDRepNotRegistered(_)));
     }
 
@@ -19099,10 +22004,18 @@ mod tests {
         sc.register(cred);
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
-        let ra_key = RewardAccount { network: 1, credential: cred };
+        let ra_key = RewardAccount {
+            network: 1,
+            credential: cred,
+        };
         let mut ra = RewardAccounts::new();
         ra.insert(ra_key, RewardAccountState::new(100, None));
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -19110,9 +22023,19 @@ mod tests {
         withdrawals.insert(ra_key, 100); // withdraw entire balance
 
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, None, Some(&withdrawals),
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            None,
+            Some(&withdrawals),
+        )
+        .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 100);
         assert_eq!(ra.balance(&ra_key), 0);
     }
@@ -19134,10 +22057,18 @@ mod tests {
         sc.register_with_deposit(cred, 2_000_000);
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
-        let ra_key = RewardAccount { network: 1, credential: cred };
+        let ra_key = RewardAccount {
+            network: 1,
+            credential: cred,
+        };
         let mut ra = RewardAccounts::new();
         ra.insert(ra_key, RewardAccountState::new(500_000, None));
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 2_000_000,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx();
 
@@ -19147,10 +22078,19 @@ mod tests {
         let certs = vec![DCert::AccountUnregistration(cred)];
 
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), Some(&withdrawals),
-        ).expect("same-tx withdraw + unregister must succeed (upstream CERTS base-case ordering)");
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            Some(&withdrawals),
+        )
+        .expect("same-tx withdraw + unregister must succeed (upstream CERTS base-case ordering)");
 
         assert_eq!(cert_adj.withdrawal_total, 500_000);
         // Credential is now unregistered.
@@ -19169,10 +22109,18 @@ mod tests {
         sc.register_with_deposit(cred, 2_000_000);
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
-        let ra_key = RewardAccount { network: 1, credential: cred };
+        let ra_key = RewardAccount {
+            network: 1,
+            credential: cred,
+        };
         let mut ra = RewardAccounts::new();
         ra.insert(ra_key, RewardAccountState::new(300_000, None));
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 2_000_000,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut ctx = sample_cert_ctx();
         ctx.is_conway = true;
@@ -19182,10 +22130,19 @@ mod tests {
         let certs = vec![DCert::AccountUnregistrationDeposit(cred, 2_000_000)];
 
         let cert_adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), Some(&withdrawals),
-        ).expect("same-tx withdraw + Conway unregister must succeed");
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            Some(&withdrawals),
+        )
+        .expect("same-tx withdraw + Conway unregister must succeed");
 
         assert_eq!(cert_adj.withdrawal_total, 300_000);
         assert_eq!(cert_adj.total_refunds, 2_000_000);
@@ -19231,10 +22188,12 @@ mod tests {
         let outputs = vec![];
         // has_redeemers = true, collateral_inputs = None → must fail
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs,
-            None, None, None, None, true, 0,
+            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, true, 0, false,
         );
-        assert!(matches!(result, Err(LedgerError::MissingCollateralForScripts)));
+        assert!(matches!(
+            result,
+            Err(LedgerError::MissingCollateralForScripts)
+        ));
     }
 
     #[test]
@@ -19244,10 +22203,23 @@ mod tests {
         let outputs = vec![];
         // has_redeemers = true, collateral_inputs = Some(&[]) → must fail
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs,
-            Some(&[]), None, None, None, true, 0,
+            &params,
+            &utxo,
+            200,
+            200_000,
+            &outputs,
+            Some(&[]),
+            None,
+            None,
+            None,
+            true,
+            0,
+            false,
         );
-        assert!(matches!(result, Err(LedgerError::MissingCollateralForScripts)));
+        assert!(matches!(
+            result,
+            Err(LedgerError::MissingCollateralForScripts)
+        ));
     }
 
     #[test]
@@ -19257,8 +22229,46 @@ mod tests {
         let outputs = vec![];
         // has_redeemers = false, collateral_inputs = None → ok (no scripts)
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs,
-            None, None, None, None, false, 0,
+            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, false, 0, false,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn alonzo_plus_tx_no_redeemers_skips_collateral_validation_even_if_present() {
+        let params = ProtocolParameters::alonzo_defaults();
+        let mut utxo = MultiEraUtxo::new();
+        let collateral_in = crate::eras::shelley::ShelleyTxIn {
+            transaction_id: [1u8; 32],
+            index: 0,
+        };
+        // Script-locked enterprise address (`0x70` + 28-byte script hash).
+        // Upstream only validates collateral when redeemers are present, so
+        // this should pass when `has_redeemers = false`.
+        let mut script_addr = vec![0x70];
+        script_addr.extend_from_slice(&[2u8; 28]);
+        utxo.insert(
+            collateral_in.clone(),
+            MultiEraTxOut::Shelley(crate::eras::shelley::ShelleyTxOut {
+                address: script_addr,
+                amount: 5_000_000,
+            }),
+        );
+        let collateral_inputs = [collateral_in];
+        let outputs = vec![];
+        let result = validate_alonzo_plus_tx(
+            &params,
+            &utxo,
+            200,
+            200_000,
+            &outputs,
+            Some(&collateral_inputs),
+            None,
+            None,
+            None,
+            false,
+            0,
+            false,
         );
         assert!(result.is_ok());
     }
@@ -19272,8 +22282,8 @@ mod tests {
         params.max_val_size = Some(10); // very small limit
         let utxo = MultiEraUtxo::new();
         let outputs = vec![]; // regular outputs are fine (empty)
-        // Build a collateral_return with a multi-asset value that
-        // serializes to more than 10 bytes.
+                              // Build a collateral_return with a multi-asset value that
+                              // serializes to more than 10 bytes.
         let mut ma = std::collections::BTreeMap::new();
         let policy_id = [0xAA; 28];
         let mut assets = std::collections::BTreeMap::new();
@@ -19287,13 +22297,66 @@ mod tests {
             script_ref: None,
         });
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs,
-            None, None, Some(&cr), None, false, 0,
+            &params,
+            &utxo,
+            200,
+            200_000,
+            &outputs,
+            None,
+            None,
+            Some(&cr),
+            None,
+            false,
+            0,
+            false,
         );
         assert!(
             matches!(result, Err(LedgerError::OutputTooBig { .. })),
             "collateral_return must be validated for max_val_size"
         );
+    }
+
+    #[test]
+    fn babbage_plus_enforces_max_collateral_inputs_without_redeemers() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.max_collateral_inputs = Some(3);
+        let mut utxo = MultiEraUtxo::new();
+        let outputs = vec![];
+        let mut inputs = Vec::new();
+        for i in 0..4u16 {
+            let txin = crate::eras::shelley::ShelleyTxIn {
+                transaction_id: [3u8; 32],
+                index: i,
+            };
+            utxo.insert(
+                txin.clone(),
+                MultiEraTxOut::Shelley(crate::eras::shelley::ShelleyTxOut {
+                    address: vec![0x60; 29],
+                    amount: 2_000_000,
+                }),
+            );
+            inputs.push(txin);
+        }
+
+        let result = validate_alonzo_plus_tx(
+            &params,
+            &utxo,
+            200,
+            200_000,
+            &outputs,
+            Some(&inputs),
+            None,
+            None,
+            None,
+            false,
+            0,
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(LedgerError::TooManyCollateralInputs { count: 4, max: 3 })
+        ));
     }
 
     // ── Network validation tests ───────────────────────────────────────
@@ -19341,9 +22404,13 @@ mod tests {
             amount: 1_000_000,
         });
         let result = validate_output_network_ids(1, &[output]);
-        assert!(matches!(result, Err(LedgerError::WrongNetwork {
-            expected: 1, found: 0,
-        })));
+        assert!(matches!(
+            result,
+            Err(LedgerError::WrongNetwork {
+                expected: 1,
+                found: 0,
+            })
+        ));
     }
 
     #[test]
@@ -19378,9 +22445,13 @@ mod tests {
             50_000u64,
         )]);
         let result = validate_withdrawal_network_ids(1, &withdrawals);
-        assert!(matches!(result, Err(LedgerError::WrongNetworkWithdrawal {
-            expected: 1, found: 0,
-        })));
+        assert!(matches!(
+            result,
+            Err(LedgerError::WrongNetworkWithdrawal {
+                expected: 1,
+                found: 0,
+            })
+        ));
     }
 
     #[test]
@@ -19398,9 +22469,13 @@ mod tests {
     #[test]
     fn validate_tx_body_network_id_rejects_mismatch() {
         let result = validate_tx_body_network_id(1, Some(0));
-        assert!(matches!(result, Err(LedgerError::WrongNetworkInTxBody {
-            expected: 1, found: 0,
-        })));
+        assert!(matches!(
+            result,
+            Err(LedgerError::WrongNetworkInTxBody {
+                expected: 1,
+                found: 0,
+            })
+        ));
     }
 
     #[test]
@@ -19421,9 +22496,13 @@ mod tests {
             }),
         ];
         let result = validate_output_network_ids(1, &outputs);
-        assert!(matches!(result, Err(LedgerError::WrongNetwork {
-            expected: 1, found: 0,
-        })));
+        assert!(matches!(
+            result,
+            Err(LedgerError::WrongNetwork {
+                expected: 1,
+                found: 0,
+            })
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -19501,9 +22580,9 @@ mod tests {
     #[test]
     fn committee_member_is_expired_boundary() {
         let member = CommitteeMemberState::with_term(10);
-        assert!(!member.is_expired(EpochNo(9)));   // before term end
-        assert!(!member.is_expired(EpochNo(10)));  // at boundary (inclusive)
-        assert!(member.is_expired(EpochNo(11)));   // past expiry
+        assert!(!member.is_expired(EpochNo(9))); // before term end
+        assert!(!member.is_expired(EpochNo(10))); // at boundary (inclusive)
+        assert!(member.is_expired(EpochNo(11))); // past expiry
     }
 
     // ----- Per-credential deposit tracking (upstream rdDeposit) -----
@@ -19555,7 +22634,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
 
         let cred = crate::StakeCredential::AddrKeyHash([0xE1; 28]);
@@ -19564,10 +22648,19 @@ mod tests {
         let reg_ctx = sample_conway_cert_ctx(); // key_deposit = 2_000_000
         let reg_certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(),
-            &reg_ctx, Some(&reg_certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &reg_ctx,
+            Some(&reg_certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(sc.get(&cred).unwrap().deposit(), 2_000_000);
 
         // Step 2: Simulate key_deposit changing to 3M.
@@ -19579,14 +22672,26 @@ mod tests {
         // Should fail: stored deposit is 2M.
         let unreg_certs = vec![DCert::AccountUnregistrationDeposit(cred, 3_000_000)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(),
-            &unreg_ctx, Some(&unreg_certs), None,
-        ).unwrap_err();
-        assert!(matches!(err, LedgerError::RefundIncorrectDELEG {
-            supplied: 3_000_000,
-            expected: 2_000_000,
-        }));
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &unreg_ctx,
+            Some(&unreg_certs),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LedgerError::RefundIncorrectDELEG {
+                supplied: 3_000_000,
+                expected: 2_000_000,
+            }
+        ));
     }
 
     #[test]
@@ -19598,7 +22703,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
 
         let cred = crate::StakeCredential::AddrKeyHash([0xE2; 28]);
@@ -19607,10 +22717,19 @@ mod tests {
         let reg_ctx = sample_conway_cert_ctx();
         let reg_certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(),
-            &reg_ctx, Some(&reg_certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &reg_ctx,
+            Some(&reg_certs),
+            None,
+        )
+        .unwrap();
 
         // Change key_deposit to 3M — should not matter.
         let mut unreg_ctx = sample_conway_cert_ctx();
@@ -19619,10 +22738,19 @@ mod tests {
         // Unregister with refund=2M (stored deposit). Should succeed.
         let unreg_certs = vec![DCert::AccountUnregistrationDeposit(cred, 2_000_000)];
         let adj = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(),
-            &unreg_ctx, Some(&unreg_certs), None,
-        ).unwrap();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &unreg_ctx,
+            Some(&unreg_certs),
+            None,
+        )
+        .unwrap();
         assert_eq!(adj.total_refunds, 2_000_000);
         assert!(!sc.is_registered(&cred));
     }
@@ -19643,19 +22771,37 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 2_000_000,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
         // Conway tag 7: AccountRegistrationDeposit on already-registered cred.
         let certs = vec![DCert::AccountRegistrationDeposit(cred, 2_000_000)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
 
         // Upstream: `StakeKeyRegisteredDELEG` — re-registration is rejected.
-        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
+        assert!(matches!(
+            err,
+            LedgerError::StakeCredentialAlreadyRegistered(_)
+        ));
         // Deposit pot unchanged.
         assert_eq!(dp.key_deposits, 2_000_000);
     }
@@ -19669,17 +22815,35 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // is_conway = false
 
         // Shelley tag 0: AccountRegistration on already-registered cred.
         let certs = vec![DCert::AccountRegistration(cred)];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
-        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            LedgerError::StakeCredentialAlreadyRegistered(_)
+        ));
     }
 
     #[test]
@@ -19695,8 +22859,14 @@ mod tests {
             vrf_keyhash: [0xBB; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xBB; 28]),
+            },
             pool_owners: vec![pool_hash],
             relays: vec![],
             pool_metadata: None,
@@ -19704,7 +22874,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 2_000_000, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 2_000_000,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_conway_cert_ctx();
 
@@ -19713,12 +22888,25 @@ mod tests {
             cred, pool_hash, 2_000_000,
         )];
         let err = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
-        ).unwrap_err();
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+        )
+        .unwrap_err();
 
         // Upstream: `StakeKeyRegisteredDELEG` — re-registration is rejected.
-        assert!(matches!(err, LedgerError::StakeCredentialAlreadyRegistered(_)));
+        assert!(matches!(
+            err,
+            LedgerError::StakeCredentialAlreadyRegistered(_)
+        ));
         assert_eq!(dp.key_deposits, 2_000_000); // unchanged
     }
 
@@ -19735,7 +22923,9 @@ mod tests {
         let cred = StakeCredential::AddrKeyHash([0xAA; 28]);
         assert!(sc.register(cred));
         // Set a delegation target on the existing entry.
-        sc.get_mut(&cred).unwrap().set_delegated_pool(Some([0x11; 28]));
+        sc.get_mut(&cred)
+            .unwrap()
+            .set_delegated_pool(Some([0x11; 28]));
         // Attempt duplicate registration — must return false AND preserve
         // the existing delegation target.
         assert!(!sc.register(cred));
@@ -19753,7 +22943,9 @@ mod tests {
         let mut sc = StakeCredentials::new();
         let cred = StakeCredential::AddrKeyHash([0xBB; 28]);
         assert!(sc.register_with_deposit(cred, 2_000_000));
-        sc.get_mut(&cred).unwrap().set_delegated_pool(Some([0x22; 28]));
+        sc.get_mut(&cred)
+            .unwrap()
+            .set_delegated_pool(Some([0x22; 28]));
         // Attempt duplicate registration with a different deposit.
         assert!(!sc.register_with_deposit(cred, 5_000_000));
         // Original deposit and delegation must be preserved.
@@ -19803,8 +22995,14 @@ mod tests {
             vrf_keyhash: [0xDD; 32],
             pledge: 0,
             cost: 170_000_000,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
-            reward_account: RewardAccount { network: 1, credential: crate::StakeCredential::AddrKeyHash([0xDD; 28]) },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: crate::StakeCredential::AddrKeyHash([0xDD; 28]),
+            },
             pool_owners: vec![[0xDD; 28]],
             relays: vec![],
             pool_metadata: None,
@@ -19817,12 +23015,26 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 500_000_000, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 500_000_000,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let ctx = sample_cert_ctx(); // current_epoch=100, e_max=18
         let result = apply_certificates_and_withdrawals(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &std::collections::BTreeMap::new(), &ctx, Some(&certs), None,
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
         );
         assert!(result.is_err(), "retirement at current epoch must fail");
         // Crucially: the pool's retiring_epoch must NOT have been mutated.
@@ -19872,7 +23084,9 @@ mod tests {
         ws.native_scripts.push(ns);
         let required = HashSet::new(); // nothing required
         let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, None);
-        assert!(matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash));
+        assert!(
+            matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash)
+        );
     }
 
     #[test]
@@ -19890,7 +23104,7 @@ mod tests {
         required.insert(hash); // required by transaction
         let mut refs = HashSet::new();
         refs.insert(hash); // also available via reference input
-        // With refs: neededNonRefs = required \ refs = ∅ → witness is extraneous.
+                           // With refs: neededNonRefs = required \ refs = ∅ → witness is extraneous.
         let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, Some(&refs));
         assert!(
             matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash),
@@ -19910,7 +23124,10 @@ mod tests {
         required.insert(hash);
         // Without refs: neededNonRefs = required → witness is accepted.
         let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, None);
-        assert!(result.is_ok(), "without reference deduction, witness covering a required script is fine");
+        assert!(
+            result.is_ok(),
+            "without reference deduction, witness covering a required script is fine"
+        );
     }
 
     #[test]
@@ -19997,7 +23214,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20009,11 +23231,29 @@ mod tests {
             MirTarget::StakeCredentials(map),
         )];
         let err = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 500, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            500,
+            Some(5),
+            Some(&mir_ctx),
         );
-        assert!(matches!(err, Err(LedgerError::MIRCertificateTooLateInEpoch { slot: 500, deadline: 500 })));
+        assert!(matches!(
+            err,
+            Err(LedgerError::MIRCertificateTooLateInEpoch {
+                slot: 500,
+                deadline: 500
+            })
+        ));
     }
 
     /// Upstream: `MIRNegativesNotCurrentlyAllowed` — pre-Alonzo negatives rejected.
@@ -20038,7 +23278,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20050,11 +23295,26 @@ mod tests {
             MirTarget::StakeCredentials(map),
         )];
         let err = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+            Some(&mir_ctx),
         );
-        assert!(matches!(err, Err(LedgerError::MIRNegativesNotCurrentlyAllowed)));
+        assert!(matches!(
+            err,
+            Err(LedgerError::MIRNegativesNotCurrentlyAllowed)
+        ));
     }
 
     /// Upstream: `MIRProducesNegativeUpdate` — Alonzo+ combined map negative.
@@ -20074,7 +23334,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20085,9 +23350,21 @@ mod tests {
             MirTarget::StakeCredentials(map),
         )];
         let err = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+            Some(&mir_ctx),
         );
         assert!(matches!(err, Err(LedgerError::MIRProducesNegativeUpdate)));
     }
@@ -20114,7 +23391,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20126,11 +23408,26 @@ mod tests {
             MirTarget::StakeCredentials(map),
         )];
         let err = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+            Some(&mir_ctx),
         );
-        assert!(matches!(err, Err(LedgerError::MIRInsufficientPotBalance { .. })));
+        assert!(matches!(
+            err,
+            Err(LedgerError::MIRInsufficientPotBalance { .. })
+        ));
     }
 
     /// Upstream: `MIRTransferNotCurrentlyAllowed` — pre-Alonzo transfer rejected.
@@ -20155,7 +23452,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20164,11 +23466,26 @@ mod tests {
             MirTarget::SendToOppositePot(1_000_000),
         )];
         let err = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+            Some(&mir_ctx),
         );
-        assert!(matches!(err, Err(LedgerError::MIRTransferNotCurrentlyAllowed)));
+        assert!(matches!(
+            err,
+            Err(LedgerError::MIRTransferNotCurrentlyAllowed)
+        ));
     }
 
     /// Upstream: `InsufficientForTransferDELEG` — transfer exceeds available.
@@ -20193,7 +23510,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20202,11 +23524,26 @@ mod tests {
             MirTarget::SendToOppositePot(5_000),
         )];
         let err = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+            Some(&mir_ctx),
         );
-        assert!(matches!(err, Err(LedgerError::MIRInsufficientForTransfer { .. })));
+        assert!(matches!(
+            err,
+            Err(LedgerError::MIRInsufficientForTransfer { .. })
+        ));
     }
 
     /// Alonzo+ MIR StakeCredentials with positive deltas that fit should succeed.
@@ -20224,7 +23561,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20236,9 +23578,21 @@ mod tests {
             MirTarget::StakeCredentials(map),
         )];
         let result = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+            Some(&mir_ctx),
         );
         assert!(result.is_ok());
     }
@@ -20258,7 +23612,12 @@ mod tests {
         let mut cs = CommitteeState::new();
         let mut ds = DrepState::new();
         let mut ra = RewardAccounts::new();
-        let mut dp = DepositPot { key_deposits: 0, pool_deposits: 0, drep_deposits: 0, proposal_deposits: 0 };
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
         let mut gd = std::collections::BTreeMap::new();
         let mut fgd = std::collections::BTreeMap::new();
         let ctx = sample_shelley_cert_ctx_for_mir();
@@ -20267,9 +23626,21 @@ mod tests {
             MirTarget::SendToOppositePot(1_000),
         )];
         let result = apply_certificates_and_withdrawals_with_future(
-            &mut pool, &mut sc, &mut cs, &mut ds, &mut ra, &mut dp,
-            &mut gd, &mut fgd, &std::collections::BTreeMap::new(), &ctx,
-            Some(&certs), None, 100, Some(5), Some(&mir_ctx),
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &mut fgd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&certs),
+            None,
+            100,
+            Some(5),
+            Some(&mir_ctx),
         );
         assert!(result.is_ok());
     }
@@ -20285,13 +23656,18 @@ mod tests {
 
         let mut utxo = MultiEraUtxo::new();
         // Existing UTxO entry with a ref-script (from before the block).
-        let existing_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        let existing_input = ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        };
         let script_bytes = vec![0x82, 0x01, 0x87]; // 3 bytes
         let existing_out = crate::eras::babbage::BabbageTxOut {
             address: vec![0x61; 29],
             amount: Value::Coin(2_000_000),
             datum_option: None,
-            script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(script_bytes.clone()))),
+            script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(
+                script_bytes.clone(),
+            ))),
         };
         utxo.insert(existing_input.clone(), MultiEraTxOut::Babbage(existing_out));
 
@@ -20302,7 +23678,10 @@ mod tests {
 
         // Tx B: ref_inputs = [TxA output at index 0] — this output doesn't
         // exist in the pre-block UTxO yet.
-        let tx_b_ref_input = ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 };
+        let tx_b_ref_input = ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        };
         let total_b = utxo.total_ref_scripts_size(&[], Some(&[tx_b_ref_input]));
         // PV <= 10: Tx B can't see Tx A's output → 0 bytes.
         assert_eq!(total_b, 0);
@@ -20322,13 +23701,18 @@ mod tests {
 
         let mut utxo = MultiEraUtxo::new();
         // Existing UTxO with a ref-script.
-        let existing_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        let existing_input = ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        };
         let script_bytes = vec![0x82, 0x01, 0x87]; // 3 bytes
         let existing_out = crate::eras::babbage::BabbageTxOut {
             address: vec![0x61; 29],
             amount: Value::Coin(2_000_000),
             datum_option: None,
-            script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(script_bytes.clone()))),
+            script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(
+                script_bytes.clone(),
+            ))),
         };
         utxo.insert(existing_input.clone(), MultiEraTxOut::Babbage(existing_out));
 
@@ -20357,7 +23741,10 @@ mod tests {
             datum_option: None,
             script_ref: Some(crate::ScriptRef(crate::Script::PlutusV2(new_script))),
         };
-        let tx_a_out_key = ShelleyTxIn { transaction_id: tx_a_id, index: 0 };
+        let tx_a_out_key = ShelleyTxIn {
+            transaction_id: tx_a_id,
+            index: 0,
+        };
         overlay.insert(tx_a_out_key.clone(), MultiEraTxOut::Babbage(tx_a_output));
 
         // --- Tx B: ref_inputs = [Tx A's output at index 0].
