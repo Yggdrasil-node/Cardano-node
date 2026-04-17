@@ -102,9 +102,7 @@ impl LocalTxSubmissionServer {
             .map_err(LocalTxSubmissionServerError::Mux)
     }
 
-    async fn recv_msg(
-        &mut self,
-    ) -> Result<LocalTxSubmissionMessage, LocalTxSubmissionServerError> {
+    async fn recv_msg(&mut self) -> Result<LocalTxSubmissionMessage, LocalTxSubmissionServerError> {
         let raw = self
             .channel
             .recv()
@@ -125,9 +123,7 @@ impl LocalTxSubmissionServer {
     /// protocol.
     ///
     /// Must be called when the server is in `StIdle` (client agency).
-    pub async fn recv_request(
-        &mut self,
-    ) -> Result<LocalTxRequest, LocalTxSubmissionServerError> {
+    pub async fn recv_request(&mut self) -> Result<LocalTxRequest, LocalTxSubmissionServerError> {
         match self.recv_msg().await? {
             LocalTxSubmissionMessage::MsgSubmitTx { tx } => Ok(LocalTxRequest::SubmitTx { tx }),
             LocalTxSubmissionMessage::MsgDone => Ok(LocalTxRequest::Done),
@@ -152,10 +148,7 @@ impl LocalTxSubmissionServer {
     ///
     /// The `reason` bytes are era-specific CBOR encoding of the rejection
     /// reason; the node layer produces these.
-    pub async fn reject(
-        &mut self,
-        reason: Vec<u8>,
-    ) -> Result<(), LocalTxSubmissionServerError> {
+    pub async fn reject(&mut self, reason: Vec<u8>) -> Result<(), LocalTxSubmissionServerError> {
         self.send_msg(&LocalTxSubmissionMessage::MsgRejectTx { reason })
             .await
     }

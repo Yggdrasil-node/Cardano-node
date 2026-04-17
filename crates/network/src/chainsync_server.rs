@@ -139,9 +139,7 @@ impl ChainSyncServer {
                 Ok(ChainSyncServerRequest::FindIntersect { points })
             }
             ChainSyncMessage::MsgDone => Ok(ChainSyncServerRequest::Done),
-            msg => Err(ChainSyncServerError::UnexpectedMessage(format!(
-                "{msg:?}"
-            ))),
+            msg => Err(ChainSyncServerError::UnexpectedMessage(format!("{msg:?}"))),
         }
     }
 
@@ -193,10 +191,7 @@ impl ChainSyncServer {
     /// Send `MsgIntersectNotFound` with the current tip.
     ///
     /// Valid from `StIntersect`. Transitions to `StIdle`.
-    pub async fn intersect_not_found(
-        &mut self,
-        tip: Vec<u8>,
-    ) -> Result<(), ChainSyncServerError> {
+    pub async fn intersect_not_found(&mut self, tip: Vec<u8>) -> Result<(), ChainSyncServerError> {
         self.send_msg(&ChainSyncMessage::MsgIntersectNotFound { tip })
             .await
     }

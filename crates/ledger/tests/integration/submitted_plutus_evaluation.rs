@@ -40,10 +40,8 @@ impl PlutusEvaluator for AlwaysFails {
 // ---------------------------------------------------------------------------
 
 const TEST_SEED: [u8; 32] = [
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
 ];
 
 fn test_vkey(seed: &[u8; 32]) -> [u8; 32] {
@@ -127,7 +125,10 @@ fn build_alonzo_minting_body(
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![AlonzoTxOut {
             address: addr,
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -181,7 +182,10 @@ fn build_minting_witness_set(
 fn seed_alonzo_utxo(state: &mut LedgerState, prev_tx_id: [u8; 32]) {
     let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
     let addr = enterprise_keyhash_address(&keyhash);
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Alonzo(AlonzoTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -193,7 +197,10 @@ fn seed_alonzo_utxo(state: &mut LedgerState, prev_tx_id: [u8; 32]) {
 fn seed_babbage_utxo(state: &mut LedgerState, prev_tx_id: [u8; 32]) {
     let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
     let addr = enterprise_keyhash_address(&keyhash);
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Babbage(BabbageTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -211,19 +218,23 @@ fn seed_babbage_utxo(state: &mut LedgerState, prev_tx_id: [u8; 32]) {
 fn alonzo_submitted_plutus_v1_evaluator_succeeds() {
     let prev_tx_id = [0xE1; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _script_hash, tx_id) =
+        build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let mut state = LedgerState::new(Era::Alonzo);
     seed_alonzo_utxo(&mut state, prev_tx_id);
 
     let evaluator = AlwaysSucceeds;
     let result = state.apply_submitted_tx(&submitted, SlotNo(100), Some(&evaluator));
-    assert!(result.is_ok(), "Alonzo submitted Plutus V1 minting should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Alonzo submitted Plutus V1 minting should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -234,12 +245,12 @@ fn alonzo_submitted_plutus_v1_evaluator_succeeds() {
 fn alonzo_submitted_plutus_v1_evaluator_fails() {
     let prev_tx_id = [0xE2; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, script_hash, tx_id) =
+        build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let mut state = LedgerState::new(Era::Alonzo);
     seed_alonzo_utxo(&mut state, prev_tx_id);
@@ -264,19 +275,23 @@ fn alonzo_submitted_plutus_v1_evaluator_fails() {
 fn alonzo_submitted_plutus_no_evaluator_soft_skip() {
     let prev_tx_id = [0xE3; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _script_hash, tx_id) =
+        build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let mut state = LedgerState::new(Era::Alonzo);
     seed_alonzo_utxo(&mut state, prev_tx_id);
 
     // No evaluator — Phase-2 validation is skipped.
     let result = state.apply_submitted_tx(&submitted, SlotNo(100), None);
-    assert!(result.is_ok(), "Alonzo submitted with no evaluator should soft-skip: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Alonzo submitted with no evaluator should soft-skip: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -301,7 +316,10 @@ fn babbage_submitted_plutus_v2_evaluator_succeeds() {
 
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V2, None, false);
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr,
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -329,16 +347,19 @@ fn babbage_submitted_plutus_v2_evaluator_succeeds() {
     let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V2);
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let mut state = LedgerState::new(Era::Babbage);
     seed_babbage_utxo(&mut state, prev_tx_id);
 
     let evaluator = AlwaysSucceeds;
     let result = state.apply_submitted_tx(&submitted, SlotNo(200), Some(&evaluator));
-    assert!(result.is_ok(), "Babbage submitted Plutus V2 minting should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Babbage submitted Plutus V2 minting should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -363,7 +384,10 @@ fn babbage_submitted_plutus_v2_evaluator_fails() {
 
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V2, None, false);
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr,
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -391,9 +415,8 @@ fn babbage_submitted_plutus_v2_evaluator_fails() {
     let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V2);
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let mut state = LedgerState::new(Era::Babbage);
     seed_babbage_utxo(&mut state, prev_tx_id);
@@ -432,7 +455,10 @@ fn conway_submitted_plutus_v3_evaluator_succeeds() {
 
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V3, None, true);
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr,
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -463,16 +489,19 @@ fn conway_submitted_plutus_v3_evaluator_succeeds() {
     let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V3);
 
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let mut state = LedgerState::new(Era::Conway);
     seed_babbage_utxo(&mut state, prev_tx_id); // Conway uses Babbage-shaped UTxO
 
     let evaluator = AlwaysSucceeds;
     let result = state.apply_submitted_tx(&submitted, SlotNo(300), Some(&evaluator));
-    assert!(result.is_ok(), "Conway submitted Plutus V3 minting should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Conway submitted Plutus V3 minting should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -497,7 +526,10 @@ fn conway_submitted_plutus_v3_evaluator_fails() {
 
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V3, None, true);
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr,
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -528,9 +560,8 @@ fn conway_submitted_plutus_v3_evaluator_fails() {
     let tx_id = yggdrasil_crypto::hash_bytes_256(&body_bytes).0;
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V3);
 
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let mut state = LedgerState::new(Era::Conway);
     seed_babbage_utxo(&mut state, prev_tx_id);
@@ -555,13 +586,13 @@ fn conway_submitted_plutus_v3_evaluator_fails() {
 fn submitted_tx_is_valid_false_rejected_before_plutus() {
     let prev_tx_id = [0xE8; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _script_hash, tx_id) = build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _script_hash, tx_id) =
+        build_alonzo_minting_body(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     // is_valid = false — should be rejected immediately
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
-        body, ws, false, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, false, None));
 
     let mut state = LedgerState::new(Era::Alonzo);
     seed_alonzo_utxo(&mut state, prev_tx_id);

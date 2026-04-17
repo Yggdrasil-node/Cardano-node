@@ -14,8 +14,8 @@
 use super::*;
 use std::collections::BTreeMap;
 use yggdrasil_ledger::{
-    apply_epoch_boundary, EpochNo, InstantaneousRewards, MirPot, MirTarget,
-    StakeSnapshot, StakeSnapshots,
+    EpochNo, InstantaneousRewards, MirPot, MirTarget, StakeSnapshot, StakeSnapshots,
+    apply_epoch_boundary,
 };
 
 // ---------------------------------------------------------------------------
@@ -196,12 +196,12 @@ fn mir_accumulation_stake_credentials_reserves() {
             m
         }),
     )];
-    yggdrasil_ledger::accumulate_mir_from_certs(
-        state.instantaneous_rewards_mut(),
-        Some(&certs),
-    );
+    yggdrasil_ledger::accumulate_mir_from_certs(state.instantaneous_rewards_mut(), Some(&certs));
 
-    assert_eq!(state.instantaneous_rewards().ir_reserves.get(&cred), Some(&100_000));
+    assert_eq!(
+        state.instantaneous_rewards().ir_reserves.get(&cred),
+        Some(&100_000)
+    );
     assert!(state.instantaneous_rewards().ir_treasury.is_empty());
 }
 
@@ -218,13 +218,13 @@ fn mir_accumulation_stake_credentials_treasury() {
             m
         }),
     )];
-    yggdrasil_ledger::accumulate_mir_from_certs(
-        state.instantaneous_rewards_mut(),
-        Some(&certs),
-    );
+    yggdrasil_ledger::accumulate_mir_from_certs(state.instantaneous_rewards_mut(), Some(&certs));
 
     assert!(state.instantaneous_rewards().ir_reserves.is_empty());
-    assert_eq!(state.instantaneous_rewards().ir_treasury.get(&cred), Some(&250_000));
+    assert_eq!(
+        state.instantaneous_rewards().ir_treasury.get(&cred),
+        Some(&250_000)
+    );
 }
 
 #[test]
@@ -250,13 +250,13 @@ fn mir_accumulation_merges_multiple_certs() {
             }),
         ),
     ];
-    yggdrasil_ledger::accumulate_mir_from_certs(
-        state.instantaneous_rewards_mut(),
-        Some(&certs),
-    );
+    yggdrasil_ledger::accumulate_mir_from_certs(state.instantaneous_rewards_mut(), Some(&certs));
 
     // Post-Alonzo unionWith (<>) semantics: 100_000 + 50_000 = 150_000
-    assert_eq!(state.instantaneous_rewards().ir_reserves.get(&cred), Some(&150_000));
+    assert_eq!(
+        state.instantaneous_rewards().ir_reserves.get(&cred),
+        Some(&150_000)
+    );
 }
 
 #[test]
@@ -267,10 +267,7 @@ fn mir_accumulation_send_to_opposite_pot() {
         MirPot::Reserves,
         MirTarget::SendToOppositePot(5_000_000),
     )];
-    yggdrasil_ledger::accumulate_mir_from_certs(
-        state.instantaneous_rewards_mut(),
-        Some(&certs),
-    );
+    yggdrasil_ledger::accumulate_mir_from_certs(state.instantaneous_rewards_mut(), Some(&certs));
 
     // Reserves to treasury: delta_reserves -= 5M, delta_treasury += 5M
     assert_eq!(state.instantaneous_rewards().delta_reserves, -5_000_000);
@@ -285,10 +282,7 @@ fn mir_accumulation_send_to_opposite_pot_treasury_to_reserves() {
         MirPot::Treasury,
         MirTarget::SendToOppositePot(3_000_000),
     )];
-    yggdrasil_ledger::accumulate_mir_from_certs(
-        state.instantaneous_rewards_mut(),
-        Some(&certs),
-    );
+    yggdrasil_ledger::accumulate_mir_from_certs(state.instantaneous_rewards_mut(), Some(&certs));
 
     // Treasury to reserves: delta_treasury -= 3M, delta_reserves += 3M
     assert_eq!(state.instantaneous_rewards().delta_treasury, -3_000_000);
@@ -298,10 +292,7 @@ fn mir_accumulation_send_to_opposite_pot_treasury_to_reserves() {
 #[test]
 fn mir_accumulation_none_certs_is_noop() {
     let mut state = mir_test_state(&[], 1_000_000_000, 500_000_000);
-    yggdrasil_ledger::accumulate_mir_from_certs(
-        state.instantaneous_rewards_mut(),
-        None,
-    );
+    yggdrasil_ledger::accumulate_mir_from_certs(state.instantaneous_rewards_mut(), None);
     assert!(state.instantaneous_rewards().is_empty());
 }
 
@@ -320,23 +311,36 @@ fn mir_epoch_boundary_credits_reward_accounts() {
     );
 
     // Seed MIR state: 200K from reserves to cred_a, 100K from treasury to cred_b
-    state.instantaneous_rewards_mut().ir_reserves.insert(cred_a, 200_000);
-    state.instantaneous_rewards_mut().ir_treasury.insert(cred_b, 100_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(cred_a, 200_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_treasury
+        .insert(cred_b, 100_000);
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Reward accounts should be credited.
-    let account_a = RewardAccount { network: 1, credential: cred_a };
-    let account_b = RewardAccount { network: 1, credential: cred_b };
-    assert_eq!(state.reward_accounts().get(&account_a).unwrap().balance(), 200_000);
-    assert_eq!(state.reward_accounts().get(&account_b).unwrap().balance(), 1_100_000);
+    let account_a = RewardAccount {
+        network: 1,
+        credential: cred_a,
+    };
+    let account_b = RewardAccount {
+        network: 1,
+        credential: cred_b,
+    };
+    assert_eq!(
+        state.reward_accounts().get(&account_a).unwrap().balance(),
+        200_000
+    );
+    assert_eq!(
+        state.reward_accounts().get(&account_b).unwrap().balance(),
+        1_100_000
+    );
 
     // Reserves debited by 200K, treasury debited by 100K.
     assert_eq!(event.mir_accounts_credited, 2);
@@ -353,24 +357,25 @@ fn mir_epoch_boundary_all_or_nothing_reserves_insufficient() {
     let cred = test_credential(1);
     let mut state = mir_test_state(
         &[(cred, 0)],
-        50_000,        // reserves: only 50K
-        500_000_000,   // treasury: plenty
+        50_000,      // reserves: only 50K
+        500_000_000, // treasury: plenty
     );
 
     // Request 100K from reserves — exceeds available.
-    state.instantaneous_rewards_mut().ir_reserves.insert(cred, 100_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(cred, 100_000);
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // No rewards should be distributed.
-    let account = RewardAccount { network: 1, credential: cred };
+    let account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
     assert_eq!(state.reward_accounts().get(&account).unwrap().balance(), 0);
     assert_eq!(event.mir_accounts_credited, 0);
     assert!(event.mir_pots_insufficient);
@@ -386,28 +391,41 @@ fn mir_epoch_boundary_all_or_nothing_treasury_insufficient() {
     let mut state = mir_test_state(
         &[(cred_a, 0), (cred_b, 0)],
         1_000_000_000,
-        30_000,        // treasury: only 30K
+        30_000, // treasury: only 30K
     );
 
     // Reserves request is fine.
-    state.instantaneous_rewards_mut().ir_reserves.insert(cred_a, 100_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(cred_a, 100_000);
     // Treasury request exceeds 30K.
-    state.instantaneous_rewards_mut().ir_treasury.insert(cred_b, 50_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_treasury
+        .insert(cred_b, 50_000);
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // All-or-nothing: neither pot pays.
-    let account_a = RewardAccount { network: 1, credential: cred_a };
-    let account_b = RewardAccount { network: 1, credential: cred_b };
-    assert_eq!(state.reward_accounts().get(&account_a).unwrap().balance(), 0);
-    assert_eq!(state.reward_accounts().get(&account_b).unwrap().balance(), 0);
+    let account_a = RewardAccount {
+        network: 1,
+        credential: cred_a,
+    };
+    let account_b = RewardAccount {
+        network: 1,
+        credential: cred_b,
+    };
+    assert_eq!(
+        state.reward_accounts().get(&account_a).unwrap().balance(),
+        0
+    );
+    assert_eq!(
+        state.reward_accounts().get(&account_b).unwrap().balance(),
+        0
+    );
     assert!(event.mir_pots_insufficient);
     assert!(state.instantaneous_rewards().is_empty());
 }
@@ -416,28 +434,31 @@ fn mir_epoch_boundary_all_or_nothing_treasury_insufficient() {
 fn mir_epoch_boundary_filters_unregistered_credentials() {
     let registered = test_credential(1);
     let unregistered = test_credential(2);
-    let mut state = mir_test_state(
-        &[(registered, 0)],
-        1_000_000_000,
-        500_000_000,
-    );
+    let mut state = mir_test_state(&[(registered, 0)], 1_000_000_000, 500_000_000);
 
     // Add MIR entries for both registered and unregistered credentials.
-    state.instantaneous_rewards_mut().ir_reserves.insert(registered, 100_000);
-    state.instantaneous_rewards_mut().ir_reserves.insert(unregistered, 200_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(registered, 100_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(unregistered, 200_000);
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Only registered credential should be credited.
-    let account = RewardAccount { network: 1, credential: registered };
-    assert_eq!(state.reward_accounts().get(&account).unwrap().balance(), 100_000);
+    let account = RewardAccount {
+        network: 1,
+        credential: registered,
+    };
+    assert_eq!(
+        state.reward_accounts().get(&account).unwrap().balance(),
+        100_000
+    );
 
     // Only 100K was drawn from reserves (unregistered 200K silently dropped).
     assert_eq!(event.mir_from_reserves, 100_000);
@@ -447,11 +468,7 @@ fn mir_epoch_boundary_filters_unregistered_credentials() {
 
 #[test]
 fn mir_epoch_boundary_send_to_opposite_pot_always_applied() {
-    let mut state = mir_test_state(
-        &[],
-        1_000_000_000,
-        500_000_000,
-    );
+    let mut state = mir_test_state(&[], 1_000_000_000, 500_000_000);
 
     // Only pot-to-pot transfer, no per-credential rewards.
     state.instantaneous_rewards_mut().delta_reserves = -10_000_000;
@@ -461,13 +478,8 @@ fn mir_epoch_boundary_send_to_opposite_pot_always_applied() {
     let treasury_before = state.accounting().treasury;
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Delta transfers should be applied.
     // Note: epoch boundary also modifies reserves/treasury for rewards, so
@@ -497,24 +509,22 @@ fn mir_epoch_boundary_pot_transfer_applied_even_when_rewards_insufficient() {
     let cred = test_credential(1);
     let mut state = mir_test_state(
         &[(cred, 0)],
-        50_000,        // reserves: only 50K — insufficient for reward
+        50_000, // reserves: only 50K — insufficient for reward
         500_000_000,
     );
 
     // Reserves reward request exceeds pot.
-    state.instantaneous_rewards_mut().ir_reserves.insert(cred, 100_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(cred, 100_000);
     // Also request pot-to-pot transfer.
     state.instantaneous_rewards_mut().delta_reserves = 1_000_000;
     state.instantaneous_rewards_mut().delta_treasury = -1_000_000;
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Rewards not distributed (pot insufficient).
     assert!(event.mir_pots_insufficient);
@@ -535,13 +545,8 @@ fn mir_epoch_boundary_empty_ir_is_noop() {
     let treasury_before = state.accounting().treasury;
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
     assert_eq!(event.mir_accounts_credited, 0);
     assert_eq!(event.mir_from_reserves, 0);
@@ -556,27 +561,30 @@ fn mir_epoch_boundary_empty_ir_is_noop() {
 #[test]
 fn mir_combined_reserves_and_treasury_same_credential() {
     let cred = test_credential(1);
-    let mut state = mir_test_state(
-        &[(cred, 0)],
-        1_000_000_000,
-        500_000_000,
-    );
+    let mut state = mir_test_state(&[(cred, 0)], 1_000_000_000, 500_000_000);
 
     // 300K from reserves + 200K from treasury → same credential should get 500K.
-    state.instantaneous_rewards_mut().ir_reserves.insert(cred, 300_000);
-    state.instantaneous_rewards_mut().ir_treasury.insert(cred, 200_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(cred, 300_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_treasury
+        .insert(cred, 200_000);
 
     let mut snapshots = empty_snapshots();
-    let event = apply_epoch_boundary(
-        &mut state,
-        EpochNo(1),
-        &mut snapshots,
-        &BTreeMap::new(),
-    )
-    .unwrap();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
 
-    let account = RewardAccount { network: 1, credential: cred };
-    assert_eq!(state.reward_accounts().get(&account).unwrap().balance(), 500_000);
+    let account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
+    assert_eq!(
+        state.reward_accounts().get(&account).unwrap().balance(),
+        500_000
+    );
     assert_eq!(event.mir_accounts_credited, 1);
     assert_eq!(event.mir_from_reserves, 300_000);
     assert_eq!(event.mir_from_treasury, 200_000);
@@ -589,20 +597,22 @@ fn mir_combined_reserves_and_treasury_same_credential() {
 #[test]
 fn ledger_state_cbor_roundtrip_with_mir() {
     let cred = test_credential(1);
-    let mut state = mir_test_state(
-        &[(cred, 1_000_000)],
-        1_000_000_000,
-        500_000_000,
-    );
+    let mut state = mir_test_state(&[(cred, 1_000_000)], 1_000_000_000, 500_000_000);
 
-    state.instantaneous_rewards_mut().ir_reserves.insert(cred, 100_000);
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(cred, 100_000);
     state.instantaneous_rewards_mut().delta_treasury = 5_000_000;
     state.instantaneous_rewards_mut().delta_reserves = -5_000_000;
 
     let bytes = state.to_cbor_bytes();
     let decoded = LedgerState::from_cbor_bytes(&bytes).unwrap();
 
-    assert_eq!(decoded.instantaneous_rewards(), state.instantaneous_rewards());
+    assert_eq!(
+        decoded.instantaneous_rewards(),
+        state.instantaneous_rewards()
+    );
     assert_eq!(decoded.accounting(), state.accounting());
 }
 
@@ -675,7 +685,9 @@ fn mir_genesis_quorum_block_path_rejects_insufficient_signatures() {
     };
 
     let block = make_shelley_block_raw(10, 1, 0xAA, vec![tx]);
-    let err = state.apply_block(&block).expect_err("MIR quorum should reject tx");
+    let err = state
+        .apply_block(&block)
+        .expect_err("MIR quorum should reject tx");
     assert!(matches!(
         err,
         LedgerError::MIRInsufficientGenesisSigs {
@@ -815,11 +827,7 @@ fn mir_genesis_quorum_submitted_path_rejects_insufficient_signatures() {
         auxiliary_data: None,
     };
     let err = state
-        .apply_submitted_tx(
-            &MultiEraSubmittedTx::Shelley(submitted),
-            SlotNo(10),
-            None,
-        )
+        .apply_submitted_tx(&MultiEraSubmittedTx::Shelley(submitted), SlotNo(10), None)
         .expect_err("submitted tx should fail MIR quorum");
     assert!(matches!(
         err,

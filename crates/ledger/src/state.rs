@@ -7486,10 +7486,7 @@ impl LedgerState {
                         .as_ref()
                         .and_then(|p| p.protocol_version),
                 ) {
-                    MultiEraUtxo::validate_reference_input_disjointness(
-                        &body.inputs,
-                        ref_inputs,
-                    )?;
+                    MultiEraUtxo::validate_reference_input_disjointness(&body.inputs, ref_inputs)?;
                 }
             }
             let mut required_scripts = HashSet::new();
@@ -8867,10 +8864,7 @@ fn validate_conway_proposals(
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
 
-            if !conway_protocol_param_update_well_formed(
-                protocol_param_update,
-                protocol_version,
-            ) {
+            if !conway_protocol_param_update_well_formed(protocol_param_update, protocol_version) {
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
             }
         }
@@ -11699,7 +11693,13 @@ pub(crate) fn accepted_by_spo(
     else {
         return true; // no SPO vote required for this action type
     };
-    let tally = tally_spo_votes(action, pool_stake_dist, is_bootstrap_phase, pool_state, stake_credentials);
+    let tally = tally_spo_votes(
+        action,
+        pool_stake_dist,
+        is_bootstrap_phase,
+        pool_state,
+        stake_credentials,
+    );
     tally.meets_threshold(&threshold)
 }
 
@@ -12413,7 +12413,7 @@ mod tests {
         assert_eq!(ra.balance(&ra1), 1200); // 1000 + 200
         assert_eq!(ra.balance(&ra2), 600); // 500 + 100
         assert_eq!(acc.treasury, 4700); // 5000 - 300
-                                        // No lineage tracked for treasury withdrawals.
+        // No lineage tracked for treasury withdrawals.
         assert!(es.prev_pparams_update().is_none());
     }
 
@@ -14115,7 +14115,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(result.is_ok(), "cross-field tx_size > block_body_size accepted (no upstream check)");
+        assert!(
+            result.is_ok(),
+            "cross-field tx_size > block_body_size accepted (no upstream check)"
+        );
     }
 
     /// Upstream `ppuWellFormed` does not merge proposed values with current
@@ -14154,7 +14157,10 @@ mod tests {
             &es,
             None,
         );
-        assert!(result.is_ok(), "tx_size > current block_body_size accepted (no effective merge in upstream)");
+        assert!(
+            result.is_ok(),
+            "tx_size > current block_body_size accepted (no effective merge in upstream)"
+        );
     }
 
     #[test]
@@ -14900,7 +14906,13 @@ mod tests {
         action.votes.insert(Voter::StakePool(pool_a), Vote::Yes);
         action.votes.insert(Voter::StakePool(pool_b), Vote::No);
 
-        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
+        let tally = tally_spo_votes(
+            &action,
+            &pool_dist,
+            false,
+            &PoolState::new(),
+            &StakeCredentials::new(),
+        );
         assert_eq!(tally.yes, 600);
         assert_eq!(tally.no, 400);
         assert_eq!(tally.total, 1000);
@@ -16328,7 +16340,13 @@ mod tests {
     fn spo_tally_empty_pool_distribution_fails_positive_threshold() {
         let action = test_hf_action();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
-        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
+        let tally = tally_spo_votes(
+            &action,
+            &pool_dist,
+            false,
+            &PoolState::new(),
+            &StakeCredentials::new(),
+        );
         assert_eq!(tally.total, 0);
         // Zero total → active = 0 → upstream `%?` returns 0 → fails
         // any positive threshold.
@@ -16346,7 +16364,13 @@ mod tests {
         pool_stakes.insert([1u8; 28], 2000u64);
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 2000);
 
-        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
+        let tally = tally_spo_votes(
+            &action,
+            &pool_dist,
+            false,
+            &PoolState::new(),
+            &StakeCredentials::new(),
+        );
         assert_eq!(tally.total, 2000);
         assert_eq!(tally.yes, 0);
         // Non-voting pool means 0 yes out of 2000 → does NOT meet 51%.
@@ -16367,7 +16391,13 @@ mod tests {
             .votes
             .insert(Voter::StakePool([1; 28]), Vote::Abstain);
 
-        let tally = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
+        let tally = tally_spo_votes(
+            &action,
+            &pool_dist,
+            false,
+            &PoolState::new(),
+            &StakeCredentials::new(),
+        );
         assert_eq!(tally.abstain, 1000);
         assert_eq!(tally.total, 1000);
         // All abstain → active = 0 → fails positive threshold.
@@ -16603,7 +16633,15 @@ mod tests {
         let action = test_treasury_action();
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
-        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false, &PoolState::new(), &StakeCredentials::new()));
+        assert!(accepted_by_spo(
+            &action,
+            true,
+            &pool_dist,
+            &pvt,
+            false,
+            &PoolState::new(),
+            &StakeCredentials::new()
+        ));
     }
 
     #[test]
@@ -16622,7 +16660,15 @@ mod tests {
         });
         let pool_dist = crate::stake::PoolStakeDistribution::default();
         let pvt = PoolVotingThresholds::default();
-        assert!(accepted_by_spo(&action, true, &pool_dist, &pvt, false, &PoolState::new(), &StakeCredentials::new()));
+        assert!(accepted_by_spo(
+            &action,
+            true,
+            &pool_dist,
+            &pvt,
+            false,
+            &PoolState::new(),
+            &StakeCredentials::new()
+        ));
     }
 
     #[test]
@@ -17722,7 +17768,10 @@ mod tests {
             vrf_keyhash: [0; 32],
             pledge: 0,
             cost: 0,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             reward_account,
             pool_owners: vec![],
             relays: vec![],
@@ -17732,7 +17781,9 @@ mod tests {
         pool_state.register(params);
         let mut stake_creds = StakeCredentials::new();
         stake_creds.register(reward_cred);
-        stake_creds.get_mut(&reward_cred).unwrap()
+        stake_creds
+            .get_mut(&reward_cred)
+            .unwrap()
             .set_delegated_drep(Some(DRep::AlwaysNoConfidence));
 
         let action = test_no_confidence_action();
@@ -17742,7 +17793,10 @@ mod tests {
 
         // Post-bootstrap (is_bootstrap_phase=false): default vote = NoConfidence → Yes.
         let tally = tally_spo_votes(&action, &pool_dist, false, &pool_state, &stake_creds);
-        assert_eq!(tally.yes, 1000, "AlwaysNoConfidence should auto-yes on NoConfidence");
+        assert_eq!(
+            tally.yes, 1000,
+            "AlwaysNoConfidence should auto-yes on NoConfidence"
+        );
         assert_eq!(tally.abstain, 0);
     }
 
@@ -17761,7 +17815,10 @@ mod tests {
             vrf_keyhash: [0; 32],
             pledge: 0,
             cost: 0,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             reward_account,
             pool_owners: vec![],
             relays: vec![],
@@ -17771,7 +17828,9 @@ mod tests {
         pool_state.register(params);
         let mut stake_creds = StakeCredentials::new();
         stake_creds.register(reward_cred);
-        stake_creds.get_mut(&reward_cred).unwrap()
+        stake_creds
+            .get_mut(&reward_cred)
+            .unwrap()
             .set_delegated_drep(Some(DRep::AlwaysNoConfidence));
 
         let action = test_hf_action();
@@ -17799,7 +17858,10 @@ mod tests {
             vrf_keyhash: [0; 32],
             pledge: 0,
             cost: 0,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             reward_account,
             pool_owners: vec![],
             relays: vec![],
@@ -17809,7 +17871,9 @@ mod tests {
         pool_state.register(params);
         let mut stake_creds = StakeCredentials::new();
         stake_creds.register(reward_cred);
-        stake_creds.get_mut(&reward_cred).unwrap()
+        stake_creds
+            .get_mut(&reward_cred)
+            .unwrap()
             .set_delegated_drep(Some(DRep::AlwaysAbstain));
 
         let action = test_no_confidence_action();
@@ -17837,7 +17901,10 @@ mod tests {
             vrf_keyhash: [0; 32],
             pledge: 0,
             cost: 0,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             reward_account,
             pool_owners: vec![],
             relays: vec![],
@@ -17847,7 +17914,9 @@ mod tests {
         pool_state.register(params);
         let mut stake_creds = StakeCredentials::new();
         stake_creds.register(reward_cred);
-        stake_creds.get_mut(&reward_cred).unwrap()
+        stake_creds
+            .get_mut(&reward_cred)
+            .unwrap()
             .set_delegated_drep(Some(DRep::AlwaysNoConfidence));
 
         // Security-group parameter change (SPOs can vote on these)
@@ -17857,8 +17926,14 @@ mod tests {
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
 
         let tally = tally_spo_votes(&action, &pool_dist, false, &pool_state, &stake_creds);
-        assert_eq!(tally.yes, 0, "NoConfidence default should not auto-yes on ParameterChange");
-        assert_eq!(tally.abstain, 0, "NoConfidence default should not count as abstain");
+        assert_eq!(
+            tally.yes, 0,
+            "NoConfidence default should not auto-yes on ParameterChange"
+        );
+        assert_eq!(
+            tally.abstain, 0,
+            "NoConfidence default should not count as abstain"
+        );
         assert_eq!(tally.total, 1000, "Stake still in total");
     }
 
@@ -17879,13 +17954,25 @@ mod tests {
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
 
         // Without bootstrap: non-voting A2 is in denominator → yes=500/(1000-0) = 50%.
-        let tally_normal = tally_spo_votes(&action, &pool_dist, false, &PoolState::new(), &StakeCredentials::new());
+        let tally_normal = tally_spo_votes(
+            &action,
+            &pool_dist,
+            false,
+            &PoolState::new(),
+            &StakeCredentials::new(),
+        );
         assert_eq!(tally_normal.yes, 500);
         assert_eq!(tally_normal.abstain, 0);
         assert_eq!(tally_normal.total, 1000);
 
         // With bootstrap: non-voting A2 counts as abstain → yes=500/(1000-500) = 100%.
-        let tally_bootstrap = tally_spo_votes(&action, &pool_dist, true, &PoolState::new(), &StakeCredentials::new());
+        let tally_bootstrap = tally_spo_votes(
+            &action,
+            &pool_dist,
+            true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
+        );
         assert_eq!(tally_bootstrap.yes, 500);
         assert_eq!(tally_bootstrap.abstain, 500);
         assert_eq!(tally_bootstrap.total, 1000);
@@ -17907,7 +17994,13 @@ mod tests {
         action.votes.insert(Voter::StakePool([0xA1; 28]), Vote::Yes);
         let pool_dist = crate::stake::PoolStakeDistribution::from_raw(pool_stakes, 1000);
 
-        let tally = tally_spo_votes(&action, &pool_dist, true, &PoolState::new(), &StakeCredentials::new());
+        let tally = tally_spo_votes(
+            &action,
+            &pool_dist,
+            true,
+            &PoolState::new(),
+            &StakeCredentials::new(),
+        );
         assert_eq!(tally.yes, 500);
         assert_eq!(tally.abstain, 0); // NOT counted as abstain for HF
         assert_eq!(tally.total, 1000);
@@ -19393,9 +19486,11 @@ mod tests {
         remove_conway_drep_votes(&unregistered, &mut governance_actions);
 
         // D1's vote removed, D2's vote preserved.
-        assert!(!governance_actions[&gov_id]
-            .votes
-            .contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+        assert!(
+            !governance_actions[&gov_id]
+                .votes
+                .contains_key(&Voter::DRepKeyHash([0xD1; 28]))
+        );
         assert_eq!(
             governance_actions[&gov_id]
                 .votes
@@ -19431,12 +19526,16 @@ mod tests {
         let unregistered = vec![Voter::DRepKeyHash([0xD1; 28])];
         remove_conway_drep_votes(&unregistered, &mut governance_actions);
 
-        assert!(!governance_actions[&gov_id_1]
-            .votes
-            .contains_key(&Voter::DRepKeyHash([0xD1; 28])));
-        assert!(!governance_actions[&gov_id_2]
-            .votes
-            .contains_key(&Voter::DRepKeyHash([0xD1; 28])));
+        assert!(
+            !governance_actions[&gov_id_1]
+                .votes
+                .contains_key(&Voter::DRepKeyHash([0xD1; 28]))
+        );
+        assert!(
+            !governance_actions[&gov_id_2]
+                .votes
+                .contains_key(&Voter::DRepKeyHash([0xD1; 28]))
+        );
     }
 
     #[test]
@@ -22854,8 +22953,8 @@ mod tests {
         params.max_val_size = Some(10); // very small limit
         let utxo = MultiEraUtxo::new();
         let outputs = vec![]; // regular outputs are fine (empty)
-                              // Build a collateral_return with a multi-asset value that
-                              // serializes to more than 10 bytes.
+        // Build a collateral_return with a multi-asset value that
+        // serializes to more than 10 bytes.
         let mut ma = std::collections::BTreeMap::new();
         let policy_id = [0xAA; 28];
         let mut assets = std::collections::BTreeMap::new();
@@ -23676,7 +23775,7 @@ mod tests {
         required.insert(hash); // required by transaction
         let mut refs = HashSet::new();
         refs.insert(hash); // also available via reference input
-                           // With refs: neededNonRefs = required \ refs = ∅ → witness is extraneous.
+        // With refs: neededNonRefs = required \ refs = ∅ → witness is extraneous.
         let result = validate_no_extraneous_script_witnesses_typed(&ws, &required, Some(&refs));
         assert!(
             matches!(result, Err(LedgerError::ExtraneousScriptWitness { hash: h }) if h == hash),

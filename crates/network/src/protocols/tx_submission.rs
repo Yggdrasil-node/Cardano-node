@@ -146,17 +146,16 @@ impl TxSubmissionState {
 
             // Server agency — StIdle
             (Self::StIdle, TxSubmissionMessage::MsgRequestTxIds { blocking, .. }) => {
-                Ok(Self::StTxIds { blocking: *blocking })
+                Ok(Self::StTxIds {
+                    blocking: *blocking,
+                })
             }
             (Self::StIdle, TxSubmissionMessage::MsgRequestTxs { .. }) => Ok(Self::StTxs),
 
             // Client agency — StTxIds
             (Self::StTxIds { .. }, TxSubmissionMessage::MsgReplyTxIds { .. }) => Ok(Self::StIdle),
             // MsgDone only from blocking StTxIds
-            (
-                Self::StTxIds { blocking: true },
-                TxSubmissionMessage::MsgDone,
-            ) => Ok(Self::StDone),
+            (Self::StTxIds { blocking: true }, TxSubmissionMessage::MsgDone) => Ok(Self::StDone),
 
             // Client agency — StTxs
             (Self::StTxs, TxSubmissionMessage::MsgReplyTxs { .. }) => Ok(Self::StIdle),

@@ -51,7 +51,6 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GovernorTargets {
     // -- Regular peer targets (excludes big-ledger) ---------------------------
-
     /// Target number of root peers (one-sided, from below only).
     ///
     /// Upstream: `targetNumberOfRootPeers`.
@@ -70,7 +69,6 @@ pub struct GovernorTargets {
     pub target_active: usize,
 
     // -- Big-ledger peer targets (independent of regular) ---------------------
-
     /// Target number of known big-ledger peers.
     ///
     /// Upstream: `targetNumberOfKnownBigLedgerPeers`.
@@ -673,9 +671,7 @@ impl PickPolicy {
                 (addr, score, rand_weight)
             })
             .collect();
-        weighted.sort_by(|a, b| {
-            b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2))
-        });
+        weighted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2)));
         weighted.truncate(count);
         weighted.into_iter().map(|(addr, _, _)| addr).collect()
     }
@@ -960,10 +956,13 @@ impl GovernorState {
             .map(|record| self.decayed_failure_count(record, now))
             .unwrap_or(0);
 
-        let record = self.failures.entry(peer).or_insert_with(|| PeerFailureRecord {
-            failure_count: 0,
-            last_failure: now,
-        });
+        let record = self
+            .failures
+            .entry(peer)
+            .or_insert_with(|| PeerFailureRecord {
+                failure_count: 0,
+                last_failure: now,
+            });
         record.failure_count = decayed.saturating_add(1);
         record.last_failure = now;
     }
@@ -1014,7 +1013,11 @@ impl GovernorState {
     /// Upstream: `inProgressPromoteCold`/`inProgressPromoteWarm` filter
     /// promotions; `inProgressDemoteWarm`/`inProgressDemoteHot` filter
     /// demotions.
-    pub fn filter_backed_off(&self, actions: Vec<GovernorAction>, now: Instant) -> Vec<GovernorAction> {
+    pub fn filter_backed_off(
+        &self,
+        actions: Vec<GovernorAction>,
+        now: Instant,
+    ) -> Vec<GovernorAction> {
         actions
             .into_iter()
             .filter(|a| match a {
@@ -1024,12 +1027,8 @@ impl GovernorState {
                 GovernorAction::PromoteToHot(addr) => {
                     !self.is_backing_off(addr, now) && !self.in_flight_hot.contains(addr)
                 }
-                GovernorAction::DemoteToWarm(addr) => {
-                    !self.in_flight_demote_hot.contains(addr)
-                }
-                GovernorAction::DemoteToCold(addr) => {
-                    !self.in_flight_demote_warm.contains(addr)
-                }
+                GovernorAction::DemoteToWarm(addr) => !self.in_flight_demote_hot.contains(addr),
+                GovernorAction::DemoteToCold(addr) => !self.in_flight_demote_warm.contains(addr),
                 _ => true,
             })
             .collect()
@@ -1083,8 +1082,7 @@ impl GovernorState {
     ///
     /// Upstream: increments `inProgressPeerShareReqs`.
     pub fn mark_peer_share_sent(&mut self) {
-        self.in_progress_peer_share_reqs =
-            self.in_progress_peer_share_reqs.saturating_add(1);
+        self.in_progress_peer_share_reqs = self.in_progress_peer_share_reqs.saturating_add(1);
     }
 
     /// Record that one or more peer-sharing responses arrived.
@@ -1092,8 +1090,7 @@ impl GovernorState {
     /// Upstream: decrements `inProgressPeerShareReqs` by the number of
     /// completed requests.
     pub fn clear_peer_share_completed(&mut self, count: u32) {
-        self.in_progress_peer_share_reqs =
-            self.in_progress_peer_share_reqs.saturating_sub(count);
+        self.in_progress_peer_share_reqs = self.in_progress_peer_share_reqs.saturating_sub(count);
     }
 
     /// Mark that a public-root discovery request was dispatched.
@@ -1104,12 +1101,7 @@ impl GovernorState {
     /// Record public-root discovery request completion.
     ///
     /// Upstream successful progress uses `min 60 ttl`.
-    pub fn complete_public_root_request(
-        &mut self,
-        now: Instant,
-        progress: bool,
-        ttl: Duration,
-    ) {
+    pub fn complete_public_root_request(&mut self, now: Instant, progress: bool, ttl: Duration) {
         self.public_root_backoff
             .on_result(now, progress, ttl, Some(Duration::from_secs(60)));
     }
@@ -1127,12 +1119,7 @@ impl GovernorState {
     /// Record big-ledger discovery request completion.
     ///
     /// Upstream successful progress uses unmodified TTL.
-    pub fn complete_big_ledger_request(
-        &mut self,
-        now: Instant,
-        progress: bool,
-        ttl: Duration,
-    ) {
+    pub fn complete_big_ledger_request(&mut self, now: Instant, progress: bool, ttl: Duration) {
         self.big_ledger_peer_backoff
             .on_result(now, progress, ttl, None);
     }
@@ -1525,11 +1512,7 @@ pub fn evaluate_hot_to_warm_demotions(
     // demoted first.  `pick_scored` puts highest-scored first,
     // so we take from the end (lowest-scored) by asking for all
     // then reversing.
-    let mut non_local_scored = pick.pick_scored(
-        non_local_hot.len(),
-        non_local_hot,
-        metrics,
-    );
+    let mut non_local_scored = pick.pick_scored(non_local_hot.len(), non_local_hot, metrics);
     non_local_scored.reverse(); // lowest-scored first → demote first
     let local_hot = pick.pick(local_hot.len(), local_hot);
 
@@ -1664,7 +1647,9 @@ pub fn evaluate_cold_to_warm_big_ledger_promotions(
 ) -> Vec<GovernorAction> {
     let warm_or_hot = registry
         .iter()
-        .filter(|(_, e)| is_big_ledger(e) && matches!(e.status, PeerStatus::PeerWarm | PeerStatus::PeerHot))
+        .filter(|(_, e)| {
+            is_big_ledger(e) && matches!(e.status, PeerStatus::PeerWarm | PeerStatus::PeerHot)
+        })
         .count();
 
     let target = targets.target_established_big_ledger;
@@ -1818,10 +1803,7 @@ pub fn evaluate_request_big_ledger_peers(
     if !state.enable_root_big_ledger_requests {
         return Vec::new();
     }
-    let known_big_ledger = registry
-        .iter()
-        .filter(|(_, e)| is_big_ledger(e))
-        .count();
+    let known_big_ledger = registry.iter().filter(|(_, e)| is_big_ledger(e)).count();
     if known_big_ledger >= targets.target_known_big_ledger {
         return Vec::new();
     }
@@ -1876,7 +1858,10 @@ pub fn evaluate_forget_cold_peers(
     for (addr, entry) in registry.iter() {
         if is_big_ledger(entry)
             || entry.status != PeerStatus::PeerCold
-            || !entry.sources.iter().all(|s| forgettable_sources.contains(s))
+            || !entry
+                .sources
+                .iter()
+                .all(|s| forgettable_sources.contains(s))
         {
             continue;
         }
@@ -1977,7 +1962,8 @@ pub fn evaluate_peer_share_requests(
     if state.in_progress_peer_share_reqs >= state.max_in_progress_peer_share_reqs {
         return Vec::new();
     }
-    let budget = (state.max_in_progress_peer_share_reqs - state.in_progress_peer_share_reqs) as usize;
+    let budget =
+        (state.max_in_progress_peer_share_reqs - state.in_progress_peer_share_reqs) as usize;
 
     // Check whether known-peer set is below target.
     let counts = regular_peer_counts(registry);
@@ -2091,8 +2077,7 @@ fn is_trustable_peer(
     entry: &PeerRegistryEntry,
     trustable_locals: &BTreeSet<SocketAddr>,
 ) -> bool {
-    entry.sources.contains(&PeerSource::PeerSourceBootstrap)
-        || trustable_locals.contains(addr)
+    entry.sources.contains(&PeerSource::PeerSourceBootstrap) || trustable_locals.contains(addr)
 }
 
 /// Returns `true` when all established (warm + hot) peers are trustable.
@@ -2106,12 +2091,10 @@ pub fn has_only_trustable_established_peers(
     local_root_groups: &[LocalRootTargets],
 ) -> bool {
     let trustable_locals = trustable_local_root_set(local_root_groups);
-    registry.iter().all(|(addr, entry)| {
-        match entry.status {
-            PeerStatus::PeerCold | PeerStatus::PeerCooling => true,
-            PeerStatus::PeerWarm | PeerStatus::PeerHot => {
-                is_trustable_peer(addr, entry, &trustable_locals)
-            }
+    registry.iter().all(|(addr, entry)| match entry.status {
+        PeerStatus::PeerCold | PeerStatus::PeerCooling => true,
+        PeerStatus::PeerWarm | PeerStatus::PeerHot => {
+            is_trustable_peer(addr, entry, &trustable_locals)
         }
     })
 }
@@ -2168,11 +2151,9 @@ pub fn filter_sensitive_promotions(
     actions
         .into_iter()
         .filter(|action| match action {
-            GovernorAction::PromoteToWarm(addr) | GovernorAction::PromoteToHot(addr) => {
-                registry
-                    .get(addr)
-                    .is_some_and(|entry| is_trustable_peer(addr, entry, &trustable_locals))
-            }
+            GovernorAction::PromoteToWarm(addr) | GovernorAction::PromoteToHot(addr) => registry
+                .get(addr)
+                .is_some_and(|entry| is_trustable_peer(addr, entry, &trustable_locals)),
             // Demotions and forgets are always allowed.
             _ => true,
         })
@@ -2211,11 +2192,21 @@ pub fn governor_tick(
         PeerSelectionMode::Sensitive => {
             // In sensitive mode:
             // 1. Demote all non-trustable hot peers to warm.
-            actions.extend(evaluate_sensitive_hot_demotions(registry, local_root_groups));
+            actions.extend(evaluate_sensitive_hot_demotions(
+                registry,
+                local_root_groups,
+            ));
             // 2. Demote all non-trustable warm peers to cold.
-            actions.extend(evaluate_sensitive_warm_demotions(registry, local_root_groups));
+            actions.extend(evaluate_sensitive_warm_demotions(
+                registry,
+                local_root_groups,
+            ));
             // 3. Enforce local root valency (trustable groups only).
-            actions.extend(enforce_local_root_valency(registry, local_root_groups, pick));
+            actions.extend(enforce_local_root_valency(
+                registry,
+                local_root_groups,
+                pick,
+            ));
             // 4. Normal promotion targets, filtered to trustable peers only.
             let mut promotions = Vec::new();
             promotions.extend(evaluate_cold_to_warm_promotions(registry, targets, pick));
@@ -2236,21 +2227,35 @@ pub fn governor_tick(
         }
         PeerSelectionMode::Normal => {
             // 1. Local root valency takes priority.
-            actions.extend(enforce_local_root_valency(registry, local_root_groups, pick));
+            actions.extend(enforce_local_root_valency(
+                registry,
+                local_root_groups,
+                pick,
+            ));
             // 2. Global promotion targets.
             actions.extend(evaluate_cold_to_warm_promotions(registry, targets, pick));
             actions.extend(evaluate_warm_to_hot_promotions(registry, targets, pick));
             // 3. Big-ledger peer promotions (suppressed in LocalRootsOnly).
             if association == AssociationMode::Unrestricted {
-                actions.extend(evaluate_cold_to_warm_big_ledger_promotions(registry, targets, pick));
-                actions.extend(evaluate_warm_to_hot_big_ledger_promotions(registry, targets, pick));
+                actions.extend(evaluate_cold_to_warm_big_ledger_promotions(
+                    registry, targets, pick,
+                ));
+                actions.extend(evaluate_warm_to_hot_big_ledger_promotions(
+                    registry, targets, pick,
+                ));
             }
             // 4. Global demotion targets.
-            actions.extend(evaluate_hot_to_warm_demotions(registry, targets, pick, metrics));
+            actions.extend(evaluate_hot_to_warm_demotions(
+                registry, targets, pick, metrics,
+            ));
             actions.extend(evaluate_warm_to_cold_demotions(registry, targets, pick));
             // 5. Big-ledger peer demotions.
-            actions.extend(evaluate_hot_to_warm_big_ledger_demotions(registry, targets, pick));
-            actions.extend(evaluate_warm_to_cold_big_ledger_demotions(registry, targets, pick));
+            actions.extend(evaluate_hot_to_warm_big_ledger_demotions(
+                registry, targets, pick,
+            ));
+            actions.extend(evaluate_warm_to_cold_big_ledger_demotions(
+                registry, targets, pick,
+            ));
             // 6. Forget excess cold peers.
             actions.extend(evaluate_forget_cold_peers(registry, targets, pick));
             // 7. Forget cold peers that have exceeded max connection retries.
@@ -2264,17 +2269,10 @@ pub fn governor_tick(
                 if let Some(gs) = state {
                     actions.extend(evaluate_request_public_roots(registry, targets, gs, now));
                     actions.extend(evaluate_request_big_ledger_peers(
-                        registry,
-                        targets,
-                        gs,
-                        now,
+                        registry, targets, gs, now,
                     ));
                     actions.extend(evaluate_known_peer_discovery(
-                        registry,
-                        targets,
-                        gs,
-                        pick,
-                        now,
+                        registry, targets, gs, pick, now,
                     ));
                 }
             }
@@ -2308,7 +2306,6 @@ pub fn governor_tick(
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PeerSelectionCounters {
     // -- Regular peers (excludes big-ledger) ---------------------------------
-
     /// Total known regular peers (cold + warm + hot).
     ///
     /// Upstream: `viewKnownPeers`.
@@ -2344,7 +2341,6 @@ pub struct PeerSelectionCounters {
     pub active_peers_demotions: usize,
 
     // -- Big-ledger peers ----------------------------------------------------
-
     /// Total known big-ledger peers.
     ///
     /// Upstream: `viewKnownBigLedgerPeers`.
@@ -2379,7 +2375,6 @@ pub struct PeerSelectionCounters {
     pub active_big_ledger_demotions: usize,
 
     // -- Local-root peers ----------------------------------------------------
-
     /// Total known local-root peers.
     ///
     /// Upstream: `viewKnownLocalRootPeers`.
@@ -2398,7 +2393,6 @@ pub struct PeerSelectionCounters {
     pub active_local_root: usize,
 
     // -- Non-root peers (known but not from any root source) -----------------
-
     /// Total known non-root peers.
     ///
     /// Upstream: `viewKnownNonRootPeers`.
@@ -2417,7 +2411,6 @@ pub struct PeerSelectionCounters {
     pub active_non_root: usize,
 
     // -- Root peer count -----------------------------------------------------
-
     /// Total number of root peers (from all root sources).
     ///
     /// Upstream: `viewRootPeers`.
@@ -2619,13 +2612,9 @@ pub fn compute_outbound_connections_state(
             // In LocalRootsOnly mode, trust requires that every established
             // peer is a trustable local root.
             let trustable_locals = trustable_local_root_set(local_root_groups);
-            let all_trusted = registry.iter().all(|(addr, entry)| {
-                match entry.status {
-                    PeerStatus::PeerCold | PeerStatus::PeerCooling => true,
-                    PeerStatus::PeerWarm | PeerStatus::PeerHot => {
-                        trustable_locals.contains(addr)
-                    }
-                }
+            let all_trusted = registry.iter().all(|(addr, entry)| match entry.status {
+                PeerStatus::PeerCold | PeerStatus::PeerCooling => true,
+                PeerStatus::PeerWarm | PeerStatus::PeerHot => trustable_locals.contains(addr),
             });
             if all_trusted {
                 OutboundConnectionsState::TrustedStateWithExternalPeers
@@ -2899,11 +2888,7 @@ pub fn churn_decrease_active(
 /// `decrease(established - active) + active` — the "warm only" portion
 /// shrinks, then active is re-added.  Bootstrap mode aggressively sets
 /// established to just above the current active count.
-pub fn churn_decrease_established(
-    regime: ChurnRegime,
-    established: usize,
-    active: usize,
-) -> usize {
+pub fn churn_decrease_established(regime: ChurnRegime, established: usize, active: usize) -> usize {
     match regime {
         ChurnRegime::ChurnDefault | ChurnRegime::ChurnPraosSync => {
             let warm_only = established.saturating_sub(active);
@@ -3190,7 +3175,12 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = evaluate_hot_to_warm_demotions(&reg, &targets, &mut test_pick(), &PeerMetrics::default());
+        let actions = evaluate_hot_to_warm_demotions(
+            &reg,
+            &targets,
+            &mut test_pick(),
+            &PeerMetrics::default(),
+        );
         assert_eq!(actions.len(), 2);
         // Non-local-root peers should be demoted first.
         for action in &actions {
@@ -3241,7 +3231,17 @@ mod tests {
             trustable: false,
         }];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
+        let actions = governor_tick(
+            &reg,
+            &targets,
+            &groups,
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            None,
+            &mut test_pick(),
+            &PeerMetrics::default(),
+            Instant::now(),
+        );
         // Should have at least the local root promotion.
         assert!(!actions.is_empty());
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
@@ -3251,7 +3251,17 @@ mod tests {
     fn empty_registry_produces_no_actions() {
         let reg = PeerRegistry::default();
         let targets = GovernorTargets::default();
-        let actions = governor_tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
+        let actions = governor_tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            None,
+            &mut test_pick(),
+            &PeerMetrics::default(),
+            Instant::now(),
+        );
         assert!(actions.is_empty());
     }
 
@@ -3295,9 +3305,7 @@ mod tests {
 
     #[test]
     fn churn_cycle_starts_on_first_tick() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot)]);
         let targets = GovernorTargets {
             target_known: 10,
             target_established: 1,
@@ -3308,8 +3316,18 @@ mod tests {
         let now = Instant::now();
 
         // First tick should enter DecreasedActive immediately.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, now);
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            now,
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
     }
 
     #[test]
@@ -3386,19 +3404,56 @@ mod tests {
         let t0 = Instant::now();
 
         // Tick 0: Idle → DecreasedActive (first cycle fires immediately).
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0);
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0,
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
 
         // 30s later: still DecreasedActive (phase_timeout = 60s).
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(30));
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(30),
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
 
         // 61s later: advance to DecreasedEstablished.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(61));
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedEstablished { .. }));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(61),
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedEstablished { .. }
+        ));
 
         // 122s later: advance to Idle (cycle complete).
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(122));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(122),
+        );
         assert_eq!(state.churn_phase, ChurnPhase::Idle);
         assert!(state.last_churn_cycle.is_some());
     }
@@ -3418,18 +3473,56 @@ mod tests {
         let t0 = Instant::now();
 
         // Complete a full cycle: Idle→Active→Established→Idle
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0);
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(11));
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(22));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0,
+        );
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(11),
+        );
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(22),
+        );
         assert_eq!(state.churn_phase, ChurnPhase::Idle);
 
         // 100s after cycle end: interval not elapsed (300s), stays Idle.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(122));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(122),
+        );
         assert_eq!(state.churn_phase, ChurnPhase::Idle);
 
         // 301s after cycle end: interval elapsed, new cycle starts.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(323));
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(323),
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
     }
 
     #[test]
@@ -3458,7 +3551,14 @@ mod tests {
         let eff = state.apply_churn_to_targets(&targets);
         assert_eq!(eff.target_active, 1); // churn_decrease(2)
 
-        let actions = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            Instant::now(),
+        );
         // Should demote non-local-root hot peers.
         let demotions: Vec<_> = actions
             .iter()
@@ -3492,7 +3592,14 @@ mod tests {
         let eff = state.apply_churn_to_targets(&targets);
         assert_eq!(eff.target_established, 1); // churn_decrease(2)
 
-        let actions = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            Instant::now(),
+        );
         let cold_demotions: Vec<_> = actions
             .iter()
             .filter(|a| matches!(a, GovernorAction::DemoteToCold(_)))
@@ -3503,9 +3610,7 @@ mod tests {
     #[test]
     fn churn_skips_local_root_demotions() {
         // Only local-root hot peers — no demotions even in decrease phase.
-        let _reg = make_registry(&[
-            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerHot),
-        ]);
+        let _reg = make_registry(&[(1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerHot)]);
         let targets = GovernorTargets {
             target_known: 10,
             target_established: 1,
@@ -3555,11 +3660,21 @@ mod tests {
             state.record_failure(addr(1));
         }
 
-        let actions = state.tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &groups,
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            Instant::now(),
+        );
         // PromoteToWarm(addr(1)) should be filtered out.
         assert!(!actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
         // First tick enters DecreasedActive phase.
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -3606,9 +3721,23 @@ mod tests {
 
         // After first tick, DecreasedActive is entered.
         // churn_decrease(2) = 1, so 1 excess hot → DemoteToWarm.
-        let actions = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, now);
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
-        assert!(actions.iter().any(|a| matches!(a, GovernorAction::DemoteToWarm(_))));
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            now,
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, GovernorAction::DemoteToWarm(_)))
+        );
     }
 
     #[test]
@@ -3634,8 +3763,19 @@ mod tests {
         };
 
         // churn_decrease(3) = 2, 3 warm > 2 target → 1 demotion to cold.
-        let actions = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, now);
-        assert!(actions.iter().any(|a| matches!(a, GovernorAction::DemoteToCold(_))));
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            now,
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, GovernorAction::DemoteToCold(_)))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3813,7 +3953,14 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, now + Duration::from_secs(10));
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            now + Duration::from_secs(10),
+        );
         // Targets met and no churn due → no actions.
         assert!(actions.is_empty());
         assert_eq!(state.churn_phase, ChurnPhase::Idle);
@@ -3884,17 +4031,24 @@ mod tests {
             target_active_big_ledger: 1,
             ..Default::default()
         };
-        assert!(evaluate_cold_to_warm_big_ledger_promotions(&reg, &targets, &mut test_pick()).is_empty());
-        assert!(evaluate_warm_to_hot_big_ledger_promotions(&reg, &targets, &mut test_pick()).is_empty());
-        assert!(evaluate_hot_to_warm_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty());
-        assert!(evaluate_warm_to_cold_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty());
+        assert!(
+            evaluate_cold_to_warm_big_ledger_promotions(&reg, &targets, &mut test_pick())
+                .is_empty()
+        );
+        assert!(
+            evaluate_warm_to_hot_big_ledger_promotions(&reg, &targets, &mut test_pick()).is_empty()
+        );
+        assert!(
+            evaluate_hot_to_warm_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty()
+        );
+        assert!(
+            evaluate_warm_to_cold_big_ledger_demotions(&reg, &targets, &mut test_pick()).is_empty()
+        );
     }
 
     #[test]
     fn request_public_roots_when_below_target_and_retry_elapsed() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm)]);
         let targets = GovernorTargets {
             target_root: 3,
             ..Default::default()
@@ -3910,9 +4064,7 @@ mod tests {
 
     #[test]
     fn request_public_roots_suppressed_during_backoff() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm)]);
         let targets = GovernorTargets {
             target_root: 3,
             ..Default::default()
@@ -3934,9 +4086,7 @@ mod tests {
 
     #[test]
     fn request_big_ledger_peers_when_below_target_and_retry_elapsed() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerWarm)]);
         let targets = GovernorTargets {
             target_known_big_ledger: 3,
             ..Default::default()
@@ -3990,8 +4140,10 @@ mod tests {
         let actions = evaluate_forget_cold_peers(&reg, &targets, &mut test_pick());
         assert_eq!(actions.len(), 2);
         assert!(actions.contains(&GovernorAction::ForgetPeer(addr(4))));
-        assert!(actions.contains(&GovernorAction::ForgetPeer(addr(2)))
-            || actions.contains(&GovernorAction::ForgetPeer(addr(3))));
+        assert!(
+            actions.contains(&GovernorAction::ForgetPeer(addr(2)))
+                || actions.contains(&GovernorAction::ForgetPeer(addr(3)))
+        );
     }
 
     #[test]
@@ -4073,14 +4225,25 @@ mod tests {
             target_established_big_ledger: 2,
             ..Default::default()
         };
-        assert!(evaluate_warm_to_cold_demotions(&reg, &established_targets, &mut test_pick()).is_empty());
+        assert!(
+            evaluate_warm_to_cold_demotions(&reg, &established_targets, &mut test_pick())
+                .is_empty()
+        );
 
         let active_targets = GovernorTargets {
             target_active: 1,
             target_active_big_ledger: 1,
             ..Default::default()
         };
-        assert!(evaluate_hot_to_warm_demotions(&reg, &active_targets, &mut test_pick(), &PeerMetrics::default()).is_empty());
+        assert!(
+            evaluate_hot_to_warm_demotions(
+                &reg,
+                &active_targets,
+                &mut test_pick(),
+                &PeerMetrics::default()
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -4105,7 +4268,10 @@ mod tests {
     #[test]
     fn requires_bootstrap_peers_returns_false_when_young_enough() {
         let ubp = UseBootstrapPeers::UseBootstrapPeers(vec![]);
-        assert!(!requires_bootstrap_peers(&ubp, LedgerStateJudgement::YoungEnough));
+        assert!(!requires_bootstrap_peers(
+            &ubp,
+            LedgerStateJudgement::YoungEnough
+        ));
     }
 
     #[test]
@@ -4117,13 +4283,19 @@ mod tests {
     #[test]
     fn requires_bootstrap_peers_returns_false_when_too_old_but_disabled() {
         let ubp = UseBootstrapPeers::DontUseBootstrapPeers;
-        assert!(!requires_bootstrap_peers(&ubp, LedgerStateJudgement::TooOld));
+        assert!(!requires_bootstrap_peers(
+            &ubp,
+            LedgerStateJudgement::TooOld
+        ));
     }
 
     #[test]
     fn requires_bootstrap_peers_returns_true_when_unavailable_and_enabled() {
         let ubp = UseBootstrapPeers::UseBootstrapPeers(vec![]);
-        assert!(requires_bootstrap_peers(&ubp, LedgerStateJudgement::Unavailable));
+        assert!(requires_bootstrap_peers(
+            &ubp,
+            LedgerStateJudgement::Unavailable
+        ));
     }
 
     #[test]
@@ -4157,19 +4329,31 @@ mod tests {
     fn is_node_able_to_make_progress_normal_mode() {
         let ubp = UseBootstrapPeers::DontUseBootstrapPeers;
         // Not in sensitive mode → always able to make progress.
-        assert!(is_node_able_to_make_progress(&ubp, LedgerStateJudgement::TooOld, false));
+        assert!(is_node_able_to_make_progress(
+            &ubp,
+            LedgerStateJudgement::TooOld,
+            false
+        ));
     }
 
     #[test]
     fn is_node_able_to_make_progress_sensitive_with_trustable_only() {
         let ubp = UseBootstrapPeers::UseBootstrapPeers(vec![]);
-        assert!(is_node_able_to_make_progress(&ubp, LedgerStateJudgement::TooOld, true));
+        assert!(is_node_able_to_make_progress(
+            &ubp,
+            LedgerStateJudgement::TooOld,
+            true
+        ));
     }
 
     #[test]
     fn is_node_able_to_make_progress_sensitive_without_trustable_only() {
         let ubp = UseBootstrapPeers::UseBootstrapPeers(vec![]);
-        assert!(!is_node_able_to_make_progress(&ubp, LedgerStateJudgement::TooOld, false));
+        assert!(!is_node_able_to_make_progress(
+            &ubp,
+            LedgerStateJudgement::TooOld,
+            false
+        ));
     }
 
     #[test]
@@ -4181,9 +4365,7 @@ mod tests {
 
     #[test]
     fn has_only_trustable_established_peers_bootstrap_warm() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceBootstrap, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceBootstrap, PeerStatus::PeerWarm)]);
         let groups: Vec<LocalRootTargets> = vec![];
         // Bootstrap peers are always trustable.
         assert!(has_only_trustable_established_peers(&reg, &groups));
@@ -4191,9 +4373,7 @@ mod tests {
 
     #[test]
     fn has_only_trustable_established_peers_trustable_local_root() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerHot),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerHot)]);
         let groups = vec![LocalRootTargets {
             peers: vec![addr(1)],
             hot_valency: 1,
@@ -4205,9 +4385,7 @@ mod tests {
 
     #[test]
     fn has_only_trustable_established_peers_non_trustable_local_root() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm)]);
         let groups = vec![LocalRootTargets {
             peers: vec![addr(1)],
             hot_valency: 1,
@@ -4323,9 +4501,7 @@ mod tests {
 
     #[test]
     fn filter_sensitive_promotions_keeps_demotions() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot)]);
         let groups: Vec<LocalRootTargets> = vec![];
 
         let actions = vec![GovernorAction::DemoteToWarm(addr(1))];
@@ -4348,7 +4524,17 @@ mod tests {
         };
         let groups: Vec<LocalRootTargets> = vec![];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Sensitive, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
+        let actions = governor_tick(
+            &reg,
+            &targets,
+            &groups,
+            PeerSelectionMode::Sensitive,
+            AssociationMode::Unrestricted,
+            None,
+            &mut test_pick(),
+            &PeerMetrics::default(),
+            Instant::now(),
+        );
         // Even though targets say 2 active, peer 2 is not trustable → demote.
         assert!(actions.contains(&GovernorAction::DemoteToWarm(addr(2))));
         // Peer 1 (bootstrap) is NOT demoted.
@@ -4372,7 +4558,17 @@ mod tests {
         };
         let groups: Vec<LocalRootTargets> = vec![];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Sensitive, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
+        let actions = governor_tick(
+            &reg,
+            &targets,
+            &groups,
+            PeerSelectionMode::Sensitive,
+            AssociationMode::Unrestricted,
+            None,
+            &mut test_pick(),
+            &PeerMetrics::default(),
+            Instant::now(),
+        );
         // Bootstrap peer may be promoted.
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(2))));
         // Big-ledger peer is suppressed in sensitive mode.
@@ -4397,7 +4593,17 @@ mod tests {
         };
         let groups: Vec<LocalRootTargets> = vec![];
 
-        let actions = governor_tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, None, &mut test_pick(), &PeerMetrics::default(), Instant::now());
+        let actions = governor_tick(
+            &reg,
+            &targets,
+            &groups,
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            None,
+            &mut test_pick(),
+            &PeerMetrics::default(),
+            Instant::now(),
+        );
         // All peers should be promoted in normal mode.
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(1))));
         assert!(actions.contains(&GovernorAction::PromoteToWarm(addr(2))));
@@ -4755,7 +4961,14 @@ mod tests {
         let mut state = GovernorState::default();
         state.mark_in_flight_demote_hot(addr(1));
 
-        let actions = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            Instant::now(),
+        );
         // Should need to demote 2, but addr(1) is in-flight so at most 1
         // new demotion from the 2 remaining candidates through filter.
         let demote_warm_count = actions
@@ -4813,17 +5026,14 @@ mod tests {
             (addr(11), NodePeerSharing::PeerSharingEnabled),
         ]);
 
-        let actions = evaluate_known_peer_discovery(
-            &reg,
-            &targets,
-            &state,
-            &mut test_pick(),
-            Instant::now(),
-        );
+        let actions =
+            evaluate_known_peer_discovery(&reg, &targets, &state, &mut test_pick(), Instant::now());
         assert!(!actions.is_empty());
-        assert!(actions
-            .iter()
-            .all(|a| matches!(a, GovernorAction::AdoptInboundPeer(_))));
+        assert!(
+            actions
+                .iter()
+                .all(|a| matches!(a, GovernorAction::AdoptInboundPeer(_)))
+        );
     }
 
     #[test]
@@ -4843,16 +5053,12 @@ mod tests {
         };
         state.set_inbound_peers([(addr(10), NodePeerSharing::PeerSharingEnabled)]);
 
-        let actions = evaluate_known_peer_discovery(
-            &reg,
-            &targets,
-            &state,
-            &mut test_pick(),
-            now,
+        let actions = evaluate_known_peer_discovery(&reg, &targets, &state, &mut test_pick(), now);
+        assert!(
+            actions
+                .iter()
+                .all(|a| matches!(a, GovernorAction::ShareRequest(_)))
         );
-        assert!(actions
-            .iter()
-            .all(|a| matches!(a, GovernorAction::ShareRequest(_))));
     }
 
     #[test]
@@ -4889,9 +5095,7 @@ mod tests {
 
     #[test]
     fn no_peer_share_when_budget_exhausted() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourcePeerShare, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourcePeerShare, PeerStatus::PeerWarm)]);
         let targets = GovernorTargets {
             target_known: 10,
             ..Default::default()
@@ -5005,9 +5209,7 @@ mod tests {
     #[test]
     fn no_peer_share_in_sensitive_mode() {
         // Peer sharing requests are suppressed in sensitive mode.
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourcePeerShare, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourcePeerShare, PeerStatus::PeerWarm)]);
         let targets = GovernorTargets {
             target_known: 100,
             target_established: 1,
@@ -5029,7 +5231,11 @@ mod tests {
         );
         // No ShareRequest should appear in sensitive mode since peer
         // sharing is only wired in Normal mode path.
-        assert!(!actions.iter().any(|a| matches!(a, GovernorAction::ShareRequest(_))));
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, GovernorAction::ShareRequest(_)))
+        );
     }
 
     #[test]
@@ -5058,7 +5264,11 @@ mod tests {
             &PeerMetrics::default(),
             now,
         );
-        assert!(actions.iter().any(|a| matches!(a, GovernorAction::ShareRequest(_))));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, GovernorAction::ShareRequest(_)))
+        );
     }
 
     #[test]
@@ -5079,7 +5289,14 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
+        let actions = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            Instant::now(),
+        );
         let share_count = actions
             .iter()
             .filter(|a| matches!(a, GovernorAction::ShareRequest(_)))
@@ -5099,10 +5316,19 @@ mod tests {
 
     #[test]
     fn node_peer_sharing_from_wire() {
-        assert_eq!(NodePeerSharing::from_wire(0), NodePeerSharing::PeerSharingDisabled);
-        assert_eq!(NodePeerSharing::from_wire(1), NodePeerSharing::PeerSharingEnabled);
+        assert_eq!(
+            NodePeerSharing::from_wire(0),
+            NodePeerSharing::PeerSharingDisabled
+        );
+        assert_eq!(
+            NodePeerSharing::from_wire(1),
+            NodePeerSharing::PeerSharingEnabled
+        );
         // Any nonzero wire value is treated as enabled per the protocol spec.
-        assert_eq!(NodePeerSharing::from_wire(42), NodePeerSharing::PeerSharingEnabled);
+        assert_eq!(
+            NodePeerSharing::from_wire(42),
+            NodePeerSharing::PeerSharingEnabled
+        );
     }
 
     #[test]
@@ -5202,16 +5428,18 @@ mod tests {
             &PeerMetrics::default(),
             now,
         );
-        assert!(!actions.iter().any(|a| matches!(a, GovernorAction::ShareRequest(_))));
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, GovernorAction::ShareRequest(_)))
+        );
     }
 
     #[test]
     fn local_roots_only_suppresses_big_ledger_promotions() {
         // In LocalRootsOnly mode, big-ledger promotions should NOT be
         // generated even in Normal mode.
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerCold),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerCold)]);
         let targets = GovernorTargets {
             target_known: 10,
             target_established: 1,
@@ -5237,9 +5465,7 @@ mod tests {
 
     #[test]
     fn unrestricted_allows_big_ledger_promotions() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerCold),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceBigLedger, PeerStatus::PeerCold)]);
         let targets = GovernorTargets {
             target_known: 10,
             target_established: 1,
@@ -5381,7 +5607,10 @@ mod tests {
             AssociationMode::LocalRootsOnly,
             &UseBootstrapPeers::DontUseBootstrapPeers,
         );
-        assert_eq!(state, OutboundConnectionsState::TrustedStateWithExternalPeers);
+        assert_eq!(
+            state,
+            OutboundConnectionsState::TrustedStateWithExternalPeers
+        );
     }
 
     #[test]
@@ -5418,7 +5647,10 @@ mod tests {
             AssociationMode::Unrestricted,
             &UseBootstrapPeers::DontUseBootstrapPeers,
         );
-        assert_eq!(state, OutboundConnectionsState::TrustedStateWithExternalPeers);
+        assert_eq!(
+            state,
+            OutboundConnectionsState::TrustedStateWithExternalPeers
+        );
     }
 
     #[test]
@@ -5441,7 +5673,10 @@ mod tests {
             &bootstrap,
         );
         // All established are trustable AND addr(1) is active + bootstrap → trusted.
-        assert_eq!(state, OutboundConnectionsState::TrustedStateWithExternalPeers);
+        assert_eq!(
+            state,
+            OutboundConnectionsState::TrustedStateWithExternalPeers
+        );
     }
 
     #[test]
@@ -5494,14 +5729,15 @@ mod tests {
             &UseBootstrapPeers::DontUseBootstrapPeers,
         );
         // No established peers → all (vacuously) trustable.
-        assert_eq!(state, OutboundConnectionsState::TrustedStateWithExternalPeers);
+        assert_eq!(
+            state,
+            OutboundConnectionsState::TrustedStateWithExternalPeers
+        );
     }
 
     #[test]
     fn outbound_local_roots_only_non_trustable_group() {
-        let reg = make_registry(&[
-            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
-        ]);
+        let reg = make_registry(&[(1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm)]);
         let group = LocalRootTargets {
             peers: vec![addr(1)],
             hot_valency: 0,
@@ -5570,15 +5806,27 @@ mod tests {
     fn churn_regime_normal_always_default() {
         // ChurnModeNormal → ChurnDefault regardless of bootstrap/consensus.
         assert_eq!(
-            pick_churn_regime(ChurnMode::Normal, &UseBootstrapPeers::DontUseBootstrapPeers, ConsensusMode::PraosMode),
+            pick_churn_regime(
+                ChurnMode::Normal,
+                &UseBootstrapPeers::DontUseBootstrapPeers,
+                ConsensusMode::PraosMode
+            ),
             ChurnRegime::ChurnDefault,
         );
         assert_eq!(
-            pick_churn_regime(ChurnMode::Normal, &UseBootstrapPeers::UseBootstrapPeers(vec![]), ConsensusMode::PraosMode),
+            pick_churn_regime(
+                ChurnMode::Normal,
+                &UseBootstrapPeers::UseBootstrapPeers(vec![]),
+                ConsensusMode::PraosMode
+            ),
             ChurnRegime::ChurnDefault,
         );
         assert_eq!(
-            pick_churn_regime(ChurnMode::Normal, &UseBootstrapPeers::DontUseBootstrapPeers, ConsensusMode::GenesisMode),
+            pick_churn_regime(
+                ChurnMode::Normal,
+                &UseBootstrapPeers::DontUseBootstrapPeers,
+                ConsensusMode::GenesisMode
+            ),
             ChurnRegime::ChurnDefault,
         );
     }
@@ -5587,7 +5835,11 @@ mod tests {
     fn churn_regime_genesis_mode_always_default() {
         // GenesisMode → ChurnDefault even with BulkSync + bootstrap.
         assert_eq!(
-            pick_churn_regime(ChurnMode::BulkSync, &UseBootstrapPeers::UseBootstrapPeers(vec![]), ConsensusMode::GenesisMode),
+            pick_churn_regime(
+                ChurnMode::BulkSync,
+                &UseBootstrapPeers::UseBootstrapPeers(vec![]),
+                ConsensusMode::GenesisMode
+            ),
             ChurnRegime::ChurnDefault,
         );
     }
@@ -5595,7 +5847,11 @@ mod tests {
     #[test]
     fn churn_regime_bulk_sync_no_bootstrap_is_praos_sync() {
         assert_eq!(
-            pick_churn_regime(ChurnMode::BulkSync, &UseBootstrapPeers::DontUseBootstrapPeers, ConsensusMode::PraosMode),
+            pick_churn_regime(
+                ChurnMode::BulkSync,
+                &UseBootstrapPeers::DontUseBootstrapPeers,
+                ConsensusMode::PraosMode
+            ),
             ChurnRegime::ChurnPraosSync,
         );
     }
@@ -5603,7 +5859,11 @@ mod tests {
     #[test]
     fn churn_regime_bulk_sync_with_bootstrap_is_bootstrap_praos_sync() {
         assert_eq!(
-            pick_churn_regime(ChurnMode::BulkSync, &UseBootstrapPeers::UseBootstrapPeers(vec![]), ConsensusMode::PraosMode),
+            pick_churn_regime(
+                ChurnMode::BulkSync,
+                &UseBootstrapPeers::UseBootstrapPeers(vec![]),
+                ConsensusMode::PraosMode
+            ),
             ChurnRegime::ChurnBootstrapPraosSync,
         );
     }
@@ -5630,44 +5890,74 @@ mod tests {
 
     #[test]
     fn churn_decrease_active_bootstrap_praos_same_as_praos() {
-        assert_eq!(churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 10, 3), 3);
-        assert_eq!(churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 10, 0), 1);
+        assert_eq!(
+            churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 10, 3),
+            3
+        );
+        assert_eq!(
+            churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 10, 0),
+            1
+        );
     }
 
     #[test]
     fn churn_decrease_active_zero_stays_zero() {
         assert_eq!(churn_decrease_active(ChurnRegime::ChurnDefault, 0, 0), 0);
         assert_eq!(churn_decrease_active(ChurnRegime::ChurnPraosSync, 0, 0), 0);
-        assert_eq!(churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 0, 0), 0);
+        assert_eq!(
+            churn_decrease_active(ChurnRegime::ChurnBootstrapPraosSync, 0, 0),
+            0
+        );
     }
 
     #[test]
     fn churn_decrease_established_default_shrinks_warm_portion() {
         // est=10, active=5 → warm_only=5, decrease(5)=4, result=4+5=9.
-        assert_eq!(churn_decrease_established(ChurnRegime::ChurnDefault, 10, 5), 9);
+        assert_eq!(
+            churn_decrease_established(ChurnRegime::ChurnDefault, 10, 5),
+            9
+        );
         // est=10, active=8 → warm_only=2, decrease(2)=1, result=1+8=9.
-        assert_eq!(churn_decrease_established(ChurnRegime::ChurnDefault, 10, 8), 9);
+        assert_eq!(
+            churn_decrease_established(ChurnRegime::ChurnDefault, 10, 8),
+            9
+        );
     }
 
     #[test]
     fn churn_decrease_established_praos_sync_same_as_default() {
-        assert_eq!(churn_decrease_established(ChurnRegime::ChurnPraosSync, 10, 5), 9);
+        assert_eq!(
+            churn_decrease_established(ChurnRegime::ChurnPraosSync, 10, 5),
+            9
+        );
     }
 
     #[test]
     fn churn_decrease_established_bootstrap_aggressive() {
         // BootstrapPraosSync → min(active, established - 1).
         // est=10, active=5 → min(5, 9) = 5.
-        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 10, 5), 5);
+        assert_eq!(
+            churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 10, 5),
+            5
+        );
         // est=10, active=9 → min(9, 9) = 9.
-        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 10, 9), 9);
+        assert_eq!(
+            churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 10, 9),
+            9
+        );
         // est=3, active=1 → min(1, 2) = 1.
-        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 3, 1), 1);
+        assert_eq!(
+            churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 3, 1),
+            1
+        );
     }
 
     #[test]
     fn churn_decrease_established_zero_stays_zero() {
-        assert_eq!(churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 0, 0), 0);
+        assert_eq!(
+            churn_decrease_established(ChurnRegime::ChurnBootstrapPraosSync, 0, 0),
+            0
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -5677,7 +5967,9 @@ mod tests {
     #[test]
     fn churn_targets_praos_sync_caps_active_decrease() {
         let state = GovernorState {
-            churn_phase: ChurnPhase::DecreasedActive { started: Instant::now() },
+            churn_phase: ChurnPhase::DecreasedActive {
+                started: Instant::now(),
+            },
             churn_regime: ChurnRegime::ChurnPraosSync,
             local_root_hot_target: 3,
             ..Default::default()
@@ -5697,7 +5989,9 @@ mod tests {
     #[test]
     fn churn_targets_bootstrap_aggressive_established() {
         let state = GovernorState {
-            churn_phase: ChurnPhase::DecreasedEstablished { started: Instant::now() },
+            churn_phase: ChurnPhase::DecreasedEstablished {
+                started: Instant::now(),
+            },
             churn_regime: ChurnRegime::ChurnBootstrapPraosSync,
             ..Default::default()
         };
@@ -5754,18 +6048,56 @@ mod tests {
         let t0 = Instant::now();
 
         // Complete a cycle fast.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0);
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(11));
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(22));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0,
+        );
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(11),
+        );
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(22),
+        );
         assert_eq!(state.churn_phase, ChurnPhase::Idle);
 
         // At 200s after cycle end (< 500s deadline interval): stays Idle.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(222));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(222),
+        );
         assert_eq!(state.churn_phase, ChurnPhase::Idle);
 
         // At 501s after cycle end: new cycle starts.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(523));
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(523),
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
     }
 
     #[test]
@@ -5784,14 +6116,45 @@ mod tests {
         let t0 = Instant::now();
 
         // Complete a cycle.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0);
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(11));
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(22));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0,
+        );
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(11),
+        );
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(22),
+        );
         assert_eq!(state.churn_phase, ChurnPhase::Idle);
 
         // At 101s after cycle end (> 100s bulk interval): new cycle starts.
-        let _ = state.tick(&reg, &targets, &[], PeerSelectionMode::Normal, AssociationMode::Unrestricted, t0 + Duration::from_secs(123));
-        assert!(matches!(state.churn_phase, ChurnPhase::DecreasedActive { .. }));
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            t0 + Duration::from_secs(123),
+        );
+        assert!(matches!(
+            state.churn_phase,
+            ChurnPhase::DecreasedActive { .. }
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -5910,7 +6273,14 @@ mod tests {
             },
         ];
         let mut state = GovernorState::default();
-        let _ = state.tick(&reg, &targets, &groups, PeerSelectionMode::Normal, AssociationMode::Unrestricted, Instant::now());
+        let _ = state.tick(
+            &reg,
+            &targets,
+            &groups,
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            Instant::now(),
+        );
         assert_eq!(state.local_root_hot_target, 7);
     }
 

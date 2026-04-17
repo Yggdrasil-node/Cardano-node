@@ -1,6 +1,6 @@
 use super::*;
-use yggdrasil_ledger::{PpupSlotContext, pv_can_follow};
 use std::collections::BTreeMap;
+use yggdrasil_ledger::{PpupSlotContext, pv_can_follow};
 
 /// Helper: build a minimal LedgerState with gen_delegs seeded.
 fn make_state_with_gen_delegs(delegate_keys: &[[u8; 28]]) -> LedgerState {
@@ -14,10 +14,13 @@ fn make_state_with_gen_delegs(delegate_keys: &[[u8; 28]]) -> LedgerState {
     // Seed genesis delegations.
     for &key in delegate_keys {
         use yggdrasil_ledger::GenesisDelegationState;
-        state.gen_delegs_mut().insert(key, GenesisDelegationState {
-            delegate: [0xDD; 28],
-            vrf: [0xEE; 32],
-        });
+        state.gen_delegs_mut().insert(
+            key,
+            GenesisDelegationState {
+                delegate: [0xDD; 28],
+                vrf: [0xEE; 32],
+            },
+        );
     }
     state
 }
@@ -241,7 +244,10 @@ fn ppup_slot_context_before_no_return_rejects_next_epoch() {
             assert_eq!(expected_epoch, 10);
             assert_eq!(voting_period, "VoteForThisEpoch");
         }
-        other => panic!("expected PPUpdateWrongEpoch VoteForThisEpoch, got: {:?}", other),
+        other => panic!(
+            "expected PPUpdateWrongEpoch VoteForThisEpoch, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -284,7 +290,10 @@ fn ppup_slot_context_after_no_return_rejects_this_epoch() {
             assert_eq!(expected_epoch, 11);
             assert_eq!(voting_period, "VoteForNextEpoch");
         }
-        other => panic!("expected PPUpdateWrongEpoch VoteForNextEpoch, got: {:?}", other),
+        other => panic!(
+            "expected PPUpdateWrongEpoch VoteForNextEpoch, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -335,6 +344,10 @@ fn stability_window_none_uses_relaxed_check() {
     // Both current (10) and current+1 (11) should pass the relaxed check.
     let update_this = make_update(genesis_key, 10, ProtocolParameterUpdate::default());
     let update_next = make_update(genesis_key, 11, ProtocolParameterUpdate::default());
-    state.validate_ppup_proposal(&update_this, None).expect("relaxed: current epoch ok");
-    state.validate_ppup_proposal(&update_next, None).expect("relaxed: next epoch ok");
+    state
+        .validate_ppup_proposal(&update_this, None)
+        .expect("relaxed: current epoch ok");
+    state
+        .validate_ppup_proposal(&update_next, None)
+        .expect("relaxed: next epoch ok");
 }

@@ -1,14 +1,13 @@
 #![allow(clippy::unwrap_used)]
+use yggdrasil_ledger::PlutusData;
+use yggdrasil_ledger::eras::{ExUnits, Redeemer};
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Era, MultiEraSubmittedTx,
-    ProtocolParameters,
-    ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyWitnessSet, SlotNo, TxId, Value, min_fee_linear,
+    ProtocolParameters, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyWitnessSet,
+    SlotNo, TxId, Value, min_fee_linear,
 };
-use yggdrasil_ledger::eras::{ExUnits, Redeemer};
-use yggdrasil_ledger::PlutusData;
 use yggdrasil_mempool::{
-    Mempool, MempoolEntry, MempoolError, MempoolRelayError, SharedMempool, MEMPOOL_ZERO_IDX,
+    MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, MempoolError, MempoolRelayError, SharedMempool,
 };
 
 fn make_entry(id_byte: u8, fee: u64, size: usize) -> MempoolEntry {
@@ -138,18 +137,28 @@ fn sample_alonzo_submitted_tx_with_redeemers(
 #[test]
 fn mempool_prioritizes_higher_fees() {
     let mut mempool = Mempool::default();
-    mempool.insert(make_entry(0x01, 1, 100)).expect("insert low");
-    mempool.insert(make_entry(0x02, 10, 100)).expect("insert high");
+    mempool
+        .insert(make_entry(0x01, 1, 100))
+        .expect("insert low");
+    mempool
+        .insert(make_entry(0x02, 10, 100))
+        .expect("insert high");
 
-    let best = mempool.pop_best().expect("mempool should return the highest fee entry");
+    let best = mempool
+        .pop_best()
+        .expect("mempool should return the highest fee entry");
     assert_eq!(best.tx_id, TxId([0x02; 32]));
 }
 
 #[test]
 fn mempool_rejects_duplicates() {
     let mut mempool = Mempool::default();
-    mempool.insert(make_entry(0x01, 5, 100)).expect("first insert");
-    let err = mempool.insert(make_entry(0x01, 5, 100)).expect_err("duplicate");
+    mempool
+        .insert(make_entry(0x01, 5, 100))
+        .expect("first insert");
+    let err = mempool
+        .insert(make_entry(0x01, 5, 100))
+        .expect_err("duplicate");
     assert!(matches!(err, MempoolError::Duplicate(_)));
     assert_eq!(mempool.len(), 1);
 }
@@ -157,8 +166,12 @@ fn mempool_rejects_duplicates() {
 #[test]
 fn mempool_enforces_capacity() {
     let mut mempool = Mempool::with_capacity(200);
-    mempool.insert(make_entry(0x01, 5, 150)).expect("first insert");
-    let err = mempool.insert(make_entry(0x02, 3, 100)).expect_err("over capacity");
+    mempool
+        .insert(make_entry(0x01, 5, 150))
+        .expect("first insert");
+    let err = mempool
+        .insert(make_entry(0x02, 3, 100))
+        .expect_err("over capacity");
     assert!(matches!(err, MempoolError::CapacityExceeded { .. }));
     assert_eq!(mempool.len(), 1);
 }
@@ -166,8 +179,12 @@ fn mempool_enforces_capacity() {
 #[test]
 fn mempool_unlimited_capacity_when_zero() {
     let mut mempool = Mempool::default(); // max_bytes = 0
-    mempool.insert(make_entry(0x01, 1, 10_000)).expect("insert 1");
-    mempool.insert(make_entry(0x02, 2, 20_000)).expect("insert 2");
+    mempool
+        .insert(make_entry(0x01, 1, 10_000))
+        .expect("insert 1");
+    mempool
+        .insert(make_entry(0x02, 2, 20_000))
+        .expect("insert 2");
     assert_eq!(mempool.len(), 2);
     assert_eq!(mempool.size_bytes(), 30_000);
 }
@@ -240,10 +257,14 @@ fn iter_yields_entries_in_fee_order() {
 #[test]
 fn insert_after_removal_frees_capacity() {
     let mut mempool = Mempool::with_capacity(200);
-    mempool.insert(make_entry(0x01, 5, 150)).expect("first insert");
+    mempool
+        .insert(make_entry(0x01, 5, 150))
+        .expect("first insert");
     assert!(mempool.remove_by_id(&TxId([0x01; 32])));
     // Now capacity is freed, a new 150-byte tx should fit.
-    mempool.insert(make_entry(0x02, 3, 150)).expect("re-insert after removal");
+    mempool
+        .insert(make_entry(0x02, 3, 150))
+        .expect("re-insert after removal");
     assert_eq!(mempool.len(), 1);
 }
 
@@ -430,10 +451,7 @@ fn insert_checked_rejects_ex_units_above_protocol_limit_for_decodable_tx() {
             tag: 0,
             index: 0,
             data: PlutusData::Integer(1),
-            ex_units: ExUnits {
-                mem: 10,
-                steps: 10,
-            },
+            ex_units: ExUnits { mem: 10, steps: 10 },
         }],
     );
     let entry = MempoolEntry::from_multi_era_submitted_tx(tx, 5_000_000, SlotNo(20_000));
@@ -442,10 +460,7 @@ fn insert_checked_rejects_ex_units_above_protocol_limit_for_decodable_tx() {
         .expect("entry should decode as submitted tx");
     assert_eq!(
         decoded.total_ex_units(),
-        Some(ExUnits {
-            mem: 10,
-            steps: 10,
-        })
+        Some(ExUnits { mem: 10, steps: 10 })
     );
 
     let err = mempool
@@ -486,7 +501,10 @@ fn insert_checked_uses_script_fee_when_redeemers_present() {
     match err {
         MempoolError::FeeTooSmall { minimum, declared } => {
             assert_eq!(declared, 1);
-            assert!(minimum > linear_min, "minimum fee should include script fee");
+            assert!(
+                minimum > linear_min,
+                "minimum fee should include script fee"
+            );
         }
         other => panic!("expected FeeTooSmall, got {other:?}"),
     }
@@ -538,7 +556,11 @@ fn conflict_detection_rejects_double_spend() {
         "expected ConflictingInputs error, got {:?}",
         result
     );
-    assert_eq!(mempool.len(), 1, "mempool should still have only the first tx");
+    assert_eq!(
+        mempool.len(),
+        1,
+        "mempool should still have only the first tx"
+    );
 }
 
 #[test]
@@ -551,7 +573,9 @@ fn conflict_detection_allows_disjoint_inputs() {
 
     let mut mempool = Mempool::with_capacity(1_000_000);
     mempool.insert(entry1).expect("first tx");
-    mempool.insert(entry2).expect("second tx with different input should be accepted");
+    mempool
+        .insert(entry2)
+        .expect("second tx with different input should be accepted");
     assert_eq!(mempool.len(), 2);
 }
 
@@ -562,12 +586,7 @@ fn conflict_detection_partial_overlap_rejected() {
 
     // entry1 consumes [A, B]; entry2 consumes [B, C] — overlap on B.
     let entry1 = make_entry_with_inputs(0x01, 100, 50, vec![input_a.clone(), input_b.clone()]);
-    let entry2 = make_entry_with_inputs(
-        0x02,
-        200,
-        50,
-        vec![input_b, sample_input(0xCC, 0)],
-    );
+    let entry2 = make_entry_with_inputs(0x02, 200, 50, vec![input_b, sample_input(0xCC, 0)]);
 
     let mut mempool = Mempool::with_capacity(1_000_000);
     mempool.insert(entry1).expect("first tx");
@@ -589,7 +608,9 @@ fn conflict_detection_claims_released_on_removal() {
     assert!(mempool.remove_by_id(&entry1.tx_id));
 
     // Now entry2 (which spends the same input) should be admitted.
-    mempool.insert(entry2).expect("entry2 should be accepted after entry1 removed");
+    mempool
+        .insert(entry2)
+        .expect("entry2 should be accepted after entry1 removed");
     assert_eq!(mempool.len(), 1);
 }
 
@@ -625,7 +646,9 @@ fn conflict_detection_claims_released_on_confirmed() {
     assert_eq!(removed, 1);
 
     // Input claim released — entry2 should now be admitted.
-    mempool.insert(entry2).expect("entry2 admitted after confirmation");
+    mempool
+        .insert(entry2)
+        .expect("entry2 admitted after confirmation");
     assert_eq!(mempool.len(), 1);
 }
 
@@ -657,9 +680,7 @@ fn shared_mempool_insert_and_pop_best() {
         .expect("insert high fee");
     assert_eq!(shared.len(), 2);
 
-    let best = shared
-        .pop_best()
-        .expect("should return highest-fee entry");
+    let best = shared.pop_best().expect("should return highest-fee entry");
     assert_eq!(best.tx_id, TxId([0x02; 32]));
     assert_eq!(best.fee, 50);
     assert_eq!(shared.len(), 1);
@@ -668,9 +689,7 @@ fn shared_mempool_insert_and_pop_best() {
 #[test]
 fn shared_mempool_remove_by_id() {
     let shared = SharedMempool::with_capacity(0);
-    shared
-        .insert(make_entry(0x01, 10, 100))
-        .expect("insert");
+    shared.insert(make_entry(0x01, 10, 100)).expect("insert");
     assert!(shared.contains(&TxId([0x01; 32])));
 
     assert!(shared.remove_by_id(&TxId([0x01; 32])));
@@ -684,15 +703,9 @@ fn shared_mempool_remove_by_id() {
 #[test]
 fn shared_mempool_remove_confirmed() {
     let shared = SharedMempool::with_capacity(0);
-    shared
-        .insert(make_entry(0x01, 10, 100))
-        .expect("insert 1");
-    shared
-        .insert(make_entry(0x02, 20, 200))
-        .expect("insert 2");
-    shared
-        .insert(make_entry(0x03, 30, 300))
-        .expect("insert 3");
+    shared.insert(make_entry(0x01, 10, 100)).expect("insert 1");
+    shared.insert(make_entry(0x02, 20, 200)).expect("insert 2");
+    shared.insert(make_entry(0x03, 30, 300)).expect("insert 3");
 
     let confirmed = [TxId([0x01; 32]), TxId([0x03; 32])];
     let removed = shared.remove_confirmed(&confirmed);
@@ -704,9 +717,7 @@ fn shared_mempool_remove_confirmed() {
 #[test]
 fn shared_mempool_contains() {
     let shared = SharedMempool::with_capacity(0);
-    shared
-        .insert(make_entry(0x01, 10, 100))
-        .expect("insert");
+    shared.insert(make_entry(0x01, 10, 100)).expect("insert");
 
     assert!(shared.contains(&TxId([0x01; 32])));
     assert!(!shared.contains(&TxId([0x99; 32])));

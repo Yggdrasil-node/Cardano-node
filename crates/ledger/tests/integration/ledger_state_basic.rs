@@ -81,10 +81,15 @@ fn ledger_state_applies_block_with_utxo_transition() {
 
     // UTxO should now have the 2 new outputs, genesis input removed.
     assert_eq!(state.utxo().len(), 2);
-    assert!(state.utxo().get(&ShelleyTxIn {
-        transaction_id: [0xAA; 32],
-        index: 0,
-    }).is_none());
+    assert!(
+        state
+            .utxo()
+            .get(&ShelleyTxIn {
+                transaction_id: [0xAA; 32],
+                index: 0,
+            })
+            .is_none()
+    );
     assert_eq!(
         state.tip,
         Point::BlockPoint(SlotNo(500), HeaderHash([0xBB; 32]))
@@ -239,10 +244,15 @@ fn ledger_state_atomicity_on_second_tx_failure() {
 
     // Original UTxO should be unchanged despite tx1 being valid.
     assert_eq!(state.utxo().len(), 2);
-    assert!(state.utxo().get(&ShelleyTxIn {
-        transaction_id: [0x01; 32],
-        index: 0,
-    }).is_some());
+    assert!(
+        state
+            .utxo()
+            .get(&ShelleyTxIn {
+                transaction_id: [0x01; 32],
+                index: 0,
+            })
+            .is_some()
+    );
     assert_eq!(state.tip, Point::Origin);
 }
 
@@ -265,7 +275,10 @@ fn ledger_state_empty_block_advances_tip() {
     };
 
     state.apply_block(&block).expect("empty block");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(42), HeaderHash([0xFF; 32])));
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(42), HeaderHash([0xFF; 32]))
+    );
     assert_eq!(state.utxo().len(), 0);
 }
 
@@ -303,20 +316,27 @@ fn ledger_state_checkpoint_restores_utxo_and_tip() {
     };
 
     let block = make_shelley_block_with_txs(50, 1, 0xBC, vec![tx_body]);
-    state.apply_block(&block).expect("apply block after checkpoint");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(50), HeaderHash([0xBC; 32])));
+    state
+        .apply_block(&block)
+        .expect("apply block after checkpoint");
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(50), HeaderHash([0xBC; 32]))
+    );
     assert_eq!(state.utxo().len(), 1);
 
     state.rollback_to_checkpoint(&checkpoint);
     assert_eq!(state.tip, Point::Origin);
     assert_eq!(state.utxo().len(), 1);
-    assert!(state
-        .utxo()
-        .get(&ShelleyTxIn {
-            transaction_id: [0xAB; 32],
-            index: 0,
-        })
-        .is_some());
+    assert!(
+        state
+            .utxo()
+            .get(&ShelleyTxIn {
+                transaction_id: [0xAB; 32],
+                index: 0,
+            })
+            .is_some()
+    );
 }
 
 #[test]
@@ -342,8 +362,14 @@ fn ledger_state_chained_transactions() {
             index: 0,
         }],
         outputs: vec![
-            ShelleyTxOut { address: vec![0x10], amount: 600 },
-            ShelleyTxOut { address: vec![0x11], amount: 200 },
+            ShelleyTxOut {
+                address: vec![0x10],
+                amount: 600,
+            },
+            ShelleyTxOut {
+                address: vec![0x11],
+                amount: 200,
+            },
         ],
         fee: 200,
         ttl: 1000,

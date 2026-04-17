@@ -180,8 +180,7 @@ impl PeerRegistry {
     pub fn set_hot_tip_slot(&mut self, peer: SocketAddr, hot_tip_slot: Option<u64>) -> bool {
         match self.peers.get_mut(&peer) {
             Some(entry)
-                if entry.status == PeerStatus::PeerHot
-                    && entry.hot_tip_slot != hot_tip_slot =>
+                if entry.status == PeerStatus::PeerHot && entry.hot_tip_slot != hot_tip_slot =>
             {
                 entry.hot_tip_slot = hot_tip_slot;
                 true
@@ -269,18 +268,12 @@ impl PeerRegistry {
     }
 
     /// Reconcile big-ledger peers from the current dynamic ledger snapshot.
-    pub fn sync_big_ledger_peers(
-        &mut self,
-        peers: impl IntoIterator<Item = SocketAddr>,
-    ) -> bool {
+    pub fn sync_big_ledger_peers(&mut self, peers: impl IntoIterator<Item = SocketAddr>) -> bool {
         self.sync_single_source(PeerSource::PeerSourceBigLedger, peers)
     }
 
     /// Reconcile peers learned via peer sharing.
-    pub fn sync_peer_share_peers(
-        &mut self,
-        peers: impl IntoIterator<Item = SocketAddr>,
-    ) -> bool {
+    pub fn sync_peer_share_peers(&mut self, peers: impl IntoIterator<Item = SocketAddr>) -> bool {
         self.sync_single_source(PeerSource::PeerSourcePeerShare, peers)
     }
 
@@ -370,7 +363,9 @@ fn desired_root_sources(providers: &RootPeerProviders) -> BTreeMap<SocketAddr, P
 mod tests {
     use super::*;
     use crate::peer_selection::PeerDiffusionMode;
-    use crate::root_peers::{ResolvedLocalRootGroup, ResolvedPublicRootPeers, RootPeerProviders, UseLedgerPeers};
+    use crate::root_peers::{
+        ResolvedLocalRootGroup, ResolvedPublicRootPeers, RootPeerProviders, UseLedgerPeers,
+    };
 
     #[test]
     fn sync_root_peers_inserts_root_sources() {
@@ -395,18 +390,35 @@ mod tests {
         assert!(registry.sync_root_peers(&providers));
         assert_eq!(registry.len(), 3);
         assert_eq!(
-            registry.get(&"127.0.0.10:3001".parse().expect("addr")).expect("local").sources,
+            registry
+                .get(&"127.0.0.10:3001".parse().expect("addr"))
+                .expect("local")
+                .sources,
             BTreeSet::from([PeerSource::PeerSourceLocalRoot])
         );
         assert_eq!(
-            registry.get(&"127.0.0.11:3001".parse().expect("addr")).expect("bootstrap").sources,
+            registry
+                .get(&"127.0.0.11:3001".parse().expect("addr"))
+                .expect("bootstrap")
+                .sources,
             BTreeSet::from([PeerSource::PeerSourceBootstrap])
         );
         assert_eq!(
-            registry.get(&"127.0.0.12:3001".parse().expect("addr")).expect("public").sources,
+            registry
+                .get(&"127.0.0.12:3001".parse().expect("addr"))
+                .expect("public")
+                .sources,
             BTreeSet::from([PeerSource::PeerSourcePublicRoot])
         );
-        assert_eq!(registry.status_counts(), PeerRegistryStatusCounts { cold: 3, cooling: 0, warm: 0, hot: 0 });
+        assert_eq!(
+            registry.status_counts(),
+            PeerRegistryStatusCounts {
+                cold: 3,
+                cooling: 0,
+                warm: 0,
+                hot: 0
+            }
+        );
     }
 
     #[test]
@@ -426,7 +438,10 @@ mod tests {
 
         assert!(registry.sync_root_peers(&providers));
         let entry = registry.get(&peer).expect("peer remains via peer-share");
-        assert_eq!(entry.sources, BTreeSet::from([PeerSource::PeerSourcePeerShare]));
+        assert_eq!(
+            entry.sources,
+            BTreeSet::from([PeerSource::PeerSourcePeerShare])
+        );
         assert_eq!(entry.status, PeerStatus::PeerWarm);
     }
 
@@ -459,7 +474,10 @@ mod tests {
         assert!(registry.sync_ledger_peers([]));
 
         let entry = registry.get(&peer).expect("bootstrap peer remains");
-        assert_eq!(entry.sources, BTreeSet::from([PeerSource::PeerSourceBootstrap]));
+        assert_eq!(
+            entry.sources,
+            BTreeSet::from([PeerSource::PeerSourceBootstrap])
+        );
         assert_eq!(entry.status, PeerStatus::PeerWarm);
     }
 
@@ -474,7 +492,10 @@ mod tests {
         assert!(registry.sync_ledger_peers([new_peer]));
 
         assert_eq!(
-            registry.get(&old_peer).expect("old peer remains via peer share").sources,
+            registry
+                .get(&old_peer)
+                .expect("old peer remains via peer share")
+                .sources,
             BTreeSet::from([PeerSource::PeerSourcePeerShare])
         );
         assert_eq!(
@@ -529,7 +550,15 @@ mod tests {
         registry.set_status(warm, PeerStatus::PeerWarm);
         registry.set_status(hot, PeerStatus::PeerHot);
 
-        assert_eq!(registry.status_counts(), PeerRegistryStatusCounts { cold: 1, cooling: 1, warm: 1, hot: 1 });
+        assert_eq!(
+            registry.status_counts(),
+            PeerRegistryStatusCounts {
+                cold: 1,
+                cooling: 1,
+                warm: 1,
+                hot: 1
+            }
+        );
     }
 
     #[test]
@@ -571,10 +600,16 @@ mod tests {
         registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
         registry.set_status(peer, PeerStatus::PeerHot);
         registry.set_hot_tip_slot(peer, Some(123));
-        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), Some(123));
+        assert_eq!(
+            registry.get(&peer).and_then(|entry| entry.hot_tip_slot),
+            Some(123)
+        );
 
         registry.set_status(peer, PeerStatus::PeerWarm);
-        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), None);
+        assert_eq!(
+            registry.get(&peer).and_then(|entry| entry.hot_tip_slot),
+            None
+        );
     }
 
     #[test]
@@ -584,11 +619,17 @@ mod tests {
 
         registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
         assert!(!registry.set_hot_tip_slot(peer, Some(9)));
-        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), None);
+        assert_eq!(
+            registry.get(&peer).and_then(|entry| entry.hot_tip_slot),
+            None
+        );
 
         registry.set_status(peer, PeerStatus::PeerHot);
         assert!(registry.set_hot_tip_slot(peer, Some(9)));
-        assert_eq!(registry.get(&peer).and_then(|entry| entry.hot_tip_slot), Some(9));
+        assert_eq!(
+            registry.get(&peer).and_then(|entry| entry.hot_tip_slot),
+            Some(9)
+        );
     }
 
     #[test]

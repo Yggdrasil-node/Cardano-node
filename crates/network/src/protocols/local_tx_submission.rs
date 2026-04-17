@@ -119,8 +119,8 @@ impl LocalTxSubmissionState {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
 use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 impl LocalTxSubmissionMessage {
     /// Encode this message to CBOR bytes.
@@ -205,7 +205,9 @@ mod tests {
     #[test]
     fn reject_roundtrip() {
         let reason = vec![0x01, 0x02];
-        let msg = LocalTxSubmissionMessage::MsgRejectTx { reason: reason.clone() };
+        let msg = LocalTxSubmissionMessage::MsgRejectTx {
+            reason: reason.clone(),
+        };
         let decoded = LocalTxSubmissionMessage::from_cbor(&msg.to_cbor()).unwrap();
         assert_eq!(decoded, LocalTxSubmissionMessage::MsgRejectTx { reason });
     }

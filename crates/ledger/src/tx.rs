@@ -1,8 +1,8 @@
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::Era;
 use crate::eras::{
-    AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, ExUnits,
-    MaryTxBody, ShelleyTx, ShelleyTxIn, ShelleyWitnessSet,
+    AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, ExUnits, MaryTxBody, ShelleyTx,
+    ShelleyTxIn, ShelleyWitnessSet,
 };
 use crate::error::LedgerError;
 use crate::types::{BlockNo, HeaderHash, SlotNo, TxId};
@@ -107,7 +107,11 @@ where
     TxBody: CborEncode,
 {
     /// Build a Shelley-family submitted transaction from typed parts.
-    pub fn new(body: TxBody, witness_set: ShelleyWitnessSet, auxiliary_data: Option<Vec<u8>>) -> Self {
+    pub fn new(
+        body: TxBody,
+        witness_set: ShelleyWitnessSet,
+        auxiliary_data: Option<Vec<u8>>,
+    ) -> Self {
         let raw_body = body.to_cbor_bytes();
         let raw_cbor = encode_shelley_family_tx(&body, &witness_set, &auxiliary_data);
         Self {
@@ -310,24 +314,18 @@ impl MultiEraSubmittedTx {
         match era {
             Era::Byron => Err(LedgerError::UnsupportedEra(Era::Byron)),
             Era::Shelley => ShelleyTx::from_cbor_bytes(data).map(Self::Shelley),
-            Era::Allegra => {
-                ShelleyCompatibleSubmittedTx::<AllegraTxBody>::from_cbor_bytes(data)
-                    .map(Self::Allegra)
-            }
+            Era::Allegra => ShelleyCompatibleSubmittedTx::<AllegraTxBody>::from_cbor_bytes(data)
+                .map(Self::Allegra),
             Era::Mary => {
                 ShelleyCompatibleSubmittedTx::<MaryTxBody>::from_cbor_bytes(data).map(Self::Mary)
             }
             Era::Alonzo => {
-                AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(data)
-                    .map(Self::Alonzo)
+                AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(data).map(Self::Alonzo)
             }
-            Era::Babbage => {
-                AlonzoCompatibleSubmittedTx::<BabbageTxBody>::from_cbor_bytes(data)
-                    .map(Self::Babbage)
-            }
+            Era::Babbage => AlonzoCompatibleSubmittedTx::<BabbageTxBody>::from_cbor_bytes(data)
+                .map(Self::Babbage),
             Era::Conway => {
-                AlonzoCompatibleSubmittedTx::<ConwayTxBody>::from_cbor_bytes(data)
-                    .map(Self::Conway)
+                AlonzoCompatibleSubmittedTx::<ConwayTxBody>::from_cbor_bytes(data).map(Self::Conway)
             }
         }
     }
@@ -556,8 +554,8 @@ pub struct Block {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eras::{ExUnits, Redeemer};
     use crate::eras::ShelleyTxBody;
+    use crate::eras::{ExUnits, Redeemer};
     use crate::plutus::PlutusData;
 
     // ── compute_tx_id ──────────────────────────────────────────────────
@@ -671,7 +669,10 @@ mod tests {
     #[test]
     fn shelley_submitted_tx_round_trip() {
         let body = ShelleyTxBody {
-            inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x01; 32],
+                index: 0,
+            }],
             outputs: vec![crate::eras::shelley::ShelleyTxOut {
                 address: vec![0x61; 29],
                 amount: 2_000_000,
@@ -710,7 +711,10 @@ mod tests {
     #[test]
     fn alonzo_submitted_tx_round_trip() {
         let body = AlonzoTxBody {
-            inputs: vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }],
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x02; 32],
+                index: 0,
+            }],
             outputs: vec![crate::eras::alonzo::AlonzoTxOut {
                 address: vec![0x61; 29],
                 amount: crate::eras::mary::Value::Coin(1_000_000),
@@ -766,14 +770,20 @@ mod tests {
     #[test]
     fn multi_era_submitted_tx_byron_unsupported() {
         let result = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Byron, &[0x00]);
-        assert!(matches!(result, Err(LedgerError::UnsupportedEra(Era::Byron))));
+        assert!(matches!(
+            result,
+            Err(LedgerError::UnsupportedEra(Era::Byron))
+        ));
     }
 
     #[test]
     fn multi_era_submitted_tx_era_accessor() {
         // Build a minimal Shelley submitted tx
         let body = ShelleyTxBody {
-            inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x01; 32],
+                index: 0,
+            }],
             outputs: vec![crate::eras::shelley::ShelleyTxOut {
                 address: vec![0x61; 29],
                 amount: 1_000_000,
@@ -805,8 +815,14 @@ mod tests {
     fn multi_era_submitted_tx_fee_and_inputs() {
         let body = ShelleyTxBody {
             inputs: vec![
-                ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-                ShelleyTxIn { transaction_id: [0x02; 32], index: 1 },
+                ShelleyTxIn {
+                    transaction_id: [0x01; 32],
+                    index: 0,
+                },
+                ShelleyTxIn {
+                    transaction_id: [0x02; 32],
+                    index: 1,
+                },
             ],
             outputs: vec![crate::eras::shelley::ShelleyTxOut {
                 address: vec![0x61; 29],
@@ -903,19 +919,13 @@ mod tests {
                         tag: 0,
                         index: 0,
                         data: PlutusData::Integer(0),
-                        ex_units: ExUnits {
-                            mem: 10,
-                            steps: 20,
-                        },
+                        ex_units: ExUnits { mem: 10, steps: 20 },
                     },
                     Redeemer {
                         tag: 1,
                         index: 0,
                         data: PlutusData::Integer(1),
-                        ex_units: ExUnits {
-                            mem: 30,
-                            steps: 40,
-                        },
+                        ex_units: ExUnits { mem: 30, steps: 40 },
                     },
                 ],
                 plutus_v2_scripts: vec![],
@@ -925,13 +935,7 @@ mod tests {
             None,
         ));
 
-        assert_eq!(
-            tx.total_ex_units(),
-            Some(ExUnits {
-                mem: 40,
-                steps: 60,
-            })
-        );
+        assert_eq!(tx.total_ex_units(), Some(ExUnits { mem: 40, steps: 60 }));
     }
 
     // ── BlockHeader / Block ────────────────────────────────────────────

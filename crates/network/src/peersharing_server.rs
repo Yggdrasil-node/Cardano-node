@@ -117,7 +117,9 @@ impl PeerSharingServer {
     /// The server must be in `StClient` (awaiting client agency).  Times out
     /// after [`PROTOCOL_RECV_TIMEOUT`] if the client sends nothing (upstream
     /// `timeLimitsPeerSharing` `shortWait` for `StClient`).
-    pub async fn recv_request(&mut self) -> Result<PeerSharingServerRequest, PeerSharingServerError> {
+    pub async fn recv_request(
+        &mut self,
+    ) -> Result<PeerSharingServerRequest, PeerSharingServerError> {
         let msg = tokio::time::timeout(PROTOCOL_RECV_TIMEOUT, self.recv_msg())
             .await
             .map_err(|_| PeerSharingServerError::Timeout)??;
@@ -147,10 +149,7 @@ impl PeerSharingServer {
     ///
     /// `provider` is called with the requested amount and should return
     /// the available peer addresses.
-    pub async fn serve_loop<F>(
-        &mut self,
-        mut provider: F,
-    ) -> Result<(), PeerSharingServerError>
+    pub async fn serve_loop<F>(&mut self, mut provider: F) -> Result<(), PeerSharingServerError>
     where
         F: FnMut(u16) -> Vec<SharedPeerAddress>,
     {

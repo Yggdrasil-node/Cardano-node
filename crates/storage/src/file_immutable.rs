@@ -171,10 +171,8 @@ impl FileImmutable {
         blocks.sort_by_key(|b| b.header.slot_no);
 
         let chain: Vec<HeaderHash> = blocks.iter().map(|b| b.header.hash).collect();
-        let index: HashMap<HeaderHash, Block> = blocks
-            .into_iter()
-            .map(|b| (b.header.hash, b))
-            .collect();
+        let index: HashMap<HeaderHash, Block> =
+            blocks.into_iter().map(|b| (b.header.hash, b)).collect();
 
         // Stale dirty sentinel has been recovered; clear it so subsequent
         // opens do not produce spurious warnings.
@@ -185,7 +183,13 @@ impl FileImmutable {
             }
         }
 
-        Ok(Self { data_dir, dirty_path, chain, index, skipped_on_open: skipped })
+        Ok(Self {
+            data_dir,
+            dirty_path,
+            chain,
+            index,
+            skipped_on_open: skipped,
+        })
     }
 
     /// Returns the number of block files that were skipped during
@@ -228,8 +232,8 @@ impl ImmutableStore for FileImmutable {
 
         self.mark_dirty()?;
         let path = self.block_path(&block.header.hash);
-        let cbor = serde_cbor::to_vec(&block)
-            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        let cbor =
+            serde_cbor::to_vec(&block).map_err(|e| StorageError::Serialization(e.to_string()))?;
         atomic_write_file(&path, &cbor)?;
 
         self.chain.push(block.header.hash);
@@ -270,7 +274,11 @@ impl ImmutableStore for FileImmutable {
                         .collect());
                 }
 
-                if let Some(pos) = self.chain.iter().position(|block_hash| *block_hash == *hash) {
+                if let Some(pos) = self
+                    .chain
+                    .iter()
+                    .position(|block_hash| *block_hash == *hash)
+                {
                     return Ok(self.chain[pos + 1..]
                         .iter()
                         .filter_map(|block_hash| self.index.get(block_hash).cloned())
@@ -327,9 +335,11 @@ impl ImmutableStore for FileImmutable {
 
 /// Encode a byte slice as lowercase hex.
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
-        use std::fmt::Write;
-        let _ = write!(acc, "{b:02x}");
-        acc
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
 }

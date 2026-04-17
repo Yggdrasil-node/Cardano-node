@@ -110,10 +110,7 @@ pub struct BlockFetchTransitionError {
 
 impl BlockFetchState {
     /// Validate that `msg` is legal from `self` and return the resulting state.
-    pub fn transition(
-        self,
-        msg: &BlockFetchMessage,
-    ) -> Result<Self, BlockFetchTransitionError> {
+    pub fn transition(self, msg: &BlockFetchMessage) -> Result<Self, BlockFetchTransitionError> {
         match (&self, msg) {
             // Client agency — StIdle
             (Self::StIdle, BlockFetchMessage::MsgRequestRange(_)) => Ok(Self::StBusy),
@@ -175,7 +172,10 @@ impl BlockFetchMessage {
         let mut enc = Encoder::new();
         match self {
             Self::MsgRequestRange(range) => {
-                enc.array(3).unsigned(0).wrapped(&range.lower).wrapped(&range.upper);
+                enc.array(3)
+                    .unsigned(0)
+                    .wrapped(&range.lower)
+                    .wrapped(&range.upper);
             }
             Self::MsgClientDone => {
                 enc.array(1).unsigned(1);

@@ -305,8 +305,7 @@ mod tests {
 
         let ret = make_ada_txout(7_000_000);
         // effective = 10_000_000 - 7_000_000 = 3_000_000
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
+        let result = validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 3_000_000);
     }
@@ -319,8 +318,7 @@ mod tests {
         utxo.insert(txin.clone(), make_ada_txout(1_000_000));
 
         let ret = make_ada_txout(5_000_000); // return > input
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 100_000, Some(&ret), None);
+        let result = validate_collateral(&params, &utxo, &[txin], 100_000, Some(&ret), None);
         assert!(matches!(
             result,
             Err(LedgerError::CollateralBalanceNegative {
@@ -339,8 +337,14 @@ mod tests {
 
         let ret = make_ada_txout(7_000_000);
         // effective = 3_000_000, declared total_collateral = 3_000_000 → ok
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), Some(3_000_000));
+        let result = validate_collateral(
+            &params,
+            &utxo,
+            &[txin],
+            1_000_000,
+            Some(&ret),
+            Some(3_000_000),
+        );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 3_000_000);
     }
@@ -354,8 +358,14 @@ mod tests {
 
         let ret = make_ada_txout(7_000_000);
         // effective = 3_000_000, declared total_collateral = 2_000_000 → mismatch
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), Some(2_000_000));
+        let result = validate_collateral(
+            &params,
+            &utxo,
+            &[txin],
+            1_000_000,
+            Some(&ret),
+            Some(2_000_000),
+        );
         assert!(matches!(
             result,
             Err(LedgerError::IncorrectTotalCollateralField {
@@ -373,8 +383,7 @@ mod tests {
         utxo.insert(txin.clone(), make_ada_txout(5_000_000));
 
         // No return, total_collateral = 5_000_000 → ok (full input is collateral)
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, None, Some(5_000_000));
+        let result = validate_collateral(&params, &utxo, &[txin], 1_000_000, None, Some(5_000_000));
         assert!(result.is_ok());
     }
 
@@ -386,8 +395,7 @@ mod tests {
         utxo.insert(txin.clone(), make_ada_txout(5_000_000));
 
         // No return, total_collateral = 3_000_000 but input = 5_000_000
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, None, Some(3_000_000));
+        let result = validate_collateral(&params, &utxo, &[txin], 1_000_000, None, Some(3_000_000));
         assert!(matches!(
             result,
             Err(LedgerError::IncorrectTotalCollateralField {
@@ -420,8 +428,7 @@ mod tests {
         // Return output absorbs the non-ADA (return is ADA-only for coin check)
         let ret = make_ada_txout(7_000_000);
         // effective = 10_000_000 - 7_000_000 = 3_000_000
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
+        let result = validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 3_000_000);
     }
@@ -445,8 +452,7 @@ mod tests {
             address: vec![0u8; 57],
             amount: Value::CoinAndAssets(7_000_000, assets),
         });
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
+        let result = validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
         assert!(matches!(result, Err(LedgerError::CollateralContainsNonAda)));
     }
 
@@ -459,8 +465,7 @@ mod tests {
 
         let ret = make_ada_txout(4_500_000);
         // effective = 500_000,  fee = 1_000_000, required = 1_500_000
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
+        let result = validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
         assert!(matches!(
             result,
             Err(LedgerError::InsufficientCollateral { .. })
@@ -533,8 +538,7 @@ mod tests {
         );
 
         let ret = make_ada_txout(7_000_000);
-        let result =
-            validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
+        let result = validate_collateral(&params, &utxo, &[txin], 1_000_000, Some(&ret), None);
         assert!(matches!(result, Err(LedgerError::CollateralNotVKeyLocked)));
     }
 

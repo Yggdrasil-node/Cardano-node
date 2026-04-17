@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used)]
-use yggdrasil_cddl_codegen::{
-    FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr,
-    generate_module, generate_module_with_codecs, parse_schema,
-};
 use yggdrasil_cddl_codegen::parser::ParseError;
+use yggdrasil_cddl_codegen::{
+    FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr, generate_module,
+    generate_module_with_codecs, parse_schema,
+};
 
 #[test]
 fn parses_and_generates_basic_module() {
@@ -108,9 +108,9 @@ fn parses_var_array_type_expr() {
     let parsed = parse_schema(schema).expect("var-array alias should parse");
     assert_eq!(
         parsed[0].definition,
-        TypeDefinition::Alias(TypeExpr::VarArray(Box::new(TypeExpr::Named(
-            String::from("uint")
-        ))))
+        TypeDefinition::Alias(TypeExpr::VarArray(Box::new(TypeExpr::Named(String::from(
+            "uint"
+        )))))
     );
 
     let generated = generate_module(&parsed);
@@ -156,8 +156,7 @@ fn parses_named_array_fields() {
 
 #[test]
 fn generates_sized_uint_variants() {
-    let schema =
-        "a = uint .size 1\nb = uint .size 2\nc = uint .size 4\nd = uint .size 8\n";
+    let schema = "a = uint .size 1\nb = uint .size 2\nc = uint .size 4\nd = uint .size 8\n";
     let parsed = parse_schema(schema).expect("sized uint variants should parse");
     let generated = generate_module(&parsed);
 
@@ -233,9 +232,9 @@ fn parses_cbor_tag_annotation() {
         parsed[0].definition,
         TypeDefinition::Alias(TypeExpr::Tagged(
             258,
-            Box::new(TypeExpr::VarArray(Box::new(TypeExpr::Named(
-                String::from("uint")
-            ))))
+            Box::new(TypeExpr::VarArray(Box::new(TypeExpr::Named(String::from(
+                "uint"
+            )))))
         ))
     );
 
@@ -512,12 +511,18 @@ fn codec_gen_fixed_bytes_decode() {
 
 #[test]
 fn error_empty_schema() {
-    assert_eq!(parse_schema("").expect_err("should fail on empty"), ParseError::Empty);
+    assert_eq!(
+        parse_schema("").expect_err("should fail on empty"),
+        ParseError::Empty
+    );
 }
 
 #[test]
 fn error_comments_only_is_empty() {
-    assert_eq!(parse_schema("; just a comment\n").expect_err("should fail on comments-only"), ParseError::Empty);
+    assert_eq!(
+        parse_schema("; just a comment\n").expect_err("should fail on comments-only"),
+        ParseError::Empty
+    );
 }
 
 #[test]
@@ -565,9 +570,9 @@ fn parses_nil_alternative() {
     let parsed = parse_schema("maybe_coin = uint / nil\n").expect("nil alternative should parse");
     assert_eq!(
         parsed[0].definition,
-        TypeDefinition::Alias(TypeExpr::Optional(Box::new(TypeExpr::Named(
-            String::from("uint")
-        ))))
+        TypeDefinition::Alias(TypeExpr::Optional(Box::new(TypeExpr::Named(String::from(
+            "uint"
+        )))))
     );
 
     let generated = generate_module(&parsed);
@@ -601,9 +606,9 @@ fn parses_nested_var_array() {
     let parsed = parse_schema(schema).expect("nested var-array should parse");
     assert_eq!(
         parsed[0].definition,
-        TypeDefinition::Alias(TypeExpr::VarArray(Box::new(TypeExpr::VarArray(
-            Box::new(TypeExpr::Named(String::from("uint")))
-        ))))
+        TypeDefinition::Alias(TypeExpr::VarArray(Box::new(TypeExpr::VarArray(Box::new(
+            TypeExpr::Named(String::from("uint"))
+        )))))
     );
 
     let generated = generate_module(&parsed);

@@ -56,10 +56,8 @@ const FAKE_PLUTUS_V1_SCRIPT: &[u8] = &[0x01];
 /// Pre-computed `Blake2b-224(0x01 || 0x01)` — the Plutus V1 script hash
 /// for `FAKE_PLUTUS_V1_SCRIPT`.
 const FAKE_PLUTUS_SCRIPT_HASH: [u8; 28] = [
-    0x66, 0xdd, 0x6f, 0xfa, 0x0c, 0x08, 0x44, 0xc7,
-    0x05, 0xc9, 0xf4, 0x2a, 0x60, 0x85, 0x8f, 0x79,
-    0x24, 0xf4, 0x7b, 0x71, 0x66, 0x01, 0x56, 0xe9,
-    0x6e, 0xf5, 0xcf, 0xbe,
+    0x66, 0xdd, 0x6f, 0xfa, 0x0c, 0x08, 0x44, 0xc7, 0x05, 0xc9, 0xf4, 0x2a, 0x60, 0x85, 0x8f, 0x79,
+    0x24, 0xf4, 0x7b, 0x71, 0x66, 0x01, 0x56, 0xe9, 0x6e, 0xf5, 0xcf, 0xbe,
 ];
 
 /// Alonzo block: Plutus-script-locked input with no datum hash should fail.
@@ -78,7 +76,7 @@ fn alonzo_block_rejects_plutus_script_locked_input_without_datum_hash() {
         MultiEraTxOut::Alonzo(AlonzoTxOut {
             address: script_addr(&FAKE_PLUTUS_SCRIPT_HASH),
             amount: Value::Coin(10_000_000),
-            datum_hash: None,  // ← NO DATUM HASH
+            datum_hash: None, // ← NO DATUM HASH
         }),
     );
 
@@ -160,7 +158,7 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         MultiEraTxOut::Alonzo(AlonzoTxOut {
             address: script_addr(&FAKE_PLUTUS_SCRIPT_HASH),
             amount: Value::Coin(10_000_000),
-            datum_hash: Some(datum_hash),  // ← HAS DATUM HASH
+            datum_hash: Some(datum_hash), // ← HAS DATUM HASH
         }),
     );
     let collateral_input = ShelleyTxIn {
@@ -184,7 +182,10 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
 
     let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
@@ -283,7 +284,10 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
 
     let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
@@ -360,7 +364,10 @@ fn alonzo_output_to_script_without_datum_hash_rejected() {
     let out_addr = script_addr(&script_hash);
     let in_addr = vkey_addr();
 
-    let input = ShelleyTxIn { transaction_id: [0xA1; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xA1; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -433,7 +440,10 @@ fn alonzo_output_to_script_with_datum_hash_accepted() {
     let out_addr = script_addr(&script_hash);
     let in_addr = vkey_addr();
 
-    let input = ShelleyTxIn { transaction_id: [0xA2; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xA2; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -499,7 +509,10 @@ fn alonzo_output_to_vkey_without_datum_hash_accepted() {
 
     let in_addr = vkey_addr();
 
-    let input = ShelleyTxIn { transaction_id: [0xA3; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xA3; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -577,7 +590,10 @@ fn cip0069_v3_script_locked_input_without_datum_accepted() {
     let v3_hash = fake_v3_script_hash();
     let addr = script_addr(&v3_hash);
 
-    let spending_input = ShelleyTxIn { transaction_id: [0xCC; 32], index: 0 };
+    let spending_input = ShelleyTxIn {
+        transaction_id: [0xCC; 32],
+        index: 0,
+    };
     let mut utxo = MultiEraUtxo::default();
     utxo.insert(
         spending_input.clone(),
@@ -609,7 +625,10 @@ fn cip0069_v1_script_locked_input_without_datum_rejected() {
     let v3_hash = fake_v3_script_hash();
     let addr = script_addr(&FAKE_PLUTUS_SCRIPT_HASH);
 
-    let spending_input = ShelleyTxIn { transaction_id: [0xDD; 32], index: 0 };
+    let spending_input = ShelleyTxIn {
+        transaction_id: [0xDD; 32],
+        index: 0,
+    };
     let mut utxo = MultiEraUtxo::default();
     utxo.insert(
         spending_input.clone(),
@@ -644,7 +663,10 @@ fn cip0069_v3_input_without_v3_set_rejected() {
     let v3_hash = fake_v3_script_hash();
     let addr = script_addr(&v3_hash);
 
-    let spending_input = ShelleyTxIn { transaction_id: [0xEE; 32], index: 0 };
+    let spending_input = ShelleyTxIn {
+        transaction_id: [0xEE; 32],
+        index: 0,
+    };
     let mut utxo = MultiEraUtxo::default();
     utxo.insert(
         spending_input.clone(),
@@ -678,13 +700,18 @@ fn collect_v3_script_hashes_from_witnesses_and_refs() {
     let mut ws = empty_witness_set();
     ws.plutus_v3_scripts.push(FAKE_PLUTUS_V3_SCRIPT.to_vec());
 
-    let hashes_from_ws = yggdrasil_ledger::plutus_validation::collect_v3_script_hashes(
-        Some(&ws), None, None,
+    let hashes_from_ws =
+        yggdrasil_ledger::plutus_validation::collect_v3_script_hashes(Some(&ws), None, None);
+    assert!(
+        hashes_from_ws.contains(&v3_hash),
+        "V3 hash from witness set"
     );
-    assert!(hashes_from_ws.contains(&v3_hash), "V3 hash from witness set");
 
     // From reference input
-    let ref_input = ShelleyTxIn { transaction_id: [0xFF; 32], index: 0 };
+    let ref_input = ShelleyTxIn {
+        transaction_id: [0xFF; 32],
+        index: 0,
+    };
     let mut utxo = MultiEraUtxo::default();
     utxo.insert(
         ref_input.clone(),
@@ -698,12 +725,20 @@ fn collect_v3_script_hashes_from_witnesses_and_refs() {
 
     let empty_ws = empty_witness_set();
     let hashes_from_refs = yggdrasil_ledger::plutus_validation::collect_v3_script_hashes(
-        Some(&empty_ws), Some(&utxo), Some(&[ref_input]),
+        Some(&empty_ws),
+        Some(&utxo),
+        Some(&[ref_input]),
     );
-    assert!(hashes_from_refs.contains(&v3_hash), "V3 hash from reference input");
+    assert!(
+        hashes_from_refs.contains(&v3_hash),
+        "V3 hash from reference input"
+    );
 
     // V1 reference script should NOT be included
-    let ref_input2 = ShelleyTxIn { transaction_id: [0xFE; 32], index: 0 };
+    let ref_input2 = ShelleyTxIn {
+        transaction_id: [0xFE; 32],
+        index: 0,
+    };
     let mut utxo2 = MultiEraUtxo::default();
     utxo2.insert(
         ref_input2.clone(),
@@ -716,7 +751,12 @@ fn collect_v3_script_hashes_from_witnesses_and_refs() {
     );
 
     let hashes_v1_only = yggdrasil_ledger::plutus_validation::collect_v3_script_hashes(
-        Some(&empty_ws), Some(&utxo2), Some(&[ref_input2]),
+        Some(&empty_ws),
+        Some(&utxo2),
+        Some(&[ref_input2]),
     );
-    assert!(hashes_v1_only.is_empty(), "V1 ref script should not be in V3 set");
+    assert!(
+        hashes_v1_only.is_empty(),
+        "V1 ref script should not be in V3 set"
+    );
 }

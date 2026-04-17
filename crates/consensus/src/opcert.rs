@@ -312,28 +312,40 @@ mod tests {
     fn verify_wrong_cold_key_fails() {
         let (oc, _) = mk_valid_opcert(0, 0);
         let wrong_vk = VerificationKey::from_bytes([0xFF; 32]);
-        assert_eq!(oc.verify(&wrong_vk), Err(ConsensusError::InvalidOpCertSignature));
+        assert_eq!(
+            oc.verify(&wrong_vk),
+            Err(ConsensusError::InvalidOpCertSignature)
+        );
     }
 
     #[test]
     fn verify_tampered_hot_vkey_fails() {
         let (mut oc, cold_vk) = mk_valid_opcert(0, 0);
         oc.hot_vkey = SumKesVerificationKey::from_bytes([0xFF; 32]);
-        assert_eq!(oc.verify(&cold_vk), Err(ConsensusError::InvalidOpCertSignature));
+        assert_eq!(
+            oc.verify(&cold_vk),
+            Err(ConsensusError::InvalidOpCertSignature)
+        );
     }
 
     #[test]
     fn verify_tampered_sequence_fails() {
         let (mut oc, cold_vk) = mk_valid_opcert(0, 0);
         oc.sequence_number = 999;
-        assert_eq!(oc.verify(&cold_vk), Err(ConsensusError::InvalidOpCertSignature));
+        assert_eq!(
+            oc.verify(&cold_vk),
+            Err(ConsensusError::InvalidOpCertSignature)
+        );
     }
 
     #[test]
     fn verify_tampered_kes_period_fails() {
         let (mut oc, cold_vk) = mk_valid_opcert(0, 0);
         oc.kes_period = 999;
-        assert_eq!(oc.verify(&cold_vk), Err(ConsensusError::InvalidOpCertSignature));
+        assert_eq!(
+            oc.verify(&cold_vk),
+            Err(ConsensusError::InvalidOpCertSignature)
+        );
     }
 
     // ── check_kes_period ─────────────────────────────────────────────

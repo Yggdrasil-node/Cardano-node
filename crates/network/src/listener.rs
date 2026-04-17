@@ -72,9 +72,7 @@ impl PeerListener {
     /// On handshake failure (version mismatch, decode error) the TCP
     /// connection is dropped and an error is returned. Callers should
     /// typically log the error and continue accepting.
-    pub async fn accept_peer(
-        &self,
-    ) -> Result<(PeerConnection, SocketAddr), PeerListenerError> {
+    pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerListenerError> {
         let (stream, addr) = self
             .listener
             .accept()
@@ -106,8 +104,5 @@ pub enum PeerListenerError {
 
     /// Handshake failed after TCP connection was accepted.
     #[error("handshake with {addr} failed: {source}")]
-    Handshake {
-        addr: SocketAddr,
-        source: PeerError,
-    },
+    Handshake { addr: SocketAddr, source: PeerError },
 }

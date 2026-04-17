@@ -177,15 +177,23 @@ pub fn conway_total_min_fee(
 
 /// GCD helper for u128 (binary GCD / Stein's algorithm).
 fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
-    if a == 0 { return b; }
-    if b == 0 { return a; }
+    if a == 0 {
+        return b;
+    }
+    if b == 0 {
+        return a;
+    }
     let shift = (a | b).trailing_zeros();
     a >>= a.trailing_zeros();
     loop {
         b >>= b.trailing_zeros();
-        if a > b { std::mem::swap(&mut a, &mut b); }
+        if a > b {
+            std::mem::swap(&mut a, &mut b);
+        }
         b -= a;
-        if b == 0 { return a << shift; }
+        if b == 0 {
+            return a << shift;
+        }
     }
 }
 
@@ -367,13 +375,19 @@ mod tests {
 
     #[test]
     fn tier_ref_script_fee_zero_size() {
-        let base = UnitInterval { numerator: 15, denominator: 1 };
+        let base = UnitInterval {
+            numerator: 15,
+            denominator: 1,
+        };
         assert_eq!(tier_ref_script_fee(&base, 0), 0);
     }
 
     #[test]
     fn tier_ref_script_fee_zero_base() {
-        let base = UnitInterval { numerator: 0, denominator: 1 };
+        let base = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         assert_eq!(tier_ref_script_fee(&base, 10_000), 0);
     }
 
@@ -381,7 +395,10 @@ mod tests {
     fn tier_ref_script_fee_single_tier_sub_stride() {
         // 10_000 bytes, base = 15/1 lovelace per byte
         // Only tier 0: 10_000 * 15 = 150_000
-        let base = UnitInterval { numerator: 15, denominator: 1 };
+        let base = UnitInterval {
+            numerator: 15,
+            denominator: 1,
+        };
         assert_eq!(tier_ref_script_fee(&base, 10_000), 150_000);
     }
 
@@ -389,7 +406,10 @@ mod tests {
     fn tier_ref_script_fee_exact_stride() {
         // 25_600 bytes at base = 15/1 per byte
         // Full first tier: 25_600 * 15 = 384_000
-        let base = UnitInterval { numerator: 15, denominator: 1 };
+        let base = UnitInterval {
+            numerator: 15,
+            denominator: 1,
+        };
         assert_eq!(tier_ref_script_fee(&base, 25_600), 384_000);
     }
 
@@ -399,7 +419,10 @@ mod tests {
         // Tier 0: 25_600 * 15 = 384_000
         // Tier 1: 25_600 * 15 * 1.2 = 25_600 * 18 = 460_800
         // Total = 844_800
-        let base = UnitInterval { numerator: 15, denominator: 1 };
+        let base = UnitInterval {
+            numerator: 15,
+            denominator: 1,
+        };
         assert_eq!(tier_ref_script_fee(&base, 51_200), 844_800);
     }
 
@@ -409,7 +432,10 @@ mod tests {
         // Tier 0: 25_600 * 15 = 384_000
         // Tier 1 (partial, 4_400 bytes): 4_400 * 15 * 1.2 = 4_400 * 18 = 79_200
         // Total = 463_200
-        let base = UnitInterval { numerator: 15, denominator: 1 };
+        let base = UnitInterval {
+            numerator: 15,
+            denominator: 1,
+        };
         assert_eq!(tier_ref_script_fee(&base, 30_000), 463_200);
     }
 
@@ -417,7 +443,10 @@ mod tests {
     fn tier_ref_script_fee_fractional_base() {
         // base = 1/10 per byte, 25_600 bytes
         // Tier 0: 25_600 * 0.1 = 2_560
-        let base = UnitInterval { numerator: 1, denominator: 10 };
+        let base = UnitInterval {
+            numerator: 1,
+            denominator: 10,
+        };
         assert_eq!(tier_ref_script_fee(&base, 25_600), 2_560);
     }
 
@@ -428,7 +457,10 @@ mod tests {
         // Tier 1: 25_600 * 12 = 307_200
         // Tier 2: 25_600 * 14.4 = 368_640
         // Total = 931_840
-        let base = UnitInterval { numerator: 10, denominator: 1 };
+        let base = UnitInterval {
+            numerator: 10,
+            denominator: 1,
+        };
         assert_eq!(tier_ref_script_fee(&base, 76_800), 931_840);
     }
 
@@ -500,7 +532,10 @@ mod tests {
             tag: 0,
             index: 0,
             data: crate::plutus::PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
         assert!(validate_per_redeemer_ex_units(&params, &[r]).is_ok());
     }
@@ -508,17 +543,28 @@ mod tests {
     #[test]
     fn per_redeemer_ex_units_one_exceeds_mem() {
         let mut params = ProtocolParameters::alonzo_defaults();
-        params.max_tx_ex_units = Some(ExUnits { mem: 1000, steps: 1_000_000 });
+        params.max_tx_ex_units = Some(ExUnits {
+            mem: 1000,
+            steps: 1_000_000,
+        });
 
         let good = crate::eras::alonzo::Redeemer {
-            tag: 0, index: 0,
+            tag: 0,
+            index: 0,
             data: crate::plutus::PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 100 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 100,
+            },
         };
         let bad = crate::eras::alonzo::Redeemer {
-            tag: 1, index: 0,
+            tag: 1,
+            index: 0,
             data: crate::plutus::PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1001, steps: 100 }, // exceeds mem limit
+            ex_units: ExUnits {
+                mem: 1001,
+                steps: 100,
+            }, // exceeds mem limit
         };
         // Total mem = 1101 > 1000, but the per-redeemer check catches the
         // single redeemer with mem=1001 > max.mem=1000.

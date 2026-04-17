@@ -47,7 +47,10 @@ fn byron_block_advances_tip_without_state_transition() {
     state
         .apply_block(&block)
         .expect("byron blocks should advance the tip as a no-op transition");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(1), HeaderHash([0xBB; 32])));
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(1), HeaderHash([0xBB; 32]))
+    );
 }
 
 #[test]
@@ -68,7 +71,18 @@ fn point_accessors() {
 
 #[test]
 fn cbor_slot_no_round_trip() {
-    for &v in &[0u64, 1, 23, 24, 255, 256, 65535, 65536, u32::MAX as u64, u64::MAX] {
+    for &v in &[
+        0u64,
+        1,
+        23,
+        24,
+        255,
+        256,
+        65535,
+        65536,
+        u32::MAX as u64,
+        u64::MAX,
+    ] {
         let slot = SlotNo(v);
         let encoded = slot.to_cbor_bytes();
         let decoded = SlotNo::from_cbor_bytes(&encoded).expect("SlotNo CBOR round-trip");
@@ -177,8 +191,7 @@ fn cbor_short_hash_rejected() {
     // Encode a 16-byte bstr, try to decode as HeaderHash (needs 32)
     let mut enc = yggdrasil_ledger::Encoder::new();
     enc.bytes(&[0xAA; 16]);
-    let err = HeaderHash::from_cbor_bytes(enc.as_bytes())
-        .expect_err("should reject short hash");
+    let err = HeaderHash::from_cbor_bytes(enc.as_bytes()).expect_err("should reject short hash");
     assert!(
         matches!(
             err,
@@ -244,7 +257,7 @@ fn cbor_negative_round_trip() {
     let bytes = enc.into_bytes();
 
     let mut dec = Decoder::new(&bytes);
-    assert_eq!(dec.negative().expect("n=0"), 0);  // represents -1
+    assert_eq!(dec.negative().expect("n=0"), 0); // represents -1
     assert_eq!(dec.negative().expect("n=99"), 99); // represents -100
     assert_eq!(dec.negative().expect("n=255"), 255); // represents -256
     assert!(dec.is_empty());
@@ -265,7 +278,10 @@ fn cbor_bool_decode() {
 #[test]
 fn cbor_skip_primitives() {
     let mut enc = Encoder::new();
-    enc.unsigned(42).text("skip me").bytes(&[1, 2, 3]).bool(true);
+    enc.unsigned(42)
+        .text("skip me")
+        .bytes(&[1, 2, 3])
+        .bool(true);
     let bytes = enc.into_bytes();
 
     let mut dec = Decoder::new(&bytes);
@@ -356,4 +372,3 @@ fn cbor_tag_24_encoded_cbor() {
     let mut inner_dec = Decoder::new(embedded);
     assert_eq!(inner_dec.unsigned().expect("inner uint"), 42);
 }
-

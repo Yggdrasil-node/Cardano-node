@@ -25,15 +25,15 @@
 //! Reference: `network-mux/src/Network/Mux.hs`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
-use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SduHeader, SDU_HEADER_SIZE};
+use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SDU_HEADER_SIZE, SduHeader};
 
 /// Maximum payload size per outgoing SDU segment.
 ///
@@ -481,7 +481,14 @@ where
         cancel_tx.clone(),
         cancel_rx.clone(),
     ));
-    let writer = tokio::spawn(mux_loop(write_half, egress_slots, role, notify, cancel_tx, cancel_rx));
+    let writer = tokio::spawn(mux_loop(
+        write_half,
+        egress_slots,
+        role,
+        notify,
+        cancel_tx,
+        cancel_rx,
+    ));
 
     (handles, MuxHandle { reader, writer })
 }
@@ -552,8 +559,8 @@ async fn demux_loop_inner<R: tokio::io::AsyncRead + Unpin>(
         }
 
         // Decode — never fails on an 8-byte buffer.
-        let header = SduHeader::decode(&hdr_buf)
-            .expect("SDU header decode cannot fail on 8-byte buffer");
+        let header =
+            SduHeader::decode(&hdr_buf).expect("SDU header decode cannot fail on 8-byte buffer");
 
         let len = header.payload_length as usize;
 

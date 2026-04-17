@@ -7,11 +7,10 @@
 //! - `Cardano.Ledger.Conway.Rules.GovCert` — `computeDRepExpiry`,
 //!   `computeDRepExpiryVersioned`
 
-use std::collections::BTreeMap;
 use super::*;
+use std::collections::BTreeMap;
 use yggdrasil_ledger::{
-    GovernanceActionState, IndividualStake,
-    StakeSnapshot, StakeSnapshots, apply_epoch_boundary,
+    GovernanceActionState, IndividualStake, StakeSnapshot, StakeSnapshots, apply_epoch_boundary,
 };
 
 // ---------------------------------------------------------------------------
@@ -164,14 +163,22 @@ fn epoch_boundary_increments_dormant_when_no_proposals() {
     assert_eq!(state.num_dormant_epochs(), 0);
 
     let event = apply_epoch_boundary(
-        &mut state, EpochNo(101), &mut empty_snapshots(), &BTreeMap::new(),
-    ).unwrap();
+        &mut state,
+        EpochNo(101),
+        &mut empty_snapshots(),
+        &BTreeMap::new(),
+    )
+    .unwrap();
     assert_eq!(event.new_epoch, EpochNo(101));
     assert_eq!(state.num_dormant_epochs(), 1);
 
     let _event2 = apply_epoch_boundary(
-        &mut state, EpochNo(102), &mut empty_snapshots(), &BTreeMap::new(),
-    ).unwrap();
+        &mut state,
+        EpochNo(102),
+        &mut empty_snapshots(),
+        &BTreeMap::new(),
+    )
+    .unwrap();
     assert_eq!(state.num_dormant_epochs(), 2);
 }
 
@@ -183,16 +190,46 @@ fn epoch_boundary_resets_dormant_when_proposals_exist() {
     // Set non-trivial DRep voting thresholds so proposals need actual votes.
     if let Some(pp) = state.protocol_params_mut() {
         pp.drep_voting_thresholds = Some(yggdrasil_ledger::DRepVotingThresholds {
-            motion_no_confidence: UnitInterval { numerator: 2, denominator: 3 },
-            committee_normal: UnitInterval { numerator: 2, denominator: 3 },
-            committee_no_confidence: UnitInterval { numerator: 2, denominator: 3 },
-            update_to_constitution: UnitInterval { numerator: 2, denominator: 3 },
-            hard_fork_initiation: UnitInterval { numerator: 2, denominator: 3 },
-            pp_network_group: UnitInterval { numerator: 2, denominator: 3 },
-            pp_economic_group: UnitInterval { numerator: 2, denominator: 3 },
-            pp_technical_group: UnitInterval { numerator: 2, denominator: 3 },
-            pp_gov_group: UnitInterval { numerator: 2, denominator: 3 },
-            treasury_withdrawal: UnitInterval { numerator: 2, denominator: 3 },
+            motion_no_confidence: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            committee_normal: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            committee_no_confidence: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            update_to_constitution: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            hard_fork_initiation: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            pp_network_group: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            pp_economic_group: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            pp_technical_group: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            pp_gov_group: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+            treasury_withdrawal: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
         });
     }
 
@@ -202,13 +239,14 @@ fn epoch_boundary_resets_dormant_when_proposals_exist() {
         drep,
         RegisteredDrep::new_active(500_000, None, EpochNo(100)),
     );
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xD2; 28]),
-    );
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xD2; 28]));
     // Delegate the stake credential to this DRep.
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xD2; 28]),
-    ) {
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xD2; 28]))
+    {
         sc.set_delegated_drep(Some(drep));
     }
     // Seed a reward account with balance under this credential so that
@@ -223,12 +261,8 @@ fn epoch_boundary_resets_dormant_when_proposals_exist() {
     let mut snaps = empty_snapshots();
 
     // Accumulate 2 dormant epochs.
-    let _e1 = apply_epoch_boundary(
-        &mut state, EpochNo(101), &mut snaps, &BTreeMap::new(),
-    ).unwrap();
-    let _e2 = apply_epoch_boundary(
-        &mut state, EpochNo(102), &mut snaps, &BTreeMap::new(),
-    ).unwrap();
+    let _e1 = apply_epoch_boundary(&mut state, EpochNo(101), &mut snaps, &BTreeMap::new()).unwrap();
+    let _e2 = apply_epoch_boundary(&mut state, EpochNo(102), &mut snaps, &BTreeMap::new()).unwrap();
     assert_eq!(state.num_dormant_epochs(), 2);
 
     // Insert a HardForkInitiation (requires DRep votes to pass, won't pass without them).
@@ -252,22 +286,23 @@ fn epoch_boundary_resets_dormant_when_proposals_exist() {
             data_hash: [0xCC; 32],
         },
     };
-    state.governance_actions_mut().insert(
-        gov_id,
-        GovernanceActionState::new(hf_proposal),
-    );
+    state
+        .governance_actions_mut()
+        .insert(gov_id, GovernanceActionState::new(hf_proposal));
     assert!(!state.governance_actions().is_empty());
 
     // Epoch boundary with active proposal that can't pass → upstream
     // `updateNumDormantEpochs` leaves the counter UNCHANGED (never resets
     // to 0 at epoch boundary). The per-tx `updateDormantDRepExpiries` is
     // responsible for clearing dormant when proposals first appear.
-    let _e3 = apply_epoch_boundary(
-        &mut state, EpochNo(103), &mut snaps, &BTreeMap::new(),
-    ).unwrap();
+    let _e3 = apply_epoch_boundary(&mut state, EpochNo(103), &mut snaps, &BTreeMap::new()).unwrap();
     // Proposal should still exist (not ratified, not expired).
     assert!(!state.governance_actions().is_empty());
-    assert_eq!(state.num_dormant_epochs(), 2, "dormant counter must stay unchanged at epoch boundary when proposals exist");
+    assert_eq!(
+        state.num_dormant_epochs(),
+        2,
+        "dormant counter must stay unchanged at epoch boundary when proposals exist"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -281,15 +316,14 @@ fn tx_with_proposals_bumps_drep_expiry_and_resets_dormant() {
 
     // Register a DRep with last_active_epoch = 30.
     let drep = DRep::KeyHash([0xD1; 28]);
-    state.drep_state_mut().register(
-        drep,
-        RegisteredDrep::new_active(500_000, None, EpochNo(30)),
-    );
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new_active(500_000, None, EpochNo(30)));
 
     // Register the proposal reward account and its stake credential.
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xBB; 28]),
-    );
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xBB; 28]));
     state.reward_accounts_mut().insert(
         reward_account_from_keyhash(&[0xBB; 28]),
         RewardAccountState::new(0, None),
@@ -298,8 +332,12 @@ fn tx_with_proposals_bumps_drep_expiry_and_resets_dormant() {
     // Accumulate 5 dormant epochs.
     for epoch in 51..56 {
         let _ = apply_epoch_boundary(
-            &mut state, EpochNo(epoch), &mut empty_snapshots(), &BTreeMap::new(),
-        ).unwrap();
+            &mut state,
+            EpochNo(epoch),
+            &mut empty_snapshots(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
     }
     assert_eq!(state.num_dormant_epochs(), 5);
     assert_eq!(
@@ -309,7 +347,10 @@ fn tx_with_proposals_bumps_drep_expiry_and_resets_dormant() {
 
     // Seed a UTxO.
     let addr = enterprise_addr_bytes(&[0xAA; 28]);
-    let input = ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -355,14 +396,21 @@ fn tx_without_proposals_preserves_dormant_counter() {
     // Accumulate 3 dormant epochs.
     for epoch in 51..54 {
         let _ = apply_epoch_boundary(
-            &mut state, EpochNo(epoch), &mut empty_snapshots(), &BTreeMap::new(),
-        ).unwrap();
+            &mut state,
+            EpochNo(epoch),
+            &mut empty_snapshots(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
     }
     assert_eq!(state.num_dormant_epochs(), 3);
 
     // Seed a UTxO and apply a tx with no proposals.
     let addr = enterprise_addr_bytes(&[0xAA; 28]);
-    let input = ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -400,15 +448,14 @@ fn dormant_bump_skips_fully_expired_dreps() {
 
     // Register a DRep that was last active at epoch 5 (very old).
     let drep = DRep::KeyHash([0xD1; 28]);
-    state.drep_state_mut().register(
-        drep,
-        RegisteredDrep::new_active(500_000, None, EpochNo(5)),
-    );
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new_active(500_000, None, EpochNo(5)));
 
     // Register proposal reward account and its stake credential.
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xBB; 28]),
-    );
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xBB; 28]));
     state.reward_accounts_mut().insert(
         reward_account_from_keyhash(&[0xBB; 28]),
         RewardAccountState::new(0, None),
@@ -417,15 +464,22 @@ fn dormant_bump_skips_fully_expired_dreps() {
     // Accumulate 3 dormant epochs.
     for epoch in 101..104 {
         let _ = apply_epoch_boundary(
-            &mut state, EpochNo(epoch), &mut empty_snapshots(), &BTreeMap::new(),
-        ).unwrap();
+            &mut state,
+            EpochNo(epoch),
+            &mut empty_snapshots(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
     }
     assert_eq!(state.num_dormant_epochs(), 3);
     // old_expiry = 5+10 = 15, new_expiry = 15+3 = 18 < 103 → skip.
 
     // Seed UTxO and submit tx with proposal.
     let addr = enterprise_addr_bytes(&[0xAA; 28]);
-    let input = ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {

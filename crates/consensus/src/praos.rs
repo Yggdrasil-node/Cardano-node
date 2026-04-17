@@ -118,8 +118,7 @@ impl ActiveSlotCoeff {
 impl PartialEq for ActiveSlotCoeff {
     fn eq(&self, other: &Self) -> bool {
         // Two coefficients are equal when their log rationals are equal.
-        self.log_num.clone() * other.log_den.clone()
-            == other.log_num.clone() * self.log_den.clone()
+        self.log_num.clone() * other.log_den.clone() == other.log_num.clone() * self.log_den.clone()
     }
 }
 
@@ -130,10 +129,7 @@ impl PartialEq for ActiveSlotCoeff {
 /// it exists for diagnostics, tests, and human-readable threshold display.
 ///
 /// Reference: Section 4.1 of the Praos paper.
-pub fn leadership_threshold(
-    active_slot_coeff: &ActiveSlotCoeff,
-    sigma: f64,
-) -> f64 {
+pub fn leadership_threshold(active_slot_coeff: &ActiveSlotCoeff, sigma: f64) -> f64 {
     1.0 - (1.0 - active_slot_coeff.f_val).powf(sigma)
 }
 
@@ -162,7 +158,9 @@ fn raw_vrf_input_bytes(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
 /// `Ouroboros.Consensus.Protocol.Praos.VRF`, which is used as
 /// `getSignableRepresentation` for the single unified VRF proof.
 pub fn praos_vrf_input(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
-    hash_bytes_256(&raw_vrf_input_bytes(slot, epoch_nonce)).0.to_vec()
+    hash_bytes_256(&raw_vrf_input_bytes(slot, epoch_nonce))
+        .0
+        .to_vec()
 }
 
 /// Pre-computed seed tag hashes for TPraos VRF input construction.
@@ -173,8 +171,8 @@ pub fn praos_vrf_input(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
 /// Reference: `mkNonceFromNumber` in `Cardano.Ledger.BaseTypes`.
 fn tpraos_seed_tag_hash(usage: VrfUsage) -> [u8; 32] {
     match usage {
-        VrfUsage::Nonce => hash_bytes_256(&[0x00]).0,   // mkNonceFromNumber 0 = seedEta
-        VrfUsage::Leader => hash_bytes_256(&[0x01]).0,   // mkNonceFromNumber 1 = seedL
+        VrfUsage::Nonce => hash_bytes_256(&[0x00]).0, // mkNonceFromNumber 0 = seedEta
+        VrfUsage::Leader => hash_bytes_256(&[0x01]).0, // mkNonceFromNumber 1 = seedL
     }
 }
 
@@ -306,7 +304,7 @@ fn taylor_exp_cmp(
     // Initially: sum = q (the k=0 term), term = q.
     // At step k (1-based): term *= x / k, then sum += (-1)^k * term.
 
-    let mut sum_num: BigUint = q.clone() * x_den;  // q * x_den / x_den = q
+    let mut sum_num: BigUint = q.clone() * x_den; // q * x_den / x_den = q
     let mut sum_den: BigUint = x_den.clone();
     let mut term_num: BigUint = q.clone(); // magnitude of current term (numerator over term_den)
     let mut term_den: BigUint = BigUint::one();
@@ -431,7 +429,7 @@ pub fn verify_leader_proof(
     active_slot_coeff: &ActiveSlotCoeff,
     mode: VrfMode,
 ) -> Result<bool, ConsensusError> {
-    use yggdrasil_crypto::vrf::{VrfProof, VRF_PROOF_SIZE};
+    use yggdrasil_crypto::vrf::{VRF_PROOF_SIZE, VrfProof};
 
     let proof_arr: [u8; VRF_PROOF_SIZE] = proof_bytes
         .try_into()
@@ -466,7 +464,7 @@ pub fn verify_nonce_proof(
     epoch_nonce: Nonce,
     nonce_proof_bytes: &[u8],
 ) -> Result<(), ConsensusError> {
-    use yggdrasil_crypto::vrf::{VrfProof, VRF_PROOF_SIZE};
+    use yggdrasil_crypto::vrf::{VRF_PROOF_SIZE, VrfProof};
 
     let proof_arr: [u8; VRF_PROOF_SIZE] = nonce_proof_bytes
         .try_into()
@@ -589,7 +587,10 @@ mod tests {
         let output = VrfOutput::from_bytes([0u8; 64]);
         // Full stake: sigma = 1/1.  TPraos mode (raw 512-bit check).
         let result = check_leader_value(&output, 1, 1, &asc, VrfMode::TPraos).expect("valid");
-        assert!(result, "all-zeros VRF output should always qualify as leader");
+        assert!(
+            result,
+            "all-zeros VRF output should always qualify as leader"
+        );
     }
 
     #[test]
@@ -598,7 +599,10 @@ mod tests {
         let output = VrfOutput::from_bytes([0xFF; 64]);
         // Small stake: sigma = 1/100.
         let result = check_leader_value(&output, 1, 100, &asc, VrfMode::TPraos).expect("valid");
-        assert!(!result, "all-ones VRF output should exceed threshold for small stake");
+        assert!(
+            !result,
+            "all-ones VRF output should exceed threshold for small stake"
+        );
     }
 
     #[test]
@@ -622,7 +626,11 @@ mod tests {
     fn praos_vrf_input_is_32_bytes() {
         let nonce = Nonce::Hash([0xAA; 32]);
         let input = praos_vrf_input(SlotNo(42), nonce);
-        assert_eq!(input.len(), 32, "Praos mkInputVRF produces Blake2b-256 hash");
+        assert_eq!(
+            input.len(),
+            32,
+            "Praos mkInputVRF produces Blake2b-256 hash"
+        );
     }
 
     #[test]
@@ -646,8 +654,14 @@ mod tests {
         let praos = praos_vrf_input(SlotNo(50), nonce);
         let tpraos_leader = tpraos_vrf_seed(SlotNo(50), nonce, VrfUsage::Leader);
         let tpraos_nonce = tpraos_vrf_seed(SlotNo(50), nonce, VrfUsage::Nonce);
-        assert_ne!(praos, tpraos_leader, "Praos mkInputVRF != TPraos mkSeed seedL");
-        assert_ne!(praos, tpraos_nonce, "Praos mkInputVRF != TPraos mkSeed seedEta");
+        assert_ne!(
+            praos, tpraos_leader,
+            "Praos mkInputVRF != TPraos mkSeed seedL"
+        );
+        assert_ne!(
+            praos, tpraos_nonce,
+            "Praos mkInputVRF != TPraos mkSeed seedEta"
+        );
     }
 
     #[test]

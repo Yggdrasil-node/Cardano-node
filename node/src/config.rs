@@ -14,16 +14,16 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
-use yggdrasil_ledger::ProtocolParameters;
-use yggdrasil_plutus::CostModel;
 use serde_json::Value;
 use thiserror::Error;
+use yggdrasil_ledger::ProtocolParameters;
+pub use yggdrasil_network::derive_peer_snapshot_freshness;
 use yggdrasil_network::{
-    LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
-    LocalRootConfig, PeerAccessPoint, PeerSnapshotFreshness, PublicRootConfig,
-    TopologyConfig, UseLedgerPeers, judge_ledger_peer_usage,
-    ordered_peer_fallbacks, resolve_peer_access_points,
+    LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
+    PeerAccessPoint, PeerSnapshotFreshness, PublicRootConfig, TopologyConfig, UseLedgerPeers,
+    eligible_ledger_peer_candidates, ordered_peer_fallbacks, resolve_peer_access_points,
 };
+use yggdrasil_plutus::CostModel;
 
 #[derive(Debug)]
 struct ResolvedTopologyPeers {
@@ -81,7 +81,11 @@ pub struct TraceNamespaceConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub backends: Vec<String>,
     /// Optional namespace-level rate limit.
-    #[serde(default, rename = "maxFrequency", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "maxFrequency",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_frequency: Option<f64>,
 }
 
@@ -92,13 +96,22 @@ pub struct TraceOptionForwarder {
     #[serde(default = "default_trace_forwarder_socket_path", rename = "socketPath")]
     pub socket_path: String,
     /// Maximum buffered connection events.
-    #[serde(default = "default_trace_forwarder_conn_queue_size", rename = "connQueueSize")]
+    #[serde(
+        default = "default_trace_forwarder_conn_queue_size",
+        rename = "connQueueSize"
+    )]
     pub conn_queue_size: u64,
     /// Maximum buffered disconnection events.
-    #[serde(default = "default_trace_forwarder_disconn_queue_size", rename = "disconnQueueSize")]
+    #[serde(
+        default = "default_trace_forwarder_disconn_queue_size",
+        rename = "disconnQueueSize"
+    )]
     pub disconn_queue_size: u64,
     /// Maximum reconnect delay in seconds.
-    #[serde(default = "default_trace_forwarder_max_reconnect_delay", rename = "maxReconnectDelay")]
+    #[serde(
+        default = "default_trace_forwarder_max_reconnect_delay",
+        rename = "maxReconnectDelay"
+    )]
     pub max_reconnect_delay: u64,
 }
 
@@ -195,13 +208,20 @@ pub struct NodeConfigFile {
     #[serde(rename = "TurnOnLogging", default = "default_turn_on_logging")]
     pub turn_on_logging: bool,
     /// Whether namespace-based trace dispatch is enabled.
-    #[serde(rename = "UseTraceDispatcher", default = "default_use_trace_dispatcher")]
+    #[serde(
+        rename = "UseTraceDispatcher",
+        default = "default_use_trace_dispatcher"
+    )]
     pub use_trace_dispatcher: bool,
     /// Whether metrics production is enabled for tracing backends.
     #[serde(rename = "TurnOnLogMetrics", default = "default_turn_on_log_metrics")]
     pub turn_on_log_metrics: bool,
     /// Optional node name carried in trace objects and metrics labels.
-    #[serde(rename = "TraceOptionNodeName", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "TraceOptionNodeName",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub trace_option_node_name: Option<String>,
     /// Optional metrics name prefix used by upstream-compatible tracing output.
     #[serde(
@@ -224,57 +244,88 @@ pub struct NodeConfigFile {
     /// Namespace trace options following the official node config shape.
     #[serde(rename = "TraceOptions", default = "default_trace_options")]
     pub trace_options: BTreeMap<String, TraceNamespaceConfig>,
-        /// Path to the NtC (node-to-client) Unix domain socket.
+    /// Path to the NtC (node-to-client) Unix domain socket.
     ///
     /// When configured, the `Run` command starts an NtC local server on this
     /// socket, allowing CLI tools and wallets to issue queries and submit
     /// transactions via the LocalStateQuery / LocalTxSubmission protocols.
     ///
     /// Matches `SocketPath` in the official Cardano node configuration.
-    #[serde(rename = "SocketPath", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "SocketPath",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub socket_path: Option<String>,
     /// Relative path to the Shelley genesis file.  Matches `ShelleyGenesisFile`
-        /// in the official Cardano node configuration.
-        #[serde(rename = "ShelleyGenesisFile", default, skip_serializing_if = "Option::is_none")]
-        pub shelley_genesis_file: Option<String>,
-        /// Relative path to the Alonzo genesis file.  Matches `AlonzoGenesisFile`
-        /// in the official Cardano node configuration.
-        #[serde(rename = "AlonzoGenesisFile", default, skip_serializing_if = "Option::is_none")]
-        pub alonzo_genesis_file: Option<String>,
-        /// Relative path to the Conway genesis file.  Matches `ConwayGenesisFile`
-        /// in the official Cardano node configuration.
-        #[serde(rename = "ConwayGenesisFile", default, skip_serializing_if = "Option::is_none")]
-        pub conway_genesis_file: Option<String>,
+    /// in the official Cardano node configuration.
+    #[serde(
+        rename = "ShelleyGenesisFile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shelley_genesis_file: Option<String>,
+    /// Relative path to the Alonzo genesis file.  Matches `AlonzoGenesisFile`
+    /// in the official Cardano node configuration.
+    #[serde(
+        rename = "AlonzoGenesisFile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub alonzo_genesis_file: Option<String>,
+    /// Relative path to the Conway genesis file.  Matches `ConwayGenesisFile`
+    /// in the official Cardano node configuration.
+    #[serde(
+        rename = "ConwayGenesisFile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conway_genesis_file: Option<String>,
     /// Relative path to a P2P topology file.  Matches `TopologyFilePath` in
     /// the official Cardano node configuration.  When set, the topology file
     /// overrides any inline `local_roots`, `public_roots`, `bootstrap_peers`,
     /// `use_ledger_after_slot`, and `peer_snapshot_file` values in this config.
     ///
     /// Reference: `Cardano.Node.Types.TopologyFile` in cardano-node.
-    #[serde(rename = "TopologyFilePath", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "TopologyFilePath",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub topology_file_path: Option<String>,
 
     // ── Block producer credentials ──────────────────────────────────────
-
     /// Path to the KES signing key file (text-envelope format).
     ///
     /// Matches the `--shelley-kes-key` CLI flag in the official Cardano node.
     /// Required for block production.
-    #[serde(rename = "ShelleyKesKey", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ShelleyKesKey",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub shelley_kes_key: Option<String>,
 
     /// Path to the VRF signing key file (text-envelope format).
     ///
     /// Matches the `--shelley-vrf-key` CLI flag in the official Cardano node.
     /// Required for block production.
-    #[serde(rename = "ShelleyVrfKey", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ShelleyVrfKey",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub shelley_vrf_key: Option<String>,
 
     /// Path to the operational certificate file (text-envelope format).
     ///
     /// Matches the `--shelley-operational-certificate` CLI flag in the
     /// official Cardano node.  Required for block production.
-    #[serde(rename = "ShelleyOperationalCertificate", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ShelleyOperationalCertificate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub shelley_operational_certificate: Option<String>,
 
     /// Path to the stake-pool cold verification key file (text-envelope).
@@ -282,7 +333,11 @@ pub struct NodeConfigFile {
     /// Used as the block header `issuer_vkey` when forging blocks and to
     /// verify that the configured operational certificate is signed by the
     /// same cold key.
-    #[serde(rename = "ShelleyOperationalCertificateIssuerVkey", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ShelleyOperationalCertificateIssuerVkey",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub shelley_operational_certificate_issuer_vkey: Option<String>,
 }
 
@@ -449,7 +504,8 @@ impl NodeConfigFile {
     pub fn load_shelley_genesis_bootstrap(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Option<crate::genesis::ShelleyGenesisBootstrap>, crate::genesis::GenesisLoadError> {
+    ) -> Result<Option<crate::genesis::ShelleyGenesisBootstrap>, crate::genesis::GenesisLoadError>
+    {
         use crate::genesis::load_shelley_genesis_bootstrap;
 
         let Some(path) = self.shelley_genesis_file.as_deref() else {
@@ -571,33 +627,17 @@ impl NodeConfigFile {
         ledger_state_judgement: LedgerStateJudgement,
         peer_snapshot_freshness: PeerSnapshotFreshness,
     ) -> (LedgerPeerUseDecision, Vec<SocketAddr>) {
-        let decision = judge_ledger_peer_usage(
+        let mut blocked = self.ordered_fallback_peers();
+        blocked.push(self.peer_addr);
+
+        eligible_ledger_peer_candidates(
+            snapshot,
+            &blocked,
             self.use_ledger_peers_policy(),
             latest_slot,
             ledger_state_judgement,
             peer_snapshot_freshness,
-        );
-
-        if decision != LedgerPeerUseDecision::Eligible {
-            return (decision, Vec::new());
-        }
-
-        let mut blocked = self.ordered_fallback_peers();
-        blocked.push(self.peer_addr);
-
-        let mut eligible = Vec::new();
-        for peer in snapshot
-            .ledger_peers
-            .iter()
-            .chain(snapshot.big_ledger_peers.iter())
-            .copied()
-        {
-            if !blocked.contains(&peer) && !eligible.contains(&peer) {
-                eligible.push(peer);
-            }
-        }
-
-        (decision, eligible)
+        )
     }
 
     /// Derive snapshot freshness from the configured `peerSnapshotFile`, the
@@ -615,45 +655,6 @@ impl NodeConfigFile {
             latest_slot,
             snapshot_available,
         )
-    }
-}
-
-/// Derive peer snapshot freshness from policy, snapshot presence, and slot data.
-pub fn derive_peer_snapshot_freshness(
-    use_ledger_peers: UseLedgerPeers,
-    snapshot_configured: bool,
-    snapshot_slot: Option<u64>,
-    latest_slot: Option<u64>,
-    snapshot_available: bool,
-) -> PeerSnapshotFreshness {
-    if !snapshot_configured {
-        return PeerSnapshotFreshness::NotConfigured;
-    }
-
-    if !snapshot_available {
-        return PeerSnapshotFreshness::Unavailable;
-    }
-
-    match use_ledger_peers {
-        UseLedgerPeers::DontUseLedgerPeers
-        | UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always) => {
-            PeerSnapshotFreshness::Fresh
-        }
-        UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::After(after_slot)) => {
-            let Some(latest_slot) = latest_slot else {
-                return PeerSnapshotFreshness::Awaiting;
-            };
-
-            if latest_slot < after_slot {
-                return PeerSnapshotFreshness::Awaiting;
-            }
-
-            match snapshot_slot {
-                Some(snapshot_slot) if snapshot_slot >= after_slot => PeerSnapshotFreshness::Fresh,
-                Some(_) => PeerSnapshotFreshness::Stale,
-                None => PeerSnapshotFreshness::Unavailable,
-            }
-        }
     }
 }
 
@@ -718,7 +719,10 @@ fn extract_snapshot_pool_peers(root: &Value, pool_key: &str) -> Vec<SocketAddr> 
 
 fn parse_snapshot_access_point(value: &Value) -> Option<PeerAccessPoint> {
     let address = value.get("address")?.as_str()?.to_owned();
-    let port = value.get("port")?.as_u64().and_then(|port| u16::try_from(port).ok())?;
+    let port = value
+        .get("port")?
+        .as_u64()
+        .and_then(|port| u16::try_from(port).ok())?;
 
     Some(PeerAccessPoint { address, port })
 }
@@ -950,7 +954,9 @@ impl FromStr for NetworkPreset {
             "mainnet" => Ok(Self::Mainnet),
             "preprod" => Ok(Self::Preprod),
             "preview" => Ok(Self::Preview),
-            other => Err(format!("unknown network: {other} (expected mainnet, preprod, or preview)")),
+            other => Err(format!(
+                "unknown network: {other} (expected mainnet, preprod, or preview)"
+            )),
         }
     }
 }
@@ -1019,8 +1025,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
         governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
-        governor_target_established_big_ledger:
-            default_governor_target_established_big_ledger(),
+        governor_target_established_big_ledger: default_governor_target_established_big_ledger(),
         governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
@@ -1078,8 +1083,7 @@ pub fn preprod_config() -> NodeConfigFile {
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
         governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
-        governor_target_established_big_ledger:
-            default_governor_target_established_big_ledger(),
+        governor_target_established_big_ledger: default_governor_target_established_big_ledger(),
         governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
@@ -1137,8 +1141,7 @@ pub fn preview_config() -> NodeConfigFile {
         governor_target_established: default_governor_target_established(),
         governor_target_active: default_governor_target_active(),
         governor_target_known_big_ledger: default_governor_target_known_big_ledger(),
-        governor_target_established_big_ledger:
-            default_governor_target_established_big_ledger(),
+        governor_target_established_big_ledger: default_governor_target_established_big_ledger(),
         governor_target_active_big_ledger: default_governor_target_active_big_ledger(),
         turn_on_logging: default_turn_on_logging(),
         use_trace_dispatcher: default_use_trace_dispatcher(),
@@ -1177,7 +1180,10 @@ mod tests {
         assert_eq!(parsed.use_ledger_after_slot, cfg.use_ledger_after_slot);
         assert_eq!(parsed.peer_snapshot_file, cfg.peer_snapshot_file);
         assert_eq!(parsed.storage_dir, cfg.storage_dir);
-        assert_eq!(parsed.checkpoint_interval_slots, cfg.checkpoint_interval_slots);
+        assert_eq!(
+            parsed.checkpoint_interval_slots,
+            cfg.checkpoint_interval_slots
+        );
         assert_eq!(parsed.max_ledger_snapshots, cfg.max_ledger_snapshots);
         assert_eq!(
             parsed.governor_tick_interval_secs,
@@ -1312,7 +1318,10 @@ mod tests {
         assert!(cfg.turn_on_logging);
         assert!(cfg.use_trace_dispatcher);
         assert!(!cfg.turn_on_log_metrics);
-        assert_eq!(cfg.trace_option_node_name.as_deref(), Some("yggdrasil-local"));
+        assert_eq!(
+            cfg.trace_option_node_name.as_deref(),
+            Some("yggdrasil-local")
+        );
         assert_eq!(cfg.trace_option_resource_frequency, 500);
         assert_eq!(cfg.trace_option_forwarder.conn_queue_size, 16);
         assert_eq!(
@@ -1336,8 +1345,7 @@ mod tests {
     fn mainnet_stability_window() {
         let cfg = default_config();
         // stability_window = 3k/f = 3 * 2160 / 0.05 = 129600
-        let stability_window =
-            (3.0 * cfg.security_param_k as f64 / cfg.active_slot_coeff) as u64;
+        let stability_window = (3.0 * cfg.security_param_k as f64 / cfg.active_slot_coeff) as u64;
         assert_eq!(stability_window, 129_600);
     }
 
@@ -1353,14 +1361,26 @@ mod tests {
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.use_ledger_after_slot, Some(177_724_800));
-        assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(
+            cfg.peer_snapshot_file.as_deref(),
+            Some("peer-snapshot.json")
+        );
         assert_eq!(cfg.storage_dir, PathBuf::from("data/mainnet"));
         assert_eq!(cfg.expected_network_id(), 1);
         assert_eq!(cfg.checkpoint_interval_slots, 2160);
         assert_eq!(cfg.max_ledger_snapshots, 8);
-        assert_eq!(cfg.shelley_genesis_file.as_deref(), Some("shelley-genesis.json"));
-        assert_eq!(cfg.alonzo_genesis_file.as_deref(), Some("alonzo-genesis.json"));
-        assert_eq!(cfg.conway_genesis_file.as_deref(), Some("conway-genesis.json"));
+        assert_eq!(
+            cfg.shelley_genesis_file.as_deref(),
+            Some("shelley-genesis.json")
+        );
+        assert_eq!(
+            cfg.alonzo_genesis_file.as_deref(),
+            Some("alonzo-genesis.json")
+        );
+        assert_eq!(
+            cfg.conway_genesis_file.as_deref(),
+            Some("conway-genesis.json")
+        );
         assert!(!candidates.is_empty());
         assert!(candidates.len() <= 3);
     }
@@ -1390,7 +1410,10 @@ mod tests {
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.use_ledger_after_slot, Some(112_406_400));
-        assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(
+            cfg.peer_snapshot_file.as_deref(),
+            Some("peer-snapshot.json")
+        );
         assert_eq!(cfg.storage_dir, PathBuf::from("data/preprod"));
         assert_eq!(cfg.checkpoint_interval_slots, 2160);
         assert_eq!(cfg.max_ledger_snapshots, 8);
@@ -1408,11 +1431,13 @@ mod tests {
         assert_eq!(cfg.slots_per_kes_period, 129_600);
         assert_eq!(cfg.max_kes_evolutions, 62);
         assert_eq!(cfg.use_ledger_after_slot, Some(102_729_600));
-        assert_eq!(cfg.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(
+            cfg.peer_snapshot_file.as_deref(),
+            Some("peer-snapshot.json")
+        );
         assert_eq!(cfg.storage_dir, PathBuf::from("data/preview"));
         // stability_window = 3*432/0.05 = 25920
-        let stability_window =
-            (3.0 * cfg.security_param_k as f64 / cfg.active_slot_coeff) as u64;
+        let stability_window = (3.0 * cfg.security_param_k as f64 / cfg.active_slot_coeff) as u64;
         assert_eq!(stability_window, 25_920);
         assert!(cfg.bootstrap_peers.is_empty());
     }
@@ -1432,9 +1457,8 @@ mod tests {
 
     #[test]
     fn topology_parser_reads_bootstrap_peers() {
-        let peers = parse_topology_bootstrap_peers(
-            include_str!("../configuration/mainnet/topology.json"),
-        );
+        let peers =
+            parse_topology_bootstrap_peers(include_str!("../configuration/mainnet/topology.json"));
         assert_eq!(peers.len(), 3);
         assert_eq!(peers[0].0, "backbone.cardano.iog.io");
         assert_eq!(peers[0].1, 3001);
@@ -1487,7 +1511,10 @@ mod tests {
             fallback,
         );
 
-        assert_eq!(topology.primary_peer, "127.0.0.10:3001".parse().expect("addr"));
+        assert_eq!(
+            topology.primary_peer,
+            "127.0.0.10:3001".parse().expect("addr")
+        );
         assert_eq!(
             topology.fallback_peers,
             vec![
@@ -1553,7 +1580,10 @@ mod tests {
         let mut cfg = default_config();
 
         cfg.use_ledger_after_slot = None;
-        assert_eq!(cfg.use_ledger_peers_policy(), UseLedgerPeers::DontUseLedgerPeers);
+        assert_eq!(
+            cfg.use_ledger_peers_policy(),
+            UseLedgerPeers::DontUseLedgerPeers
+        );
 
         cfg.use_ledger_after_slot = Some(0);
         assert_eq!(
@@ -1797,15 +1827,28 @@ mod tests {
 
     #[test]
     fn network_preset_from_str() {
-        assert_eq!("mainnet".parse::<NetworkPreset>().expect("mainnet"), NetworkPreset::Mainnet);
-        assert_eq!("Preprod".parse::<NetworkPreset>().expect("preprod"), NetworkPreset::Preprod);
-        assert_eq!("PREVIEW".parse::<NetworkPreset>().expect("preview"), NetworkPreset::Preview);
+        assert_eq!(
+            "mainnet".parse::<NetworkPreset>().expect("mainnet"),
+            NetworkPreset::Mainnet
+        );
+        assert_eq!(
+            "Preprod".parse::<NetworkPreset>().expect("preprod"),
+            NetworkPreset::Preprod
+        );
+        assert_eq!(
+            "PREVIEW".parse::<NetworkPreset>().expect("preview"),
+            NetworkPreset::Preview
+        );
         assert!("unknown".parse::<NetworkPreset>().is_err());
     }
 
     #[test]
     fn network_preset_display_round_trips() {
-        for preset in [NetworkPreset::Mainnet, NetworkPreset::Preprod, NetworkPreset::Preview] {
+        for preset in [
+            NetworkPreset::Mainnet,
+            NetworkPreset::Preprod,
+            NetworkPreset::Preview,
+        ] {
             let s = preset.to_string();
             let parsed: NetworkPreset = s.parse().expect("display should round-trip");
             assert_eq!(parsed, preset);
@@ -1952,7 +1995,10 @@ mod tests {
         cfg.topology_file_path = Some("my-topology.json".to_owned());
         let json = serde_json::to_string_pretty(&cfg).expect("serialize");
         let parsed: NodeConfigFile = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(parsed.topology_file_path.as_deref(), Some("my-topology.json"));
+        assert_eq!(
+            parsed.topology_file_path.as_deref(),
+            Some("my-topology.json")
+        );
     }
 
     /// Default `max_major_protocol_version` matches Conway-era `MaxMajorProtVer`

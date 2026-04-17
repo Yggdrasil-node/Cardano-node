@@ -40,15 +40,9 @@ pub enum NextResponse {
         tip: Vec<u8>,
     },
     /// The server asked us to wait and then later delivered a roll-forward.
-    AwaitRollForward {
-        header: Vec<u8>,
-        tip: Vec<u8>,
-    },
+    AwaitRollForward { header: Vec<u8>, tip: Vec<u8> },
     /// The server asked us to wait and then later delivered a rolled-backward.
-    AwaitRollBackward {
-        point: Vec<u8>,
-        tip: Vec<u8>,
-    },
+    AwaitRollBackward { point: Vec<u8>, tip: Vec<u8> },
 }
 
 /// The server's response to a `MsgFindIntersect`.
@@ -262,8 +256,7 @@ impl ChainSyncClient {
     }
 
     fn decode_point(raw: &[u8]) -> Result<Point, ChainSyncClientError> {
-        Point::from_cbor_bytes(raw)
-            .map_err(|e| ChainSyncClientError::PointDecode(e.to_string()))
+        Point::from_cbor_bytes(raw).map_err(|e| ChainSyncClientError::PointDecode(e.to_string()))
     }
 
     fn decode_tip(raw: &[u8]) -> Result<Point, ChainSyncClientError> {
@@ -273,8 +266,7 @@ impl ChainSyncClient {
     }
 
     fn decode_header<H: CborDecode>(raw: &[u8]) -> Result<H, ChainSyncClientError> {
-        H::from_cbor_bytes(raw)
-            .map_err(|e| ChainSyncClientError::HeaderDecode(e.to_string()))
+        H::from_cbor_bytes(raw).map_err(|e| ChainSyncClientError::HeaderDecode(e.to_string()))
     }
 
     // -- public API -------------------------------------------------------

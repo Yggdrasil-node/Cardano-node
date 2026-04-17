@@ -17,21 +17,18 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use yggdrasil_consensus::{
-    ActiveSlotCoeff, HeaderBody, OpCert, VrfMode,
-    check_is_leader, kes_period_of_slot, check_kes_period,
+    ActiveSlotCoeff, HeaderBody, OpCert, VrfMode, check_is_leader, check_kes_period,
+    kes_period_of_slot,
 };
 use yggdrasil_crypto::ed25519::{Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{
-    SumKesSigningKey, SumKesSignature, SumKesVerificationKey,
-    gen_sum_kes_signing_key, sign_sum_kes, update_sum_kes,
+    SumKesSignature, SumKesSigningKey, SumKesVerificationKey, gen_sum_kes_signing_key,
+    sign_sum_kes, update_sum_kes,
 };
-use yggdrasil_crypto::vrf::{
-    VrfOutput, VrfSecretKey, VrfVerificationKey,
-    VRF_SIGNING_KEY_SIZE,
-};
+use yggdrasil_crypto::vrf::{VRF_SIGNING_KEY_SIZE, VrfOutput, VrfSecretKey, VrfVerificationKey};
 use yggdrasil_ledger::{
-    BlockNo, CborEncode, Encoder, HeaderHash, Nonce, SlotNo, TxId, Era,
-    PraosHeader, PraosHeaderBody, ShelleyOpCert, ShelleyVrfCert,
+    BlockNo, CborEncode, Encoder, Era, HeaderHash, Nonce, PraosHeader, PraosHeaderBody,
+    ShelleyOpCert, ShelleyVrfCert, SlotNo, TxId,
 };
 use yggdrasil_mempool::MempoolEntry;
 
@@ -194,10 +191,12 @@ pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProduc
         });
     }
     let depth_str = &type_tag[KES_SIGNING_KEY_TYPE_PREFIX.len()..];
-    let depth: u32 = depth_str.parse().map_err(|_| BlockProducerError::OpCertDecode {
-        path: path.display().to_string(),
-        detail: format!("cannot parse KES depth from type tag suffix '{depth_str}'"),
-    })?;
+    let depth: u32 = depth_str
+        .parse()
+        .map_err(|_| BlockProducerError::OpCertDecode {
+            path: path.display().to_string(),
+            detail: format!("cannot parse KES depth from type tag suffix '{depth_str}'"),
+        })?;
 
     let seed_bytes = unwrap_cbor_bytes(&cbor_bytes, path)?;
     if seed_bytes.len() != 32 {
@@ -216,9 +215,7 @@ pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProduc
 ///
 /// The CBOR payload is expected to be a CBOR `bytes` item containing the
 /// 32-byte Ed25519 verification key.
-pub fn load_issuer_verification_key(
-    path: &Path,
-) -> Result<VerificationKey, BlockProducerError> {
+pub fn load_issuer_verification_key(path: &Path) -> Result<VerificationKey, BlockProducerError> {
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
     if type_tag != STAKE_POOL_VERIFICATION_KEY_TYPE {
         return Err(BlockProducerError::TypeMismatch {
@@ -289,8 +286,8 @@ fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerE
     }
 
     // 1) hot_vkey: CBOR bytes(32)
-    let hot_vkey_raw = read_cbor_bytes_field(&mut cursor)
-        .map_err(|_| err("failed to read hot_vkey bytes"))?;
+    let hot_vkey_raw =
+        read_cbor_bytes_field(&mut cursor).map_err(|_| err("failed to read hot_vkey bytes"))?;
     if hot_vkey_raw.len() != 32 {
         return Err(err(&format!(
             "hot_vkey length {}, expected 32",
@@ -306,8 +303,7 @@ fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerE
         read_cbor_uint(&mut cursor).map_err(|_| err("failed to read sequence_number"))?;
 
     // 3) kes_period: CBOR uint
-    let kes_period =
-        read_cbor_uint(&mut cursor).map_err(|_| err("failed to read kes_period"))?;
+    let kes_period = read_cbor_uint(&mut cursor).map_err(|_| err("failed to read kes_period"))?;
 
     // 4) sigma: CBOR bytes(64)
     let sigma_raw =
@@ -522,11 +518,11 @@ pub fn load_block_producer_credentials(
     let operational_cert = load_operational_certificate(opcert_path)?;
     let issuer_vkey = load_issuer_verification_key(issuer_vkey_path)?;
 
-    operational_cert
-        .verify(&issuer_vkey)
-        .map_err(|e| BlockProducerError::Crypto(format!(
+    operational_cert.verify(&issuer_vkey).map_err(|e| {
+        BlockProducerError::Crypto(format!(
             "operational certificate does not verify against issuer key: {e}"
-        )))?;
+        ))
+    })?;
 
     Ok(BlockProducerCredentials {
         vrf_signing_key,
@@ -612,10 +608,8 @@ pub fn check_can_forge(
     creds: &BlockProducerCredentials,
     slot: SlotNo,
 ) -> Result<u32, BlockProducerError> {
-    let current_kes_period =
-        kes_period_of_slot(slot.0, creds.slots_per_kes_period).map_err(|e| {
-            BlockProducerError::KesPeriod(e.to_string())
-        })?;
+    let current_kes_period = kes_period_of_slot(slot.0, creds.slots_per_kes_period)
+        .map_err(|e| BlockProducerError::KesPeriod(e.to_string()))?;
 
     check_kes_period(
         &creds.operational_cert,
@@ -633,9 +627,8 @@ pub fn check_can_forge(
             ))
         })?;
 
-    u32::try_from(offset).map_err(|_| {
-        BlockProducerError::KesPeriod("KES period offset overflows u32".to_owned())
-    })
+    u32::try_from(offset)
+        .map_err(|_| BlockProducerError::KesPeriod("KES period offset overflows u32".to_owned()))
 }
 
 // ---------------------------------------------------------------------------
@@ -735,9 +728,7 @@ pub fn forge_block_header(
 /// its final period.
 ///
 /// Reference: `updateKES` / `HotKey.evolve` in upstream.
-pub fn evolve_kes_key(
-    creds: &mut BlockProducerCredentials,
-) -> Result<bool, BlockProducerError> {
+pub fn evolve_kes_key(creds: &mut BlockProducerCredentials) -> Result<bool, BlockProducerError> {
     let result = update_sum_kes(&creds.kes_signing_key, creds.kes_current_period)
         .map_err(|e| BlockProducerError::Crypto(e.to_string()))?;
     match result {
@@ -906,11 +897,7 @@ pub fn check_should_forge(
     };
     let target_u32 = match u32::try_from(target_period) {
         Ok(p) => p,
-        Err(_) => {
-            return ShouldForge::ForgeStateUpdateError(
-                "KES period exceeds u32".to_owned(),
-            )
-        }
+        Err(_) => return ShouldForge::ForgeStateUpdateError("KES period exceeds u32".to_owned()),
     };
     if target_u32 > creds.kes_current_period {
         match evolve_kes_key_to_period(creds, target_u32) {
@@ -1180,7 +1167,11 @@ pub fn serialize_forged_block_cbor(forged: &ForgedBlock) -> Vec<u8> {
     // Encode the multi-era envelope: [7, ConwayBlock]
     let mut enc = Encoder::with_capacity(
         2 + praos_hdr.to_cbor_bytes().len()
-            + forged.transactions.iter().map(|t| t.raw_tx.len()).sum::<usize>()
+            + forged
+                .transactions
+                .iter()
+                .map(|t| t.raw_tx.len())
+                .sum::<usize>()
             + 64,
     );
 
@@ -1282,11 +1273,7 @@ fn split_submitted_tx(data: &[u8]) -> Result<SubmittedTxSlices<'_>, ()> {
         let aux_end = dec.position();
         let raw = dec.slice(aux_start, aux_end).map_err(|_| ())?;
         // Check for CBOR null (0xf6)
-        if raw == [0xf6] {
-            None
-        } else {
-            Some(raw)
-        }
+        if raw == [0xf6] { None } else { Some(raw) }
     } else {
         None
     };
@@ -1408,16 +1395,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key_bytes = [0xABu8; 64];
         let cbor = cbor_bstr(&key_bytes);
-        let json = make_text_envelope(
-            "WrongType",
-            "",
-            &hex::encode(&cbor),
-        );
+        let json = make_text_envelope("WrongType", "", &hex::encode(&cbor));
         let path = write_temp_file(&dir, "vrf_bad.skey", &json);
         let result = load_vrf_signing_key(&path);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("unexpected text envelope type"), "{err_msg}");
+        assert!(
+            err_msg.contains("unexpected text envelope type"),
+            "{err_msg}"
+        );
     }
 
     #[test]
@@ -1426,11 +1412,7 @@ mod tests {
         // Depth-0 KES key = just a 32-byte seed
         let seed = [0xCDu8; 32];
         let cbor = cbor_bstr(&seed);
-        let json = make_text_envelope(
-            "KesSigningKey_ed25519_kes_2^0",
-            "",
-            &hex::encode(&cbor),
-        );
+        let json = make_text_envelope("KesSigningKey_ed25519_kes_2^0", "", &hex::encode(&cbor));
         let path = write_temp_file(&dir, "kes.skey", &json);
         let sk = load_kes_signing_key(&path).unwrap();
         assert_eq!(sk.depth(), 0);
@@ -1442,11 +1424,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let issuer_bytes = [0xA5u8; 32];
         let cbor = cbor_bstr(&issuer_bytes);
-        let json = make_text_envelope(
-            "StakePoolVerificationKey_ed25519",
-            "",
-            &hex::encode(&cbor),
-        );
+        let json = make_text_envelope("StakePoolVerificationKey_ed25519", "", &hex::encode(&cbor));
         let path = write_temp_file(&dir, "cold.vkey", &json);
 
         let issuer = load_issuer_verification_key(&path).expect("load issuer vkey");
@@ -1458,11 +1436,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seed = [0x42u8; 32];
         let cbor = cbor_bstr(&seed);
-        let json = make_text_envelope(
-            "KesSigningKey_ed25519_kes_2^6",
-            "",
-            &hex::encode(&cbor),
-        );
+        let json = make_text_envelope("KesSigningKey_ed25519_kes_2^6", "", &hex::encode(&cbor));
         let path = write_temp_file(&dir, "kes6.skey", &json);
         let sk = load_kes_signing_key(&path).unwrap();
         assert_eq!(sk.depth(), 6);
@@ -1484,11 +1458,7 @@ mod tests {
         cbor.push(0x0A); // uint 10 (kes_period)
         cbor.extend_from_slice(&cbor_bstr(&sigma)); // bytes(64)
 
-        let json = make_text_envelope(
-            "NodeOperationalCertificate",
-            "",
-            &hex::encode(&cbor),
-        );
+        let json = make_text_envelope("NodeOperationalCertificate", "", &hex::encode(&cbor));
         let path = write_temp_file(&dir, "node.cert", &json);
         let opcert = load_operational_certificate(&path).unwrap();
 
@@ -1539,11 +1509,8 @@ mod tests {
         opcert_cbor.push(0x00); // sequence_number = 0
         opcert_cbor.push(0x00); // kes_period = 0
         opcert_cbor.extend_from_slice(&cbor_bstr(&sigma.0));
-        let opcert_json = make_text_envelope(
-            "NodeOperationalCertificate",
-            "",
-            &hex::encode(opcert_cbor),
-        );
+        let opcert_json =
+            make_text_envelope("NodeOperationalCertificate", "", &hex::encode(opcert_cbor));
         let opcert_path = write_temp_file(&dir, "node.cert", &opcert_json);
 
         // Issuer key file uses different cold key B.
@@ -1688,16 +1655,9 @@ mod tests {
         let nonce = Nonce::Hash([1u8; 32]);
         let slot = SlotNo(42);
 
-        let election = check_slot_leadership(
-            &creds,
-            slot,
-            nonce,
-            1,
-            1,
-            &active_slot_coeff,
-        )
-        .unwrap()
-        .expect("should be leader with f=1.0");
+        let election = check_slot_leadership(&creds, slot, nonce, 1, 1, &active_slot_coeff)
+            .unwrap()
+            .expect("should be leader with f=1.0");
 
         let forged = forge_block_header(
             &creds,
@@ -1706,7 +1666,7 @@ mod tests {
             BlockNo(1),
             None,
             [0xAA; 32], // body hash
-            100,         // body size
+            100,        // body size
             cold_vk,
             &ForgeBlockConfig {
                 protocol_version: (9, 0),
@@ -1860,8 +1820,8 @@ mod tests {
         let body_start = dec.position();
         dec.skip().expect("skip envelope body");
         let body_end = dec.position();
-        let conway = ConwayBlock::from_cbor_bytes(&raw[body_start..body_end])
-            .expect("decode conway block");
+        let conway =
+            ConwayBlock::from_cbor_bytes(&raw[body_start..body_end]).expect("decode conway block");
 
         assert_eq!(conway.header.body.slot, 123);
         assert!(conway.transaction_bodies.is_empty());

@@ -36,16 +36,14 @@ use std::sync::{Arc, RwLock};
 use yggdrasil_ledger::{CborDecode, Era, LedgerStateSnapshot, MultiEraSubmittedTx, Point, SlotNo};
 use yggdrasil_mempool::SharedMempool;
 use yggdrasil_network::{
-    AcquireFailure, AcquireTarget,
-    LocalStateQueryAcquiredRequest, LocalStateQueryIdleRequest,
-    LocalStateQueryServer, LocalStateQueryServerError,
-    LocalTxMonitorAcquiredRequest, LocalTxMonitorIdleRequest,
-    LocalTxMonitorServer, LocalTxMonitorServerError,
-    LocalTxRequest, LocalTxSubmissionServer, LocalTxSubmissionServerError,
+    AcquireFailure, AcquireTarget, LocalStateQueryAcquiredRequest, LocalStateQueryIdleRequest,
+    LocalStateQueryServer, LocalStateQueryServerError, LocalTxMonitorAcquiredRequest,
+    LocalTxMonitorIdleRequest, LocalTxMonitorServer, LocalTxMonitorServerError, LocalTxRequest,
+    LocalTxSubmissionServer, LocalTxSubmissionServerError,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
-use crate::runtime::{add_tx_to_shared_mempool, MempoolAddTxResult};
+use crate::runtime::{MempoolAddTxResult, add_tx_to_shared_mempool};
 use crate::sync::recover_ledger_state_chaindb;
 
 // ---------------------------------------------------------------------------
@@ -134,16 +132,13 @@ where
                 // Recover a current ledger state for decoding and validation.
                 // The RwLockReadGuard (and its originating Result) must be
                 // fully dropped before any .await to keep the future Send.
-                let ledger_result = chain_db
-                    .read()
+                let ledger_result = chain_db.read().ok().and_then(|db| {
+                    recover_ledger_state_chaindb(
+                        &db,
+                        yggdrasil_ledger::LedgerState::new(Era::Byron),
+                    )
                     .ok()
-                    .and_then(|db| {
-                        recover_ledger_state_chaindb(
-                            &db,
-                            yggdrasil_ledger::LedgerState::new(Era::Byron),
-                        )
-                        .ok()
-                    });
+                });
                 let mut ledger_state = match ledger_result {
                     Some(recovery) => recovery.ledger_state,
                     None => {
@@ -232,8 +227,8 @@ where
                         loop {
                             match server.recv_acquired_request().await? {
                                 LocalStateQueryAcquiredRequest::Query(query_bytes) => {
-                                    let result = dispatcher
-                                        .dispatch_query(&current_snapshot, &query_bytes);
+                                    let result =
+                                        dispatcher.dispatch_query(&current_snapshot, &query_bytes);
                                     server.send_result(result).await?;
                                 }
                                 LocalStateQueryAcquiredRequest::Release => {
@@ -247,9 +242,7 @@ where
                                             server.acquired().await?;
                                         }
                                         None => {
-                                            server
-                                                .failure(AcquireFailure::PointNotOnChain)
-                                                .await?;
+                                            server.failure(AcquireFailure::PointNotOnChain).await?;
                                             // After failure on re-acquire the
                                             // server returns to StAcquired so
                                             // the acquired loop continues.
@@ -307,7 +300,9 @@ where
                     .unwrap_or(0u64);
                 server.acquired(tip_slot).await?;
 
-                let mut tx_iter = snapshot.mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX).into_iter();
+                let mut tx_iter = snapshot
+                    .mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX)
+                    .into_iter();
 
                 loop {
                     match server.recv_acquired_request().await? {
@@ -354,7 +349,9 @@ where
                                 .map(|s| s.0)
                                 .unwrap_or(0u64);
                             server.acquired(tip_slot).await?;
-                            tx_iter = new_snapshot.mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX).into_iter();
+                            tx_iter = new_snapshot
+                                .mempool_txids_after(yggdrasil_mempool::MEMPOOL_ZERO_IDX)
+                                .into_iter();
                             // Note: we shadow `snapshot` by rebinding below,
                             // but the borrow checker requires us to break out
                             // the new snapshot. Instead, we restart the outer
@@ -394,21 +391,17 @@ where
     match target {
         AcquireTarget::VolatileTip => {
             // Acquire at the current chain tip — always available.
-            let recovery = recover_ledger_state_chaindb(
-                &db,
-                yggdrasil_ledger::LedgerState::new(Era::Byron),
-            )
-            .ok()?;
+            let recovery =
+                recover_ledger_state_chaindb(&db, yggdrasil_ledger::LedgerState::new(Era::Byron))
+                    .ok()?;
             Some(recovery.ledger_state.snapshot())
         }
         AcquireTarget::Point(point) => {
             // Acquire at a specific historical point.
             // Recover the full ledger state and check that the tip matches.
-            let recovery = recover_ledger_state_chaindb(
-                &db,
-                yggdrasil_ledger::LedgerState::new(Era::Byron),
-            )
-            .ok()?;
+            let recovery =
+                recover_ledger_state_chaindb(&db, yggdrasil_ledger::LedgerState::new(Era::Byron))
+                    .ok()?;
             let snapshot = recovery.ledger_state.snapshot();
             if snapshot.tip() == &Point::Origin {
                 Some(snapshot)
@@ -473,7 +466,7 @@ where
     V: VolatileStore + Send + Sync + 'static,
     L: LedgerStore + Send + Sync + 'static,
 {
-    use yggdrasil_network::{ntc_accept, MiniProtocolNum};
+    use yggdrasil_network::{MiniProtocolNum, ntc_accept};
 
     let conn = match ntc_accept(stream, network_magic).await {
         Ok(c) => c,
@@ -506,7 +499,8 @@ where
     let tx_mempool = mempool.clone();
     let tx_evaluator = evaluator.clone();
     tokio::spawn(async move {
-        let _ = run_local_tx_submission_session(tx_server, tx_chain_db, tx_mempool, tx_evaluator).await;
+        let _ =
+            run_local_tx_submission_session(tx_server, tx_chain_db, tx_mempool, tx_evaluator).await;
     });
 
     // Spawn LocalStateQuery task.
@@ -711,7 +705,8 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                 let balance = if param_start < query.len() {
                     let mut pdec = Decoder::new(&query[param_start..]);
                     if let Ok(acct_bytes) = pdec.bytes() {
-                        if let Some(acct) = yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes) {
+                        if let Some(acct) = yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes)
+                        {
                             snapshot.query_reward_balance(&acct)
                         } else {
                             0
@@ -796,7 +791,9 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                     let mut pdec = Decoder::new(&query[param_start..]);
                     if let Ok(n) = pdec.array() {
                         for _ in 0..n {
-                            if let Ok(txin) = yggdrasil_ledger::eras::shelley::ShelleyTxIn::decode_cbor(&mut pdec) {
+                            if let Ok(txin) =
+                                yggdrasil_ledger::eras::shelley::ShelleyTxIn::decode_cbor(&mut pdec)
+                            {
                                 txins.push(txin);
                             }
                         }
@@ -832,7 +829,9 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                     let mut pdec = Decoder::new(&query[param_start..]);
                     if let Ok(n) = pdec.array() {
                         for _ in 0..n {
-                            if let Ok(cred) = yggdrasil_ledger::StakeCredential::decode_cbor(&mut pdec) {
+                            if let Ok(cred) =
+                                yggdrasil_ledger::StakeCredential::decode_cbor(&mut pdec)
+                            {
                                 creds.push(cred);
                             }
                         }
@@ -908,7 +907,10 @@ mod tests {
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
-        assert!(!result.is_empty(), "QueryCurrentEra should return a non-empty response");
+        assert!(
+            !result.is_empty(),
+            "QueryCurrentEra should return a non-empty response"
+        );
     }
 
     #[test]
@@ -924,7 +926,10 @@ mod tests {
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
-        assert!(!result.is_empty(), "QueryChainTip should return a non-empty response");
+        assert!(
+            !result.is_empty(),
+            "QueryChainTip should return a non-empty response"
+        );
     }
 
     #[test]
@@ -940,7 +945,10 @@ mod tests {
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
-        assert!(!result.is_empty(), "QueryCurrentEpoch should return a non-empty response");
+        assert!(
+            !result.is_empty(),
+            "QueryCurrentEpoch should return a non-empty response"
+        );
     }
 
     #[test]
@@ -956,7 +964,10 @@ mod tests {
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
-        assert!(result.is_empty(), "unknown query tag should return empty bytes");
+        assert!(
+            result.is_empty(),
+            "unknown query tag should return empty bytes"
+        );
     }
 
     #[test]
@@ -965,7 +976,10 @@ mod tests {
         let snapshot = state.snapshot();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[]);
-        assert!(result.is_empty(), "empty query bytes should return empty bytes");
+        assert!(
+            result.is_empty(),
+            "empty query bytes should return empty bytes"
+        );
     }
 
     #[test]
@@ -980,7 +994,10 @@ mod tests {
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
-        assert!(!result.is_empty(), "QueryProtocolParameters should return CBOR null");
+        assert!(
+            !result.is_empty(),
+            "QueryProtocolParameters should return CBOR null"
+        );
         // CBOR null is 0xf6
         assert_eq!(result, vec![0xf6]);
     }
@@ -1070,7 +1087,10 @@ mod tests {
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
-        assert!(!result.is_empty(), "GetConstitution should return a non-empty CBOR response");
+        assert!(
+            !result.is_empty(),
+            "GetConstitution should return a non-empty CBOR response"
+        );
     }
 
     #[test]

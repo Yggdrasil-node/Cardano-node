@@ -168,17 +168,11 @@ mod tests {
     #[test]
     fn clock_skew_from_duration_ceil() {
         // 2s tolerance, 1s slots → 2 slot skew
-        let skew = ClockSkew::from_duration(
-            Duration::from_secs(2),
-            Duration::from_secs(1),
-        );
+        let skew = ClockSkew::from_duration(Duration::from_secs(2), Duration::from_secs(1));
         assert_eq!(skew.max_slots, 2);
 
         // 3s tolerance, 2s slots → ceil(1.5) = 2 slot skew
-        let skew = ClockSkew::from_duration(
-            Duration::from_secs(3),
-            Duration::from_secs(2),
-        );
+        let skew = ClockSkew::from_duration(Duration::from_secs(3), Duration::from_secs(2));
         assert_eq!(skew.max_slots, 2);
     }
 
@@ -190,10 +184,7 @@ mod tests {
 
     #[test]
     fn clock_skew_zero_slot_length_safe() {
-        let skew = ClockSkew::from_duration(
-            Duration::from_secs(2),
-            Duration::ZERO,
-        );
+        let skew = ClockSkew::from_duration(Duration::from_secs(2), Duration::ZERO);
         // With zero slot length fallback to 1s → 2 slots
         assert_eq!(skew.max_slots, 2);
     }

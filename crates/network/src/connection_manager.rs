@@ -19,10 +19,10 @@ use std::net::SocketAddr;
 use std::time::Instant;
 
 use crate::connection::{
-    timeouts::{PROTOCOL_IDLE_TIMEOUT, TIME_WAIT_TIMEOUT},
     AbstractState, AcceptedConnectionsLimit, ConnStateId, ConnectionId, ConnectionManagerError,
-    ConnectionState, DataFlow, DemotedToColdRemoteTr, OperationResult, Provenance,
-    TimeoutExpired, Transition,
+    ConnectionState, DataFlow, DemotedToColdRemoteTr, OperationResult, Provenance, TimeoutExpired,
+    Transition,
+    timeouts::{PROTOCOL_IDLE_TIMEOUT, TIME_WAIT_TIMEOUT},
 };
 
 // ---------------------------------------------------------------------------
@@ -405,9 +405,10 @@ impl ConnectionManagerState {
             remote: peer,
         };
 
-        let entry = self.connections.get_mut(&peer).ok_or(
-            ConnectionManagerError::UnknownPeer(peer),
-        )?;
+        let entry = self
+            .connections
+            .get_mut(&peer)
+            .ok_or(ConnectionManagerError::UnknownPeer(peer))?;
 
         match &entry.state {
             ConnectionState::ReservedOutboundState
@@ -446,9 +447,10 @@ impl ConnectionManagerState {
         &mut self,
         peer: SocketAddr,
     ) -> Result<(), ConnectionManagerError> {
-        let entry = self.connections.get_mut(&peer).ok_or(
-            ConnectionManagerError::UnknownPeer(peer),
-        )?;
+        let entry = self
+            .connections
+            .get_mut(&peer)
+            .ok_or(ConnectionManagerError::UnknownPeer(peer))?;
 
         match &entry.state {
             ConnectionState::ReservedOutboundState
@@ -492,8 +494,7 @@ impl ConnectionManagerState {
         let from = entry.state.abstract_state();
         match &entry.state {
             // Cannot demote reserved or unnegotiated.
-            ConnectionState::ReservedOutboundState
-            | ConnectionState::UnnegotiatedState { .. } => (
+            ConnectionState::ReservedOutboundState | ConnectionState::UnnegotiatedState { .. } => (
                 ReleaseOutboundResult::Error(ConnectionManagerError::ForbiddenOperation {
                     peer,
                     state: from,
@@ -552,7 +553,10 @@ impl ConnectionManagerState {
                 entry.time_wait_deadline = None;
                 // May need pruning due to new inbound connection.
                 let prune_actions = self.maybe_prune();
-                (ReleaseOutboundResult::Noop(AbstractState::InboundIdleSt(DataFlow::Duplex)), prune_actions)
+                (
+                    ReleaseOutboundResult::Noop(AbstractState::InboundIdleSt(DataFlow::Duplex)),
+                    prune_actions,
+                )
             }
 
             // Already idle: no-op.
@@ -602,8 +606,7 @@ impl ConnectionManagerState {
             }
 
             // Terminating/Terminated: no-op.
-            ConnectionState::TerminatingState { .. }
-            | ConnectionState::TerminatedState { .. } => {
+            ConnectionState::TerminatingState { .. } | ConnectionState::TerminatedState { .. } => {
                 (ReleaseOutboundResult::Noop(from), Vec::new())
             }
         }
@@ -702,9 +705,10 @@ impl ConnectionManagerState {
         peer: SocketAddr,
         data_flow: DataFlow,
     ) -> Result<AbstractState, ConnectionManagerError> {
-        let entry = self.connections.get_mut(&peer).ok_or(
-            ConnectionManagerError::UnknownPeer(peer),
-        )?;
+        let entry = self
+            .connections
+            .get_mut(&peer)
+            .ok_or(ConnectionManagerError::UnknownPeer(peer))?;
 
         match &entry.state {
             ConnectionState::UnnegotiatedState {
@@ -723,9 +727,7 @@ impl ConnectionManagerState {
             // Outbound won the race for this slot (self-connect): no-op.
             ConnectionState::OutboundUniState { .. }
             | ConnectionState::OutboundDupState { .. }
-            | ConnectionState::OutboundIdleState { .. } => {
-                Ok(entry.state.abstract_state())
-            }
+            | ConnectionState::OutboundIdleState { .. } => Ok(entry.state.abstract_state()),
             other => Err(ConnectionManagerError::ForbiddenOperation {
                 peer,
                 state: other.abstract_state(),
@@ -951,8 +953,7 @@ impl ConnectionManagerState {
             ),
 
             // Terminating/Terminated: connection gone.
-            ConnectionState::TerminatingState { .. }
-            | ConnectionState::TerminatedState { .. } => (
+            ConnectionState::TerminatingState { .. } | ConnectionState::TerminatedState { .. } => (
                 OperationResult::TerminatedConnection(entry.state.abstract_state()),
                 Vec::new(),
             ),
@@ -1027,8 +1028,7 @@ impl ConnectionManagerState {
             ),
 
             // Terminating/Terminated: connection gone.
-            ConnectionState::TerminatingState { .. }
-            | ConnectionState::TerminatedState { .. } => (
+            ConnectionState::TerminatingState { .. } | ConnectionState::TerminatedState { .. } => (
                 OperationResult::TerminatedConnection(entry.state.abstract_state()),
                 Vec::new(),
             ),
@@ -1053,9 +1053,10 @@ impl ConnectionManagerState {
         &mut self,
         peer: SocketAddr,
     ) -> Result<AbstractState, ConnectionManagerError> {
-        let entry = self.connections.get_mut(&peer).ok_or(
-            ConnectionManagerError::UnknownPeer(peer),
-        )?;
+        let entry = self
+            .connections
+            .get_mut(&peer)
+            .ok_or(ConnectionManagerError::UnknownPeer(peer))?;
 
         match &entry.state {
             ConnectionState::OutboundDupState {
@@ -1080,13 +1081,11 @@ impl ConnectionManagerState {
 
     /// Transition from `TerminatingState` to `TerminatedState` after the
     /// TIME_WAIT timeout.
-    pub fn time_wait_expired(
-        &mut self,
-        peer: SocketAddr,
-    ) -> Result<(), ConnectionManagerError> {
-        let entry = self.connections.get_mut(&peer).ok_or(
-            ConnectionManagerError::UnknownPeer(peer),
-        )?;
+    pub fn time_wait_expired(&mut self, peer: SocketAddr) -> Result<(), ConnectionManagerError> {
+        let entry = self
+            .connections
+            .get_mut(&peer)
+            .ok_or(ConnectionManagerError::UnknownPeer(peer))?;
 
         match &entry.state {
             ConnectionState::TerminatingState { error, .. } => {
@@ -1126,8 +1125,7 @@ impl ConnectionManagerState {
         let entry = self.connections.get_mut(&peer)?;
         match &entry.state {
             // Don't transition if already terminating/terminated.
-            ConnectionState::TerminatingState { .. }
-            | ConnectionState::TerminatedState { .. } => {
+            ConnectionState::TerminatingState { .. } | ConnectionState::TerminatedState { .. } => {
                 Some(entry.state.abstract_state())
             }
             // Any other state → TerminatingState.
@@ -1222,24 +1220,16 @@ impl ConnectionManagerState {
         let mut prunable: Vec<(SocketAddr, ConnStateId, bool)> = self
             .connections
             .iter()
-            .filter_map(|(addr, e)| {
-                match &e.state {
-                    ConnectionState::InboundIdleState { .. } => {
-                        Some((*addr, e.conn_state_id, false))
-                    }
-                    ConnectionState::TerminatedState { .. } => {
-                        Some((*addr, e.conn_state_id, true))
-                    }
-                    _ => None,
-                }
+            .filter_map(|(addr, e)| match &e.state {
+                ConnectionState::InboundIdleState { .. } => Some((*addr, e.conn_state_id, false)),
+                ConnectionState::TerminatedState { .. } => Some((*addr, e.conn_state_id, true)),
+                _ => None,
             })
             .collect();
 
         // Sort: terminated first (free slots), then idle by descending
         // ConnStateId (most recently added first).
-        prunable.sort_by(|a, b| {
-            b.2.cmp(&a.2).then_with(|| b.1 .0.cmp(&a.1 .0))
-        });
+        prunable.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| b.1.0.cmp(&a.1.0)));
 
         let mut to_prune_addrs = Vec::new();
         for (addr, _id, is_terminated) in prunable.into_iter().take(needed) {
@@ -1255,8 +1245,10 @@ impl ConnectionManagerState {
                             error: Some("pruned for inbound capacity".to_owned()),
                         };
                         entry.responder_timeout_deadline = None;
-                        entry.time_wait_deadline =
-                            Some(std::time::Instant::now() + crate::connection::timeouts::TIME_WAIT_TIMEOUT);
+                        entry.time_wait_deadline = Some(
+                            std::time::Instant::now()
+                                + crate::connection::timeouts::TIME_WAIT_TIMEOUT,
+                        );
                     }
                 }
                 to_prune_addrs.push(addr);
@@ -1300,7 +1292,7 @@ impl ConnectionManagerState {
 
         // Sort by ConnStateId descending (prune most recently added first,
         // matching upstream default PrunePolicy).
-        prunable.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        prunable.sort_by(|a, b| b.1.0.cmp(&a.1.0));
 
         let to_prune: Vec<SocketAddr> = prunable.into_iter().take(excess).map(|(a, _)| a).collect();
 
@@ -1370,7 +1362,9 @@ mod tests {
         let mut cm = ConnectionManagerState::new();
         let p = peer(2001);
 
-        let _ = cm.acquire_outbound_connection(local(), p).expect("acquire outbound");
+        let _ = cm
+            .acquire_outbound_connection(local(), p)
+            .expect("acquire outbound");
         cm.outbound_handshake_done(local(), p, DataFlow::Duplex)
             .expect("handshake done");
 
@@ -1392,7 +1386,9 @@ mod tests {
         let mut cm = ConnectionManagerState::new();
         let p = peer(2002);
 
-        let _ = cm.acquire_outbound_connection(local(), p).expect("acquire outbound");
+        let _ = cm
+            .acquire_outbound_connection(local(), p)
+            .expect("acquire outbound");
         cm.outbound_handshake_done(local(), p, DataFlow::Unidirectional)
             .expect("handshake done");
         let _ = cm.mark_terminating(p, Some("test".to_owned()));
@@ -1412,9 +1408,7 @@ mod tests {
     #[test]
     fn acquire_outbound_fresh() {
         let mut cm = ConnectionManagerState::new();
-        let (result, actions) = cm
-            .acquire_outbound_connection(local(), peer(2000))
-            .unwrap();
+        let (result, actions) = cm.acquire_outbound_connection(local(), peer(2000)).unwrap();
         assert_eq!(result, AcquireOutboundResult::Fresh);
         assert_eq!(actions, vec![CmAction::StartConnect(peer(2000))]);
         assert_eq!(
@@ -1427,8 +1421,13 @@ mod tests {
     fn acquire_outbound_duplicate_reserved_errors() {
         let mut cm = ConnectionManagerState::new();
         cm.acquire_outbound_connection(local(), peer(2000)).unwrap();
-        let err = cm.acquire_outbound_connection(local(), peer(2000)).unwrap_err();
-        assert!(matches!(err, ConnectionManagerError::ConnectionExists { .. }));
+        let err = cm
+            .acquire_outbound_connection(local(), peer(2000))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ConnectionManagerError::ConnectionExists { .. }
+        ));
     }
 
     #[test]
@@ -1442,19 +1441,14 @@ mod tests {
         cm.inbound_handshake_done(peer(2000), DataFlow::Duplex)
             .unwrap();
 
-        let (result, actions) = cm
-            .acquire_outbound_connection(local(), peer(2000))
-            .unwrap();
+        let (result, actions) = cm.acquire_outbound_connection(local(), peer(2000)).unwrap();
         match result {
             AcquireOutboundResult::Reused(st) => {
                 assert_eq!(st, AbstractState::OutboundDupSt(TimeoutExpired::Ticking));
             }
             other => panic!("expected Reused, got {:?}", other),
         }
-        assert_eq!(
-            actions,
-            vec![CmAction::StartResponderTimeout(cid)]
-        );
+        assert_eq!(actions, vec![CmAction::StartResponderTimeout(cid)]);
     }
 
     #[test]
@@ -1471,7 +1465,10 @@ mod tests {
         let err = cm
             .acquire_outbound_connection(local(), peer(2000))
             .unwrap_err();
-        assert!(matches!(err, ConnectionManagerError::ForbiddenConnection(_)));
+        assert!(matches!(
+            err,
+            ConnectionManagerError::ForbiddenConnection(_)
+        ));
     }
 
     #[test]
@@ -1486,9 +1483,7 @@ mod tests {
             .unwrap();
         cm.promoted_to_warm_remote(peer(2000));
 
-        let (result, _) = cm
-            .acquire_outbound_connection(local(), peer(2000))
-            .unwrap();
+        let (result, _) = cm.acquire_outbound_connection(local(), peer(2000)).unwrap();
         match result {
             AcquireOutboundResult::Reused(st) => {
                 assert_eq!(st, AbstractState::DuplexSt);
@@ -1510,9 +1505,7 @@ mod tests {
             .unwrap();
         cm.mark_terminating(peer(2000), None);
 
-        let (result, _) = cm
-            .acquire_outbound_connection(local(), peer(2000))
-            .unwrap();
+        let (result, _) = cm.acquire_outbound_connection(local(), peer(2000)).unwrap();
         assert_eq!(
             result,
             AcquireOutboundResult::Disconnected(AbstractState::TerminatingSt)
@@ -1715,7 +1708,10 @@ mod tests {
         // so prune_for_inbound cannot evict them.
         for i in 0..2 {
             let p = peer(2000 + i);
-            let cid = ConnectionId { local: local(), remote: p };
+            let cid = ConnectionId {
+                local: local(),
+                remote: p,
+            };
             cm.include_inbound_connection(cid).unwrap();
             cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
             cm.promoted_to_warm_remote(p); // InboundState (active)
@@ -1727,7 +1723,10 @@ mod tests {
             remote: peer(3000),
         };
         let err = cm.include_inbound_connection(cid).unwrap_err();
-        assert!(matches!(err, ConnectionManagerError::ForbiddenOperation { .. }));
+        assert!(matches!(
+            err,
+            ConnectionManagerError::ForbiddenOperation { .. }
+        ));
     }
 
     #[test]
@@ -1744,7 +1743,10 @@ mod tests {
 
         // Try to include another inbound from same peer.
         let err = cm.include_inbound_connection(cid).unwrap_err();
-        assert!(matches!(err, ConnectionManagerError::ConnectionExists { .. }));
+        assert!(matches!(
+            err,
+            ConnectionManagerError::ConnectionExists { .. }
+        ));
     }
 
     // -- Inbound handshake --
@@ -1869,9 +1871,7 @@ mod tests {
         let (result, _) = cm.promoted_to_warm_remote(peer(2000));
         assert_eq!(
             result,
-            OperationResult::OperationSuccess(AbstractState::InboundSt(
-                DataFlow::Unidirectional
-            ))
+            OperationResult::OperationSuccess(AbstractState::InboundSt(DataFlow::Unidirectional))
         );
     }
 
@@ -2136,10 +2136,7 @@ mod tests {
 
         // 3. Remote starts → DuplexSt
         cm.promoted_to_warm_remote(peer(2000));
-        assert_eq!(
-            cm.abstract_state_of(&peer(2000)),
-            AbstractState::DuplexSt
-        );
+        assert_eq!(cm.abstract_state_of(&peer(2000)), AbstractState::DuplexSt);
 
         // 4. Remote stops → OutboundDup(Ticking) (demoted remote)
         cm.demoted_to_cold_remote(peer(2000));
@@ -2157,7 +2154,10 @@ mod tests {
 
         // 6. Release outbound → OutboundIdle → Terminate.
         let (result, actions) = cm.release_outbound_connection(peer(2000));
-        assert!(matches!(result, ReleaseOutboundResult::DemotedToColdLocal(_)));
+        assert!(matches!(
+            result,
+            ReleaseOutboundResult::DemotedToColdLocal(_)
+        ));
         assert_eq!(actions.len(), 1);
 
         // 7. Mark terminating.
@@ -2256,10 +2256,7 @@ mod tests {
 
         // Outbound governor wants to reuse → DuplexSt.
         cm.acquire_outbound_connection(local(), peer(2000)).unwrap();
-        assert_eq!(
-            cm.abstract_state_of(&peer(2000)),
-            AbstractState::DuplexSt
-        );
+        assert_eq!(cm.abstract_state_of(&peer(2000)), AbstractState::DuplexSt);
 
         // Governor releases outbound → InboundState(Duplex).
         cm.release_outbound_connection(peer(2000));
@@ -2417,7 +2414,10 @@ mod tests {
         // Insert two idle inbound connections.
         for i in 0..2 {
             let p = peer(3000 + i);
-            let cid = ConnectionId { local: local(), remote: p };
+            let cid = ConnectionId {
+                local: local(),
+                remote: p,
+            };
             cm.include_inbound_connection(cid).unwrap();
             cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
         }
@@ -2444,12 +2444,18 @@ mod tests {
 
         // Insert one idle and one terminated.
         let p1 = peer(3010);
-        let cid1 = ConnectionId { local: local(), remote: p1 };
+        let cid1 = ConnectionId {
+            local: local(),
+            remote: p1,
+        };
         cm.include_inbound_connection(cid1).unwrap();
         cm.inbound_handshake_done(p1, DataFlow::Duplex).unwrap();
 
         let p2 = peer(3011);
-        let cid2 = ConnectionId { local: local(), remote: p2 };
+        let cid2 = ConnectionId {
+            local: local(),
+            remote: p2,
+        };
         cm.include_inbound_connection(cid2).unwrap();
         cm.inbound_handshake_done(p2, DataFlow::Duplex).unwrap();
         cm.mark_terminating(p2, None);
@@ -2459,9 +2465,15 @@ mod tests {
         // Prune 1: should pick terminated first (free slot, no close needed).
         let actions = cm.prune_for_inbound(1);
         // Terminated entry is removed outright — no PruneConnections needed.
-        assert!(actions.is_empty(), "terminated removal needs no runtime action");
+        assert!(
+            actions.is_empty(),
+            "terminated removal needs no runtime action"
+        );
         // p2 should be gone.
-        assert_eq!(cm.abstract_state_of(&p2), AbstractState::UnknownConnectionSt);
+        assert_eq!(
+            cm.abstract_state_of(&p2),
+            AbstractState::UnknownConnectionSt
+        );
     }
 
     #[test]
@@ -2475,7 +2487,10 @@ mod tests {
         // Insert two *active* inbound connections (InboundState, not idle).
         for i in 0..2 {
             let p = peer(3020 + i);
-            let cid = ConnectionId { local: local(), remote: p };
+            let cid = ConnectionId {
+                local: local(),
+                remote: p,
+            };
             cm.include_inbound_connection(cid).unwrap();
             cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
             cm.promoted_to_warm_remote(p); // → InboundState (active)
@@ -2497,7 +2512,10 @@ mod tests {
         // Fill to hard limit with idle inbound.
         for i in 0..2 {
             let p = peer(3030 + i);
-            let cid = ConnectionId { local: local(), remote: p };
+            let cid = ConnectionId {
+                local: local(),
+                remote: p,
+            };
             cm.include_inbound_connection(cid).unwrap();
             cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
         }
@@ -2505,7 +2523,10 @@ mod tests {
 
         // New inbound should succeed by pruning one idle connection.
         let new_peer = peer(3040);
-        let new_cid = ConnectionId { local: local(), remote: new_peer };
+        let new_cid = ConnectionId {
+            local: local(),
+            remote: new_peer,
+        };
         let (id, actions) = cm.include_inbound_connection(new_cid).unwrap();
         assert!(id.0 > 0);
         // Should have emitted PruneConnections for the evicted idle peer.
@@ -2524,16 +2545,25 @@ mod tests {
         // Fill to hard limit with active (non-idle) inbound.
         for i in 0..2 {
             let p = peer(3050 + i);
-            let cid = ConnectionId { local: local(), remote: p };
+            let cid = ConnectionId {
+                local: local(),
+                remote: p,
+            };
             cm.include_inbound_connection(cid).unwrap();
             cm.inbound_handshake_done(p, DataFlow::Duplex).unwrap();
             cm.promoted_to_warm_remote(p); // active
         }
 
         // New inbound should fail — nothing to prune.
-        let new_cid = ConnectionId { local: local(), remote: peer(3060) };
+        let new_cid = ConnectionId {
+            local: local(),
+            remote: peer(3060),
+        };
         let err = cm.include_inbound_connection(new_cid).unwrap_err();
-        assert!(matches!(err, ConnectionManagerError::ForbiddenOperation { .. }));
+        assert!(matches!(
+            err,
+            ConnectionManagerError::ForbiddenOperation { .. }
+        ));
     }
 
     // -- counters() --
@@ -2552,7 +2582,9 @@ mod tests {
     #[test]
     fn counters_outbound_unidirectional() {
         let mut cm = ConnectionManagerState::new();
-        let _ = cm.acquire_outbound_connection(local(), peer(4001)).expect("acquire");
+        let _ = cm
+            .acquire_outbound_connection(local(), peer(4001))
+            .expect("acquire");
         cm.outbound_handshake_done(local(), peer(4001), DataFlow::Unidirectional)
             .expect("handshake");
         let c = cm.counters();
@@ -2565,7 +2597,9 @@ mod tests {
     #[test]
     fn counters_outbound_duplex() {
         let mut cm = ConnectionManagerState::new();
-        let _ = cm.acquire_outbound_connection(local(), peer(4002)).expect("acquire");
+        let _ = cm
+            .acquire_outbound_connection(local(), peer(4002))
+            .expect("acquire");
         cm.outbound_handshake_done(local(), peer(4002), DataFlow::Duplex)
             .expect("handshake");
         let c = cm.counters();
@@ -2576,9 +2610,13 @@ mod tests {
     #[test]
     fn counters_inbound_duplex() {
         let mut cm = ConnectionManagerState::new();
-        let cid = ConnectionId { local: local(), remote: peer(4003) };
+        let cid = ConnectionId {
+            local: local(),
+            remote: peer(4003),
+        };
         cm.include_inbound_connection(cid).unwrap();
-        cm.inbound_handshake_done(peer(4003), DataFlow::Duplex).unwrap();
+        cm.inbound_handshake_done(peer(4003), DataFlow::Duplex)
+            .unwrap();
         let c = cm.counters();
         assert_eq!(c.inbound_conns, 1);
         assert_eq!(c.duplex_conns, 1);
@@ -2588,15 +2626,25 @@ mod tests {
     fn counters_mixed_connections() {
         let mut cm = ConnectionManagerState::new();
         // Outbound unidirectional
-        let _ = cm.acquire_outbound_connection(local(), peer(4010)).expect("acquire");
-        cm.outbound_handshake_done(local(), peer(4010), DataFlow::Unidirectional).expect("hs");
+        let _ = cm
+            .acquire_outbound_connection(local(), peer(4010))
+            .expect("acquire");
+        cm.outbound_handshake_done(local(), peer(4010), DataFlow::Unidirectional)
+            .expect("hs");
         // Outbound duplex
-        let _ = cm.acquire_outbound_connection(local(), peer(4011)).expect("acquire");
-        cm.outbound_handshake_done(local(), peer(4011), DataFlow::Duplex).expect("hs");
+        let _ = cm
+            .acquire_outbound_connection(local(), peer(4011))
+            .expect("acquire");
+        cm.outbound_handshake_done(local(), peer(4011), DataFlow::Duplex)
+            .expect("hs");
         // Inbound duplex
-        let cid = ConnectionId { local: local(), remote: peer(4012) };
+        let cid = ConnectionId {
+            local: local(),
+            remote: peer(4012),
+        };
         cm.include_inbound_connection(cid).unwrap();
-        cm.inbound_handshake_done(peer(4012), DataFlow::Duplex).unwrap();
+        cm.inbound_handshake_done(peer(4012), DataFlow::Duplex)
+            .unwrap();
 
         let c = cm.counters();
         assert_eq!(c.outbound_conns, 2);

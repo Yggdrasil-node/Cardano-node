@@ -1,5 +1,5 @@
-use super::*;
 use super::types_and_certs::sample_hash32;
+use super::*;
 
 pub(super) fn sample_reward_account() -> RewardAccount {
     // 0xE0 header = reward account keyhash on mainnet
@@ -119,7 +119,9 @@ fn shelley_tx_body_with_all_keys_4_6_round_trip() {
         }],
         fee: 200_000,
         ttl: 500_000,
-        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(
+            StakeCredential::AddrKeyHash([0x01; 28]),
+        )]),
         withdrawals: Some(wdrl),
         update: Some(update),
         auxiliary_data_hash: Some([0xFF; 32]),
@@ -177,7 +179,9 @@ fn mary_tx_body_with_certs_and_withdrawals_round_trip() {
         }],
         fee: 190_000,
         ttl: Some(700_000),
-        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::ScriptHash([0x03; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(
+            StakeCredential::ScriptHash([0x03; 28]),
+        )]),
         withdrawals: Some(wdrl),
         update: None,
         auxiliary_data_hash: None,
@@ -215,7 +219,9 @@ fn alonzo_tx_body_with_certs_and_withdrawals_round_trip() {
         }],
         fee: 250_000,
         ttl: Some(800_000),
-        certificates: Some(vec![DCert::AccountUnregistration(StakeCredential::AddrKeyHash([0x04; 28]))]),
+        certificates: Some(vec![DCert::AccountUnregistration(
+            StakeCredential::AddrKeyHash([0x04; 28]),
+        )]),
         withdrawals: Some(wdrl),
         update: Some(update),
         auxiliary_data_hash: None,
@@ -250,7 +256,9 @@ fn babbage_tx_body_with_certs_and_withdrawals_round_trip() {
         }],
         fee: 300_000,
         ttl: None,
-        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x05; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(
+            StakeCredential::AddrKeyHash([0x05; 28]),
+        )]),
         withdrawals: Some(wdrl),
         update: None,
         auxiliary_data_hash: None,
@@ -338,7 +346,9 @@ fn shelley_tx_body_map_count_includes_keys_4_5_6() {
         }],
         fee: 200_000,
         ttl: 500_000,
-        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(
+            StakeCredential::AddrKeyHash([0x01; 28]),
+        )]),
         withdrawals: Some(wdrl),
         update: Some(update),
         auxiliary_data_hash: None,
@@ -368,7 +378,9 @@ fn conway_tx_body_no_update_key_round_trip() {
         }],
         fee: 200_000,
         ttl: None,
-        certificates: Some(vec![DCert::AccountRegistration(StakeCredential::AddrKeyHash([0x01; 28]))]),
+        certificates: Some(vec![DCert::AccountRegistration(
+            StakeCredential::AddrKeyHash([0x01; 28]),
+        )]),
         withdrawals: Some(wdrl),
         auxiliary_data_hash: None,
         validity_interval_start: None,

@@ -45,9 +45,7 @@ enum Frame {
     },
 
     /// Applying a case branch result to remaining constructor field values.
-    CaseApply {
-        remaining: Vec<Value>,
-    },
+    CaseApply { remaining: Vec<Value> },
 }
 
 // ---------------------------------------------------------------------------
@@ -238,17 +236,14 @@ impl CekMachine {
                                 branches: branches.len(),
                             });
                         }
-                        let branch = branches.into_iter().nth(tag_usize)
-                            .ok_or(MachineError::UnexpectedConstructorTag {
-                                tag,
-                                branches: 0,
-                            })?;
+                        let branch = branches
+                            .into_iter()
+                            .nth(tag_usize)
+                            .ok_or(MachineError::UnexpectedConstructorTag { tag, branches: 0 })?;
                         // Push CaseApply to apply branch to field values
                         // once the branch term evaluates.
                         if !fields.is_empty() {
-                            self.frames.push(Frame::CaseApply {
-                                remaining: fields,
-                            });
+                            self.frames.push(Frame::CaseApply { remaining: fields });
                         }
                         Ok(State::Computing(branch, env))
                     }
@@ -297,9 +292,8 @@ impl CekMachine {
                 args.push(arg);
 
                 if forces >= needed_forces && args.len() >= needed_args {
-                    let result = evaluate_builtin(
-                        builtin, &args, &self.cost_model, &mut self.logs,
-                    )?;
+                    let result =
+                        evaluate_builtin(builtin, &args, &self.cost_model, &mut self.logs)?;
                     let cost = self.cost_model.builtin_cost(builtin, &args);
                     self.budget.spend(cost)?;
                     Ok(State::Returning(result))
@@ -318,11 +312,7 @@ impl CekMachine {
     fn force_value(&mut self, value: Value) -> Result<State, MachineError> {
         match value {
             Value::Delay(body, env) => Ok(State::Computing(body, env)),
-            Value::BuiltinApp {
-                fun,
-                forces,
-                args,
-            } => {
+            Value::BuiltinApp { fun, forces, args } => {
                 let (needed_forces, needed_args) = fun.arity();
 
                 // Upstream enforces: all forces first, then args.
@@ -337,9 +327,7 @@ impl CekMachine {
                 let new_forces = forces + 1;
 
                 if new_forces >= needed_forces && args.len() >= needed_args {
-                    let result = evaluate_builtin(
-                        fun, &args, &self.cost_model, &mut self.logs,
-                    )?;
+                    let result = evaluate_builtin(fun, &args, &self.cost_model, &mut self.logs)?;
                     let cost = self.cost_model.builtin_cost(fun, &args);
                     self.budget.spend(cost)?;
                     Ok(State::Returning(result))
@@ -382,10 +370,7 @@ mod tests {
 
     /// Helper: create a machine with generous budget.
     fn machine() -> CekMachine {
-        CekMachine::new(
-            ExBudget::new(10_000_000, 10_000_000),
-            CostModel::default(),
-        )
+        CekMachine::new(ExBudget::new(10_000_000, 10_000_000), CostModel::default())
     }
 
     // -- Constant evaluation ----------------------------------------------
@@ -524,10 +509,7 @@ mod tests {
         let mut m = machine();
         // Var(0) is invalid de Bruijn index.
         let body = Term::LamAbs(Box::new(Term::Var(0)));
-        let term = Term::Apply(
-            Box::new(body),
-            Box::new(Term::Constant(Constant::Unit)),
-        );
+        let term = Term::Apply(Box::new(body), Box::new(Term::Constant(Constant::Unit)));
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(err, MachineError::UnboundVariable(0)));
     }
@@ -650,9 +632,7 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Apply(
-                    Box::new(Term::Force(Box::new(Term::Builtin(
-                        DefaultFun::IfThenElse,
-                    )))),
+                    Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::IfThenElse)))),
                     Box::new(Term::Constant(Constant::Bool(true))),
                 )),
                 Box::new(Term::Constant(Constant::Integer(1))),
@@ -672,9 +652,7 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Apply(
-                    Box::new(Term::Force(Box::new(Term::Builtin(
-                        DefaultFun::IfThenElse,
-                    )))),
+                    Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::IfThenElse)))),
                     Box::new(Term::Constant(Constant::Bool(false))),
                 )),
                 Box::new(Term::Constant(Constant::Integer(1))),
@@ -701,10 +679,13 @@ mod tests {
     #[test]
     fn eval_constr_with_fields() {
         let mut m = machine();
-        let term = Term::Constr(1, vec![
-            Term::Constant(Constant::Integer(10)),
-            Term::Constant(Constant::Integer(20)),
-        ]);
+        let term = Term::Constr(
+            1,
+            vec![
+                Term::Constant(Constant::Integer(10)),
+                Term::Constant(Constant::Integer(20)),
+            ],
+        );
         let result = m.evaluate(term).unwrap();
         if let Value::Constr(tag, fields) = &result {
             assert_eq!(*tag, 1);
@@ -800,10 +781,7 @@ mod tests {
     #[test]
     fn eval_budget_exhaustion() {
         // Tiny budget should run out.
-        let mut m = CekMachine::new(
-            ExBudget::new(50, 50),
-            CostModel::default(),
-        );
+        let mut m = CekMachine::new(ExBudget::new(50, 50), CostModel::default());
         // Need multiple steps to exhaust.
         let term = Term::Apply(
             Box::new(Term::LamAbs(Box::new(Term::Apply(
@@ -895,9 +873,9 @@ mod tests {
     fn force_apply_order_double_force_on_single_force_builtin_errors() {
         // IfThenElse needs 1 force. Forcing twice is wrong.
         let mut m = machine();
-        let term = Term::Force(Box::new(Term::Force(Box::new(
-            Term::Builtin(DefaultFun::IfThenElse),
-        ))));
+        let term = Term::Force(Box::new(Term::Force(Box::new(Term::Builtin(
+            DefaultFun::IfThenElse,
+        )))));
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(
             err,
@@ -931,10 +909,7 @@ mod tests {
         let outer = Term::LamAbs(Box::new(Term::LamAbs(Box::new(f_body))));
         let id = Term::LamAbs(Box::new(Term::Var(1)));
         let term = Term::Apply(
-            Box::new(Term::Apply(
-                Box::new(outer),
-                Box::new(id),
-            )),
+            Box::new(Term::Apply(Box::new(outer), Box::new(id))),
             Box::new(Term::Constant(Constant::Integer(42))),
         );
         let result = m.evaluate(term).unwrap();
@@ -1053,10 +1028,7 @@ mod tests {
     #[test]
     fn eval_head_list_empty() {
         let mut m = machine();
-        let list = Term::Constant(Constant::ProtoList(
-            crate::types::Type::Integer,
-            vec![],
-        ));
+        let list = Term::Constant(Constant::ProtoList(crate::types::Type::Integer, vec![]));
         let term = Term::Apply(
             Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::HeadList)))),
             Box::new(list),
@@ -1068,10 +1040,7 @@ mod tests {
     #[test]
     fn eval_null_list_true() {
         let mut m = machine();
-        let list = Term::Constant(Constant::ProtoList(
-            crate::types::Type::Integer,
-            vec![],
-        ));
+        let list = Term::Constant(Constant::ProtoList(crate::types::Type::Integer, vec![]));
         let term = Term::Apply(
             Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::NullList)))),
             Box::new(list),
@@ -1108,9 +1077,9 @@ mod tests {
         ));
         // Force Force FstPair pair
         let term = Term::Apply(
-            Box::new(Term::Force(Box::new(Term::Force(Box::new(
-                Term::Builtin(DefaultFun::FstPair),
-            ))))),
+            Box::new(Term::Force(Box::new(Term::Force(Box::new(Term::Builtin(
+                DefaultFun::FstPair,
+            )))))),
             Box::new(pair),
         );
         let result = m.evaluate(term).unwrap();
@@ -1130,9 +1099,9 @@ mod tests {
             Box::new(Constant::ByteString(vec![2])),
         ));
         let term = Term::Apply(
-            Box::new(Term::Force(Box::new(Term::Force(Box::new(
-                Term::Builtin(DefaultFun::SndPair),
-            ))))),
+            Box::new(Term::Force(Box::new(Term::Force(Box::new(Term::Builtin(
+                DefaultFun::SndPair,
+            )))))),
             Box::new(pair),
         );
         let result = m.evaluate(term).unwrap();
@@ -1204,15 +1173,24 @@ mod tests {
         use crate::cost_model::StepCosts;
 
         let step_costs = StepCosts {
-            var_cpu: 10, var_mem: 1,
-            constant_cpu: 20, constant_mem: 2,
-            lam_cpu: 30, lam_mem: 3,
-            apply_cpu: 40, apply_mem: 4,
-            delay_cpu: 50, delay_mem: 5,
-            force_cpu: 60, force_mem: 6,
-            builtin_cpu: 70, builtin_mem: 7,
-            constr_cpu: 80, constr_mem: 8,
-            case_cpu: 90, case_mem: 9,
+            var_cpu: 10,
+            var_mem: 1,
+            constant_cpu: 20,
+            constant_mem: 2,
+            lam_cpu: 30,
+            lam_mem: 3,
+            apply_cpu: 40,
+            apply_mem: 4,
+            delay_cpu: 50,
+            delay_mem: 5,
+            force_cpu: 60,
+            force_mem: 6,
+            builtin_cpu: 70,
+            builtin_mem: 7,
+            constr_cpu: 80,
+            constr_mem: 8,
+            case_cpu: 90,
+            case_mem: 9,
         };
         let model = custom_model(step_costs);
         let initial = ExBudget::new(10_000_000, 10_000_000);
@@ -1237,7 +1215,8 @@ mod tests {
 
         // Delay(Const): Delay wraps a thunk – only 1 step
         let mut m3 = CekMachine::new(initial, model);
-        m3.evaluate(Term::Delay(Box::new(Term::Constant(Constant::Integer(42))))).unwrap();
+        m3.evaluate(Term::Delay(Box::new(Term::Constant(Constant::Integer(42)))))
+            .unwrap();
         assert_eq!(m3.steps_taken(), 1);
         assert_eq!(m3.remaining_budget().cpu, initial.cpu - 50);
     }
@@ -1247,17 +1226,20 @@ mod tests {
         use crate::cost_model::StepCosts;
 
         let model = custom_model(StepCosts {
-            force_cpu: 60, force_mem: 6,
-            delay_cpu: 50, delay_mem: 5,
-            constant_cpu: 20, constant_mem: 2,
+            force_cpu: 60,
+            force_mem: 6,
+            delay_cpu: 50,
+            delay_mem: 5,
+            constant_cpu: 20,
+            constant_mem: 2,
             ..StepCosts::default()
         });
         let initial = ExBudget::new(10_000_000, 10_000_000);
 
         // Force(Delay(Constant(42))): Force + Delay + Constant = 3 steps
-        let term = Term::Force(Box::new(
-            Term::Delay(Box::new(Term::Constant(Constant::Integer(42)))),
-        ));
+        let term = Term::Force(Box::new(Term::Delay(Box::new(Term::Constant(
+            Constant::Integer(42),
+        )))));
         let mut m = CekMachine::new(initial, model);
         m.evaluate(term).unwrap();
         assert_eq!(m.steps_taken(), 3);
@@ -1269,16 +1251,20 @@ mod tests {
         use crate::cost_model::StepCosts;
 
         let model = custom_model(StepCosts {
-            constr_cpu: 80, constr_mem: 8,
-            case_cpu: 90, case_mem: 9,
-            constant_cpu: 20, constant_mem: 2,
+            constr_cpu: 80,
+            constr_mem: 8,
+            case_cpu: 90,
+            case_mem: 9,
+            constant_cpu: 20,
+            constant_mem: 2,
             ..StepCosts::default()
         });
         let initial = ExBudget::new(10_000_000, 10_000_000);
 
         // Constr(0, [42]): Constr + Constant = 2 steps
         let mut m = CekMachine::new(initial, model.clone());
-        m.evaluate(Term::Constr(0, vec![Term::Constant(Constant::Integer(42))])).unwrap();
+        m.evaluate(Term::Constr(0, vec![Term::Constant(Constant::Integer(42))]))
+            .unwrap();
         assert_eq!(m.remaining_budget().cpu, initial.cpu - (80 + 20));
 
         // Case(Constr(0, []), [Constant(42)]): Case + Constr + Constant = 3 steps

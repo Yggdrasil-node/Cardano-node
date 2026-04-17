@@ -11,9 +11,7 @@
 //! Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Server`.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
-use crate::protocols::{
-    LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,
-};
+use crate::protocols::{LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError};
 
 // ---------------------------------------------------------------------------
 // Error
@@ -133,9 +131,7 @@ impl LocalTxMonitorServer {
             .map_err(LocalTxMonitorServerError::Mux)
     }
 
-    async fn recv_msg(
-        &mut self,
-    ) -> Result<LocalTxMonitorMessage, LocalTxMonitorServerError> {
+    async fn recv_msg(&mut self) -> Result<LocalTxMonitorMessage, LocalTxMonitorServerError> {
         let raw = self
             .channel
             .recv()
@@ -170,10 +166,7 @@ impl LocalTxMonitorServer {
     ///
     /// Sends `MsgAcquired(slot_no)` and transitions to `StAcquired`.
     /// Must be called when the server is in `StAcquiring`.
-    pub async fn acquired(
-        &mut self,
-        slot_no: u64,
-    ) -> Result<(), LocalTxMonitorServerError> {
+    pub async fn acquired(&mut self, slot_no: u64) -> Result<(), LocalTxMonitorServerError> {
         self.send_msg(&LocalTxMonitorMessage::MsgAcquired { slot_no })
             .await
     }
@@ -191,9 +184,7 @@ impl LocalTxMonitorServer {
             }
             LocalTxMonitorMessage::MsgGetSizes => Ok(LocalTxMonitorAcquiredRequest::GetSizes),
             LocalTxMonitorMessage::MsgRelease => Ok(LocalTxMonitorAcquiredRequest::Release),
-            LocalTxMonitorMessage::MsgAcquire => {
-                Ok(LocalTxMonitorAcquiredRequest::AwaitAcquire)
-            }
+            LocalTxMonitorMessage::MsgAcquire => Ok(LocalTxMonitorAcquiredRequest::AwaitAcquire),
             msg => Err(LocalTxMonitorServerError::UnexpectedMessage(format!(
                 "{msg:?}"
             ))),
@@ -217,10 +208,7 @@ impl LocalTxMonitorServer {
     /// Reply to a `MsgHasTx` with membership result.
     ///
     /// Must be called when the last received message was `MsgHasTx`.
-    pub async fn reply_has_tx(
-        &mut self,
-        has_tx: bool,
-    ) -> Result<(), LocalTxMonitorServerError> {
+    pub async fn reply_has_tx(&mut self, has_tx: bool) -> Result<(), LocalTxMonitorServerError> {
         self.send_msg(&LocalTxMonitorMessage::MsgReplyHasTx { has_tx })
             .await
     }

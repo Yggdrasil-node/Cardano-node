@@ -48,7 +48,10 @@ fn make_alonzo_tx(
     witness_steps: u64,
 ) -> yggdrasil_ledger::Tx {
     let body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: input_idx }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: input_idx,
+        }],
         outputs: vec![AlonzoTxOut {
             address: output_addr.to_vec(),
             amount: Value::Coin(output_coin),
@@ -85,7 +88,12 @@ fn make_alonzo_tx(
     }
 }
 
-fn make_alonzo_block_helper(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_alonzo_block_helper(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Alonzo,
         header: BlockHeader {
@@ -111,7 +119,10 @@ fn make_babbage_tx(
     witness_steps: u64,
 ) -> yggdrasil_ledger::Tx {
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: input_idx }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: input_idx,
+        }],
         outputs: vec![BabbageTxOut {
             address: output_addr.to_vec(),
             amount: Value::Coin(output_coin),
@@ -152,7 +163,12 @@ fn make_babbage_tx(
     }
 }
 
-fn make_babbage_block_helper(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_babbage_block_helper(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Babbage,
         header: BlockHeader {
@@ -178,7 +194,10 @@ fn make_conway_tx(
     witness_steps: u64,
 ) -> yggdrasil_ledger::Tx {
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: input_idx }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: input_idx,
+        }],
         outputs: vec![BabbageTxOut {
             address: output_addr.to_vec(),
             amount: Value::Coin(output_coin),
@@ -222,7 +241,12 @@ fn make_conway_tx(
     }
 }
 
-fn make_conway_block_helper(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_conway_block_helper(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Conway,
         header: BlockHeader {
@@ -240,21 +264,39 @@ fn make_conway_block_helper(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yg
 
 fn params_with_block_ex_units(max_mem: u64, max_steps: u64) -> ProtocolParameters {
     let mut p = ProtocolParameters::alonzo_defaults();
-    p.max_block_ex_units = Some(ExUnits { mem: max_mem, steps: max_steps });
+    p.max_block_ex_units = Some(ExUnits {
+        mem: max_mem,
+        steps: max_steps,
+    });
     p.min_fee_a = 0;
     p.min_fee_b = 0;
     // Zero out execution-unit prices so script fees don't interfere.
-    p.price_mem = Some(UnitInterval { numerator: 0, denominator: 1 });
-    p.price_step = Some(UnitInterval { numerator: 0, denominator: 1 });
+    p.price_mem = Some(UnitInterval {
+        numerator: 0,
+        denominator: 1,
+    });
+    p.price_step = Some(UnitInterval {
+        numerator: 0,
+        denominator: 1,
+    });
     // Disable min-utxo enforcement.
     p.coins_per_utxo_byte = Some(0);
     p.min_utxo_value = None;
     p
 }
 
-fn seed_utxo_alonzo(state: &mut LedgerState, tx_hash: [u8; 32], index: u16, addr: &[u8], coin: u64) {
+fn seed_utxo_alonzo(
+    state: &mut LedgerState,
+    tx_hash: [u8; 32],
+    index: u16,
+    addr: &[u8],
+    coin: u64,
+) {
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: tx_hash, index },
+        ShelleyTxIn {
+            transaction_id: tx_hash,
+            index,
+        },
         MultiEraTxOut::Alonzo(AlonzoTxOut {
             address: addr.to_vec(),
             amount: Value::Coin(coin),
@@ -263,9 +305,18 @@ fn seed_utxo_alonzo(state: &mut LedgerState, tx_hash: [u8; 32], index: u16, addr
     );
 }
 
-fn seed_utxo_babbage(state: &mut LedgerState, tx_hash: [u8; 32], index: u16, addr: &[u8], coin: u64) {
+fn seed_utxo_babbage(
+    state: &mut LedgerState,
+    tx_hash: [u8; 32],
+    index: u16,
+    addr: &[u8],
+    coin: u64,
+) {
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: tx_hash, index },
+        ShelleyTxIn {
+            transaction_id: tx_hash,
+            index,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.to_vec(),
             amount: Value::Coin(coin),
@@ -307,7 +358,9 @@ fn alonzo_block_ex_units_exceed_mem_rejected() {
     let block = make_alonzo_block_helper(10, 1, 0xA2, vec![tx1, tx2]);
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::BlockExUnitsExceeded { block_mem, max_mem, .. } => {
+        LedgerError::BlockExUnitsExceeded {
+            block_mem, max_mem, ..
+        } => {
             assert_eq!(block_mem, 12_000);
             assert_eq!(max_mem, 10_000);
         }
@@ -329,7 +382,11 @@ fn alonzo_block_ex_units_exceed_steps_rejected() {
     let block = make_alonzo_block_helper(10, 1, 0xA3, vec![tx1, tx2]);
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::BlockExUnitsExceeded { block_steps, max_steps, .. } => {
+        LedgerError::BlockExUnitsExceeded {
+            block_steps,
+            max_steps,
+            ..
+        } => {
             assert_eq!(block_steps, 16_000);
             assert_eq!(max_steps, 10_000);
         }
@@ -380,7 +437,12 @@ fn babbage_block_ex_units_exceed_rejected() {
     let block = make_babbage_block_helper(10, 1, 0xB2, vec![tx1, tx2]);
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::BlockExUnitsExceeded { block_mem, block_steps, max_mem, max_steps } => {
+        LedgerError::BlockExUnitsExceeded {
+            block_mem,
+            block_steps,
+            max_mem,
+            max_steps,
+        } => {
             assert_eq!(block_mem, 14_000);
             assert_eq!(block_steps, 14_000);
             assert_eq!(max_mem, 10_000);
@@ -420,7 +482,12 @@ fn conway_block_ex_units_exceed_rejected() {
     let block = make_conway_block_helper(10, 1, 0xC2, vec![tx1, tx2]);
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::BlockExUnitsExceeded { block_mem, block_steps, max_mem, max_steps } => {
+        LedgerError::BlockExUnitsExceeded {
+            block_mem,
+            block_steps,
+            max_mem,
+            max_steps,
+        } => {
             assert_eq!(block_mem, 12_000);
             assert_eq!(block_steps, 12_000);
             assert_eq!(max_mem, 10_000);
@@ -449,7 +516,9 @@ fn block_ex_units_one_over_limit_rejected() {
     let block = make_alonzo_block_helper(10, 1, 0xE1, vec![tx1, tx2]);
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::BlockExUnitsExceeded { block_mem, max_mem, .. } => {
+        LedgerError::BlockExUnitsExceeded {
+            block_mem, max_mem, ..
+        } => {
             assert_eq!(block_mem, 10_001);
             assert_eq!(max_mem, 10_000);
         }

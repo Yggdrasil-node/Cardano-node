@@ -24,13 +24,13 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use yggdrasil_crypto::blake2b::hash_bytes_256;
-use yggdrasil_ledger::{
-    Address, AddrKeyHash, Anchor, EnactState, GenesisDelegateHash, GenesisHash, PoolKeyHash,
-    ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
-};
+use yggdrasil_ledger::eras::alonzo::ExUnits;
 use yggdrasil_ledger::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
-use yggdrasil_ledger::eras::alonzo::ExUnits;
+use yggdrasil_ledger::{
+    AddrKeyHash, Address, Anchor, EnactState, GenesisDelegateHash, GenesisHash, PoolKeyHash,
+    ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
+};
 use yggdrasil_plutus::{CostModel, CostModelError};
 
 // ---------------------------------------------------------------------------
@@ -296,9 +296,7 @@ pub enum GenesisExtraEntropy {
     /// Identity nonce — does not contribute entropy.
     NeutralNonce,
     /// A 32-byte hash carrying entropy.
-    Nonce {
-        contents: String,
-    },
+    Nonce { contents: String },
 }
 
 impl GenesisRational {
@@ -312,7 +310,10 @@ impl GenesisRational {
 
 impl Default for GenesisRational {
     fn default() -> Self {
-        Self { numerator: 0, denominator: 1 }
+        Self {
+            numerator: 0,
+            denominator: 1,
+        }
     }
 }
 
@@ -325,19 +326,31 @@ impl<'de> serde::Deserialize<'de> for GenesisRational {
         impl<'de> Visitor<'de> for Vis {
             type Value = GenesisRational;
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "a rational as a float or {{numerator, denominator}} object")
+                write!(
+                    f,
+                    "a rational as a float or {{numerator, denominator}} object"
+                )
             }
             fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
                 // Convert float to a rational with denominator 1_000_000.
                 let denom = 1_000_000u64;
                 let numer = (v * denom as f64).round() as u64;
-                Ok(GenesisRational { numerator: numer, denominator: denom })
+                Ok(GenesisRational {
+                    numerator: numer,
+                    denominator: denom,
+                })
             }
             fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
-                Ok(GenesisRational { numerator: v as u64, denominator: 1 })
+                Ok(GenesisRational {
+                    numerator: v as u64,
+                    denominator: 1,
+                })
             }
             fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(GenesisRational { numerator: v, denominator: 1 })
+                Ok(GenesisRational {
+                    numerator: v,
+                    denominator: 1,
+                })
             }
             fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
                 let mut numerator: Option<u64> = None;
@@ -346,12 +359,18 @@ impl<'de> serde::Deserialize<'de> for GenesisRational {
                     match key.as_str() {
                         "numerator" => numerator = Some(map.next_value()?),
                         "denominator" => denominator = Some(map.next_value()?),
-                        _ => { map.next_value::<serde_json::Value>()?; }
+                        _ => {
+                            map.next_value::<serde_json::Value>()?;
+                        }
                     }
                 }
                 let n = numerator.ok_or_else(|| serde::de::Error::missing_field("numerator"))?;
-                let d = denominator.ok_or_else(|| serde::de::Error::missing_field("denominator"))?;
-                Ok(GenesisRational { numerator: n, denominator: d })
+                let d =
+                    denominator.ok_or_else(|| serde::de::Error::missing_field("denominator"))?;
+                Ok(GenesisRational {
+                    numerator: n,
+                    denominator: d,
+                })
             }
         }
         de.deserialize_any(Vis)
@@ -397,11 +416,17 @@ pub struct AlonzoGenesis {
     pub max_value_size: u32,
 
     /// Collateral percentage (150 = 150%).
-    #[serde(rename = "collateralPercentage", default = "default_collateral_percentage")]
+    #[serde(
+        rename = "collateralPercentage",
+        default = "default_collateral_percentage"
+    )]
     pub collateral_percentage: u64,
 
     /// Maximum collateral inputs.
-    #[serde(rename = "maxCollateralInputs", default = "default_max_collateral_inputs")]
+    #[serde(
+        rename = "maxCollateralInputs",
+        default = "default_max_collateral_inputs"
+    )]
     pub max_collateral_inputs: u32,
 
     /// PlutusV1 and PlutusV2 cost model parameter maps (named string → integer).
@@ -572,10 +597,7 @@ pub fn build_protocol_parameters(
 
     // Derive coins_per_utxo_byte from lovelacePerUTxOWord.
     // 1 UTxO word = 8 bytes.  The Alonzo field is per word; Babbage uses per byte.
-    let coins_per_utxo_byte = alonzo
-        .lovelace_per_utxo_word
-        .map(|v| v / 8)
-        .or(Some(4_310)); // Babbage mainnet default
+    let coins_per_utxo_byte = alonzo.lovelace_per_utxo_word.map(|v| v / 8).or(Some(4_310)); // Babbage mainnet default
 
     ProtocolParameters {
         min_fee_a: pp.min_fee_a,
@@ -1050,57 +1072,57 @@ const CONWAY_V3_PARAM_NAMES: &[&str] = &[
     "byteStringToInteger-memory-arguments-intercept",
     "byteStringToInteger-memory-arguments-slope",
     // -- Indices 251+: bitwise, ripemd_160, expModInteger (CIP-0058/0123) --
-    "andByteString-cpu-arguments-intercept",          // 251
-    "andByteString-cpu-arguments-slope1",             // 252
-    "andByteString-cpu-arguments-slope2",             // 253
-    "andByteString-memory-arguments-intercept",       // 254
-    "andByteString-memory-arguments-slope",           // 255
-    "orByteString-cpu-arguments-intercept",           // 256
-    "orByteString-cpu-arguments-slope1",              // 257
-    "orByteString-cpu-arguments-slope2",              // 258
-    "orByteString-memory-arguments-intercept",        // 259
-    "orByteString-memory-arguments-slope",            // 260
-    "xorByteString-cpu-arguments-intercept",          // 261
-    "xorByteString-cpu-arguments-slope1",             // 262
-    "xorByteString-cpu-arguments-slope2",             // 263
-    "xorByteString-memory-arguments-intercept",       // 264
-    "xorByteString-memory-arguments-slope",           // 265
-    "complementByteString-cpu-arguments-intercept",   // 266
-    "complementByteString-cpu-arguments-slope",       // 267
+    "andByteString-cpu-arguments-intercept",           // 251
+    "andByteString-cpu-arguments-slope1",              // 252
+    "andByteString-cpu-arguments-slope2",              // 253
+    "andByteString-memory-arguments-intercept",        // 254
+    "andByteString-memory-arguments-slope",            // 255
+    "orByteString-cpu-arguments-intercept",            // 256
+    "orByteString-cpu-arguments-slope1",               // 257
+    "orByteString-cpu-arguments-slope2",               // 258
+    "orByteString-memory-arguments-intercept",         // 259
+    "orByteString-memory-arguments-slope",             // 260
+    "xorByteString-cpu-arguments-intercept",           // 261
+    "xorByteString-cpu-arguments-slope1",              // 262
+    "xorByteString-cpu-arguments-slope2",              // 263
+    "xorByteString-memory-arguments-intercept",        // 264
+    "xorByteString-memory-arguments-slope",            // 265
+    "complementByteString-cpu-arguments-intercept",    // 266
+    "complementByteString-cpu-arguments-slope",        // 267
     "complementByteString-memory-arguments-intercept", // 268
-    "complementByteString-memory-arguments-slope",    // 269
-    "readBit-cpu-arguments",                          // 270
-    "readBit-memory-arguments",                       // 271
-    "writeBits-cpu-arguments-intercept",              // 272
-    "writeBits-cpu-arguments-slope",                  // 273
-    "writeBits-memory-arguments-intercept",           // 274
-    "writeBits-memory-arguments-slope",               // 275
-    "replicateByte-cpu-arguments-intercept",          // 276
-    "replicateByte-cpu-arguments-slope",              // 277
-    "replicateByte-memory-arguments-intercept",       // 278
-    "replicateByte-memory-arguments-slope",           // 279
-    "shiftByteString-cpu-arguments-intercept",        // 280
-    "shiftByteString-cpu-arguments-slope",            // 281
-    "shiftByteString-memory-arguments-intercept",     // 282
-    "shiftByteString-memory-arguments-slope",         // 283
-    "rotateByteString-cpu-arguments-intercept",       // 284
-    "rotateByteString-cpu-arguments-slope",           // 285
-    "rotateByteString-memory-arguments-intercept",    // 286
-    "rotateByteString-memory-arguments-slope",        // 287
-    "countSetBits-cpu-arguments-intercept",           // 288
-    "countSetBits-cpu-arguments-slope",               // 289
-    "countSetBits-memory-arguments",                  // 290
-    "findFirstSetBit-cpu-arguments-intercept",        // 291
-    "findFirstSetBit-cpu-arguments-slope",            // 292
-    "findFirstSetBit-memory-arguments",               // 293
-    "ripemd_160-cpu-arguments-intercept",             // 294
-    "ripemd_160-cpu-arguments-slope",                 // 295
-    "ripemd_160-memory-arguments",                    // 296
-    "expModInteger-cpu-arguments-coefficient00",      // 297
-    "expModInteger-cpu-arguments-coefficient11",      // 298
-    "expModInteger-cpu-arguments-coefficient12",      // 299
-    "expModInteger-memory-arguments-intercept",       // 300
-    "expModInteger-memory-arguments-slope",           // 301
+    "complementByteString-memory-arguments-slope",     // 269
+    "readBit-cpu-arguments",                           // 270
+    "readBit-memory-arguments",                        // 271
+    "writeBits-cpu-arguments-intercept",               // 272
+    "writeBits-cpu-arguments-slope",                   // 273
+    "writeBits-memory-arguments-intercept",            // 274
+    "writeBits-memory-arguments-slope",                // 275
+    "replicateByte-cpu-arguments-intercept",           // 276
+    "replicateByte-cpu-arguments-slope",               // 277
+    "replicateByte-memory-arguments-intercept",        // 278
+    "replicateByte-memory-arguments-slope",            // 279
+    "shiftByteString-cpu-arguments-intercept",         // 280
+    "shiftByteString-cpu-arguments-slope",             // 281
+    "shiftByteString-memory-arguments-intercept",      // 282
+    "shiftByteString-memory-arguments-slope",          // 283
+    "rotateByteString-cpu-arguments-intercept",        // 284
+    "rotateByteString-cpu-arguments-slope",            // 285
+    "rotateByteString-memory-arguments-intercept",     // 286
+    "rotateByteString-memory-arguments-slope",         // 287
+    "countSetBits-cpu-arguments-intercept",            // 288
+    "countSetBits-cpu-arguments-slope",                // 289
+    "countSetBits-memory-arguments",                   // 290
+    "findFirstSetBit-cpu-arguments-intercept",         // 291
+    "findFirstSetBit-cpu-arguments-slope",             // 292
+    "findFirstSetBit-memory-arguments",                // 293
+    "ripemd_160-cpu-arguments-intercept",              // 294
+    "ripemd_160-cpu-arguments-slope",                  // 295
+    "ripemd_160-memory-arguments",                     // 296
+    "expModInteger-cpu-arguments-coefficient00",       // 297
+    "expModInteger-cpu-arguments-coefficient11",       // 298
+    "expModInteger-cpu-arguments-coefficient12",       // 299
+    "expModInteger-memory-arguments-intercept",        // 300
+    "expModInteger-memory-arguments-slope",            // 301
 ];
 
 /// Build a named-parameter map from Conway `plutusV3CostModel` array values.
@@ -1117,9 +1139,7 @@ fn conway_v3_named_params(values: &[i64]) -> BTreeMap<String, i64> {
 // ---------------------------------------------------------------------------
 
 /// Load and deserialise a JSON genesis file.
-fn load_json<T: serde::de::DeserializeOwned>(
-    path: &Path,
-) -> Result<T, GenesisLoadError> {
+fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, GenesisLoadError> {
     let contents = fs::read_to_string(path).map_err(|source| GenesisLoadError::Io {
         path: path.to_path_buf(),
         source,
@@ -1236,32 +1256,93 @@ pub fn chrono_parse_system_start(s: &str) -> Option<f64> {
 // Defaults
 // ---------------------------------------------------------------------------
 
-fn default_active_slots_coeff() -> f64 { 0.05 }
-fn default_epoch_length() -> u64 { 432_000 }
-fn default_slots_per_kes_period() -> u64 { 129_600 }
-fn default_max_kes_evolutions() -> u64 { 62 }
-fn default_security_param() -> u64 { 2_160 }
-fn default_update_quorum() -> u64 { 5 }
-fn default_slot_length() -> f64 { 1.0 }
-fn default_max_lovelace_supply() -> u64 { 45_000_000_000_000_000 }
-fn default_min_fee_a() -> u64 { 44 }
-fn default_min_fee_b() -> u64 { 155_381 }
-fn default_max_block_body_size() -> u32 { 65_536 }
-fn default_max_tx_size() -> u32 { 16_384 }
-fn default_max_block_header_size() -> u16 { 1_100 }
-fn default_key_deposit() -> u64 { 2_000_000 }
-fn default_pool_deposit() -> u64 { 500_000_000 }
-fn default_e_max() -> u64 { 18 }
-fn default_n_opt() -> u64 { 150 }
-fn default_a0() -> GenesisRational { GenesisRational { numerator: 3, denominator: 10 } }
-fn default_rho() -> GenesisRational { GenesisRational { numerator: 3, denominator: 1_000 } }
-fn default_tau() -> GenesisRational { GenesisRational { numerator: 2, denominator: 10 } }
-fn default_protocol_version() -> GenesisProtocolVersion { GenesisProtocolVersion { major: 2, minor: 0 } }
-fn default_min_utxo_value() -> u64 { 1_000_000 }
-fn default_min_pool_cost() -> u64 { 340_000_000 }
-fn default_max_value_size() -> u32 { 5_000 }
-fn default_collateral_percentage() -> u64 { 150 }
-fn default_max_collateral_inputs() -> u32 { 3 }
+fn default_active_slots_coeff() -> f64 {
+    0.05
+}
+fn default_epoch_length() -> u64 {
+    432_000
+}
+fn default_slots_per_kes_period() -> u64 {
+    129_600
+}
+fn default_max_kes_evolutions() -> u64 {
+    62
+}
+fn default_security_param() -> u64 {
+    2_160
+}
+fn default_update_quorum() -> u64 {
+    5
+}
+fn default_slot_length() -> f64 {
+    1.0
+}
+fn default_max_lovelace_supply() -> u64 {
+    45_000_000_000_000_000
+}
+fn default_min_fee_a() -> u64 {
+    44
+}
+fn default_min_fee_b() -> u64 {
+    155_381
+}
+fn default_max_block_body_size() -> u32 {
+    65_536
+}
+fn default_max_tx_size() -> u32 {
+    16_384
+}
+fn default_max_block_header_size() -> u16 {
+    1_100
+}
+fn default_key_deposit() -> u64 {
+    2_000_000
+}
+fn default_pool_deposit() -> u64 {
+    500_000_000
+}
+fn default_e_max() -> u64 {
+    18
+}
+fn default_n_opt() -> u64 {
+    150
+}
+fn default_a0() -> GenesisRational {
+    GenesisRational {
+        numerator: 3,
+        denominator: 10,
+    }
+}
+fn default_rho() -> GenesisRational {
+    GenesisRational {
+        numerator: 3,
+        denominator: 1_000,
+    }
+}
+fn default_tau() -> GenesisRational {
+    GenesisRational {
+        numerator: 2,
+        denominator: 10,
+    }
+}
+fn default_protocol_version() -> GenesisProtocolVersion {
+    GenesisProtocolVersion { major: 2, minor: 0 }
+}
+fn default_min_utxo_value() -> u64 {
+    1_000_000
+}
+fn default_min_pool_cost() -> u64 {
+    340_000_000
+}
+fn default_max_value_size() -> u32 {
+    5_000
+}
+fn default_collateral_percentage() -> u64 {
+    150
+}
+fn default_max_collateral_inputs() -> u32 {
+    3
+}
 
 fn decode_hex_bytes(value: &str, field: &'static str) -> Result<Vec<u8>, GenesisLoadError> {
     if value.len() % 2 != 0 {
@@ -1281,11 +1362,12 @@ fn decode_hex_bytes(value: &str, field: &'static str) -> Result<Vec<u8>, Genesis
             value: value.to_owned(),
             message: "invalid hex digit".to_owned(),
         })?;
-        let lo = decode_hex_nibble(raw[index + 1]).ok_or_else(|| GenesisLoadError::InvalidField {
-            field,
-            value: value.to_owned(),
-            message: "invalid hex digit".to_owned(),
-        })?;
+        let lo =
+            decode_hex_nibble(raw[index + 1]).ok_or_else(|| GenesisLoadError::InvalidField {
+                field,
+                value: value.to_owned(),
+                message: "invalid hex digit".to_owned(),
+            })?;
         bytes.push((hi << 4) | lo);
         index += 2;
     }
@@ -1297,11 +1379,13 @@ fn decode_fixed_hash<const N: usize>(
     field: &'static str,
 ) -> Result<[u8; N], GenesisLoadError> {
     let bytes = decode_hex_bytes(value, field)?;
-    bytes.try_into().map_err(|_: Vec<u8>| GenesisLoadError::InvalidField {
-        field,
-        value: value.to_owned(),
-        message: format!("expected {N} bytes"),
-    })
+    bytes
+        .try_into()
+        .map_err(|_: Vec<u8>| GenesisLoadError::InvalidField {
+            field,
+            value: value.to_owned(),
+            message: format!("expected {N} bytes"),
+        })
 }
 
 fn decode_hex_nibble(byte: u8) -> Option<u8> {
@@ -1366,9 +1450,18 @@ mod tests {
                 pool_deposit: 500_000_000,
                 e_max: 18,
                 n_opt: 150,
-                a0: GenesisRational { numerator: 3, denominator: 10 },
-                rho: GenesisRational { numerator: 3, denominator: 1_000 },
-                tau: GenesisRational { numerator: 2, denominator: 10 },
+                a0: GenesisRational {
+                    numerator: 3,
+                    denominator: 10,
+                },
+                rho: GenesisRational {
+                    numerator: 3,
+                    denominator: 1_000,
+                },
+                tau: GenesisRational {
+                    numerator: 2,
+                    denominator: 10,
+                },
                 decentralisation_param: Some(1.0),
                 extra_entropy: Some(GenesisExtraEntropy::NeutralNonce),
                 protocol_version: GenesisProtocolVersion { major: 2, minor: 0 },
@@ -1377,7 +1470,7 @@ mod tests {
             },
             update_quorum: 5,
             max_lovelace_supply: 45_000_000_000_000_000,
-            }
+        }
     }
 
     fn sample_alonzo() -> AlonzoGenesis {
@@ -1405,8 +1498,14 @@ mod tests {
         AlonzoGenesis {
             lovelace_per_utxo_word: Some(34_482),
             execution_prices: AlonzoExecPrices {
-                pr_mem: GenesisRational { numerator: 577, denominator: 10_000 },
-                pr_steps: GenesisRational { numerator: 721, denominator: 10_000_000 },
+                pr_mem: GenesisRational {
+                    numerator: 577,
+                    denominator: 10_000,
+                },
+                pr_steps: GenesisRational {
+                    numerator: 721,
+                    denominator: 10_000_000,
+                },
             },
             max_tx_ex_units: AlonzoExUnits {
                 ex_units_mem: 10_000_000,
@@ -1426,23 +1525,68 @@ mod tests {
     fn sample_conway() -> ConwayGenesis {
         ConwayGenesis {
             pool_voting_thresholds: Some(GenesisPoolVotingThresholds {
-                motion_no_confidence: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
-                committee_normal: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
-                committee_no_confidence: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
-                hard_fork_initiation: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
-                pp_security_group: GenesisRational { numerator: 510_000, denominator: 1_000_000 },
+                motion_no_confidence: GenesisRational {
+                    numerator: 510_000,
+                    denominator: 1_000_000,
+                },
+                committee_normal: GenesisRational {
+                    numerator: 510_000,
+                    denominator: 1_000_000,
+                },
+                committee_no_confidence: GenesisRational {
+                    numerator: 510_000,
+                    denominator: 1_000_000,
+                },
+                hard_fork_initiation: GenesisRational {
+                    numerator: 510_000,
+                    denominator: 1_000_000,
+                },
+                pp_security_group: GenesisRational {
+                    numerator: 510_000,
+                    denominator: 1_000_000,
+                },
             }),
             drep_voting_thresholds: Some(GenesisDRepVotingThresholds {
-                motion_no_confidence: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
-                committee_normal: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
-                committee_no_confidence: GenesisRational { numerator: 600_000, denominator: 1_000_000 },
-                update_to_constitution: GenesisRational { numerator: 750_000, denominator: 1_000_000 },
-                hard_fork_initiation: GenesisRational { numerator: 600_000, denominator: 1_000_000 },
-                pp_network_group: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
-                pp_economic_group: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
-                pp_technical_group: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
-                pp_gov_group: GenesisRational { numerator: 750_000, denominator: 1_000_000 },
-                treasury_withdrawal: GenesisRational { numerator: 670_000, denominator: 1_000_000 },
+                motion_no_confidence: GenesisRational {
+                    numerator: 670_000,
+                    denominator: 1_000_000,
+                },
+                committee_normal: GenesisRational {
+                    numerator: 670_000,
+                    denominator: 1_000_000,
+                },
+                committee_no_confidence: GenesisRational {
+                    numerator: 600_000,
+                    denominator: 1_000_000,
+                },
+                update_to_constitution: GenesisRational {
+                    numerator: 750_000,
+                    denominator: 1_000_000,
+                },
+                hard_fork_initiation: GenesisRational {
+                    numerator: 600_000,
+                    denominator: 1_000_000,
+                },
+                pp_network_group: GenesisRational {
+                    numerator: 670_000,
+                    denominator: 1_000_000,
+                },
+                pp_economic_group: GenesisRational {
+                    numerator: 670_000,
+                    denominator: 1_000_000,
+                },
+                pp_technical_group: GenesisRational {
+                    numerator: 670_000,
+                    denominator: 1_000_000,
+                },
+                pp_gov_group: GenesisRational {
+                    numerator: 750_000,
+                    denominator: 1_000_000,
+                },
+                treasury_withdrawal: GenesisRational {
+                    numerator: 670_000,
+                    denominator: 1_000_000,
+                },
             }),
             committee_min_size: Some(7),
             committee_max_term_length: Some(146),
@@ -1455,7 +1599,10 @@ mod tests {
             constitution: Some(GenesisConstitution {
                 anchor: Some(GenesisConstitutionAnchor {
                     url: Some("ipfs://example".to_owned()),
-                    data_hash: Some("ca41a91f399259bcefe57f9858e91f6d00e1a38d6d9c63d4052914ea7bd70cb2".to_owned()),
+                    data_hash: Some(
+                        "ca41a91f399259bcefe57f9858e91f6d00e1a38d6d9c63d4052914ea7bd70cb2"
+                            .to_owned(),
+                    ),
                 }),
                 script: Some("fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64".to_owned()),
             }),
@@ -1518,13 +1665,19 @@ mod tests {
         assert_eq!(params.committee_term_limit, Some(146));
 
         // Pool voting thresholds.
-        let pvt = params.pool_voting_thresholds.as_ref().expect("pool_voting_thresholds");
+        let pvt = params
+            .pool_voting_thresholds
+            .as_ref()
+            .expect("pool_voting_thresholds");
         assert_eq!(pvt.motion_no_confidence.numerator, 510_000);
         assert_eq!(pvt.motion_no_confidence.denominator, 1_000_000);
         assert_eq!(pvt.pp_security_group.numerator, 510_000);
 
         // DRep voting thresholds.
-        let dvt = params.drep_voting_thresholds.as_ref().expect("drep_voting_thresholds");
+        let dvt = params
+            .drep_voting_thresholds
+            .as_ref()
+            .expect("drep_voting_thresholds");
         assert_eq!(dvt.motion_no_confidence.numerator, 670_000);
         assert_eq!(dvt.update_to_constitution.numerator, 750_000);
         assert_eq!(dvt.treasury_withdrawal.numerator, 670_000);
@@ -1539,7 +1692,10 @@ mod tests {
 
         assert_eq!(enact.constitution.anchor.url, "ipfs://example");
         assert_ne!(enact.constitution.anchor.data_hash, [0u8; 32]);
-        let hash = enact.constitution.guardrails_script_hash.expect("script hash");
+        let hash = enact
+            .constitution
+            .guardrails_script_hash
+            .expect("script hash");
         // First byte of "fa24fb..." is 0xfa.
         assert_eq!(hash[0], 0xfa);
         assert_eq!(hash.len(), 28);
@@ -1558,11 +1714,14 @@ mod tests {
         let mut shelley = sample_shelley();
         let mut address = vec![0x60];
         address.extend_from_slice(&[0x11; 28]);
-        let address_hex = address.iter().fold(String::with_capacity(address.len() * 2), |mut acc, byte| {
-            use std::fmt::Write;
-            let _ = write!(acc, "{byte:02x}");
-            acc
-        });
+        let address_hex =
+            address
+                .iter()
+                .fold(String::with_capacity(address.len() * 2), |mut acc, byte| {
+                    use std::fmt::Write;
+                    let _ = write!(acc, "{byte:02x}");
+                    acc
+                });
         shelley.initial_funds.insert(address_hex, 123);
 
         let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
@@ -1588,7 +1747,10 @@ mod tests {
     #[test]
     fn build_shelley_genesis_bootstrap_parses_stake_delegations() {
         let mut shelley = sample_shelley();
-        shelley.staking.stake.insert("11".repeat(28), "22".repeat(28));
+        shelley
+            .staking
+            .stake
+            .insert("11".repeat(28), "22".repeat(28));
 
         let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
         assert_eq!(bootstrap.staking.len(), 1);
@@ -1618,7 +1780,10 @@ mod tests {
         assert_eq!(named.len(), 251); // only 251 values zipped
         assert_eq!(named.get("addInteger-cpu-arguments-intercept"), Some(&0));
         assert_eq!(named.get("cekApplyCost-exBudgetCPU"), Some(&17));
-        assert_eq!(named.get("byteStringToInteger-memory-arguments-slope"), Some(&250));
+        assert_eq!(
+            named.get("byteStringToInteger-memory-arguments-slope"),
+            Some(&250)
+        );
 
         let mut conway = sample_conway();
         conway.plutus_v3_cost_model = Some((0..251).map(|n| n as i64).collect());
@@ -1635,7 +1800,11 @@ mod tests {
         assert_eq!(model.step_costs.case_mem, 196);
         assert_eq!(model.builtin_cpu, 19);
         assert_eq!(model.builtin_mem, 20);
-        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::VerifySchnorrSecp256k1Signature));
+        assert!(
+            model
+                .builtin_costs
+                .contains_key(&yggdrasil_plutus::DefaultFun::VerifySchnorrSecp256k1Signature)
+        );
     }
 
     #[test]
@@ -1647,12 +1816,24 @@ mod tests {
         let named = conway_v3_named_params(&(0..302).map(|n| n as i64).collect::<Vec<_>>());
         assert_eq!(named.len(), 302);
         // Verify bitwise parameter keys appear at expected indices.
-        assert_eq!(named.get("andByteString-cpu-arguments-intercept"), Some(&251));
-        assert_eq!(named.get("complementByteString-cpu-arguments-intercept"), Some(&266));
+        assert_eq!(
+            named.get("andByteString-cpu-arguments-intercept"),
+            Some(&251)
+        );
+        assert_eq!(
+            named.get("complementByteString-cpu-arguments-intercept"),
+            Some(&266)
+        );
         assert_eq!(named.get("readBit-cpu-arguments"), Some(&270));
         assert_eq!(named.get("countSetBits-memory-arguments"), Some(&290));
-        assert_eq!(named.get("expModInteger-cpu-arguments-coefficient00"), Some(&297));
-        assert_eq!(named.get("expModInteger-memory-arguments-slope"), Some(&301));
+        assert_eq!(
+            named.get("expModInteger-cpu-arguments-coefficient00"),
+            Some(&297)
+        );
+        assert_eq!(
+            named.get("expModInteger-memory-arguments-slope"),
+            Some(&301)
+        );
 
         // Build cost model and verify bitwise builtins have proper entries.
         let mut conway = sample_conway();
@@ -1662,11 +1843,31 @@ mod tests {
             .expect("build cost model")
             .expect("v3 cost model from 302-entry array");
 
-        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::AndByteString));
-        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ComplementByteString));
-        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ReadBit));
-        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::CountSetBits));
-        assert!(model.builtin_costs.contains_key(&yggdrasil_plutus::DefaultFun::ExpModInteger));
+        assert!(
+            model
+                .builtin_costs
+                .contains_key(&yggdrasil_plutus::DefaultFun::AndByteString)
+        );
+        assert!(
+            model
+                .builtin_costs
+                .contains_key(&yggdrasil_plutus::DefaultFun::ComplementByteString)
+        );
+        assert!(
+            model
+                .builtin_costs
+                .contains_key(&yggdrasil_plutus::DefaultFun::ReadBit)
+        );
+        assert!(
+            model
+                .builtin_costs
+                .contains_key(&yggdrasil_plutus::DefaultFun::CountSetBits)
+        );
+        assert!(
+            model
+                .builtin_costs
+                .contains_key(&yggdrasil_plutus::DefaultFun::ExpModInteger)
+        );
     }
 
     #[test]
@@ -1694,7 +1895,10 @@ mod tests {
         let parsed: ShelleyGenesis = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.active_slots_coeff, shelley.active_slots_coeff);
         assert_eq!(parsed.security_param, shelley.security_param);
-        assert_eq!(parsed.protocol_params.min_fee_a, shelley.protocol_params.min_fee_a);
+        assert_eq!(
+            parsed.protocol_params.min_fee_a,
+            shelley.protocol_params.min_fee_a
+        );
     }
 
     #[test]
@@ -1737,9 +1941,15 @@ mod tests {
         assert_eq!(genesis.committee_min_size, Some(7));
         assert_eq!(genesis.committee_max_term_length, Some(146));
         // Verify voting thresholds parsed successfully.
-        let pvt = genesis.pool_voting_thresholds.as_ref().expect("poolVotingThresholds");
+        let pvt = genesis
+            .pool_voting_thresholds
+            .as_ref()
+            .expect("poolVotingThresholds");
         assert!(pvt.motion_no_confidence.numerator > 0);
-        let dvt = genesis.drep_voting_thresholds.as_ref().expect("dRepVotingThresholds");
+        let dvt = genesis
+            .drep_voting_thresholds
+            .as_ref()
+            .expect("dRepVotingThresholds");
         assert!(dvt.motion_no_confidence.numerator > 0);
         assert!(dvt.update_to_constitution.numerator > 0);
     }

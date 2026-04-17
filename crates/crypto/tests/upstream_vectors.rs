@@ -4,13 +4,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use yggdrasil_crypto::{
+    VrfBatchCompatProof, VrfOutput, VrfProof, VrfVerificationKey,
     bls12_381::{
-        self, g1_add, g1_equal, g1_hash_to_group, g1_neg, g1_scalar_mul,
-        g1_uncompress, g2_add, g2_equal, g2_neg, g2_scalar_mul, g2_uncompress,
-        miller_loop, mul_ml_result, final_verify,
+        self, final_verify, g1_add, g1_equal, g1_hash_to_group, g1_neg, g1_scalar_mul,
+        g1_uncompress, g2_add, g2_equal, g2_neg, g2_scalar_mul, g2_uncompress, miller_loop,
+        mul_ml_result,
     },
-    vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors, VrfBatchCompatProof, VrfOutput,
-    VrfProof, VrfVerificationKey,
+    vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
 };
 
 const CARDANO_BASE_SHA: &str = "db52f43b38ba5d8927feb2199d4913fe6c0f974d";
@@ -62,7 +62,11 @@ fn upstream_praos_vrf_vector_files_are_present_and_well_formed() {
             assert!(is_hex(alpha), "alpha must be hex or empty");
         }
 
-        let expected_pi_len = if vrf == "PraosBatchCompatVRF" { 256 } else { 160 };
+        let expected_pi_len = if vrf == "PraosBatchCompatVRF" {
+            256
+        } else {
+            160
+        };
         assert_eq!(pi.len(), expected_pi_len, "proof hex length mismatch");
         assert!(is_hex(pi));
 
@@ -105,12 +109,18 @@ fn bls_ec_operations_match_upstream_vectors() {
     let g1_neg_expected = g1_uncompress(&lines[5]).expect("G1 -P");
 
     // Verify G1 operations
-    assert!(g1_equal(&g1_add(&g1_p, &g1_q), &g1_add_expected), "G1 add mismatch");
+    assert!(
+        g1_equal(&g1_add(&g1_p, &g1_q), &g1_add_expected),
+        "G1 add mismatch"
+    );
     assert!(
         g1_equal(&g1_add(&g1_p, &g1_neg(&g1_q)), &g1_sub_expected),
         "G1 sub mismatch"
     );
-    assert!(g1_equal(&g1_neg(&g1_p), &g1_neg_expected), "G1 neg mismatch");
+    assert!(
+        g1_equal(&g1_neg(&g1_p), &g1_neg_expected),
+        "G1 neg mismatch"
+    );
 
     let scalar = decode_hex_vec("40df499974f62e2f268cd5096b0d952073900054122ffce0a27c9d96932891a5");
     assert!(
@@ -126,12 +136,18 @@ fn bls_ec_operations_match_upstream_vectors() {
     let g2_mul_expected = g2_uncompress(&lines[10]).expect("G2 [s]Q");
     let g2_neg_expected = g2_uncompress(&lines[11]).expect("G2 -P");
 
-    assert!(g2_equal(&g2_add(&g2_p, &g2_q), &g2_add_expected), "G2 add mismatch");
+    assert!(
+        g2_equal(&g2_add(&g2_p, &g2_q), &g2_add_expected),
+        "G2 add mismatch"
+    );
     assert!(
         g2_equal(&g2_add(&g2_p, &g2_neg(&g2_q)), &g2_sub_expected),
         "G2 sub mismatch"
     );
-    assert!(g2_equal(&g2_neg(&g2_p), &g2_neg_expected), "G2 neg mismatch");
+    assert!(
+        g2_equal(&g2_neg(&g2_p), &g2_neg_expected),
+        "G2 neg mismatch"
+    );
     assert!(
         g2_equal(&g2_scalar_mul(&scalar, false, &g2_q), &g2_mul_expected),
         "G2 scalar mul mismatch"
@@ -177,7 +193,10 @@ fn bls_pairing_identities_match_upstream_vectors() {
     let ml_b = miller_loop(&b_p, &q);
     let lhs = mul_ml_result(&ml_a, &ml_b);
     let rhs = miller_loop(&ab_sum_p, &q);
-    assert!(final_verify(&lhs, &rhs), "e([a]P,Q)*e([b]P,Q) != e([a+b]P,Q)");
+    assert!(
+        final_verify(&lhs, &rhs),
+        "e([a]P,Q)*e([b]P,Q) != e([a+b]P,Q)"
+    );
 
     // Identity 5: e([a]P, [b]Q) == e(P, [a*b]Q)
     let lhs = miller_loop(&a_p, &b_q);
@@ -189,7 +208,10 @@ fn bls_pairing_identities_match_upstream_vectors() {
     let ml_b = miller_loop(&p, &b_q);
     let lhs = mul_ml_result(&ml_a, &ml_b);
     let rhs = miller_loop(&p, &ab_sum_q);
-    assert!(final_verify(&lhs, &rhs), "e(P,[a]Q)*e(P,[b]Q) != e(P,[a+b]Q)");
+    assert!(
+        final_verify(&lhs, &rhs),
+        "e(P,[a]Q)*e(P,[b]Q) != e(P,[a+b]Q)"
+    );
 }
 
 #[test]
@@ -198,16 +220,28 @@ fn bls_serde_rejects_invalid_points() {
     assert_eq!(lines.len(), 8);
 
     // Line 2 (idx 1): G1 compressed, not on curve
-    assert!(g1_uncompress(&lines[1]).is_err(), "G1 compressed not-on-curve should fail");
+    assert!(
+        g1_uncompress(&lines[1]).is_err(),
+        "G1 compressed not-on-curve should fail"
+    );
 
     // Line 3 (idx 2): G1 compressed, not in subgroup
-    assert!(g1_uncompress(&lines[2]).is_err(), "G1 compressed not-in-group should fail");
+    assert!(
+        g1_uncompress(&lines[2]).is_err(),
+        "G1 compressed not-in-group should fail"
+    );
 
     // Line 6 (idx 5): G2 compressed, not on curve
-    assert!(g2_uncompress(&lines[5]).is_err(), "G2 compressed not-on-curve should fail");
+    assert!(
+        g2_uncompress(&lines[5]).is_err(),
+        "G2 compressed not-on-curve should fail"
+    );
 
     // Line 7 (idx 6): G2 compressed, not in subgroup
-    assert!(g2_uncompress(&lines[6]).is_err(), "G2 compressed not-in-group should fail");
+    assert!(
+        g2_uncompress(&lines[6]).is_err(),
+        "G2 compressed not-in-group should fail"
+    );
 }
 
 #[test]
@@ -242,7 +276,10 @@ fn bls_hash_to_curve_large_dst() {
 
     // Large DST (> 255 bytes) triggers hash-to-curve internal DST pre-hashing.
     let result = g1_hash_to_group(msg, large_dst).expect("hash to G1 with large DST");
-    assert!(g1_equal(&result, &expected), "hash-to-curve large DST mismatch");
+    assert!(
+        g1_equal(&result, &expected),
+        "hash-to-curve large DST mismatch"
+    );
 }
 
 #[test]
@@ -274,18 +311,42 @@ fn embedded_vrf_vectors_match_vendored_standard_examples() {
         vendored_ver03["sk"],
         "ver03 seed mismatch"
     );
-    assert_eq!(hex(&embedded_ver03.public_key), vendored_ver03["pk"], "ver03 pk mismatch");
-    assert_eq!(hex(&embedded_ver03.proof), vendored_ver03["pi"], "ver03 proof mismatch");
-    assert_eq!(hex(&embedded_ver03.output), vendored_ver03["beta"], "ver03 output mismatch");
+    assert_eq!(
+        hex(&embedded_ver03.public_key),
+        vendored_ver03["pk"],
+        "ver03 pk mismatch"
+    );
+    assert_eq!(
+        hex(&embedded_ver03.proof),
+        vendored_ver03["pi"],
+        "ver03 proof mismatch"
+    );
+    assert_eq!(
+        hex(&embedded_ver03.output),
+        vendored_ver03["beta"],
+        "ver03 output mismatch"
+    );
 
     assert_eq!(
         hex(&embedded_ver13.secret_key[..32]),
         vendored_ver13["sk"],
         "ver13 seed mismatch"
     );
-    assert_eq!(hex(&embedded_ver13.public_key), vendored_ver13["pk"], "ver13 pk mismatch");
-    assert_eq!(hex(&embedded_ver13.proof), vendored_ver13["pi"], "ver13 proof mismatch");
-    assert_eq!(hex(&embedded_ver13.output), vendored_ver13["beta"], "ver13 output mismatch");
+    assert_eq!(
+        hex(&embedded_ver13.public_key),
+        vendored_ver13["pk"],
+        "ver13 pk mismatch"
+    );
+    assert_eq!(
+        hex(&embedded_ver13.proof),
+        vendored_ver13["pi"],
+        "ver13 proof mismatch"
+    );
+    assert_eq!(
+        hex(&embedded_ver13.output),
+        vendored_ver13["beta"],
+        "ver13 output mismatch"
+    );
 }
 
 #[test]
@@ -302,7 +363,10 @@ fn vendored_batchcompat_praos_vectors_verify_against_implementation() {
         let path = dir.join(&name);
         let content = fs::read_to_string(&path).expect("vector file should be readable as UTF-8");
         let kv = parse_kv(&content);
-        assert_eq!(kv.get("vrf").map(String::as_str), Some("PraosBatchCompatVRF"));
+        assert_eq!(
+            kv.get("vrf").map(String::as_str),
+            Some("PraosBatchCompatVRF")
+        );
 
         let public_key = decode_hex_array::<32>(
             kv.get("pk")
@@ -339,7 +403,10 @@ fn vendored_batchcompat_praos_vectors_verify_against_implementation() {
         checked += 1;
     }
 
-    assert!(checked > 0, "at least one mirrored batch-compatible vector should be verified");
+    assert!(
+        checked > 0,
+        "at least one mirrored batch-compatible vector should be verified"
+    );
     assert!(
         failures.is_empty(),
         "mirrored batch-compatible vectors should verify cleanly, failures: {}",
@@ -398,7 +465,10 @@ fn vendored_standard_praos_vectors_verify_against_implementation() {
         checked += 1;
     }
 
-    assert!(checked > 0, "at least one mirrored standard vector should be verified");
+    assert!(
+        checked > 0,
+        "at least one mirrored standard vector should be verified"
+    );
     assert!(
         failures.is_empty(),
         "mirrored standard vectors should verify cleanly, failures: {}",
@@ -453,7 +523,10 @@ fn vendored_batchcompat_full_corpus_probe() {
         checked += 1;
     }
 
-    assert!(checked > 0, "full batch-compatible corpus should contain vectors");
+    assert!(
+        checked > 0,
+        "full batch-compatible corpus should contain vectors"
+    );
     assert!(
         failures.is_empty(),
         "full batch-compatible corpus parity failures: {}",
@@ -551,9 +624,7 @@ fn assert_hex_lines(path: &Path, expected_line_count: usize) {
 }
 
 fn is_hex(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() % 2 == 0
-        && value.chars().all(|c| c.is_ascii_hexdigit())
+    !value.is_empty() && value.len() % 2 == 0 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn decode_hex_vec(value: &str) -> Vec<u8> {
@@ -574,7 +645,11 @@ fn decode_hex_vec(value: &str) -> Vec<u8> {
 }
 
 fn decode_hex_array<const N: usize>(value: &str) -> [u8; N] {
-    assert_eq!(value.len(), N * 2, "hex value length should match output array");
+    assert_eq!(
+        value.len(),
+        N * 2,
+        "hex value length should match output array"
+    );
     let bytes = decode_hex_vec(value);
     bytes
         .try_into()

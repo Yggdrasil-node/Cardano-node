@@ -15,9 +15,7 @@ mod peer_sharing;
 /// TxSubmission2 protocol state machine and messages.
 mod tx_submission;
 
-pub use block_fetch::{
-    BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
-};
+pub use block_fetch::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
 pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
 pub use local_state_query::{

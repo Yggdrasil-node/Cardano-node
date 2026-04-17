@@ -1,18 +1,37 @@
 #![allow(clippy::unwrap_used)]
-use yggdrasil_crypto::{
-    Blake2bHash, CompactKesSignature, CryptoError, KesPeriod, KesSigningKey,
-    Signature, SigningKey, SimpleCompactKesSignature, SimpleKesSignature,
-    SimpleKesSigningKey, SimpleKesVerificationKey, VerificationKey,
-    VrfBatchCompatProof, VrfOutput, VrfProof, VrfSecretKey,
-    VrfVerificationKey,
-    ed25519_rfc8032_vectors, hash_bytes, simple_kes_two_period_test_vectors,
-    vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
-    // SumKES
-    SumKesSignature, SumKesVerificationKey,
-    derive_sum_kes_vk, gen_sum_kes_signing_key, sign_sum_kes,
-    update_sum_kes, verify_sum_kes,
-};
 use yggdrasil_crypto::vrf::VRF_SEED_SIZE;
+use yggdrasil_crypto::{
+    Blake2bHash,
+    CompactKesSignature,
+    CryptoError,
+    KesPeriod,
+    KesSigningKey,
+    Signature,
+    SigningKey,
+    SimpleCompactKesSignature,
+    SimpleKesSignature,
+    SimpleKesSigningKey,
+    SimpleKesVerificationKey,
+    // SumKES
+    SumKesSignature,
+    SumKesVerificationKey,
+    VerificationKey,
+    VrfBatchCompatProof,
+    VrfOutput,
+    VrfProof,
+    VrfSecretKey,
+    VrfVerificationKey,
+    derive_sum_kes_vk,
+    ed25519_rfc8032_vectors,
+    gen_sum_kes_signing_key,
+    hash_bytes,
+    sign_sum_kes,
+    simple_kes_two_period_test_vectors,
+    update_sum_kes,
+    verify_sum_kes,
+    vrf_praos_batchcompat_test_vectors,
+    vrf_praos_test_vectors,
+};
 
 #[test]
 fn blake2b_hash_is_deterministic() {
@@ -86,7 +105,11 @@ fn ed25519_matches_rfc8032_test_vectors() {
             .sign(&vector.message)
             .expect("signing should succeed for vector seed");
 
-        assert_eq!(signature, expected_signature, "signature mismatch for {}", vector.name);
+        assert_eq!(
+            signature, expected_signature,
+            "signature mismatch for {}",
+            vector.name
+        );
 
         derived_verification_key
             .verify(&vector.message, &expected_signature)
@@ -105,7 +128,12 @@ fn praos_vrf_vectors_match_embedded_key_layout_and_output_hash() {
         let proof = VrfProof::from_bytes(vector.proof);
         let expected_output = VrfOutput::from_bytes(vector.output);
 
-        assert_eq!(signing_key.to_bytes(), vector.secret_key, "signing key mismatch for {}", vector.name);
+        assert_eq!(
+            signing_key.to_bytes(),
+            vector.secret_key,
+            "signing key mismatch for {}",
+            vector.name
+        );
         assert_eq!(
             signing_key.seed_bytes(),
             vector.secret_key[..32],
@@ -138,7 +166,12 @@ fn batchcompat_vrf_vectors_match_embedded_key_layout_and_output_hash() {
         let proof = VrfBatchCompatProof::from_bytes(vector.proof);
         let expected_output = VrfOutput::from_bytes(vector.output);
 
-        assert_eq!(signing_key.to_bytes(), vector.secret_key, "signing key mismatch for {}", vector.name);
+        assert_eq!(
+            signing_key.to_bytes(),
+            vector.secret_key,
+            "signing key mismatch for {}",
+            vector.name
+        );
         assert_eq!(
             verification_key.to_bytes(),
             vector.public_key,
@@ -146,7 +179,9 @@ fn batchcompat_vrf_vectors_match_embedded_key_layout_and_output_hash() {
             vector.name
         );
         assert_eq!(
-            proof.output().expect("published batch-compatible Praos proof should decode"),
+            proof
+                .output()
+                .expect("published batch-compatible Praos proof should decode"),
             expected_output,
             "output mismatch for {}",
             vector.name
@@ -342,7 +377,8 @@ fn batchcompat_vrf_verify_rejects_tampered_proof_components() {
     for flip_offset in [0_usize, 32, 64, 96] {
         let mut tampered = vector.proof;
         tampered[flip_offset] ^= 0x01;
-        let result = vk.verify_batchcompat(&vector.message, &VrfBatchCompatProof::from_bytes(tampered));
+        let result =
+            vk.verify_batchcompat(&vector.message, &VrfBatchCompatProof::from_bytes(tampered));
         assert!(
             result.is_err(),
             "batchcompat proof tampered at byte {flip_offset} should be rejected"
@@ -590,7 +626,10 @@ fn compact_single_kes_from_bytes_round_trips() {
     let compact_bytes = signature.to_bytes();
 
     assert_eq!(decoded, signature);
-    assert_eq!(decoded.signature().to_bytes().as_slice(), &compact_bytes[..64]);
+    assert_eq!(
+        decoded.signature().to_bytes().as_slice(),
+        &compact_bytes[..64]
+    );
 }
 
 #[test]
@@ -664,8 +703,14 @@ fn simple_kes_rejects_invalid_depth_or_length() {
         .expect_err("SimpleKES should reject malformed verification key byte lengths");
 
     assert_eq!(empty, CryptoError::InvalidKesDepth(0));
-    assert_eq!(malformed_signing, CryptoError::InvalidKesKeyMaterialLength(31));
-    assert_eq!(malformed_verification, CryptoError::InvalidKesKeyMaterialLength(31));
+    assert_eq!(
+        malformed_signing,
+        CryptoError::InvalidKesKeyMaterialLength(31)
+    );
+    assert_eq!(
+        malformed_verification,
+        CryptoError::InvalidKesKeyMaterialLength(31)
+    );
 }
 
 #[test]
@@ -758,9 +803,18 @@ fn simple_kes_fixture_vectors_match_exact_signature_bytes() {
             .expect("SimpleKES fixture should derive verification keys");
         let period = KesPeriod(vector.period);
 
-        assert_eq!(verification_key.to_bytes().len(), vector.verification_keys.len() * 32);
-        assert_eq!(&verification_key.to_bytes()[..32], vector.verification_keys[0].as_slice());
-        assert_eq!(&verification_key.to_bytes()[32..64], vector.verification_keys[1].as_slice());
+        assert_eq!(
+            verification_key.to_bytes().len(),
+            vector.verification_keys.len() * 32
+        );
+        assert_eq!(
+            &verification_key.to_bytes()[..32],
+            vector.verification_keys[0].as_slice()
+        );
+        assert_eq!(
+            &verification_key.to_bytes()[32..64],
+            vector.verification_keys[1].as_slice()
+        );
 
         let signature = signing_key
             .sign(period, &vector.message)
@@ -772,8 +826,18 @@ fn simple_kes_fixture_vectors_match_exact_signature_bytes() {
             .sign_indexed_compact(period, &vector.message)
             .expect("SimpleKES fixture period should sign with compact indexed encoding");
 
-        assert_eq!(signature.to_bytes(), vector.signature, "signature mismatch for {}", vector.name);
-        assert_eq!(indexed.to_bytes(), vector.indexed_signature, "indexed signature mismatch for {}", vector.name);
+        assert_eq!(
+            signature.to_bytes(),
+            vector.signature,
+            "signature mismatch for {}",
+            vector.name
+        );
+        assert_eq!(
+            indexed.to_bytes(),
+            vector.indexed_signature,
+            "indexed signature mismatch for {}",
+            vector.name
+        );
         assert_eq!(
             compact_indexed.to_bytes(),
             vector.compact_indexed_signature,
@@ -864,10 +928,9 @@ fn sum_kes_depth2_four_periods() {
     let mut current_sk = sk;
     for period in 0u32..4 {
         let msg = format!("message for period {period}");
-        let sig = sign_sum_kes(&current_sk, period, msg.as_bytes())
-            .expect("depth-2 sign should succeed");
-        verify_sum_kes(&vk, period, msg.as_bytes(), &sig)
-            .expect("depth-2 verify should succeed");
+        let sig =
+            sign_sum_kes(&current_sk, period, msg.as_bytes()).expect("depth-2 sign should succeed");
+        verify_sum_kes(&vk, period, msg.as_bytes(), &sig).expect("depth-2 verify should succeed");
 
         if period < 3 {
             current_sk = update_sum_kes(&current_sk, period)
@@ -901,7 +964,10 @@ fn sum_kes_depth3_full_lifecycle() {
     }
 
     let expired = update_sum_kes(&current_sk, 7).expect("depth-3 final update");
-    assert!(expired.is_none(), "depth-3 key should be exhausted at period 7");
+    assert!(
+        expired.is_none(),
+        "depth-3 key should be exhausted at period 7"
+    );
 }
 
 #[test]

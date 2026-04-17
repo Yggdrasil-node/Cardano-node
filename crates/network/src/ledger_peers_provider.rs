@@ -114,6 +114,117 @@ impl LedgerPeerSnapshot {
     }
 }
 
+/// Merge a live ledger snapshot with an optional peer-snapshot-file overlay.
+///
+/// Overlay peers are appended in-order while preserving uniqueness, and the
+/// final snapshot is normalized so big-ledger peers remain disjoint from the
+/// ledger-peer set.
+pub fn merge_ledger_peer_snapshots(
+    ledger_snapshot: &LedgerPeerSnapshot,
+    snapshot_overlay: Option<LedgerPeerSnapshot>,
+) -> LedgerPeerSnapshot {
+    let mut merged_ledger_peers = ledger_snapshot.ledger_peers.clone();
+    let mut merged_big_ledger_peers = ledger_snapshot.big_ledger_peers.clone();
+
+    if let Some(snapshot_overlay) = snapshot_overlay {
+        for peer in snapshot_overlay.ledger_peers {
+            if !merged_ledger_peers.contains(&peer) {
+                merged_ledger_peers.push(peer);
+            }
+        }
+
+        for peer in snapshot_overlay.big_ledger_peers {
+            if !merged_big_ledger_peers.contains(&peer) {
+                merged_big_ledger_peers.push(peer);
+            }
+        }
+    }
+
+    LedgerPeerSnapshot::new(merged_ledger_peers, merged_big_ledger_peers)
+}
+
+/// Derive peer-snapshot freshness from policy, snapshot presence, and the
+/// latest observed slot.
+///
+/// This logic belongs with ledger-peer policy because freshness is part of the
+/// decision of whether snapshot-backed ledger peers may participate in peer
+/// selection, not a configuration-parsing concern.
+pub fn derive_peer_snapshot_freshness(
+    use_ledger_peers: UseLedgerPeers,
+    snapshot_configured: bool,
+    snapshot_slot: Option<u64>,
+    latest_slot: Option<u64>,
+    snapshot_available: bool,
+) -> PeerSnapshotFreshness {
+    if !snapshot_configured {
+        return PeerSnapshotFreshness::NotConfigured;
+    }
+
+    if !snapshot_available {
+        return PeerSnapshotFreshness::Unavailable;
+    }
+
+    match use_ledger_peers {
+        UseLedgerPeers::DontUseLedgerPeers | UseLedgerPeers::UseLedgerPeers(AfterSlot::Always) => {
+            PeerSnapshotFreshness::Fresh
+        }
+        UseLedgerPeers::UseLedgerPeers(AfterSlot::After(after_slot)) => {
+            let Some(latest_slot) = latest_slot else {
+                return PeerSnapshotFreshness::Awaiting;
+            };
+
+            if latest_slot < after_slot {
+                return PeerSnapshotFreshness::Awaiting;
+            }
+
+            match snapshot_slot {
+                Some(snapshot_slot) if snapshot_slot >= after_slot => PeerSnapshotFreshness::Fresh,
+                Some(_) => PeerSnapshotFreshness::Stale,
+                None => PeerSnapshotFreshness::Unavailable,
+            }
+        }
+    }
+}
+
+/// Return currently eligible ledger-derived peer candidates while excluding
+/// peers already covered by other bootstrap or reconnect sources.
+///
+/// The returned order preserves the normalized snapshot order: ledger peers
+/// first, then big-ledger peers.
+pub fn eligible_ledger_peer_candidates(
+    snapshot: &LedgerPeerSnapshot,
+    blocked_peers: &[SocketAddr],
+    use_ledger_peers: UseLedgerPeers,
+    latest_slot: Option<u64>,
+    ledger_state_judgement: LedgerStateJudgement,
+    peer_snapshot_freshness: PeerSnapshotFreshness,
+) -> (LedgerPeerUseDecision, Vec<SocketAddr>) {
+    let decision = judge_ledger_peer_usage(
+        use_ledger_peers,
+        latest_slot,
+        ledger_state_judgement,
+        peer_snapshot_freshness,
+    );
+
+    if decision != LedgerPeerUseDecision::Eligible {
+        return (decision, Vec::new());
+    }
+
+    let mut eligible = Vec::new();
+    for peer in snapshot
+        .ledger_peers
+        .iter()
+        .chain(snapshot.big_ledger_peers.iter())
+        .copied()
+    {
+        if !blocked_peers.contains(&peer) && !eligible.contains(&peer) {
+            eligible.push(peer);
+        }
+    }
+
+    (decision, eligible)
+}
+
 /// A refresh result emitted by a ledger peer provider.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LedgerPeerProviderRefresh {
@@ -207,7 +318,8 @@ pub fn apply_ledger_peer_refresh(
 ) -> bool {
     match refresh {
         LedgerPeerProviderRefresh::Combined(snapshot) => {
-            let snapshot = LedgerPeerSnapshot::new(snapshot.ledger_peers, snapshot.big_ledger_peers);
+            let snapshot =
+                LedgerPeerSnapshot::new(snapshot.ledger_peers, snapshot.big_ledger_peers);
             let ledger_changed = registry.sync_ledger_peers(snapshot.ledger_peers);
             let big_ledger_changed = registry.sync_big_ledger_peers(snapshot.big_ledger_peers);
             ledger_changed || big_ledger_changed
@@ -254,10 +366,9 @@ pub fn reconcile_ledger_peer_registry_with_policy(
     );
 
     let changed = match decision {
-        LedgerPeerUseDecision::Eligible => apply_ledger_peer_refresh(
-            registry,
-            LedgerPeerProviderRefresh::Combined(snapshot),
-        ),
+        LedgerPeerUseDecision::Eligible => {
+            apply_ledger_peer_refresh(registry, LedgerPeerProviderRefresh::Combined(snapshot))
+        }
         LedgerPeerUseDecision::Disabled
         | LedgerPeerUseDecision::AwaitingLatestSlot { .. }
         | LedgerPeerUseDecision::BeforeUseLedgerAfterSlot { .. }
@@ -277,14 +388,17 @@ pub fn reconcile_ledger_peer_registry_with_policy(
 #[derive(Clone, Debug)]
 pub struct ScriptedLedgerPeerProvider {
     kind: LedgerPeerProviderKind,
-    scripted_refreshes: VecDeque<Result<Option<LedgerPeerProviderRefresh>, LedgerPeerProviderError>>,
+    scripted_refreshes:
+        VecDeque<Result<Option<LedgerPeerProviderRefresh>, LedgerPeerProviderError>>,
 }
 
 impl ScriptedLedgerPeerProvider {
     /// Create a provider from scripted refresh results.
     pub fn new(
         kind: LedgerPeerProviderKind,
-        scripted_refreshes: impl IntoIterator<Item = Result<Option<LedgerPeerProviderRefresh>, LedgerPeerProviderError>>,
+        scripted_refreshes: impl IntoIterator<
+            Item = Result<Option<LedgerPeerProviderRefresh>, LedgerPeerProviderError>,
+        >,
     ) -> Self {
         Self {
             kind,
@@ -325,13 +439,100 @@ mod tests {
         let ledger_only: SocketAddr = "127.0.0.11:3001".parse().expect("addr");
         let big_only: SocketAddr = "127.0.0.12:3001".parse().expect("addr");
 
-        let snapshot = LedgerPeerSnapshot::new(
-            [shared, ledger_only, shared],
-            [shared, big_only, big_only],
-        );
+        let snapshot =
+            LedgerPeerSnapshot::new([shared, ledger_only, shared], [shared, big_only, big_only]);
 
         assert_eq!(snapshot.ledger_peers, vec![shared, ledger_only]);
         assert_eq!(snapshot.big_ledger_peers, vec![big_only]);
+    }
+
+    #[test]
+    fn merge_ledger_peer_snapshots_appends_overlay_uniquely() {
+        let base_ledger: SocketAddr = "127.0.0.40:3001".parse().expect("addr");
+        let overlay_ledger: SocketAddr = "127.0.0.41:3001".parse().expect("addr");
+        let overlay_big: SocketAddr = "127.0.0.42:3001".parse().expect("addr");
+
+        let merged = merge_ledger_peer_snapshots(
+            &LedgerPeerSnapshot::new([base_ledger], Vec::<SocketAddr>::new()),
+            Some(LedgerPeerSnapshot::new(
+                [base_ledger, overlay_ledger],
+                [overlay_ledger, overlay_big],
+            )),
+        );
+
+        assert_eq!(merged.ledger_peers, vec![base_ledger, overlay_ledger]);
+        assert_eq!(merged.big_ledger_peers, vec![overlay_big]);
+    }
+
+    #[test]
+    fn derive_peer_snapshot_freshness_waits_for_latest_slot_before_gate() {
+        assert_eq!(
+            derive_peer_snapshot_freshness(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::After(100)),
+                true,
+                Some(100),
+                None,
+                true,
+            ),
+            PeerSnapshotFreshness::Awaiting
+        );
+        assert_eq!(
+            derive_peer_snapshot_freshness(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::After(100)),
+                true,
+                Some(100),
+                Some(99),
+                true,
+            ),
+            PeerSnapshotFreshness::Awaiting
+        );
+    }
+
+    #[test]
+    fn derive_peer_snapshot_freshness_marks_old_snapshot_stale_after_gate() {
+        assert_eq!(
+            derive_peer_snapshot_freshness(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::After(100)),
+                true,
+                Some(99),
+                Some(100),
+                true,
+            ),
+            PeerSnapshotFreshness::Stale
+        );
+        assert_eq!(
+            derive_peer_snapshot_freshness(
+                UseLedgerPeers::UseLedgerPeers(AfterSlot::After(100)),
+                true,
+                Some(100),
+                Some(100),
+                true,
+            ),
+            PeerSnapshotFreshness::Fresh
+        );
+    }
+
+    #[test]
+    fn eligible_ledger_peer_candidates_filters_blocked_peers() {
+        let primary: SocketAddr = "127.0.0.50:3001".parse().expect("addr");
+        let blocked_fallback: SocketAddr = "127.0.0.51:3001".parse().expect("addr");
+        let ledger_peer: SocketAddr = "127.0.0.52:3001".parse().expect("addr");
+        let big_ledger_peer: SocketAddr = "127.0.0.53:3001".parse().expect("addr");
+
+        let (decision, peers) = eligible_ledger_peer_candidates(
+            &LedgerPeerSnapshot::new(
+                [primary, blocked_fallback, ledger_peer],
+                [blocked_fallback, big_ledger_peer],
+            ),
+            &[primary, blocked_fallback],
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+            Some(1),
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::Fresh,
+        );
+
+        assert_eq!(decision, LedgerPeerUseDecision::Eligible);
+        assert_eq!(peers, vec![ledger_peer, big_ledger_peer]);
     }
 
     #[test]
@@ -372,7 +573,10 @@ mod tests {
         ));
 
         let entry = registry.get(&peer).expect("peer remains");
-        assert_eq!(entry.sources, [PeerSource::PeerSourcePeerShare].into_iter().collect());
+        assert_eq!(
+            entry.sources,
+            [PeerSource::PeerSourcePeerShare].into_iter().collect()
+        );
         assert_eq!(entry.status, PeerStatus::PeerHot);
     }
 
@@ -395,10 +599,8 @@ mod tests {
     #[test]
     fn refresh_ledger_peer_registry_ignores_empty_provider_poll() {
         let mut registry = PeerRegistry::default();
-        let mut provider = ScriptedLedgerPeerProvider::new(
-            LedgerPeerProviderKind::Combined,
-            [Ok(None)],
-        );
+        let mut provider =
+            ScriptedLedgerPeerProvider::new(LedgerPeerProviderKind::Combined, [Ok(None)]);
 
         assert!(!refresh_ledger_peer_registry(&mut registry, &mut provider).expect("refresh"));
         assert!(registry.is_empty());
@@ -409,7 +611,9 @@ mod tests {
         let mut registry = PeerRegistry::default();
         let mut provider = ScriptedLedgerPeerProvider::new(
             LedgerPeerProviderKind::Combined,
-            [Err(LedgerPeerProviderError::RefreshFailed("ledger snapshot unavailable".to_owned()))],
+            [Err(LedgerPeerProviderError::RefreshFailed(
+                "ledger snapshot unavailable".to_owned(),
+            ))],
         );
 
         assert_eq!(

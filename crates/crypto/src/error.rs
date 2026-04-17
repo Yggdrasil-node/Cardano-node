@@ -80,7 +80,10 @@ mod tests {
 
     #[test]
     fn display_invalid_vrf_proof() {
-        assert_eq!(CryptoError::InvalidVrfProof.to_string(), "invalid vrf proof");
+        assert_eq!(
+            CryptoError::InvalidVrfProof.to_string(),
+            "invalid vrf proof"
+        );
     }
 
     #[test]

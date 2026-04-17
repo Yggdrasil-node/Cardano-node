@@ -100,8 +100,8 @@ fn witness_set_with_complex_plutus_data() {
         plutus_v3_scripts: vec![],
     };
     let bytes = wset.to_cbor_bytes();
-    let decoded = ShelleyWitnessSet::from_cbor_bytes(&bytes)
-        .expect("witness set complex plutus data");
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set complex plutus data");
     assert_eq!(wset, decoded);
 }
 
@@ -126,8 +126,8 @@ fn witness_set_with_typed_redeemer_and_plutus_data() {
         plutus_v3_scripts: vec![],
     };
     let bytes = wset.to_cbor_bytes();
-    let decoded = ShelleyWitnessSet::from_cbor_bytes(&bytes)
-        .expect("witness set typed redeemer + data");
+    let decoded =
+        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set typed redeemer + data");
     assert_eq!(wset, decoded);
 }
 

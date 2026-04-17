@@ -126,9 +126,7 @@ impl LocalStateQueryServer {
             .map_err(LocalStateQueryServerError::Mux)
     }
 
-    async fn recv_msg(
-        &mut self,
-    ) -> Result<LocalStateQueryMessage, LocalStateQueryServerError> {
+    async fn recv_msg(&mut self) -> Result<LocalStateQueryMessage, LocalStateQueryServerError> {
         let raw = self
             .channel
             .recv()
@@ -166,9 +164,7 @@ impl LocalStateQueryServer {
     ///
     /// Sends `MsgAcquired` and transitions to `StAcquired`.
     /// Must be called when the server is in `StAcquiring`.
-    pub async fn acquired(
-        &mut self,
-    ) -> Result<(), LocalStateQueryServerError> {
+    pub async fn acquired(&mut self) -> Result<(), LocalStateQueryServerError> {
         self.send_msg(&LocalStateQueryMessage::MsgAcquired).await
     }
 
@@ -211,10 +207,7 @@ impl LocalStateQueryServer {
     ///
     /// Sends `MsgResult(result_bytes)` and transitions back to `StAcquired`.
     /// Must be called when the server is in `StQuerying`.
-    pub async fn send_result(
-        &mut self,
-        result: Vec<u8>,
-    ) -> Result<(), LocalStateQueryServerError> {
+    pub async fn send_result(&mut self, result: Vec<u8>) -> Result<(), LocalStateQueryServerError> {
         self.send_msg(&LocalStateQueryMessage::MsgResult { result })
             .await
     }

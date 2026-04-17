@@ -68,7 +68,11 @@ pub struct InMemoryImmutable {
 
 impl ImmutableStore for InMemoryImmutable {
     fn append_block(&mut self, block: Block) -> Result<(), StorageError> {
-        if self.blocks.iter().any(|b| b.header.hash == block.header.hash) {
+        if self
+            .blocks
+            .iter()
+            .any(|b| b.header.hash == block.header.hash)
+        {
             return Err(StorageError::DuplicateBlock(block.header.hash));
         }
         self.blocks.push(block);
@@ -97,7 +101,11 @@ impl ImmutableStore for InMemoryImmutable {
                     return Ok(self.blocks.clone());
                 }
 
-                if let Some(pos) = self.blocks.iter().position(|block| block.header.hash == *hash) {
+                if let Some(pos) = self
+                    .blocks
+                    .iter()
+                    .position(|block| block.header.hash == *hash)
+                {
                     return Ok(self.blocks[pos + 1..].to_vec());
                 }
 

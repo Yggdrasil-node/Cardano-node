@@ -158,7 +158,13 @@ fn to_rust_type_name(name: &str) -> String {
 
 fn to_snake_case(name: &str) -> String {
     name.chars()
-        .map(|ch| if ch == '-' { '_' } else { ch.to_ascii_lowercase() })
+        .map(|ch| {
+            if ch == '-' {
+                '_'
+            } else {
+                ch.to_ascii_lowercase()
+            }
+        })
         .collect()
 }
 
@@ -242,7 +248,11 @@ fn gen_array_encode(type_name: &str, items: &[ArrayItem]) -> String {
         } else {
             format!("item_{i}")
         };
-        s.push_str(&emit_encode_field(&item.ty, &format!("self.{field}"), "        "));
+        s.push_str(&emit_encode_field(
+            &item.ty,
+            &format!("self.{field}"),
+            "        ",
+        ));
     }
     s.push_str("    }\n");
     s.push_str("}\n\n");
@@ -313,7 +323,11 @@ fn gen_map_encode(type_name: &str, fields: &[ParsedField]) -> String {
             s.push_str("        }\n");
         } else {
             s.push_str(&format!("        {key_expr}\n"));
-            s.push_str(&emit_encode_field(&f.ty, &format!("self.{fname}"), "        "));
+            s.push_str(&emit_encode_field(
+                &f.ty,
+                &format!("self.{fname}"),
+                "        ",
+            ));
         }
     }
 
@@ -332,13 +346,13 @@ fn gen_map_decode(type_name: &str, fields: &[ParsedField]) -> String {
     for f in fields {
         let fname = map_field_name(f);
         let rust_ty = map_type_expr(&f.ty);
-        s.push_str(&format!("        let mut {fname}: Option<{rust_ty}> = None;\n"));
+        s.push_str(&format!(
+            "        let mut {fname}: Option<{rust_ty}> = None;\n"
+        ));
     }
 
     // Determine whether keys are integer or label.
-    let uses_int_keys = fields
-        .iter()
-        .any(|f| matches!(f.key, FieldKey::Index(_)));
+    let uses_int_keys = fields.iter().any(|f| matches!(f.key, FieldKey::Index(_)));
 
     s.push_str("        for _ in 0..map_len {\n");
     if uses_int_keys {
@@ -418,9 +432,7 @@ fn gen_choice_encode(type_name: &str, variants: &[Vec<ArrayItem>]) -> String {
                 })
                 .collect();
             let pat = bindings.join(", ");
-            s.push_str(&format!(
-                "            Self::{variant} {{ {pat} }} => {{\n"
-            ));
+            s.push_str(&format!("            Self::{variant} {{ {pat} }} => {{\n"));
             s.push_str(&format!("                enc.array({});\n", fields.len()));
             for (fi, item) in fields.iter().enumerate() {
                 let name = &bindings[fi];
@@ -443,7 +455,9 @@ fn gen_choice_decode(type_name: &str, variants: &[Vec<ArrayItem>]) -> String {
     s.push_str("        let len = dec.array()?;\n");
 
     if variants.is_empty() {
-        s.push_str("        Err(LedgerError::CborInvalidLength { expected: 0, actual: len as usize })\n");
+        s.push_str(
+            "        Err(LedgerError::CborInvalidLength { expected: 0, actual: len as usize })\n",
+        );
     } else {
         s.push_str("        match len {\n");
 
@@ -495,9 +509,7 @@ fn gen_choice_decode(type_name: &str, variants: &[Vec<ArrayItem>]) -> String {
                         };
                         if fi == 0 {
                             // Tag is already decoded as `tag`.
-                            s.push_str(&format!(
-                                "                        let {fname} = tag;\n"
-                            ));
+                            s.push_str(&format!("                        let {fname} = tag;\n"));
                         } else {
                             s.push_str(&emit_decode_field(
                                 &item.ty,
@@ -539,10 +551,7 @@ fn is_builtin_primitive(expr: &TypeExpr) -> bool {
             name.as_str(),
             "uint" | "int" | "bool" | "bytes" | "bstr" | "text" | "tstr"
         ),
-        TypeExpr::Sized(base, _) => matches!(
-            base.as_str(),
-            "uint" | "int" | "bytes" | "bstr"
-        ),
+        TypeExpr::Sized(base, _) => matches!(base.as_str(), "uint" | "int" | "bytes" | "bstr"),
         TypeExpr::VarArray(_) | TypeExpr::Optional(_) => false,
         TypeExpr::Tagged(_, inner) => is_builtin_primitive(inner),
     }
@@ -554,24 +563,20 @@ fn is_builtin_primitive(expr: &TypeExpr) -> bool {
 /// `self.field_0` or `val`).
 fn emit_encode_field(expr: &TypeExpr, accessor: &str, indent: &str) -> String {
     match expr {
-        TypeExpr::Named(name) => {
-            match name.as_str() {
-                "uint" => format!("{indent}enc.unsigned({accessor});\n"),
-                "int" => format!("{indent}enc.integer({accessor});\n"),
-                "bool" => format!("{indent}enc.bool({accessor});\n"),
-                "bytes" | "bstr" => format!("{indent}enc.bytes(&{accessor});\n"),
-                "text" | "tstr" => format!("{indent}enc.text(&{accessor});\n"),
-                _ => format!("{indent}{accessor}.encode_cbor(enc);\n"),
-            }
-        }
-        TypeExpr::Sized(base, _) => {
-            match base.as_str() {
-                "uint" => format!("{indent}enc.unsigned({accessor} as u64);\n"),
-                "int" => format!("{indent}enc.integer({accessor} as i64);\n"),
-                "bytes" | "bstr" => format!("{indent}enc.bytes(&{accessor});\n"),
-                _ => format!("{indent}{accessor}.encode_cbor(enc);\n"),
-            }
-        }
+        TypeExpr::Named(name) => match name.as_str() {
+            "uint" => format!("{indent}enc.unsigned({accessor});\n"),
+            "int" => format!("{indent}enc.integer({accessor});\n"),
+            "bool" => format!("{indent}enc.bool({accessor});\n"),
+            "bytes" | "bstr" => format!("{indent}enc.bytes(&{accessor});\n"),
+            "text" | "tstr" => format!("{indent}enc.text(&{accessor});\n"),
+            _ => format!("{indent}{accessor}.encode_cbor(enc);\n"),
+        },
+        TypeExpr::Sized(base, _) => match base.as_str() {
+            "uint" => format!("{indent}enc.unsigned({accessor} as u64);\n"),
+            "int" => format!("{indent}enc.integer({accessor} as i64);\n"),
+            "bytes" | "bstr" => format!("{indent}enc.bytes(&{accessor});\n"),
+            _ => format!("{indent}{accessor}.encode_cbor(enc);\n"),
+        },
         TypeExpr::VarArray(inner) => {
             let mut s = format!("{indent}enc.array({accessor}.len() as u64);\n");
             s.push_str(&format!("{indent}for item in &{accessor} {{\n"));
@@ -613,39 +618,31 @@ fn emit_decode_assign(expr: &TypeExpr, field_name: &str, indent: &str) -> String
 /// Emits the decode expression for a type expression.
 fn emit_decode_expr(expr: &TypeExpr, indent: &str) -> String {
     match expr {
-        TypeExpr::Named(name) => {
-            match name.as_str() {
-                "uint" => "dec.unsigned()?".to_string(),
-                "int" => "dec.integer()?".to_string(),
-                "bool" => "dec.bool()?".to_string(),
-                "bytes" | "bstr" => "dec.bytes()?.to_vec()".to_string(),
-                "text" | "tstr" => "dec.text()?.to_string()".to_string(),
-                other => format!("{}::decode_cbor(dec)?", to_rust_type_name(other)),
+        TypeExpr::Named(name) => match name.as_str() {
+            "uint" => "dec.unsigned()?".to_string(),
+            "int" => "dec.integer()?".to_string(),
+            "bool" => "dec.bool()?".to_string(),
+            "bytes" | "bstr" => "dec.bytes()?.to_vec()".to_string(),
+            "text" | "tstr" => "dec.text()?.to_string()".to_string(),
+            other => format!("{}::decode_cbor(dec)?", to_rust_type_name(other)),
+        },
+        TypeExpr::Sized(base, size) => match base.as_str() {
+            "uint" => match size {
+                8 => "dec.unsigned()?".to_string(),
+                _ => format!("dec.unsigned()? as {}", map_sized_type(base, *size)),
+            },
+            "int" => match size {
+                8 => "dec.integer()?".to_string(),
+                _ => format!("dec.integer()? as {}", map_sized_type(base, *size)),
+            },
+            "bytes" | "bstr" => {
+                format!(
+                    "{{\n{indent}    let b = dec.bytes()?;\n{indent}    let arr: [{base_ty}; {size}] = b.try_into().map_err(|_| LedgerError::CborInvalidLength {{ expected: {size}, actual: b.len() }})?;\n{indent}    arr\n{indent}}}",
+                    base_ty = "u8",
+                )
             }
-        }
-        TypeExpr::Sized(base, size) => {
-            match base.as_str() {
-                "uint" => {
-                    match size {
-                        8 => "dec.unsigned()?".to_string(),
-                        _ => format!("dec.unsigned()? as {}", map_sized_type(base, *size)),
-                    }
-                }
-                "int" => {
-                    match size {
-                        8 => "dec.integer()?".to_string(),
-                        _ => format!("dec.integer()? as {}", map_sized_type(base, *size)),
-                    }
-                }
-                "bytes" | "bstr" => {
-                    format!(
-                        "{{\n{indent}    let b = dec.bytes()?;\n{indent}    let arr: [{base_ty}; {size}] = b.try_into().map_err(|_| LedgerError::CborInvalidLength {{ expected: {size}, actual: b.len() }})?;\n{indent}    arr\n{indent}}}",
-                        base_ty = "u8",
-                    )
-                }
-                _ => format!("{}::decode_cbor(dec)?", to_rust_type_name(base)),
-            }
-        }
+            _ => format!("{}::decode_cbor(dec)?", to_rust_type_name(base)),
+        },
         TypeExpr::VarArray(inner) => {
             let inner_decode = emit_decode_expr(inner, &format!("{indent}    "));
             format!(

@@ -10,27 +10,32 @@ use std::time::Duration;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use yggdrasil_consensus::{ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize, FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, is_new_epoch, judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof, verify_nonce_proof};
+use yggdrasil_consensus::{
+    ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize,
+    FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
+    NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters,
+    OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, is_new_epoch,
+    judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof, verify_nonce_proof,
+};
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
 use yggdrasil_crypto::vrf::VrfVerificationKey;
-use yggdrasil_network::{
-    BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient,
-    ChainSyncClientError, DecodedHeaderNextResponse, KeepAliveClient, KeepAliveClientError, NextResponse,
-    PeerError, TypedIntersectResponse, TypedNextResponse,
-};
 use yggdrasil_ledger::{
-    AlonzoBlock, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock, BYRON_SLOTS_PER_EPOCH,
-    CborDecode, CborEncode, ConwayBlock,
-    Decoder, Era, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState, Nonce, Point,
-    PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
-    apply_epoch_boundary, compute_block_body_hash,
+    AlonzoBlock, BYRON_SLOTS_PER_EPOCH, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock,
+    CborDecode, CborEncode, ConwayBlock, Decoder, EpochBoundaryEvent, Era, HeaderHash, LedgerError,
+    LedgerState, Nonce, Point, PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock,
+    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId,
+    UnitInterval, apply_epoch_boundary, compute_block_body_hash,
 };
 use yggdrasil_mempool::Mempool;
-use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
+use yggdrasil_network::{
+    BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient, ChainSyncClientError,
+    DecodedHeaderNextResponse, KeepAliveClient, KeepAliveClientError, NextResponse, PeerError,
+    TypedIntersectResponse, TypedNextResponse,
+};
 use yggdrasil_plutus::CostModel;
+use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
 
 pub use yggdrasil_storage::LedgerRecoveryOutcome;
 
@@ -470,7 +475,9 @@ pub async fn sync_step_typed(
     block_fetch: &mut BlockFetchClient,
     from_point: Point,
 ) -> Result<TypedSyncStep, SyncError> {
-    let next = chain_sync.request_next_decoded_header::<ShelleyHeader>().await?;
+    let next = chain_sync
+        .request_next_decoded_header::<ShelleyHeader>()
+        .await?;
 
     match next {
         DecodedHeaderNextResponse::RollForward { header, tip }
@@ -538,12 +545,7 @@ pub async fn sync_steps_typed(
     let mut rollback_count = 0usize;
 
     for _ in 0..count {
-        let step = sync_step_typed(
-            chain_sync,
-            block_fetch,
-            from_point,
-        )
-        .await?;
+        let step = sync_step_typed(chain_sync, block_fetch, from_point).await?;
 
         match &step {
             TypedSyncStep::RollForward { tip, blocks, .. } => {
@@ -585,12 +587,7 @@ pub async fn sync_until_typed(
             break;
         }
 
-        let step = sync_step_typed(
-            chain_sync,
-            block_fetch,
-            from_point,
-        )
-        .await?;
+        let step = sync_step_typed(chain_sync, block_fetch, from_point).await?;
 
         match &step {
             TypedSyncStep::RollForward { tip, blocks, .. } => {
@@ -677,10 +674,9 @@ pub async fn typed_find_intersect(
     points: &[Point],
 ) -> Result<TypedIntersectResult, SyncError> {
     match chain_sync.find_intersect_points(points.to_vec()).await? {
-        TypedIntersectResponse::Found { point, tip } => Ok(TypedIntersectResult::Found {
-            point,
-            tip,
-        }),
+        TypedIntersectResponse::Found { point, tip } => {
+            Ok(TypedIntersectResult::Found { point, tip })
+        }
         TypedIntersectResponse::NotFound { tip } => Ok(TypedIntersectResult::NotFound { tip }),
     }
 }
@@ -863,7 +859,10 @@ impl LedgerCheckpointPolicy {
 
         match (previous_point, current_point) {
             (Point::Origin, Point::BlockPoint(_, _)) => true,
-            (Point::BlockPoint(previous_slot, previous_hash), Point::BlockPoint(current_slot, current_hash)) => {
+            (
+                Point::BlockPoint(previous_slot, previous_hash),
+                Point::BlockPoint(current_slot, current_hash),
+            ) => {
                 (*current_slot == *previous_slot && *current_hash != *previous_hash)
                     || current_slot.0.saturating_sub(previous_slot.0) >= self.min_slot_delta
             }
@@ -923,11 +922,13 @@ impl VerifiedSyncServiceConfig {
     /// time-conversion parameters.
     pub(crate) fn build_plutus_evaluator(&self) -> crate::plutus_eval::CekPlutusEvaluator {
         match (&self.plutus_cost_model, self.system_start_unix_secs) {
-            (Some(cm), Some(start)) => crate::plutus_eval::CekPlutusEvaluator::with_time_conversion(
-                cm.clone(),
-                start,
-                self.slot_length_secs.unwrap_or(1.0),
-            ),
+            (Some(cm), Some(start)) => {
+                crate::plutus_eval::CekPlutusEvaluator::with_time_conversion(
+                    cm.clone(),
+                    start,
+                    self.slot_length_secs.unwrap_or(1.0),
+                )
+            }
             (Some(cm), None) => crate::plutus_eval::CekPlutusEvaluator::with_cost_model(cm.clone()),
             (None, Some(start)) => crate::plutus_eval::CekPlutusEvaluator {
                 system_start_unix_secs: Some(start),
@@ -1074,7 +1075,13 @@ pub(crate) fn compute_pool_performance(
         let numerator = blocks_produced.saturating_mul(total_stake);
         let denominator = pool_stake.saturating_mul(total_blocks);
         if denominator > 0 {
-            performance.insert(*pool_hash, UnitInterval { numerator, denominator });
+            performance.insert(
+                *pool_hash,
+                UnitInterval {
+                    numerator,
+                    denominator,
+                },
+            );
         }
     }
     performance
@@ -1117,11 +1124,8 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
             // expected_blocks ≈ σ_pool * epoch_size * f.  When the set
             // snapshot has stake data we use it; otherwise fall back to
             // the previous behavior of treating all pools as perfect.
-            let pool_performance = compute_pool_performance(
-                pool_block_counts,
-                &snapshots.set,
-                epoch_size,
-            );
+            let pool_performance =
+                compute_pool_performance(pool_block_counts, &snapshots.set, epoch_size);
             apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
@@ -1195,11 +1199,9 @@ where
     if progress.rollback_count > 0 {
         chain_db.truncate_ledger_checkpoints_after_point(&progress.current_point)?;
 
-        tracking.ledger_state = recover_ledger_state_chaindb(
-            chain_db,
-            tracking.base_ledger_state.clone(),
-        )?
-        .ledger_state;
+        tracking.ledger_state =
+            recover_ledger_state_chaindb(chain_db, tracking.base_ledger_state.clone())?
+                .ledger_state;
         // After rollback recovery, stake snapshots are stale — reset them
         // so epoch boundary processing restarts cleanly.
         if tracking.stake_snapshots.is_some() {
@@ -1252,24 +1254,28 @@ where
                     policy.max_snapshots,
                 )?;
                 tracking.last_persisted_point = current_point;
-                Ok((LedgerCheckpointUpdateOutcome::Persisted {
-                    slot,
-                    retained_snapshots: retention.retained_snapshots,
-                    pruned_snapshots: retention.pruned_snapshots,
-                    rollback_count: progress.rollback_count,
-                }, epoch_events))
+                Ok((
+                    LedgerCheckpointUpdateOutcome::Persisted {
+                        slot,
+                        retained_snapshots: retention.retained_snapshots,
+                        pruned_snapshots: retention.pruned_snapshots,
+                        rollback_count: progress.rollback_count,
+                    },
+                    epoch_events,
+                ))
             } else {
                 let since_last_slot_delta = match tracking.last_persisted_point {
-                    Point::BlockPoint(previous_slot, _) => {
-                        slot.0.saturating_sub(previous_slot.0)
-                    }
+                    Point::BlockPoint(previous_slot, _) => slot.0.saturating_sub(previous_slot.0),
                     Point::Origin => slot.0,
                 };
-                Ok((LedgerCheckpointUpdateOutcome::Skipped {
-                    slot,
-                    rollback_count: progress.rollback_count,
-                    since_last_slot_delta,
-                }, epoch_events))
+                Ok((
+                    LedgerCheckpointUpdateOutcome::Skipped {
+                        slot,
+                        rollback_count: progress.rollback_count,
+                        since_last_slot_delta,
+                    },
+                    epoch_events,
+                ))
             }
         }
     }
@@ -1312,10 +1318,12 @@ where
     V: VolatileStore,
     L: LedgerStore,
 {
-    chain_db.recover_ledger_state(base_state).map_err(|error| match error {
-        StorageError::Recovery(message) => SyncError::Recovery(message),
-        other => SyncError::Storage(other),
-    })
+    chain_db
+        .recover_ledger_state(base_state)
+        .map_err(|error| match error {
+            StorageError::Recovery(message) => SyncError::Recovery(message),
+            other => SyncError::Storage(other),
+        })
 }
 /// Run a continuous verified sync loop with multi-era block decoding,
 /// header/body verification, and optional epoch nonce tracking.
@@ -1444,11 +1452,7 @@ where
     let mut total_stable = 0usize;
     let mut chain_state = config.security_param.map(ChainState::new);
     let mut ocert_counters = config.verification.ocert_counters.clone();
-    let mut checkpoint_tracking = default_checkpoint_tracking(
-        chain_db,
-        base_ledger_state,
-        config,
-    )?;
+    let mut checkpoint_tracking = default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
 
     // Enable epoch boundary processing when nonce config provides epoch size.
     if let Some(ref nonce_cfg) = config.nonce_config {
@@ -1571,11 +1575,13 @@ pub fn shelley_header_body_to_consensus(body: &ShelleyHeaderBody) -> ConsensusHe
 /// Returns `SyncError::LedgerDecode` if the KES signature bytes cannot be
 /// parsed at `SHELLEY_KES_DEPTH`.
 pub fn shelley_header_to_consensus(header: &ShelleyHeader) -> Result<ConsensusHeader, SyncError> {
-    let kes_sig = SumKesSignature::from_bytes(SHELLEY_KES_DEPTH, &header.signature)
-        .map_err(|_| SyncError::LedgerDecode(LedgerError::CborInvalidLength {
-            expected: SumKesSignature::expected_size(SHELLEY_KES_DEPTH),
-            actual: header.signature.len(),
-        }))?;
+    let kes_sig =
+        SumKesSignature::from_bytes(SHELLEY_KES_DEPTH, &header.signature).map_err(|_| {
+            SyncError::LedgerDecode(LedgerError::CborInvalidLength {
+                expected: SumKesSignature::expected_size(SHELLEY_KES_DEPTH),
+                actual: header.signature.len(),
+            })
+        })?;
 
     Ok(ConsensusHeader {
         body: shelley_header_body_to_consensus(&header.body),
@@ -1634,11 +1640,13 @@ pub fn praos_header_body_to_consensus(body: &PraosHeaderBody) -> ConsensusHeader
 /// Returns `SyncError::LedgerDecode` if the KES signature bytes cannot be
 /// parsed at `SHELLEY_KES_DEPTH`.
 pub fn praos_header_to_consensus(header: &PraosHeader) -> Result<ConsensusHeader, SyncError> {
-    let kes_sig = SumKesSignature::from_bytes(SHELLEY_KES_DEPTH, &header.signature)
-        .map_err(|_| SyncError::LedgerDecode(LedgerError::CborInvalidLength {
-            expected: SumKesSignature::expected_size(SHELLEY_KES_DEPTH),
-            actual: header.signature.len(),
-        }))?;
+    let kes_sig =
+        SumKesSignature::from_bytes(SHELLEY_KES_DEPTH, &header.signature).map_err(|_| {
+            SyncError::LedgerDecode(LedgerError::CborInvalidLength {
+                expected: SumKesSignature::expected_size(SHELLEY_KES_DEPTH),
+                actual: header.signature.len(),
+            })
+        })?;
 
     Ok(ConsensusHeader {
         body: praos_header_body_to_consensus(&header.body),
@@ -1704,9 +1712,7 @@ impl MultiEraBlock {
     /// Shelley through Conway blocks extract it from the typed header body.
     pub fn slot(&self) -> SlotNo {
         match self {
-            Self::Byron { block, .. } => {
-                SlotNo(block.absolute_slot(BYRON_SLOTS_PER_EPOCH))
-            }
+            Self::Byron { block, .. } => SlotNo(block.absolute_slot(BYRON_SLOTS_PER_EPOCH)),
             Self::Shelley(b) => SlotNo(b.header.body.slot),
             Self::Alonzo(b) => SlotNo(b.header.body.slot),
             Self::Babbage(b) => SlotNo(b.header.body.slot),
@@ -1881,8 +1887,8 @@ pub fn decode_multi_era_block(raw: &[u8]) -> Result<MultiEraBlock, SyncError> {
 pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlock>, SyncError> {
     raw_blocks
         .iter()
-    .map(|raw| decode_multi_era_block(raw))
-    .collect()
+        .map(|raw| decode_multi_era_block(raw))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -2231,8 +2237,7 @@ pub fn verify_block_vrf(
     // 2. For TPraos blocks, also verify the nonce VRF proof (upstream `vrfChecks`
     //    verifies both `bheaderEta` and `bheaderL`).
     if let Some(np) = nonce_proof {
-        verify_nonce_proof(&vk, slot, params.epoch_nonce, np)
-            .map_err(SyncError::Consensus)?;
+        verify_nonce_proof(&vk, slot, params.epoch_nonce, np).map_err(SyncError::Consensus)?;
     }
 
     Ok(leader_ok)
@@ -2383,17 +2388,14 @@ pub fn verify_block_vrf_with_stake(
     //   vrfHKStake = IndividualPoolStake.iPoolInfoVRF (from PoolDistr)
     //   when vrfHKStake /= vrfHKBlock → VRFKeyBadNonce / VRFKeyBadLeaderValue
     if let Some(vrf_vkey_bytes) = block_vrf_vkey(block) {
-        let vrf_hash_block =
-            yggdrasil_crypto::blake2b::hash_bytes_256(&vrf_vkey_bytes).0;
+        let vrf_hash_block = yggdrasil_crypto::blake2b::hash_bytes_256(&vrf_vkey_bytes).0;
         match stake_dist.pool_vrf_key_hash(&pool_hash) {
             Some(registered_vrf_hash) => {
                 if vrf_hash_block != *registered_vrf_hash {
-                    return Err(SyncError::Consensus(
-                        ConsensusError::VrfKeyMismatch {
-                            expected: *registered_vrf_hash,
-                            actual: vrf_hash_block,
-                        },
-                    ));
+                    return Err(SyncError::Consensus(ConsensusError::VrfKeyMismatch {
+                        expected: *registered_vrf_hash,
+                        actual: vrf_hash_block,
+                    }));
                 }
             }
             None => {
@@ -2441,22 +2443,46 @@ pub fn apply_nonce_evolution(
         MultiEraBlock::Shelley(s) => {
             let slot = SlotNo(s.header.body.slot);
             let prev_hash = s.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &s.header.body.nonce_vrf.output, prev_hash, config, NonceDerivation::TPraos);
+            state.apply_block(
+                slot,
+                &s.header.body.nonce_vrf.output,
+                prev_hash,
+                config,
+                NonceDerivation::TPraos,
+            );
         }
         MultiEraBlock::Alonzo(a) => {
             let slot = SlotNo(a.header.body.slot);
             let prev_hash = a.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &a.header.body.nonce_vrf.output, prev_hash, config, NonceDerivation::TPraos);
+            state.apply_block(
+                slot,
+                &a.header.body.nonce_vrf.output,
+                prev_hash,
+                config,
+                NonceDerivation::TPraos,
+            );
         }
         MultiEraBlock::Babbage(b) => {
             let slot = SlotNo(b.header.body.slot);
             let prev_hash = b.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &b.header.body.vrf_result.output, prev_hash, config, NonceDerivation::Praos);
+            state.apply_block(
+                slot,
+                &b.header.body.vrf_result.output,
+                prev_hash,
+                config,
+                NonceDerivation::Praos,
+            );
         }
         MultiEraBlock::Conway(c) => {
             let slot = SlotNo(c.header.body.slot);
             let prev_hash = c.header.body.prev_hash.map(HeaderHash);
-            state.apply_block(slot, &c.header.body.vrf_result.output, prev_hash, config, NonceDerivation::Praos);
+            state.apply_block(
+                slot,
+                &c.header.body.vrf_result.output,
+                prev_hash,
+                config,
+                NonceDerivation::Praos,
+            );
         }
         MultiEraBlock::Byron { .. } => {
             // Byron blocks have no VRF; skip nonce evolution.
@@ -2570,34 +2596,26 @@ pub fn verify_multi_era_block(
     }
 
     match block {
-        MultiEraBlock::Shelley(shelley) => {
-            verify_shelley_header(
-                &shelley.header,
-                config.slots_per_kes_period,
-                config.max_kes_evolutions,
-            )
-        }
-        MultiEraBlock::Alonzo(alonzo) => {
-            verify_shelley_header(
-                &alonzo.header,
-                config.slots_per_kes_period,
-                config.max_kes_evolutions,
-            )
-        }
-        MultiEraBlock::Babbage(babbage) => {
-            verify_praos_header(
-                &babbage.header,
-                config.slots_per_kes_period,
-                config.max_kes_evolutions,
-            )
-        }
-        MultiEraBlock::Conway(conway) => {
-            verify_praos_header(
-                &conway.header,
-                config.slots_per_kes_period,
-                config.max_kes_evolutions,
-            )
-        }
+        MultiEraBlock::Shelley(shelley) => verify_shelley_header(
+            &shelley.header,
+            config.slots_per_kes_period,
+            config.max_kes_evolutions,
+        ),
+        MultiEraBlock::Alonzo(alonzo) => verify_shelley_header(
+            &alonzo.header,
+            config.slots_per_kes_period,
+            config.max_kes_evolutions,
+        ),
+        MultiEraBlock::Babbage(babbage) => verify_praos_header(
+            &babbage.header,
+            config.slots_per_kes_period,
+            config.max_kes_evolutions,
+        ),
+        MultiEraBlock::Conway(conway) => verify_praos_header(
+            &conway.header,
+            config.slots_per_kes_period,
+            config.max_kes_evolutions,
+        ),
         MultiEraBlock::Byron { .. } => Ok(()),
     }
 }
@@ -2673,9 +2691,7 @@ fn compute_actual_body_size(raw_inner_block: &[u8]) -> Result<u32, SyncError> {
 /// Reference: hard-fork combinator era transitions in
 /// `Ouroboros.Consensus.Cardano.Block` — each era defines its protocol
 /// version range.
-pub fn validate_block_protocol_version(
-    block: &MultiEraBlock,
-) -> Result<(), SyncError> {
+pub fn validate_block_protocol_version(block: &MultiEraBlock) -> Result<(), SyncError> {
     validate_block_protocol_version_with_max(block, None)
 }
 
@@ -2708,7 +2724,6 @@ fn validate_protocol_version_for_era(
     minor: u64,
     max_major_protocol_version: Option<u64>,
 ) -> Result<(), SyncError> {
-
     if let Some(max) = max_major_protocol_version {
         if major > max {
             return Err(SyncError::ProtocolVersionTooHigh { major, max });
@@ -2920,7 +2935,9 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
     step: &MultiEraSyncStep,
 ) -> Result<(), SyncError> {
     match step {
-        MultiEraSyncStep::RollForward { blocks, raw_blocks, .. } => {
+        MultiEraSyncStep::RollForward {
+            blocks, raw_blocks, ..
+        } => {
             let raws = raw_blocks.as_deref();
             for (i, b) in blocks.iter().enumerate() {
                 let mut block = multi_era_block_to_block(b);
@@ -3024,8 +3041,7 @@ fn try_set_tentative_header(
     tentative_state: &Arc<RwLock<TentativeState>>,
     raw_header: &[u8],
 ) -> bool {
-    let Some((header_body, slot, hash)) = tentative_header_from_raw_header(raw_header)
-    else {
+    let Some((header_body, slot, hash)) = tentative_header_from_raw_header(raw_header) else {
         return false;
     };
 
@@ -3089,26 +3105,23 @@ pub(crate) async fn sync_batch_verified_with_tentative(
         let me_step = match next {
             TypedNextResponse::RollForward { header, tip }
             | TypedNextResponse::AwaitRollForward { header, tip } => {
-                let tentative_set = tentative_state
-                    .is_some_and(|state| try_set_tentative_header(state, &header));
+                let tentative_set =
+                    tentative_state.is_some_and(|state| try_set_tentative_header(state, &header));
 
-                let raw_and_decoded = match fetch_range_blocks_multi_era_raw_decoded(
-                    block_fetch,
-                    from_point,
-                    tip,
-                )
-                .await
-                {
-                    Ok(blocks) => blocks,
-                    Err(err) => {
-                        if tentative_set {
-                            if let Some(state) = tentative_state {
-                                clear_tentative_trap(state);
+                let raw_and_decoded =
+                    match fetch_range_blocks_multi_era_raw_decoded(block_fetch, from_point, tip)
+                        .await
+                    {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            if tentative_set {
+                                if let Some(state) = tentative_state {
+                                    clear_tentative_trap(state);
+                                }
                             }
+                            return Err(err);
                         }
-                        return Err(err);
-                    }
-                };
+                    };
 
                 if let Some(config) = verification {
                     if config.verify_body_hash {
@@ -3157,11 +3170,8 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                     if let Some(ref fc) = config.future_check {
                         for block in &decoded_blocks {
                             let block_slot = block.slot();
-                            match judge_header_slot(
-                                block_slot,
-                                fc.current_wall_slot,
-                                fc.clock_skew,
-                            ) {
+                            match judge_header_slot(block_slot, fc.current_wall_slot, fc.clock_skew)
+                            {
                                 FutureSlotJudgement::NotFuture
                                 | FutureSlotJudgement::NearFuture { .. } => {}
                                 FutureSlotJudgement::FarFuture { excess_slots } => {
@@ -3189,8 +3199,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 // `Ouroboros.Consensus.Protocol.Praos`.
                 if let Some(ref mut counters) = *ocert_counters {
                     for block in &decoded_blocks {
-                        if let Err(err) =
-                            validate_block_opcert_counter_permissive(block, counters)
+                        if let Err(err) = validate_block_opcert_counter_permissive(block, counters)
                         {
                             if tentative_set {
                                 if let Some(state) = tentative_state {
@@ -3396,16 +3405,10 @@ pub fn extract_consumed_inputs(block: &MultiEraBlock) -> Vec<ShelleyTxIn> {
 /// rolled-back transactions is handled separately.
 ///
 /// Returns the total number of entries evicted (confirmed + expired).
-pub fn evict_confirmed_from_mempool(
-    mempool: &mut Mempool,
-    step: &MultiEraSyncStep,
-) -> usize {
+pub fn evict_confirmed_from_mempool(mempool: &mut Mempool, step: &MultiEraSyncStep) -> usize {
     match step {
         MultiEraSyncStep::RollForward { blocks, tip, .. } => {
-            let confirmed_ids: Vec<TxId> = blocks
-                .iter()
-                .flat_map(extract_tx_ids)
-                .collect();
+            let confirmed_ids: Vec<TxId> = blocks.iter().flat_map(extract_tx_ids).collect();
             let removed = mempool.remove_confirmed(&confirmed_ids);
             let tip_slot = tip.slot().unwrap_or(SlotNo(0));
             let purged = mempool.purge_expired(tip_slot);
@@ -3425,10 +3428,7 @@ pub fn evict_confirmed_from_mempool(
 ///
 /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — post-rollback
 /// re-addition of rolled-back transactions.
-pub fn collect_rolled_back_tx_ids<V: VolatileStore>(
-    store: &V,
-    target: &Point,
-) -> Vec<TxId> {
+pub fn collect_rolled_back_tx_ids<V: VolatileStore>(store: &V, target: &Point) -> Vec<TxId> {
     store
         .suffix_after(target)
         .iter()
@@ -3439,11 +3439,10 @@ pub fn collect_rolled_back_tx_ids<V: VolatileStore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yggdrasil_ledger::{
-        PoolKeyHash, PoolParams, StakeCredential,
-        StakeSnapshot, UnitInterval, RewardAccount,
-    };
     use yggdrasil_consensus::EpochSize;
+    use yggdrasil_ledger::{
+        PoolKeyHash, PoolParams, RewardAccount, StakeCredential, StakeSnapshot, UnitInterval,
+    };
 
     fn pool_hash(seed: u8) -> PoolKeyHash {
         [seed; 28]
@@ -3464,7 +3463,10 @@ mod tests {
                 vrf_keyhash: [0u8; 32],
                 pledge: 0,
                 cost: 0,
-                margin: UnitInterval { numerator: 0, denominator: 1 },
+                margin: UnitInterval {
+                    numerator: 0,
+                    denominator: 1,
+                },
                 reward_account: RewardAccount {
                     network: 0,
                     credential: StakeCredential::AddrKeyHash([0u8; 28]),
@@ -3560,25 +3562,31 @@ mod tests {
     #[test]
     fn sync_error_peer_attributable_for_validation_failures() {
         assert!(SyncError::BlockBodyHashMismatch.is_peer_attributable());
-        assert!(SyncError::Consensus(
-            yggdrasil_consensus::ConsensusError::InvalidKesSignature
-        ).is_peer_attributable());
-        assert!(SyncError::LedgerDecode(
-            LedgerError::CborTrailingBytes(1)
-        ).is_peer_attributable());
-        assert!(SyncError::BlockFromFuture {
-            slot: 999,
-            excess_slots: 100,
-        }.is_peer_attributable());
+        assert!(
+            SyncError::Consensus(yggdrasil_consensus::ConsensusError::InvalidKesSignature)
+                .is_peer_attributable()
+        );
+        assert!(SyncError::LedgerDecode(LedgerError::CborTrailingBytes(1)).is_peer_attributable());
+        assert!(
+            SyncError::BlockFromFuture {
+                slot: 999,
+                excess_slots: 100,
+            }
+            .is_peer_attributable()
+        );
     }
 
     #[test]
     fn sync_error_not_peer_attributable_for_local_errors() {
         assert!(!SyncError::Recovery("test".to_owned()).is_peer_attributable());
-        assert!(!SyncError::Storage(StorageError::Serialization("test".to_owned())).is_peer_attributable());
-        assert!(!SyncError::KeepAlive(
-            yggdrasil_network::KeepAliveClientError::ConnectionClosed
-        ).is_peer_attributable());
+        assert!(
+            !SyncError::Storage(StorageError::Serialization("test".to_owned()))
+                .is_peer_attributable()
+        );
+        assert!(
+            !SyncError::KeepAlive(yggdrasil_network::KeepAliveClientError::ConnectionClosed)
+                .is_peer_attributable()
+        );
     }
 
     #[test]

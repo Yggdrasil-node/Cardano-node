@@ -1,45 +1,46 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::collections::BTreeMap;
 
 use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, bail};
 use serde::Serialize;
 use serde_json::json;
 
+use yggdrasil_consensus::{
+    ActiveSlotCoeff, ClockSkew, DiffusionPipeliningSupport, EpochSize, NonceEvolutionConfig,
+    NonceEvolutionState, OcertCounters, SecurityParam, TentativeState,
+};
+use yggdrasil_ledger::{
+    Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, SlotNo,
+    StakeCredential,
+};
+use yggdrasil_mempool::{SharedMempool, SharedTxState};
+use yggdrasil_network::{
+    ConnectionManagerState, GovernorState, GovernorTargets, HandshakeVersion, InboundGovernorState,
+    LedgerPeerSnapshot, LedgerStateJudgement, NodePeerSharing, PeerAccessPoint, PeerListener,
+    merge_ledger_peer_snapshots, resolve_peer_access_points,
+};
 use yggdrasil_node::config::{
-    NetworkPreset, NodeConfigFile, TraceNamespaceConfig, default_config,
-    load_peer_snapshot_file, load_topology_file, apply_topology_to_config,
+    NetworkPreset, NodeConfigFile, TraceNamespaceConfig, apply_topology_to_config, default_config,
+    load_peer_snapshot_file, load_topology_file,
 };
 use yggdrasil_node::genesis;
 use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
-    BlockProvider, ChainProvider,
-    FutureBlockCheckConfig,
-    LedgerCheckpointPolicy, NodeConfig, ResumedSyncServiceOutcome,
-    RuntimeGovernorConfig, VerificationConfig,
-    ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig,
-    SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer,
-    recover_ledger_state_chaindb,
-    run_block_producer_loop,
-    run_governor_loop,
-    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer,
-    seed_peer_registry,
-    run_inbound_accept_loop,
+    BlockProvider, ChainProvider, FutureBlockCheckConfig, LedgerCheckpointPolicy, NodeConfig,
+    ResumeReconnectingVerifiedSyncRequest, ResumedSyncServiceOutcome, RuntimeGovernorConfig,
+    SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer, VerificationConfig,
+    VerifiedSyncServiceConfig, recover_ledger_state_chaindb,
+    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer, run_block_producer_loop,
+    run_governor_loop, run_inbound_accept_loop, seed_peer_registry,
 };
-use yggdrasil_consensus::{ActiveSlotCoeff, ClockSkew, DiffusionPipeliningSupport, EpochSize, NonceEvolutionConfig, NonceEvolutionState, OcertCounters, SecurityParam, TentativeState};
-use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, SlotNo, StakeCredential};
-use yggdrasil_mempool::{SharedMempool, SharedTxState};
-use yggdrasil_network::{
-    ConnectionManagerState,
-    GovernorState, GovernorTargets,
-    HandshakeVersion, LedgerPeerSnapshot, LedgerStateJudgement, PeerAccessPoint,
-    InboundGovernorState,
-    NodePeerSharing, PeerListener, resolve_peer_access_points,
+use yggdrasil_storage::{
+    ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, LedgerStore,
+    VolatileStore,
 };
-use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, LedgerStore, VolatileStore};
 
 const CHECKPOINT_TRACE_NAMESPACE: &str = "Node.Recovery.Checkpoint";
 
@@ -285,8 +286,7 @@ struct StorageValidationReport {
 async fn run_query(socket_path: PathBuf, query: QueryCommand) -> Result<()> {
     use tokio::net::UnixStream;
     use yggdrasil_network::{
-        AcquireTarget, LocalStateQueryClient, MiniProtocolDir, MiniProtocolNum,
-        start_mux_unix,
+        AcquireTarget, LocalStateQueryClient, MiniProtocolDir, MiniProtocolNum, start_mux_unix,
     };
 
     let stream = UnixStream::connect(&socket_path)
@@ -371,7 +371,10 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
         QueryCommand::StakePools => {
             enc.array(1).unsigned(15u64);
         }
-        QueryCommand::DelegationsAndRewards { credential, is_key_hash } => {
+        QueryCommand::DelegationsAndRewards {
+            credential,
+            is_key_hash,
+        } => {
             let cred_bytes = hex::decode(credential.trim()).unwrap_or_default();
             enc.array(2).unsigned(16u64);
             // Encode as a single-element credential array: [[tag, hash]]
@@ -394,10 +397,7 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
 /// Decode a raw CBOR result from the node into a `serde_json::Value` suitable
 /// for pretty-printing.
 #[cfg(unix)]
-fn decode_ntc_result(
-    query: &QueryCommand,
-    result: &[u8],
-) -> Result<serde_json::Value> {
+fn decode_ntc_result(query: &QueryCommand, result: &[u8]) -> Result<serde_json::Value> {
     use yggdrasil_ledger::Decoder;
     let val = match query {
         QueryCommand::CurrentEra => {
@@ -478,8 +478,7 @@ fn decode_ntc_result(
 async fn run_submit_tx(socket_path: PathBuf, tx_bytes: Vec<u8>) -> Result<()> {
     use tokio::net::UnixStream;
     use yggdrasil_network::{
-        LocalTxSubmissionClient, MiniProtocolDir, MiniProtocolNum,
-        start_mux_unix,
+        LocalTxSubmissionClient, MiniProtocolDir, MiniProtocolNum, start_mux_unix,
     };
 
     let stream = UnixStream::connect(&socket_path)
@@ -521,9 +520,18 @@ fn main() -> Result<()> {
             println!("{json}");
             Ok(())
         }
-        Command::ValidateConfig { config, network, topology, database_path } => {
+        Command::ValidateConfig {
+            config,
+            network,
+            topology,
+            database_path,
+        } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
-            apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
+            apply_topology_override(
+                &mut file_cfg,
+                topology.as_deref(),
+                config_base_dir.as_deref(),
+            )?;
             if let Some(ref db_path) = database_path {
                 file_cfg.storage_dir = db_path.clone();
             }
@@ -532,9 +540,18 @@ fn main() -> Result<()> {
             println!("{json}");
             Ok(())
         }
-        Command::Status { config, network, topology, database_path } => {
+        Command::Status {
+            config,
+            network,
+            topology,
+            database_path,
+        } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
-            apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
+            apply_topology_override(
+                &mut file_cfg,
+                topology.as_deref(),
+                config_base_dir.as_deref(),
+            )?;
             if let Some(ref db_path) = database_path {
                 file_cfg.storage_dir = db_path.clone();
             }
@@ -567,7 +584,11 @@ fn main() -> Result<()> {
             shelley_operational_certificate_issuer_vkey,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
-            apply_topology_override(&mut file_cfg, topology.as_deref(), config_base_dir.as_deref())?;
+            apply_topology_override(
+                &mut file_cfg,
+                topology.as_deref(),
+                config_base_dir.as_deref(),
+            )?;
 
             // CLI --database-path overrides config file storage_dir.
             if let Some(ref db_path) = database_path {
@@ -637,10 +658,8 @@ fn main() -> Result<()> {
             // Load the slot length and system start from shelley genesis for the
             // block producer's slot clock and the blocks-from-the-future check.
             // Falls back to 1.0 s slot length when the genesis file is missing.
-            let shelley_genesis: Option<genesis::ShelleyGenesis> = file_cfg
-                .shelley_genesis_file
-                .as_deref()
-                .and_then(|path| {
+            let shelley_genesis: Option<genesis::ShelleyGenesis> =
+                file_cfg.shelley_genesis_file.as_deref().and_then(|path| {
                     let full_path = if let Some(base) = config_base_dir.as_deref() {
                         base.join(std::path::Path::new(path))
                     } else {
@@ -648,8 +667,7 @@ fn main() -> Result<()> {
                     };
                     genesis::load_shelley_genesis(&full_path).ok()
                 });
-            let genesis_slot_length: Option<f64> =
-                shelley_genesis.as_ref().map(|g| g.slot_length);
+            let genesis_slot_length: Option<f64> = shelley_genesis.as_ref().map(|g| g.slot_length);
             let genesis_system_start_unix_secs: Option<f64> = shelley_genesis
                 .as_ref()
                 .and_then(|g| g.system_start.as_deref())
@@ -696,10 +714,10 @@ fn main() -> Result<()> {
             };
 
             let security_param = SecurityParam(file_cfg.security_param_k);
-            let checkpoint_interval_slots = checkpoint_interval_slots
-                .unwrap_or(file_cfg.checkpoint_interval_slots);
-            let max_ledger_snapshots = max_ledger_snapshots
-                .unwrap_or(file_cfg.max_ledger_snapshots);
+            let checkpoint_interval_slots =
+                checkpoint_interval_slots.unwrap_or(file_cfg.checkpoint_interval_slots);
+            let max_ledger_snapshots =
+                max_ledger_snapshots.unwrap_or(file_cfg.max_ledger_snapshots);
 
             let active_slot_coeff = ActiveSlotCoeff::new(file_cfg.active_slot_coeff).ok();
 
@@ -746,8 +764,10 @@ fn main() -> Result<()> {
             };
 
             let tracer = NodeTracer::from_config(&file_cfg);
-            let storage_dir = resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
-            let base_ledger_state = strict_base_ledger_state(&file_cfg, config_base_dir.as_deref())?;
+            let storage_dir =
+                resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
+            let base_ledger_state =
+                strict_base_ledger_state(&file_cfg, config_base_dir.as_deref())?;
             let chain_db = ChainDb::new(
                 FileImmutable::open(storage_dir.join("immutable"))?,
                 FileVolatile::open(storage_dir.join("volatile"))?,
@@ -770,10 +790,9 @@ fn main() -> Result<()> {
                 .as_ref()
                 .map(|recovery| ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state))
                 .unwrap_or_default();
-            let peer_snapshot_path = file_cfg
-                .peer_snapshot_file
-                .as_deref()
-                .map(|path| resolve_config_path(std::path::Path::new(path), config_base_dir.as_deref()));
+            let peer_snapshot_path = file_cfg.peer_snapshot_file.as_deref().map(|path| {
+                resolve_config_path(std::path::Path::new(path), config_base_dir.as_deref())
+            });
 
             if let Err(err) = &recovery {
                 tracer.trace_runtime(
@@ -808,14 +827,15 @@ fn main() -> Result<()> {
 
             let governor_config = RuntimeGovernorConfig::new(
                 std::time::Duration::from_secs(file_cfg.governor_tick_interval_secs),
-                file_cfg.keepalive_interval_secs.map(std::time::Duration::from_secs),
+                file_cfg
+                    .keepalive_interval_secs
+                    .map(std::time::Duration::from_secs),
                 GovernorTargets {
                     target_known: file_cfg.governor_target_known,
                     target_established: file_cfg.governor_target_established,
                     target_active: file_cfg.governor_target_active,
                     target_known_big_ledger: file_cfg.governor_target_known_big_ledger,
-                    target_established_big_ledger:
-                        file_cfg.governor_target_established_big_ledger,
+                    target_established_big_ledger: file_cfg.governor_target_established_big_ledger,
                     target_active_big_ledger: file_cfg.governor_target_active_big_ledger,
                     ..Default::default()
                 },
@@ -830,12 +850,16 @@ fn main() -> Result<()> {
             let has_any_block_producer_path = file_cfg.shelley_kes_key.is_some()
                 || file_cfg.shelley_vrf_key.is_some()
                 || file_cfg.shelley_operational_certificate.is_some()
-                || file_cfg.shelley_operational_certificate_issuer_vkey.is_some();
+                || file_cfg
+                    .shelley_operational_certificate_issuer_vkey
+                    .is_some();
 
             let has_all_block_producer_paths = file_cfg.shelley_kes_key.is_some()
                 && file_cfg.shelley_vrf_key.is_some()
                 && file_cfg.shelley_operational_certificate.is_some()
-                && file_cfg.shelley_operational_certificate_issuer_vkey.is_some();
+                && file_cfg
+                    .shelley_operational_certificate_issuer_vkey
+                    .is_some();
 
             if has_any_block_producer_path && !has_all_block_producer_paths {
                 bail!(
@@ -918,7 +942,11 @@ fn main() -> Result<()> {
             rt.block_on(run_query(socket_path, query))
         }
         #[cfg(unix)]
-        Command::SubmitTx { socket_path, tx_file, tx_hex } => {
+        Command::SubmitTx {
+            socket_path,
+            tx_file,
+            tx_hex,
+        } => {
             let tx_bytes = match (tx_file, tx_hex) {
                 (Some(path), _) => std::fs::read(&path)
                     .wrap_err_with(|| format!("failed to read tx file {}", path.display()))?,
@@ -978,11 +1006,10 @@ fn strict_base_ledger_state(
         // Compute stability_window = 3k/f from genesis config so the
         // ledger PPUP rule can enforce the exact upstream slot-of-no-return.
         if file_cfg.active_slot_coeff > 0.0 {
-            let sw = (3.0 * file_cfg.security_param_k as f64
-                / file_cfg.active_slot_coeff) as u64;
+            let sw = (3.0 * file_cfg.security_param_k as f64 / file_cfg.active_slot_coeff) as u64;
             state.set_stability_window(sw);
         }
-        }
+    }
     if let Some(params) = file_cfg
         .load_genesis_protocol_params(config_base_dir)
         .wrap_err("failed to load genesis protocol parameters")?
@@ -1061,9 +1088,10 @@ fn apply_topology_override(
     let topology_path = if let Some(path) = cli_topology {
         Some(path.to_path_buf())
     } else {
-        file_cfg.topology_file_path.as_deref().map(|s| {
-            resolve_config_path(std::path::Path::new(s), config_base_dir)
-        })
+        file_cfg
+            .topology_file_path
+            .as_deref()
+            .map(|s| resolve_config_path(std::path::Path::new(s), config_base_dir))
     };
 
     if let Some(path) = topology_path {
@@ -1168,16 +1196,19 @@ fn validate_config_report(
     {
         let base_ledger_state = best_effort_base_ledger_state(file_cfg, config_base_dir);
         let chain_db = ChainDb::new(
-            FileImmutable::open(&immutable_dir)
-                .wrap_err_with(|| format!("failed to open immutable store {}", immutable_dir.display()))?,
-            FileVolatile::open(&volatile_dir)
-                .wrap_err_with(|| format!("failed to open volatile store {}", volatile_dir.display()))?,
-            FileLedgerStore::open(&ledger_dir)
-                .wrap_err_with(|| format!("failed to open ledger store {}", ledger_dir.display()))?,
+            FileImmutable::open(&immutable_dir).wrap_err_with(|| {
+                format!("failed to open immutable store {}", immutable_dir.display())
+            })?,
+            FileVolatile::open(&volatile_dir).wrap_err_with(|| {
+                format!("failed to open volatile store {}", volatile_dir.display())
+            })?,
+            FileLedgerStore::open(&ledger_dir).wrap_err_with(|| {
+                format!("failed to open ledger store {}", ledger_dir.display())
+            })?,
         );
         let tip = chain_db.recovery().tip;
-        let recovery = recover_ledger_state_chaindb(&chain_db, base_ledger_state)
-            .wrap_err_with(|| {
+        let recovery =
+            recover_ledger_state_chaindb(&chain_db, base_ledger_state).wrap_err_with(|| {
                 format!(
                     "failed to recover ledger state from storage directory {}",
                     storage_dir.display()
@@ -1295,12 +1326,9 @@ fn status_report(
     }
 
     let chain_db = ChainDb::new(
-        FileImmutable::open(immutable_dir)
-            .wrap_err("failed to open immutable store")?,
-        FileVolatile::open(volatile_dir)
-            .wrap_err("failed to open volatile store")?,
-        FileLedgerStore::open(ledger_dir)
-            .wrap_err("failed to open ledger store")?,
+        FileImmutable::open(immutable_dir).wrap_err("failed to open immutable store")?,
+        FileVolatile::open(volatile_dir).wrap_err("failed to open volatile store")?,
+        FileLedgerStore::open(ledger_dir).wrap_err("failed to open ledger store")?,
     );
 
     let chain_tip = chain_db.tip();
@@ -1347,14 +1375,14 @@ fn status_report(
             .and_then(|r| r.checkpoint_slot.map(|s| s.0)),
         ledger_checkpoint_count,
         replayed_volatile_blocks: recovery.as_ref().ok().map(|r| r.replayed_volatile_blocks),
-        recovered_ledger_point: recovery
-            .as_ref()
-            .ok()
-            .map(|r| format!("{:?}", r.point)),
+        recovered_ledger_point: recovery.as_ref().ok().map(|r| format!("{:?}", r.point)),
     })
 }
 
-fn resolve_storage_dir(storage_dir: &std::path::Path, config_base_dir: Option<&std::path::Path>) -> PathBuf {
+fn resolve_storage_dir(
+    storage_dir: &std::path::Path,
+    config_base_dir: Option<&std::path::Path>,
+) -> PathBuf {
     if storage_dir.is_absolute() {
         storage_dir.to_path_buf()
     } else if let Some(base_dir) = config_base_dir {
@@ -1364,7 +1392,10 @@ fn resolve_storage_dir(storage_dir: &std::path::Path, config_base_dir: Option<&s
     }
 }
 
-fn resolve_config_path(path: &std::path::Path, config_base_dir: Option<&std::path::Path>) -> PathBuf {
+fn resolve_config_path(
+    path: &std::path::Path,
+    config_base_dir: Option<&std::path::Path>,
+) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else if let Some(base_dir) = config_base_dir {
@@ -1402,27 +1433,12 @@ fn extend_unique_ledger_peers(
     }
 }
 
-fn merge_ledger_peer_snapshots(
-    ledger_snapshot: &LedgerPeerSnapshot,
-    snapshot_file: Option<LedgerPeerSnapshot>,
-) -> LedgerPeerSnapshot {
-    let mut merged_ledger_peers = ledger_snapshot.ledger_peers.clone();
-    let mut merged_big_ledger_peers = ledger_snapshot.big_ledger_peers.clone();
-
-    if let Some(snapshot_file) = snapshot_file {
-        extend_unique_peers(&mut merged_ledger_peers, snapshot_file.ledger_peers);
-        extend_unique_peers(
-            &mut merged_big_ledger_peers,
-            snapshot_file.big_ledger_peers,
-        );
-    }
-
-    LedgerPeerSnapshot::new(merged_ledger_peers, merged_big_ledger_peers)
-}
-
 fn ledger_peer_snapshot_from_ledger_state(ledger_state: &LedgerState) -> LedgerPeerSnapshot {
     let mut ledger_peers = Vec::new();
-    extend_unique_ledger_peers(&mut ledger_peers, ledger_state.pool_state().relay_access_points());
+    extend_unique_ledger_peers(
+        &mut ledger_peers,
+        ledger_state.pool_state().relay_access_points(),
+    );
     LedgerPeerSnapshot::new(ledger_peers, Vec::new())
 }
 
@@ -1442,7 +1458,8 @@ fn configured_fallback_peers(
     let mut snapshot_file = None;
 
     if let Some(peer_snapshot_file) = file_cfg.peer_snapshot_file.as_deref() {
-        let peer_snapshot_path = resolve_config_path(std::path::Path::new(peer_snapshot_file), config_base_dir);
+        let peer_snapshot_path =
+            resolve_config_path(std::path::Path::new(peer_snapshot_file), config_base_dir);
         snapshot_path = Some(peer_snapshot_path.clone());
 
         match load_peer_snapshot_file(&peer_snapshot_path) {
@@ -1467,7 +1484,10 @@ fn configured_fallback_peers(
                     trace_fields([
                         ("decision", json!(format!("{decision:?}"))),
                         ("latestSlot", json!(latest_slot)),
-                        ("snapshotPath", json!(peer_snapshot_path.display().to_string())),
+                        (
+                            "snapshotPath",
+                            json!(peer_snapshot_path.display().to_string()),
+                        ),
                         ("error", json!(err.to_string())),
                     ]),
                 );
@@ -1476,7 +1496,8 @@ fn configured_fallback_peers(
     }
 
     let combined_snapshot = merge_ledger_peer_snapshots(ledger_snapshot, snapshot_file);
-    let freshness = file_cfg.peer_snapshot_freshness(snapshot_slot, latest_slot, snapshot_available);
+    let freshness =
+        file_cfg.peer_snapshot_freshness(snapshot_slot, latest_slot, snapshot_available);
     let (decision, eligible_peers) = file_cfg.eligible_ledger_fallback_peers(
         &combined_snapshot,
         latest_slot,
@@ -1498,8 +1519,14 @@ fn configured_fallback_peers(
                 "snapshotPath",
                 json!(snapshot_path.map(|path| path.display().to_string())),
             ),
-            ("ledgerPeerCount", json!(combined_snapshot.ledger_peers.len())),
-            ("bigLedgerPeerCount", json!(combined_snapshot.big_ledger_peers.len())),
+            (
+                "ledgerPeerCount",
+                json!(combined_snapshot.ledger_peers.len()),
+            ),
+            (
+                "bigLedgerPeerCount",
+                json!(combined_snapshot.big_ledger_peers.len()),
+            ),
             ("eligiblePeerCount", json!(snapshot_peer_count)),
         ]),
     );
@@ -1511,12 +1538,10 @@ fn checkpoint_trace_config_mut(file_cfg: &mut NodeConfigFile) -> &mut TraceNames
     file_cfg
         .trace_options
         .entry(CHECKPOINT_TRACE_NAMESPACE.to_owned())
-    .or_default()
+        .or_default()
 }
 
-async fn run_node(
-    request: RunNodeRequest,
-) -> Result<()> {
+async fn run_node(request: RunNodeRequest) -> Result<()> {
     let RunNodeRequest {
         node_config,
         bootstrap_peers,
@@ -1543,41 +1568,50 @@ async fn run_node(
             "Notice",
             "block producer credentials loaded",
             trace_fields([
-                ("vrfVerificationKeyHash", json!(hex::encode(yggdrasil_crypto::blake2b::hash_bytes_256(&bp.vrf_verification_key.0).0))),
-                ("opcertSequenceNumber", json!(bp.operational_cert.sequence_number)),
+                (
+                    "vrfVerificationKeyHash",
+                    json!(hex::encode(
+                        yggdrasil_crypto::blake2b::hash_bytes_256(&bp.vrf_verification_key.0).0
+                    )),
+                ),
+                (
+                    "opcertSequenceNumber",
+                    json!(bp.operational_cert.sequence_number),
+                ),
                 ("kesPeriod", json!(bp.kes_current_period)),
             ]),
         );
     }
 
     let block_producer_runtime_config = block_producer_credentials.as_ref().and_then(|_| {
-        sync_config.active_slot_coeff.clone().map(|active_slot_coeff| {
-            let protocol_version = forged_header_protocol_version(
-                &base_ledger_state,
-                max_major_protocol_version,
-            );
-            let (max_block_body_size, protocol_version) = base_ledger_state
-                .protocol_params()
-                .map(|params| {
-                    (
-                        params.max_block_body_size,
-                        params.protocol_version.unwrap_or(protocol_version),
-                    )
-                })
-                .unwrap_or((65_536, protocol_version));
+        sync_config
+            .active_slot_coeff
+            .clone()
+            .map(|active_slot_coeff| {
+                let protocol_version =
+                    forged_header_protocol_version(&base_ledger_state, max_major_protocol_version);
+                let (max_block_body_size, protocol_version) = base_ledger_state
+                    .protocol_params()
+                    .map(|params| {
+                        (
+                            params.max_block_body_size,
+                            params.protocol_version.unwrap_or(protocol_version),
+                        )
+                    })
+                    .unwrap_or((65_536, protocol_version));
 
-            yggdrasil_node::RuntimeBlockProducerConfig {
-                slot_length: std::time::Duration::from_secs_f64(
-                    sync_config.slot_length_secs.unwrap_or(1.0),
-                ),
-                active_slot_coeff,
-                sigma_num: 1,
-                sigma_den: 1,
-                epoch_nonce: Nonce::Neutral,
-                max_block_body_size,
-                protocol_version,
-            }
-        })
+                yggdrasil_node::RuntimeBlockProducerConfig {
+                    slot_length: std::time::Duration::from_secs_f64(
+                        sync_config.slot_length_secs.unwrap_or(1.0),
+                    ),
+                    active_slot_coeff,
+                    sigma_num: 1,
+                    sigma_den: 1,
+                    epoch_nonce: Nonce::Neutral,
+                    max_block_body_size,
+                    protocol_version,
+                }
+            })
     });
 
     if block_producer_credentials.is_some() && block_producer_runtime_config.is_none() {
@@ -1616,7 +1650,16 @@ async fn run_node(
             ("bootstrapPeerCount", json!(1 + bootstrap_peers.len())),
             ("networkMagic", json!(node_config.network_magic)),
             ("storageDir", json!(storage_dir.display().to_string())),
-            ("protocolVersions", json!(node_config.protocol_versions.iter().map(|v| v.0).collect::<Vec<_>>())),
+            (
+                "protocolVersions",
+                json!(
+                    node_config
+                        .protocol_versions
+                        .iter()
+                        .map(|v| v.0)
+                        .collect::<Vec<_>>()
+                ),
+            ),
         ]),
     );
 
@@ -1686,7 +1729,8 @@ async fn run_node(
                 governor_tracer,
                 Some(governor_metrics),
                 shutdown,
-            ).await;
+            )
+            .await;
         })
     };
 
@@ -1705,26 +1749,25 @@ async fn run_node(
     // sync pipeline sets a tentative header after header validation but
     // before body validation completes; the ChainSync server may serve it
     // to downstream peers immediately.
-    let shared_tentative_state: Option<Arc<RwLock<TentativeState>>> =
-        match diffusion_pipelining {
-            DiffusionPipeliningSupport::DiffusionPipeliningOff => None,
-            DiffusionPipeliningSupport::DiffusionPipeliningOn => {
-                Some(Arc::new(RwLock::new(TentativeState::initial())))
-            }
-        };
+    let shared_tentative_state: Option<Arc<RwLock<TentativeState>>> = match diffusion_pipelining {
+        DiffusionPipeliningSupport::DiffusionPipeliningOff => None,
+        DiffusionPipeliningSupport::DiffusionPipeliningOn => {
+            Some(Arc::new(RwLock::new(TentativeState::initial())))
+        }
+    };
 
     // Shared block-producer state updated by the sync pipeline so the
     // producer loop reads live epoch nonce and stake sigma values.
-    let shared_bp_state = std::sync::Arc::new(
-        std::sync::RwLock::new(yggdrasil_node::SharedBlockProducerState::default()),
-    );
+    let shared_bp_state = std::sync::Arc::new(std::sync::RwLock::new(
+        yggdrasil_node::SharedBlockProducerState::default(),
+    ));
 
     // Compute issuer pool-key-hash (Blake2b-224) before credentials are
     // consumed by the block-producer task.  Used by the sync pipeline to
     // push stake sigma updates to the shared producer state.
-    let bp_pool_key_hash: Option<[u8; 28]> = block_producer_credentials.as_ref().map(|bp| {
-        yggdrasil_crypto::blake2b::hash_bytes_224(&bp.issuer_vkey.0).0
-    });
+    let bp_pool_key_hash: Option<[u8; 28]> = block_producer_credentials
+        .as_ref()
+        .map(|bp| yggdrasil_crypto::blake2b::hash_bytes_224(&bp.issuer_vkey.0).0);
 
     let block_producer_task =
         if let (Some(block_producer_credentials), Some(block_producer_config)) =
@@ -1858,7 +1901,9 @@ async fn run_node(
         let ntc_path = ntc_path.clone();
         let ntc_tracer = tracer.clone();
         let mut ntc_shutdown = shutdown_rx.clone();
-        let ntc_evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>> = None;
+        let ntc_evaluator: Option<
+            Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>,
+        > = None;
         let ntc_network_magic = node_config.network_magic;
 
         tracer.trace_runtime(
@@ -1929,47 +1974,49 @@ async fn run_node(
     );
 
     let mut sync_shutdown = shutdown_rx.clone();
-    let outcome: ResumedSyncServiceOutcome = match resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(
-        &chain_db,
-        request,
-        &tracer,
-        async move {
-            if *sync_shutdown.borrow() {
-                return;
-            }
-            while sync_shutdown.changed().await.is_ok() {
+    let outcome: ResumedSyncServiceOutcome =
+        match resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(
+            &chain_db,
+            request,
+            &tracer,
+            async move {
                 if *sync_shutdown.borrow() {
-                    break;
+                    return;
                 }
+                while sync_shutdown.changed().await.is_ok() {
+                    if *sync_shutdown.borrow() {
+                        break;
+                    }
+                }
+            },
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                let _ = shutdown_tx.send(true);
+                let _ = governor_task.await;
+                if let Some(handle) = block_producer_task {
+                    let _ = handle.await;
+                }
+                if let Some(handle) = inbound_task {
+                    let _ = handle.await;
+                }
+                if let Some(handle) = ntc_task {
+                    let _ = handle.await;
+                }
+                tracer.trace_runtime(
+                    "Node.Sync",
+                    "Error",
+                    "node run failed",
+                    trace_fields([
+                        ("error", json!(err.to_string())),
+                        ("primaryPeer", json!(node_config.peer_addr.to_string())),
+                    ]),
+                );
+                return Err(err.into());
             }
-        },
-    )
-    .await {
-        Ok(outcome) => outcome,
-        Err(err) => {
-            let _ = shutdown_tx.send(true);
-            let _ = governor_task.await;
-            if let Some(handle) = block_producer_task {
-                let _ = handle.await;
-            }
-            if let Some(handle) = inbound_task {
-                let _ = handle.await;
-            }
-            if let Some(handle) = ntc_task {
-                let _ = handle.await;
-            }
-            tracer.trace_runtime(
-                "Node.Sync",
-                "Error",
-                "node run failed",
-                trace_fields([
-                    ("error", json!(err.to_string())),
-                    ("primaryPeer", json!(node_config.peer_addr.to_string())),
-                ]),
-            );
-            return Err(err.into());
-        }
-    };
+        };
 
     let _ = shutdown_tx.send(true);
     let _ = governor_task.await;
@@ -1988,16 +2035,36 @@ async fn run_node(
         "Notice",
         "sync complete",
         trace_fields([
-            ("checkpointSlot", json!(outcome.recovery.checkpoint_slot.map(|slot| slot.0))),
-            ("replayedVolatileBlocks", json!(outcome.recovery.replayed_volatile_blocks)),
-            ("recoveredPoint", json!(format!("{:?}", outcome.recovery.point))),
+            (
+                "checkpointSlot",
+                json!(outcome.recovery.checkpoint_slot.map(|slot| slot.0)),
+            ),
+            (
+                "replayedVolatileBlocks",
+                json!(outcome.recovery.replayed_volatile_blocks),
+            ),
+            (
+                "recoveredPoint",
+                json!(format!("{:?}", outcome.recovery.point)),
+            ),
             ("totalBlocks", json!(outcome.sync.total_blocks)),
             ("totalRollbacks", json!(outcome.sync.total_rollbacks)),
             ("batchesCompleted", json!(outcome.sync.batches_completed)),
             ("stableBlockCount", json!(outcome.sync.stable_block_count)),
             ("reconnectCount", json!(outcome.sync.reconnect_count)),
-            ("lastConnectedPeer", json!(outcome.sync.last_connected_peer_addr.map(|addr| addr.to_string()))),
-            ("finalPoint", json!(format!("{:?}", outcome.sync.final_point))),
+            (
+                "lastConnectedPeer",
+                json!(
+                    outcome
+                        .sync
+                        .last_connected_peer_addr
+                        .map(|addr| addr.to_string())
+                ),
+            ),
+            (
+                "finalPoint",
+                json!(format!("{:?}", outcome.sync.final_point)),
+            ),
         ]),
     );
 
@@ -2061,10 +2128,7 @@ struct RunNodeRequest {
 /// check on `GET /health`.
 ///
 /// Uses raw tokio TCP — no HTTP framework dependency required.
-async fn serve_metrics(
-    port: u16,
-    metrics: std::sync::Arc<NodeMetrics>,
-) -> std::io::Result<()> {
+async fn serve_metrics(port: u16, metrics: std::sync::Arc<NodeMetrics>) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -2094,7 +2158,11 @@ async fn serve_metrics(
                 let snap = metrics.snapshot();
                 match serde_json::to_string_pretty(&snap) {
                     Ok(json) => ("200 OK", "application/json", json),
-                    Err(_) => ("500 Internal Server Error", "text/plain", "serialization error".to_owned()),
+                    Err(_) => (
+                        "500 Internal Server Error",
+                        "text/plain",
+                        "serialization error".to_owned(),
+                    ),
                 }
             } else if request.starts_with("GET /metrics") {
                 let body = metrics.snapshot().to_prometheus_text();
@@ -2116,16 +2184,14 @@ async fn serve_metrics(
 mod tests {
     use super::{
         CHECKPOINT_TRACE_NAMESPACE, apply_topology_override, checkpoint_trace_config_mut,
-        configured_fallback_peers, ledger_peer_snapshot_from_ledger_state,
-        forged_header_protocol_version, load_effective_config,
-        preset_config_base_dir, status_report,
-        validate_config_report,
+        configured_fallback_peers, forged_header_protocol_version,
+        ledger_peer_snapshot_from_ledger_state, load_effective_config, preset_config_base_dir,
+        status_report, validate_config_report,
     };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use yggdrasil_ledger::{
-        Era, LedgerState, PoolParams, Relay, RewardAccount, StakeCredential,
-        UnitInterval,
+        Era, LedgerState, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
     };
     use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
     use yggdrasil_node::config::default_config;
@@ -2168,10 +2234,7 @@ mod tests {
         let mut cfg = default_config();
         let override_cfg = checkpoint_trace_config_mut(&mut cfg);
         override_cfg.severity = Some("Silence".to_owned());
-        override_cfg.backends = vec![
-            "Stdout MachineFormat".to_owned(),
-            "Forwarder".to_owned(),
-        ];
+        override_cfg.backends = vec!["Stdout MachineFormat".to_owned(), "Forwarder".to_owned()];
 
         let checkpoint_cfg = cfg
             .trace_options
@@ -2180,10 +2243,7 @@ mod tests {
         assert_eq!(checkpoint_cfg.severity.as_deref(), Some("Silence"));
         assert_eq!(
             checkpoint_cfg.backends,
-            vec![
-                "Stdout MachineFormat".to_owned(),
-                "Forwarder".to_owned(),
-            ]
+            vec!["Stdout MachineFormat".to_owned(), "Forwarder".to_owned(),]
         );
     }
 
@@ -2204,17 +2264,18 @@ mod tests {
                 credential: StakeCredential::AddrKeyHash([3; 28]),
             },
             pool_owners: vec![[4; 28]],
-            relays: vec![Relay::SingleHostAddr(Some(3001), Some([127, 0, 0, 9]), None)],
+            relays: vec![Relay::SingleHostAddr(
+                Some(3001),
+                Some([127, 0, 0, 9]),
+                None,
+            )],
             pool_metadata: None,
         });
 
         let snapshot = ledger_peer_snapshot_from_ledger_state(&ledger_state);
         assert_eq!(
             snapshot,
-            LedgerPeerSnapshot::new(
-                ["127.0.0.9:3001".parse().expect("peer")],
-                Vec::new(),
-            )
+            LedgerPeerSnapshot::new(["127.0.0.9:3001".parse().expect("peer")], Vec::new(),)
         );
     }
 
@@ -2224,10 +2285,8 @@ mod tests {
         cfg.use_ledger_after_slot = Some(0);
         cfg.peer_snapshot_file = None;
         let tracer = NodeTracer::from_config(&cfg);
-        let ledger_snapshot = LedgerPeerSnapshot::new(
-            ["127.0.0.9:3001".parse().expect("peer")],
-            Vec::new(),
-        );
+        let ledger_snapshot =
+            LedgerPeerSnapshot::new(["127.0.0.9:3001".parse().expect("peer")], Vec::new());
 
         let fallback_peers = configured_fallback_peers(
             &cfg,
@@ -2272,10 +2331,8 @@ mod tests {
         cfg.use_ledger_after_slot = Some(0);
         cfg.peer_snapshot_file = Some("peer-snapshot.json".to_owned());
         let tracer = NodeTracer::from_config(&cfg);
-        let ledger_snapshot = LedgerPeerSnapshot::new(
-            ["127.0.0.9:3001".parse().expect("peer")],
-            Vec::new(),
-        );
+        let ledger_snapshot =
+            LedgerPeerSnapshot::new(["127.0.0.9:3001".parse().expect("peer")], Vec::new());
 
         let fallback_peers = configured_fallback_peers(
             &cfg,
@@ -2309,10 +2366,12 @@ mod tests {
         let report = validate_config_report(&cfg, Some(&dir)).expect("validation report");
 
         assert_eq!(report.storage.status, "not-initialized");
-        assert!(report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("storage directories are not initialized")));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("storage directories are not initialized"))
+        );
 
         std::fs::remove_dir_all(dir).ok();
     }
@@ -2376,7 +2435,9 @@ mod tests {
         assert_eq!(cfg.network_magic, 2);
         assert_eq!(
             config_base_dir,
-            Some(preset_config_base_dir(yggdrasil_node::config::NetworkPreset::Preview))
+            Some(preset_config_base_dir(
+                yggdrasil_node::config::NetworkPreset::Preview
+            ))
         );
     }
 
@@ -2429,15 +2490,16 @@ mod tests {
             load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
                 .expect("preset config");
 
-        let report = validate_config_report(&cfg, config_base_dir.as_deref())
-            .expect("validation report");
+        let report =
+            validate_config_report(&cfg, config_base_dir.as_deref()).expect("validation report");
 
         assert_eq!(report.peer_snapshot.status, "unavailable");
         assert!(report.peer_snapshot.error.is_some());
-        assert!(report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("configured peer snapshot file could not be loaded")));
+        assert!(
+            report.warnings.iter().any(
+                |warning| warning.contains("configured peer snapshot file could not be loaded")
+            )
+        );
     }
 
     #[test]
@@ -2507,8 +2569,14 @@ mod tests {
         let json = serde_json::to_string_pretty(&report).expect("serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
 
-        assert_eq!(parsed["network_magic"], serde_json::Value::from(764_824_073u64));
-        assert_eq!(parsed["storage_initialized"], serde_json::Value::Bool(false));
+        assert_eq!(
+            parsed["network_magic"],
+            serde_json::Value::from(764_824_073u64)
+        );
+        assert_eq!(
+            parsed["storage_initialized"],
+            serde_json::Value::Bool(false)
+        );
 
         std::fs::remove_dir_all(dir).ok();
     }
@@ -2641,8 +2709,7 @@ mod tests {
         cfg.topology_file_path = None;
         let original_ledger_slot = cfg.use_ledger_after_slot;
 
-        apply_topology_override(&mut cfg, None, None)
-            .expect("apply topology no-op");
+        apply_topology_override(&mut cfg, None, None).expect("apply topology no-op");
 
         assert_eq!(cfg.use_ledger_after_slot, original_ledger_slot);
     }

@@ -139,14 +139,18 @@ impl KesSigningKey {
     /// Derives the verification key for this single-period KES key.
     pub fn verification_key(&self) -> Result<KesVerificationKey, CryptoError> {
         Ok(KesVerificationKey(
-            SigningKey::from_bytes(self.0).verification_key()?.to_bytes(),
+            SigningKey::from_bytes(self.0)
+                .verification_key()?
+                .to_bytes(),
         ))
     }
 
     /// Signs a message for period `0`.
     pub fn sign(&self, period: KesPeriod, message: &[u8]) -> Result<KesSignature, CryptoError> {
         ensure_supported_period(period)?;
-        Ok(KesSignature(SigningKey::from_bytes(self.0).sign(message)?.to_bytes()))
+        Ok(KesSignature(
+            SigningKey::from_bytes(self.0).sign(message)?.to_bytes(),
+        ))
     }
 
     /// Signs a message using the compact single-period KES encoding.
@@ -254,10 +258,7 @@ impl SimpleKesSigningKey {
         }
 
         Ok(Self(
-            seeds
-                .into_iter()
-                .map(KesSigningKey::from_bytes)
-                .collect(),
+            seeds.into_iter().map(KesSigningKey::from_bytes).collect(),
         ))
     }
 
@@ -283,10 +284,7 @@ impl SimpleKesSigningKey {
 
     /// Returns concatenated raw seed bytes in period order.
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.0
-            .iter()
-            .flat_map(|key| key.to_bytes())
-            .collect()
+        self.0.iter().flat_map(|key| key.to_bytes()).collect()
     }
 
     /// Returns the number of supported periods.
@@ -377,10 +375,7 @@ impl SimpleKesVerificationKey {
 
     /// Returns concatenated raw verification key bytes in period order.
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.0
-            .iter()
-            .flat_map(|key| key.to_bytes())
-            .collect()
+        self.0.iter().flat_map(|key| key.to_bytes()).collect()
     }
 
     /// Returns the number of supported periods.
@@ -447,11 +442,9 @@ impl SimpleKesSignature {
 
     /// Returns the embedded signing period.
     pub fn period(&self) -> KesPeriod {
-        KesPeriod(u32::from_be_bytes(
-            self.0[..4]
-                .try_into()
-                .expect("SimpleKES signature prefix should match fixed period length"),
-        ))
+        KesPeriod(u32::from_be_bytes(self.0[..4].try_into().expect(
+            "SimpleKES signature prefix should match fixed period length",
+        )))
     }
 
     /// Returns the embedded Ed25519-like signature bytes.
@@ -477,11 +470,9 @@ impl SimpleCompactKesSignature {
 
     /// Returns the embedded signing period.
     pub fn period(&self) -> KesPeriod {
-        KesPeriod(u32::from_be_bytes(
-            self.0[..4]
-                .try_into()
-                .expect("SimpleCompactKES signature prefix should match fixed period length"),
-        ))
+        KesPeriod(u32::from_be_bytes(self.0[..4].try_into().expect(
+            "SimpleCompactKES signature prefix should match fixed period length",
+        )))
     }
 
     /// Returns the embedded Ed25519-like signature bytes.
@@ -618,7 +609,9 @@ mod tests {
     #[test]
     fn kes_sign_wrong_key_fails() {
         let sk1 = KesSigningKey::from_bytes([1u8; 32]);
-        let vk2 = KesSigningKey::from_bytes([2u8; 32]).verification_key().unwrap();
+        let vk2 = KesSigningKey::from_bytes([2u8; 32])
+            .verification_key()
+            .unwrap();
         let sig = sk1.sign(KesPeriod(0), b"msg").unwrap();
         assert!(vk2.verify(KesPeriod(0), b"msg", &sig).is_err());
     }
@@ -646,7 +639,9 @@ mod tests {
     #[test]
     fn compact_kes_rejects_vk_mismatch() {
         let sk1 = KesSigningKey::from_bytes([1u8; 32]);
-        let vk2 = KesSigningKey::from_bytes([2u8; 32]).verification_key().unwrap();
+        let vk2 = KesSigningKey::from_bytes([2u8; 32])
+            .verification_key()
+            .unwrap();
         let csig = sk1.sign_compact(KesPeriod(0), b"msg").unwrap();
         let result = vk2.verify_compact(KesPeriod(0), b"msg", &csig);
         assert_eq!(result, Err(CryptoError::KesVerificationKeyMismatch));

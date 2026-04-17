@@ -421,12 +421,7 @@ fn byron_address_validate_rejects_bad_checksum() {
 }
 
 fn make_valid_byron_address(payload: &[u8]) -> Vec<u8> {
-    let mut out = vec![
-        0x82,
-        0xd8,
-        24,
-        0x40 + payload.len() as u8,
-    ];
+    let mut out = vec![0x82, 0xd8, 24, 0x40 + payload.len() as u8];
     out.extend_from_slice(payload);
     let crc = crc32_ieee(payload);
     if crc <= 23 {
@@ -647,8 +642,10 @@ fn dcert_stake_deregistration_round_trip() {
 
 #[test]
 fn dcert_stake_delegation_round_trip() {
-    let cert =
-        DCert::DelegationToStakePool(StakeCredential::AddrKeyHash(sample_hash28()), sample_hash28());
+    let cert = DCert::DelegationToStakePool(
+        StakeCredential::AddrKeyHash(sample_hash28()),
+        sample_hash28(),
+    );
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -693,7 +690,8 @@ fn dcert_genesis_key_delegation_round_trip() {
 
 #[test]
 fn dcert_reg_cert_round_trip() {
-    let cert = DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
+    let cert =
+        DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -701,7 +699,10 @@ fn dcert_reg_cert_round_trip() {
 
 #[test]
 fn dcert_unreg_cert_round_trip() {
-    let cert = DCert::AccountUnregistrationDeposit(StakeCredential::ScriptHash(sample_hash28()), 2_000_000);
+    let cert = DCert::AccountUnregistrationDeposit(
+        StakeCredential::ScriptHash(sample_hash28()),
+        2_000_000,
+    );
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -794,10 +795,7 @@ fn dcert_resign_committee_cold_with_anchor_round_trip() {
 
 #[test]
 fn dcert_resign_committee_cold_no_anchor_round_trip() {
-    let cert = DCert::CommitteeResignation(
-        StakeCredential::ScriptHash(sample_hash28()),
-        None,
-    );
+    let cert = DCert::CommitteeResignation(StakeCredential::ScriptHash(sample_hash28()), None);
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -832,7 +830,8 @@ fn dcert_reg_drep_no_anchor_round_trip() {
 
 #[test]
 fn dcert_unreg_drep_round_trip() {
-    let cert = DCert::DrepUnregistration(StakeCredential::AddrKeyHash(sample_hash28()), 500_000_000);
+    let cert =
+        DCert::DrepUnregistration(StakeCredential::AddrKeyHash(sample_hash28()), 500_000_000);
     let bytes = cert.to_cbor_bytes();
     let decoded = DCert::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(cert, decoded);
@@ -882,7 +881,8 @@ fn dcert_pool_registration_starts_with_tag_3() {
 
 #[test]
 fn dcert_reg_cert_conway_starts_with_tag_7() {
-    let cert = DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
+    let cert =
+        DCert::AccountRegistrationDeposit(StakeCredential::AddrKeyHash(sample_hash28()), 2_000_000);
     let bytes = cert.to_cbor_bytes();
     // array(3) = 0x83, uint(7) = 0x07
     assert_eq!(bytes[0], 0x83);

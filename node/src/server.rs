@@ -12,8 +12,8 @@
 //! Reference: `ouroboros-network-framework`'s inbound-governor session
 //! lifecycle.
 
-use std::net::SocketAddr;
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -21,27 +21,22 @@ use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool};
 use crate::sync::recover_ledger_state_chaindb;
 use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
-    AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock,
-    Decoder, MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo, TxId,
+    AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock, Decoder,
+    MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo, TxId,
 };
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
+use yggdrasil_network::multiplexer::MiniProtocolNum;
 use yggdrasil_network::{
-    AcceptedConnectionsLimit,
-    BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
-    ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest,
-    CmAction, ConnectionId, ConnectionManagerState, DataFlow,
-    InboundGovernorAction, InboundGovernorEvent, InboundGovernorState,
-    KeepAliveServer, KeepAliveServerError,
-    MuxHandle, PeerConnection, PeerListener, PeerListenerError,
-    NodePeerSharing,
-    OperationResult, RateLimitDecision, ResponderCounters,
-    PeerRegistry, PeerSharingServer, PeerSharingServerError,
-    PeerStatus, SharedPeerAddress,
-    TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
+    AcceptedConnectionsLimit, BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
+    ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest, CmAction, ConnectionId,
+    ConnectionManagerState, DataFlow, InboundGovernorAction, InboundGovernorEvent,
+    InboundGovernorState, KeepAliveServer, KeepAliveServerError, MuxHandle, NodePeerSharing,
+    OperationResult, PeerConnection, PeerListener, PeerListenerError, PeerRegistry,
+    PeerSharingServer, PeerSharingServerError, PeerStatus, RateLimitDecision, ResponderCounters,
+    SharedPeerAddress, TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
     rate_limit_decision,
 };
-use yggdrasil_network::multiplexer::MiniProtocolNum;
-use yggdrasil_storage::{ChainDb, ImmutableStore, VolatileStore, LedgerStore};
+use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
 // ---------------------------------------------------------------------------
 // InboundPeerSession
@@ -101,7 +96,10 @@ impl<I: std::fmt::Debug, V: std::fmt::Debug, L: std::fmt::Debug> std::fmt::Debug
         f.debug_struct("SharedTxSubmissionConsumer")
             .field("chain_db", &self.chain_db)
             .field("mempool", &self.mempool)
-            .field("evaluator", &self.evaluator.as_ref().map(|_| "<PlutusEvaluator>"))
+            .field(
+                "evaluator",
+                &self.evaluator.as_ref().map(|_| "<PlutusEvaluator>"),
+            )
             .finish()
     }
 }
@@ -109,16 +107,26 @@ impl<I: std::fmt::Debug, V: std::fmt::Debug, L: std::fmt::Debug> std::fmt::Debug
 impl<I, V, L> SharedTxSubmissionConsumer<I, V, L> {
     /// Create a new shared TxSubmission consumer from coordinated storage and a mempool.
     pub fn new(chain_db: Arc<RwLock<ChainDb<I, V, L>>>, mempool: SharedMempool) -> Self {
-        Self { chain_db, mempool, evaluator: None }
+        Self {
+            chain_db,
+            mempool,
+            evaluator: None,
+        }
     }
 
     /// Create a new shared TxSubmission consumer with a Plutus evaluator.
     pub fn with_evaluator(
         chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
         mempool: SharedMempool,
-        evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
+        evaluator: Option<
+            Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>,
+        >,
     ) -> Self {
-        Self { chain_db, mempool, evaluator }
+        Self {
+            chain_db,
+            mempool,
+            evaluator,
+        }
     }
 
     /// Shared mempool receiving admitted inbound transactions.
@@ -139,7 +147,10 @@ where
                 Ok(guard) => guard,
                 Err(_) => return 0,
             };
-            match recover_ledger_state_chaindb(&chain_db, yggdrasil_ledger::LedgerState::new(yggdrasil_ledger::Era::Byron)) {
+            match recover_ledger_state_chaindb(
+                &chain_db,
+                yggdrasil_ledger::LedgerState::new(yggdrasil_ledger::Era::Byron),
+            ) {
                 Ok(recovery) => recovery.ledger_state,
                 Err(_) => return 0,
             }
@@ -161,11 +172,18 @@ where
             return 0;
         }
 
-        let eval_ref = self.evaluator.as_ref().map(|e| {
-            e.as_ref() as &dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator
-        });
+        let eval_ref = self
+            .evaluator
+            .as_ref()
+            .map(|e| e.as_ref() as &dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator);
 
-        match add_txs_to_shared_mempool(&mut ledger_state, &self.mempool, decoded, current_slot, eval_ref) {
+        match add_txs_to_shared_mempool(
+            &mut ledger_state,
+            &self.mempool,
+            decoded,
+            current_slot,
+            eval_ref,
+        ) {
             Ok(results) => results
                 .into_iter()
                 .filter(|result| matches!(result, MempoolAddTxResult::MempoolTxAdded(_)))
@@ -221,12 +239,7 @@ impl PeerSharingProvider for SharedPeerSharingProvider {
 
         let mut peers = registry
             .iter()
-            .filter(|(_, entry)| {
-                matches!(
-                    entry.status,
-                    PeerStatus::PeerWarm | PeerStatus::PeerHot
-                )
-            })
+            .filter(|(_, entry)| matches!(entry.status, PeerStatus::PeerWarm | PeerStatus::PeerHot))
             .map(|(addr, _)| SharedPeerAddress { addr: *addr })
             .collect::<Vec<_>>();
 
@@ -303,9 +316,7 @@ fn apply_inbound_governor_actions(
                 };
                 execute_cm_actions(cm_actions);
 
-                if let OperationResult::OperationSuccess(commit_result) =
-                    release_result
-                {
+                if let OperationResult::OperationSuccess(commit_result) = release_result {
                     let follow_up = {
                         let mut ig = inbound_governor
                             .write()
@@ -369,10 +380,7 @@ impl InboundPeerSession {
     /// Consumes the per-protocol handles from the connection and wraps
     /// them in server drivers.  Returns `None` if any required protocol
     /// handle is missing.
-    pub fn from_connection(
-        mut conn: PeerConnection,
-        remote_addr: SocketAddr,
-    ) -> Option<Self> {
+    pub fn from_connection(mut conn: PeerConnection, remote_addr: SocketAddr) -> Option<Self> {
         let cs = conn.protocols.remove(&MiniProtocolNum::CHAIN_SYNC)?;
         let bf = conn.protocols.remove(&MiniProtocolNum::BLOCK_FETCH)?;
         let ka = conn.protocols.remove(&MiniProtocolNum::KEEP_ALIVE)?;
@@ -403,9 +411,7 @@ impl InboundPeerSession {
 ///
 /// Enforces upstream `timeLimitsKeepAlive` — 60 s server-side timeout
 /// (upstream `SingServer → Just 60`) per receive.
-pub async fn run_keepalive_server(
-    mut server: KeepAliveServer,
-) -> Result<(), KeepAliveServerError> {
+pub async fn run_keepalive_server(mut server: KeepAliveServer) -> Result<(), KeepAliveServerError> {
     loop {
         let result = tokio::time::timeout(
             yggdrasil_network::protocol_limits::keepalive::SERVER
@@ -436,11 +442,7 @@ pub trait BlockProvider: Send + Sync {
     /// matches BlockFetch usage after ChainSync advances the current point.
     /// Returns the raw CBOR bytes for each block in chain order, or an
     /// empty vec if the range is unavailable.
-    fn get_block_range(
-        &self,
-        from: &[u8],
-        to: &[u8],
-    ) -> Vec<Vec<u8>>;
+    fn get_block_range(&self, from: &[u8], to: &[u8]) -> Vec<Vec<u8>>;
 }
 
 /// Run the BlockFetch server loop, serving blocks from a [`BlockProvider`].
@@ -518,8 +520,7 @@ pub async fn run_chainsync_server(
                 // - If confirmed chain now includes the cursor → ok, keep going.
                 // - Otherwise → tentative was trapped, roll backward.
                 if served_tentative {
-                    if provider.next_header(&cursor).is_some()
-                        || provider.tentative_tip().is_some()
+                    if provider.next_header(&cursor).is_some() || provider.tentative_tip().is_some()
                     {
                         // Tentative was adopted: confirmed chain advanced
                         // past the cursor, or tentative is still set.
@@ -530,7 +531,9 @@ pub async fn run_chainsync_server(
                         let confirmed_tip = provider.chain_tip();
                         // Reset cursor to the confirmed chain tip.
                         cursor = Some(confirmed_tip.clone());
-                        server.roll_backward(confirmed_tip.clone(), confirmed_tip).await?;
+                        server
+                            .roll_backward(confirmed_tip.clone(), confirmed_tip)
+                            .await?;
                         continue;
                     }
                 }
@@ -630,7 +633,10 @@ pub async fn run_txsubmission_server(
     // Reference: `Ouroboros.Network.TxSubmission.Inbound.serverPeer`.
 
     loop {
-        match server.request_tx_ids(true, ack, TXSUBMISSION_BATCH_SIZE).await? {
+        match server
+            .request_tx_ids(true, ack, TXSUBMISSION_BATCH_SIZE)
+            .await?
+        {
             TxIdsReply::Done => {
                 if let Some((tx_state, peer_addr)) = &dedup {
                     tx_state.unregister_peer(peer_addr);
@@ -668,11 +674,8 @@ pub async fn run_txsubmission_server(
                 let txs = {
                     let timeout = yggdrasil_network::protocol_limits::txsubmission::ST_TXS
                         .expect("txsubmission ST_TXS timeout constant must be set");
-                    match tokio::time::timeout(
-                        timeout,
-                        server.request_txs(to_request.clone()),
-                    )
-                    .await
+                    match tokio::time::timeout(timeout, server.request_txs(to_request.clone()))
+                        .await
                     {
                         Ok(Ok(txs)) => txs,
                         Ok(Err(e)) => {
@@ -701,14 +704,12 @@ pub async fn run_txsubmission_server(
                                 if let Some((tx_state, peer_addr)) = &dedup {
                                     tx_state.unregister_peer(peer_addr);
                                 }
-                                return Err(TxSubmissionServerError::UnexpectedMessage(
-                                    format!(
-                                        "body size mismatch for tx {}: advertised {} vs actual {}",
-                                        hex::encode(txid.0),
-                                        advertised,
-                                        actual,
-                                    ),
-                                ));
+                                return Err(TxSubmissionServerError::UnexpectedMessage(format!(
+                                    "body size mismatch for tx {}: advertised {} vs actual {}",
+                                    hex::encode(txid.0),
+                                    advertised,
+                                    actual,
+                                )));
                             }
                         }
                     }
@@ -771,7 +772,10 @@ impl<I, V, L> SharedChainDb<I, V, L> {
 
     /// Create a shared handle from a pre-existing `Arc`.
     pub fn from_arc(arc: Arc<RwLock<ChainDb<I, V, L>>>) -> Self {
-        Self { inner: arc, tentative: None }
+        Self {
+            inner: arc,
+            tentative: None,
+        }
     }
 
     /// Create a shared handle from a pre-existing `Arc` with a shared
@@ -900,12 +904,30 @@ fn extract_chainsync_header(raw_block: &[u8]) -> Option<Vec<u8>> {
             ByronBlock::MainBlock { raw_header, .. } => Some(raw_header),
             ByronBlock::EpochBoundary { .. } => None,
         },
-        era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => {
-            Some(ShelleyBlock::from_cbor_bytes(body_bytes).ok()?.header.to_cbor_bytes())
-        }
-        era_tag::ALONZO => Some(AlonzoBlock::from_cbor_bytes(body_bytes).ok()?.header.to_cbor_bytes()),
-        era_tag::BABBAGE => Some(BabbageBlock::from_cbor_bytes(body_bytes).ok()?.header.to_cbor_bytes()),
-        era_tag::CONWAY => Some(ConwayBlock::from_cbor_bytes(body_bytes).ok()?.header.to_cbor_bytes()),
+        era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => Some(
+            ShelleyBlock::from_cbor_bytes(body_bytes)
+                .ok()?
+                .header
+                .to_cbor_bytes(),
+        ),
+        era_tag::ALONZO => Some(
+            AlonzoBlock::from_cbor_bytes(body_bytes)
+                .ok()?
+                .header
+                .to_cbor_bytes(),
+        ),
+        era_tag::BABBAGE => Some(
+            BabbageBlock::from_cbor_bytes(body_bytes)
+                .ok()?
+                .header
+                .to_cbor_bytes(),
+        ),
+        era_tag::CONWAY => Some(
+            ConwayBlock::from_cbor_bytes(body_bytes)
+                .ok()?
+                .header
+                .to_cbor_bytes(),
+        ),
         _ => None,
     }
 }
@@ -939,11 +961,7 @@ where
         }
 
         // Get the first block after the cursor.
-        let next = find_next_block(
-            db.immutable(),
-            db.volatile(),
-            &cursor_point,
-        )?;
+        let next = find_next_block(db.immutable(), db.volatile(), &cursor_point)?;
 
         let next_point = block_point(&next).to_cbor_bytes();
         let header_cbor = extract_chainsync_header(next.raw_cbor.as_deref()?)?;
@@ -1032,7 +1050,9 @@ fn find_next_block<I: ImmutableStore, V: VolatileStore>(
     }
     let vol_blocks = volatile.prefix_up_to(&vol_tip).ok()?;
     let cursor_hash = cursor.hash()?;
-    let pos = vol_blocks.iter().position(|b| b.header.hash == cursor_hash)?;
+    let pos = vol_blocks
+        .iter()
+        .position(|b| b.header.hash == cursor_hash)?;
     vol_blocks.into_iter().nth(pos + 1)
 }
 
@@ -1579,7 +1599,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     let drain_deadline = tokio::time::Instant::now() + INBOUND_DRAIN_TIMEOUT;
     while !session_tasks.is_empty() {
         match tokio::time::timeout_at(drain_deadline, session_tasks.join_next()).await {
-            Ok(Some(_)) => {} // task completed
+            Ok(Some(_)) => {}  // task completed
             Ok(None) => break, // JoinSet empty
             Err(_) => break,   // timeout expired
         }
@@ -1595,11 +1615,12 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
 mod tests {
     use super::{
         BlockProvider, ChainProvider, PeerSharingProvider, SharedChainDb,
-        SharedPeerSharingProvider, TxSubmissionConsumer,
-        run_inbound_accept_loop,
+        SharedPeerSharingProvider, TxSubmissionConsumer, run_inbound_accept_loop,
     };
-    use std::sync::{Arc, Mutex, RwLock};
+    use crate::NodeConfig;
+    use crate::runtime::bootstrap;
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, RwLock};
     use std::time::Duration;
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
@@ -1610,8 +1631,6 @@ mod tests {
         ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         VolatileStore,
     };
-    use crate::NodeConfig;
-    use crate::runtime::bootstrap;
 
     const SHELLEY_ERA_TAG: u64 = 2;
 
@@ -1631,7 +1650,11 @@ mod tests {
         }
     }
 
-    fn make_shelley_block(slot: u64, block_number: u64, prev_hash: Option<[u8; 32]>) -> (Block, ShelleyHeader) {
+    fn make_shelley_block(
+        slot: u64,
+        block_number: u64,
+        prev_hash: Option<[u8; 32]>,
+    ) -> (Block, ShelleyHeader) {
         let header = ShelleyHeader {
             body: ShelleyHeaderBody {
                 block_number,
@@ -1689,7 +1712,9 @@ mod tests {
         let upper = Point::BlockPoint(block.header.slot_no, block.header.hash).to_cbor_bytes();
 
         let mut immutable = InMemoryImmutable::default();
-        immutable.append_block(block).expect("append immutable block");
+        immutable
+            .append_block(block)
+            .expect("append immutable block");
         let db = ChainDb::new(
             immutable,
             InMemoryVolatile::default(),
@@ -1707,14 +1732,17 @@ mod tests {
         let first_point = Point::BlockPoint(first_block.header.slot_no, first_block.header.hash);
         let (second_block, _) = make_shelley_block(20, 2, Some(first_header.header_hash().0));
         let expected_raw = second_block.raw_cbor.clone().expect("raw block");
-        let upper = Point::BlockPoint(second_block.header.slot_no, second_block.header.hash).to_cbor_bytes();
+        let upper = Point::BlockPoint(second_block.header.slot_no, second_block.header.hash)
+            .to_cbor_bytes();
 
         let mut immutable = InMemoryImmutable::default();
         immutable
             .append_block(first_block)
             .expect("append immutable block");
         let mut volatile = InMemoryVolatile::default();
-        volatile.add_block(second_block).expect("append volatile block");
+        volatile
+            .add_block(second_block)
+            .expect("append volatile block");
         let db = ChainDb::new(immutable, volatile, InMemoryLedgerStore::default());
         let provider = SharedChainDb::new(db);
 
@@ -1735,26 +1763,47 @@ mod tests {
             .append_block(first_block)
             .expect("append immutable block");
         let mut volatile = InMemoryVolatile::default();
-        volatile.add_block(second_block).expect("append volatile block");
+        volatile
+            .add_block(second_block)
+            .expect("append volatile block");
         let db = ChainDb::new(immutable, volatile, InMemoryLedgerStore::default());
         let provider = SharedChainDb::new(db);
 
         let (cursor_point, first_raw_header, first_tip) = provider
             .next_header(&None)
             .expect("first chainsync response");
-        assert_eq!(Point::from_cbor_bytes(&cursor_point).expect("first point"), first_point);
-        assert_eq!(ShelleyHeader::from_cbor_bytes(&first_raw_header).expect("first header"), first_header);
+        assert_eq!(
+            Point::from_cbor_bytes(&cursor_point).expect("first point"),
+            first_point
+        );
+        assert_eq!(
+            ShelleyHeader::from_cbor_bytes(&first_raw_header).expect("first header"),
+            first_header
+        );
         assert_eq!(first_tip, second_point.to_cbor_bytes());
 
         let (next_point, second_raw_header, second_tip) = provider
             .next_header(&Some(cursor_point))
             .expect("second chainsync response");
-        assert_eq!(Point::from_cbor_bytes(&next_point).expect("second point"), second_point);
-        assert_eq!(ShelleyHeader::from_cbor_bytes(&second_raw_header).expect("second header"), second_header);
+        assert_eq!(
+            Point::from_cbor_bytes(&next_point).expect("second point"),
+            second_point
+        );
+        assert_eq!(
+            ShelleyHeader::from_cbor_bytes(&second_raw_header).expect("second header"),
+            second_header
+        );
         assert_eq!(second_tip, second_point.to_cbor_bytes());
 
-        assert!(provider.next_header(&Some(second_point.to_cbor_bytes())).is_none());
-        assert_eq!(provider.find_intersect(&[second_point.to_cbor_bytes()]), Some((second_point.to_cbor_bytes(), second_point.to_cbor_bytes())));
+        assert!(
+            provider
+                .next_header(&Some(second_point.to_cbor_bytes()))
+                .is_none()
+        );
+        assert_eq!(
+            provider.find_intersect(&[second_point.to_cbor_bytes()]),
+            Some((second_point.to_cbor_bytes(), second_point.to_cbor_bytes()))
+        );
         assert_eq!(provider.chain_tip(), second_point.to_cbor_bytes());
     }
 
@@ -1773,13 +1822,9 @@ mod tests {
 
     #[tokio::test]
     async fn inbound_accept_loop_runs_txsubmission_server() {
-        let listener = PeerListener::bind(
-            "127.0.0.1:0",
-            42,
-            vec![HandshakeVersion(15)],
-        )
-        .await
-        .expect("bind listener");
+        let listener = PeerListener::bind("127.0.0.1:0", 42, vec![HandshakeVersion(15)])
+            .await
+            .expect("bind listener");
         let listen_addr = listener.local_addr().expect("listen addr");
         let consumer = Arc::new(RecordingTxSubmissionConsumer::default());
 
@@ -1820,7 +1865,11 @@ mod tests {
         .await
         .expect("bootstrap client");
 
-        session.tx_submission.init().await.expect("init txsubmission");
+        session
+            .tx_submission
+            .init()
+            .await
+            .expect("init txsubmission");
 
         let first_request = session
             .tx_submission
@@ -1876,11 +1925,7 @@ mod tests {
             other => panic!("expected follow-up tx ids request, got {other:?}"),
         }
 
-        session
-            .tx_submission
-            .send_done()
-            .await
-            .expect("send done");
+        session.tx_submission.send_done().await.expect("send done");
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(
@@ -1889,13 +1934,16 @@ mod tests {
         );
 
         let _ = shutdown_tx.send(());
-        accept_task.await.expect("accept task join").expect("accept loop");
+        accept_task
+            .await
+            .expect("accept task join")
+            .expect("accept loop");
     }
 
     #[test]
     fn shared_peer_sharing_provider_returns_warm_and_hot_peers() {
-        use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus};
         use std::net::SocketAddr;
+        use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus};
 
         let mut registry = PeerRegistry::default();
         let warm: SocketAddr = "1.2.3.4:3001".parse().unwrap();
@@ -1921,8 +1969,8 @@ mod tests {
 
     #[test]
     fn shared_peer_sharing_provider_respects_amount_limit() {
-        use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus};
         use std::net::SocketAddr;
+        use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus};
 
         let mut registry = PeerRegistry::default();
         for i in 1..=5u8 {
@@ -1949,10 +1997,7 @@ mod tests {
             self.confirmed_tip.to_cbor_bytes()
         }
 
-        fn next_header(
-            &self,
-            _cursor: &Option<Vec<u8>>,
-        ) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        fn next_header(&self, _cursor: &Option<Vec<u8>>) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
             None
         }
 
@@ -1974,13 +2019,9 @@ mod tests {
 
     #[tokio::test]
     async fn chainsync_server_rolls_back_after_tentative_trap() {
-        let listener = PeerListener::bind(
-            "127.0.0.1:0",
-            42,
-            vec![HandshakeVersion(15)],
-        )
-        .await
-        .expect("bind listener");
+        let listener = PeerListener::bind("127.0.0.1:0", 42, vec![HandshakeVersion(15)])
+            .await
+            .expect("bind listener");
         let listen_addr = listener.local_addr().expect("listen addr");
 
         let confirmed_point = Point::BlockPoint(SlotNo(1), HeaderHash([0xCD; 32]));
@@ -2036,8 +2077,7 @@ mod tests {
             .await
             .expect("first request_next");
         match first {
-            NextResponse::RollForward { tip, .. }
-            | NextResponse::AwaitRollForward { tip, .. } => {
+            NextResponse::RollForward { tip, .. } | NextResponse::AwaitRollForward { tip, .. } => {
                 assert_eq!(tip, tentative_point.to_cbor_bytes());
             }
             other => panic!("expected tentative roll-forward, got {other:?}"),

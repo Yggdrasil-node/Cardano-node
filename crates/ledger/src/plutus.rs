@@ -267,13 +267,14 @@ impl CborDecode for PlutusData {
                         let raw = dec.bytes()?;
                         let mut magnitude: u128 = 0;
                         for &b in raw {
-                            magnitude = magnitude
-                                .checked_shl(8)
-                                .ok_or(LedgerError::CborTypeMismatch {
-                                    expected: 0,
-                                    actual: 0,
-                                })?
-                                | u128::from(b);
+                            magnitude =
+                                magnitude
+                                    .checked_shl(8)
+                                    .ok_or(LedgerError::CborTypeMismatch {
+                                        expected: 0,
+                                        actual: 0,
+                                    })?
+                                    | u128::from(b);
                         }
                         let val = -1 - magnitude as i128;
                         Ok(Self::Integer(val))
@@ -770,11 +771,14 @@ mod tests {
         // 9f 01 02 03 ff = [_ 1, 2, 3]
         let data = [0x9f, 0x01, 0x02, 0x03, 0xff];
         let pd = PlutusData::from_cbor_bytes(&data).unwrap();
-        assert_eq!(pd, PlutusData::List(vec![
-            PlutusData::Integer(1),
-            PlutusData::Integer(2),
-            PlutusData::Integer(3),
-        ]));
+        assert_eq!(
+            pd,
+            PlutusData::List(vec![
+                PlutusData::Integer(1),
+                PlutusData::Integer(2),
+                PlutusData::Integer(3),
+            ])
+        );
     }
 
     #[test]
@@ -782,10 +786,13 @@ mod tests {
         // bf 01 02 03 04 ff = {_ 1: 2, 3: 4}
         let data = [0xbf, 0x01, 0x02, 0x03, 0x04, 0xff];
         let pd = PlutusData::from_cbor_bytes(&data).unwrap();
-        assert_eq!(pd, PlutusData::Map(vec![
-            (PlutusData::Integer(1), PlutusData::Integer(2)),
-            (PlutusData::Integer(3), PlutusData::Integer(4)),
-        ]));
+        assert_eq!(
+            pd,
+            PlutusData::Map(vec![
+                (PlutusData::Integer(1), PlutusData::Integer(2)),
+                (PlutusData::Integer(3), PlutusData::Integer(4)),
+            ])
+        );
     }
 
     #[test]
@@ -801,10 +808,10 @@ mod tests {
         // d8 79 (tag 121) 9f 01 02 ff = Constr(0, [_ 1, 2])
         let data = [0xd8, 0x79, 0x9f, 0x01, 0x02, 0xff];
         let pd = PlutusData::from_cbor_bytes(&data).unwrap();
-        assert_eq!(pd, PlutusData::Constr(0, vec![
-            PlutusData::Integer(1),
-            PlutusData::Integer(2),
-        ]));
+        assert_eq!(
+            pd,
+            PlutusData::Constr(0, vec![PlutusData::Integer(1), PlutusData::Integer(2),])
+        );
     }
 
     #[test]
@@ -821,14 +828,15 @@ mod tests {
             0xff,                         // end array
         ];
         let pd = PlutusData::from_cbor_bytes(&data).unwrap();
-        assert_eq!(pd, PlutusData::List(vec![
-            PlutusData::Map(vec![
-                (PlutusData::Integer(1), PlutusData::List(vec![
-                    PlutusData::Integer(2),
-                    PlutusData::Integer(3),
-                ])),
-            ]),
-            PlutusData::Bytes(vec![0xff]),
-        ]));
+        assert_eq!(
+            pd,
+            PlutusData::List(vec![
+                PlutusData::Map(vec![(
+                    PlutusData::Integer(1),
+                    PlutusData::List(vec![PlutusData::Integer(2), PlutusData::Integer(3),])
+                ),]),
+                PlutusData::Bytes(vec![0xff]),
+            ])
+        );
     }
 }

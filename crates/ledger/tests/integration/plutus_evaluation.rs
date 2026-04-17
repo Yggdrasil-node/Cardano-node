@@ -3,7 +3,9 @@
 
 use super::*;
 use std::collections::BTreeMap;
-use yggdrasil_ledger::plutus_validation::{PlutusEvaluator, PlutusScriptEval, PlutusVersion, TxContext, plutus_script_hash};
+use yggdrasil_ledger::plutus_validation::{
+    PlutusEvaluator, PlutusScriptEval, PlutusVersion, TxContext, plutus_script_hash,
+};
 
 // ---------------------------------------------------------------------------
 // Mock evaluators
@@ -36,10 +38,8 @@ impl PlutusEvaluator for AlwaysFails {
 
 /// Dummy signing seed for Ed25519.
 const TEST_SEED: [u8; 32] = [
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
 ];
 
 fn test_vkey(seed: &[u8; 32]) -> [u8; 32] {
@@ -69,7 +69,13 @@ fn encode_witness_set(ws: &ShelleyWitnessSet) -> Vec<u8> {
     ws.to_cbor_bytes()
 }
 
-fn make_block(era: Era, slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_block(
+    era: Era,
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era,
         header: BlockHeader {
@@ -151,7 +157,10 @@ fn build_alonzo_minting_tx(
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![AlonzoTxOut {
             address: addr,
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -207,7 +216,10 @@ fn build_minting_witness_set(
 fn seed_alonzo_state(prev_tx_id: [u8; 32]) -> LedgerState {
     let keyhash = vkey_hash(&test_vkey(&TEST_SEED));
     let addr = enterprise_keyhash_address(&keyhash);
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Alonzo(AlonzoTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -226,7 +238,8 @@ fn seed_alonzo_state(prev_tx_id: [u8; 32]) -> LedgerState {
 fn alonzo_plutus_v1_minting_evaluator_succeeds() {
     let prev_tx_id = [0xAA; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _script_hash, tx_id) =
+        build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -234,14 +247,18 @@ fn alonzo_plutus_v1_minting_evaluator_succeeds() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
-    is_valid: None,
+        is_valid: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x01, vec![tx]);
 
     let mut state = seed_alonzo_state(prev_tx_id);
     let evaluator = AlwaysSucceeds;
     let result = state.apply_block_validated(&block, Some(&evaluator));
-    assert!(result.is_ok(), "apply_block_validated should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "apply_block_validated should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -252,7 +269,8 @@ fn alonzo_plutus_v1_minting_evaluator_succeeds() {
 fn alonzo_plutus_v1_minting_evaluator_fails() {
     let prev_tx_id = [0xBB; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _script_hash, tx_id) =
+        build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -284,7 +302,8 @@ fn alonzo_plutus_v1_minting_evaluator_fails() {
 fn alonzo_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() {
     let prev_tx_id = [0xB0; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _script_hash, tx_id) =
+        build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -320,7 +339,8 @@ fn alonzo_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
 fn alonzo_plutus_v1_minting_no_evaluator_skips() {
     let prev_tx_id = [0xCC; 32];
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _script_hash, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _script_hash, tx_id) =
+        build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -328,14 +348,18 @@ fn alonzo_plutus_v1_minting_no_evaluator_skips() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
-    is_valid: None,
+        is_valid: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x03, vec![tx]);
 
     let mut state = seed_alonzo_state(prev_tx_id);
     // apply_block() delegates to apply_block_validated(block, None) — no evaluator.
     let result = state.apply_block(&block);
-    assert!(result.is_ok(), "apply_block (no evaluator) should soft-skip Plutus: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "apply_block (no evaluator) should soft-skip Plutus: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -361,7 +385,10 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr.clone(),
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -394,11 +421,14 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
-    is_valid: None,
+        is_valid: None,
     };
     let block = make_block(Era::Babbage, 200, 2, 0x04, vec![tx]);
 
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Babbage(BabbageTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -410,7 +440,11 @@ fn babbage_plutus_v2_minting_evaluator_succeeds() {
 
     let evaluator = AlwaysSucceeds;
     let result = state.apply_block_validated(&block, Some(&evaluator));
-    assert!(result.is_ok(), "Babbage Plutus V2 minting should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Babbage Plutus V2 minting should succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -431,7 +465,10 @@ fn babbage_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr.clone(),
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -467,7 +504,10 @@ fn babbage_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
     };
     let block = make_block(Era::Babbage, 210, 5, 0x11, vec![tx]);
 
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Babbage(BabbageTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -510,7 +550,10 @@ fn babbage_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch()
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr.clone(),
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -546,7 +589,10 @@ fn babbage_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch()
     };
     let block = make_block(Era::Babbage, 211, 6, 0x12, vec![tx]);
 
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Babbage(BabbageTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -594,7 +640,10 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr.clone(),
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -630,11 +679,14 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
         body: body_bytes,
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
-    is_valid: None,
+        is_valid: None,
     };
     let block = make_block(Era::Conway, 300, 3, 0x05, vec![tx]);
 
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Babbage(BabbageTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -646,7 +698,11 @@ fn conway_plutus_v3_minting_evaluator_succeeds() {
 
     let evaluator = AlwaysSucceeds;
     let result = state.apply_block_validated(&block, Some(&evaluator));
-    assert!(result.is_ok(), "Conway Plutus V3 minting should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Conway Plutus V3 minting should succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -667,7 +723,10 @@ fn conway_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr.clone(),
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -706,7 +765,10 @@ fn conway_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
     };
     let block = make_block(Era::Conway, 310, 7, 0x13, vec![tx]);
 
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Babbage(BabbageTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -749,7 +811,10 @@ fn conway_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
     output_assets.insert(script_hash, output_policy_assets);
 
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: prev_tx_id, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: prev_tx_id,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr.clone(),
             amount: Value::CoinAndAssets(4_800_000, output_assets),
@@ -788,7 +853,10 @@ fn conway_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
     };
     let block = make_block(Era::Conway, 311, 8, 0x14, vec![tx]);
 
-    let txin = ShelleyTxIn { transaction_id: prev_tx_id, index: 0 };
+    let txin = ShelleyTxIn {
+        transaction_id: prev_tx_id,
+        index: 0,
+    };
     let txout = MultiEraTxOut::Babbage(BabbageTxOut {
         address: addr,
         amount: Value::Coin(5_000_000),
@@ -828,8 +896,10 @@ impl PlutusEvaluator for AssertEvaluator {
         assert_eq!(eval.script_hash, self.expected_hash, "script hash mismatch");
         assert_eq!(eval.version, self.expected_version, "version mismatch");
         assert_eq!(eval.script_bytes, DUMMY_SCRIPT, "script bytes mismatch");
-        assert!(eval.ex_units.steps != 0 || eval.ex_units.mem != 0,
-            "ex_units should have non-zero budget");
+        assert!(
+            eval.ex_units.steps != 0 || eval.ex_units.mem != 0,
+            "ex_units should have non-zero budget"
+        );
         Ok(())
     }
 }
@@ -839,7 +909,8 @@ fn alonzo_evaluator_receives_correct_script_metadata() {
     let prev_tx_id = [0xFF; 32];
     let script_hash = plutus_script_hash(PlutusVersion::V1, DUMMY_SCRIPT);
     let sdh = compute_minting_sdh(DUMMY_SCRIPT, PlutusVersion::V1, None, false);
-    let (body, _, tx_id) = build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
+    let (body, _, tx_id) =
+        build_alonzo_minting_tx(prev_tx_id, DUMMY_SCRIPT, PlutusVersion::V1, Some(sdh));
     let ws = build_minting_witness_set(DUMMY_SCRIPT, &tx_id, PlutusVersion::V1);
 
     let tx = yggdrasil_ledger::Tx {
@@ -847,7 +918,7 @@ fn alonzo_evaluator_receives_correct_script_metadata() {
         body: body.to_cbor_bytes(),
         witnesses: Some(encode_witness_set(&ws)),
         auxiliary_data: None,
-    is_valid: None,
+        is_valid: None,
     };
     let block = make_block(Era::Alonzo, 100, 1, 0x06, vec![tx]);
 
@@ -857,5 +928,9 @@ fn alonzo_evaluator_receives_correct_script_metadata() {
         expected_version: PlutusVersion::V1,
     };
     let result = state.apply_block_validated(&block, Some(&evaluator));
-    assert!(result.is_ok(), "evaluator assertions should pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "evaluator assertions should pass: {:?}",
+        result
+    );
 }

@@ -6,10 +6,10 @@
 //! `LedgerStore`) backed by both an in-memory implementation (for tests and
 //! early integration) and a file-backed implementation (for durable storage).
 
-/// Errors shared by all storage backends.
-pub mod error;
 /// Minimal ChainDB-style coordination across storage backends.
 pub mod chain_db;
+/// Errors shared by all storage backends.
+pub mod error;
 /// File-backed immutable block storage.
 pub mod file_immutable;
 /// File-backed ledger snapshot storage.
@@ -27,9 +27,7 @@ pub mod volatile_db;
 pub use error::StorageError;
 
 // -- Coordination re-exports --------------------------------------------------
-pub use chain_db::{
-	ChainDb, ChainDbRecovery, LedgerCheckpointRetention, LedgerRecoveryOutcome,
-};
+pub use chain_db::{ChainDb, ChainDbRecovery, LedgerCheckpointRetention, LedgerRecoveryOutcome};
 
 // -- Trait re-exports ---------------------------------------------------------
 pub use immutable_db::ImmutableStore;

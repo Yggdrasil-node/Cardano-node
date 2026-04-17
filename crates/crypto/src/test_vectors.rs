@@ -573,9 +573,9 @@ fn decode_hex_array<const N: usize>(hex: &str) -> [u8; N] {
     let bytes = decode_hex_vec(hex);
     let actual = bytes.len();
 
-    bytes.try_into().unwrap_or_else(|_| {
-        panic!("expected {N} bytes from hex input, got {actual}")
-    })
+    bytes
+        .try_into()
+        .unwrap_or_else(|_| panic!("expected {N} bytes from hex input, got {actual}"))
 }
 
 fn decode_hex_vec(hex: &str) -> Vec<u8> {

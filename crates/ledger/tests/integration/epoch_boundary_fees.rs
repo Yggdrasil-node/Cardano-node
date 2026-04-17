@@ -4,8 +4,7 @@
 
 use std::collections::BTreeMap;
 use yggdrasil_ledger::{
-    StakeSnapshots, StakeSnapshot, UnitInterval,
-    RewardParams, compute_epoch_rewards,
+    RewardParams, StakeSnapshot, StakeSnapshots, UnitInterval, compute_epoch_rewards,
 };
 
 /// Build a minimal `StakeSnapshots` with all-empty snapshots.
@@ -50,15 +49,27 @@ fn fee_pot_feeds_epoch_reward_computation() {
     let reserves = 1_000_000_000_000u64; // 1T lovelace
 
     let params = RewardParams {
-        rho: UnitInterval { numerator: 3, denominator: 1000 }, // 0.3% monetary expansion
-        tau: UnitInterval { numerator: 2, denominator: 10 },   // 20% treasury cut
-        a0: UnitInterval { numerator: 3, denominator: 10 },    // pledge influence 0.3
+        rho: UnitInterval {
+            numerator: 3,
+            denominator: 1000,
+        }, // 0.3% monetary expansion
+        tau: UnitInterval {
+            numerator: 2,
+            denominator: 10,
+        }, // 20% treasury cut
+        a0: UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        }, // pledge influence 0.3
         n_opt: 500,
         min_pool_cost: 340_000_000,
         reserves,
         fee_pot,
         max_lovelace_supply: 0,
-        eta: UnitInterval { numerator: 1, denominator: 1 },
+        eta: UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        },
     };
 
     // Empty snapshot — no pools, no delegations
@@ -98,27 +109,51 @@ fn zero_fee_pot_produces_smaller_treasury_delta() {
     let reserves = 1_000_000_000_000u64;
 
     let with_fees = RewardParams {
-        rho: UnitInterval { numerator: 3, denominator: 1000 },
-        tau: UnitInterval { numerator: 2, denominator: 10 },
-        a0: UnitInterval { numerator: 3, denominator: 10 },
+        rho: UnitInterval {
+            numerator: 3,
+            denominator: 1000,
+        },
+        tau: UnitInterval {
+            numerator: 2,
+            denominator: 10,
+        },
+        a0: UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        },
         n_opt: 500,
         min_pool_cost: 340_000_000,
         reserves,
         fee_pot: 50_000_000,
         max_lovelace_supply: 0,
-        eta: UnitInterval { numerator: 1, denominator: 1 },
+        eta: UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        },
     };
 
     let without_fees = RewardParams {
-        rho: UnitInterval { numerator: 3, denominator: 1000 },
-        tau: UnitInterval { numerator: 2, denominator: 10 },
-        a0: UnitInterval { numerator: 3, denominator: 10 },
+        rho: UnitInterval {
+            numerator: 3,
+            denominator: 1000,
+        },
+        tau: UnitInterval {
+            numerator: 2,
+            denominator: 10,
+        },
+        a0: UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        },
         n_opt: 500,
         min_pool_cost: 340_000_000,
         reserves,
         fee_pot: 0,
         max_lovelace_supply: 0,
-        eta: UnitInterval { numerator: 1, denominator: 1 },
+        eta: UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        },
     };
 
     let go_snapshot = StakeSnapshot::default();

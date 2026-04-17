@@ -23,9 +23,9 @@ use std::collections::{BTreeMap, HashMap};
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
-use crate::protocol_params::ProtocolParameterUpdate;
 use crate::eras::shelley::{PraosHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
+use crate::protocol_params::ProtocolParameterUpdate;
 use crate::types::{Anchor, DCert, HeaderHash, RewardAccount, StakeCredential, UnitInterval};
 
 pub const CONWAY_NAME: &str = "Conway";
@@ -190,11 +190,10 @@ impl CborDecode for GovActionId {
         }
         let raw = dec.bytes()?;
         let transaction_id: [u8; 32] =
-            raw.try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 32,
-                    actual: raw.len(),
-                })?;
+            raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: raw.len(),
+            })?;
         let gov_action_index = dec.unsigned()? as u16;
         Ok(Self {
             transaction_id,
@@ -256,12 +255,10 @@ impl CborDecode for Constitution {
             None
         } else {
             let raw = dec.bytes()?;
-            let hash: [u8; 28] =
-                raw.try_into()
-                    .map_err(|_| LedgerError::CborInvalidLength {
-                        expected: 28,
-                        actual: raw.len(),
-                    })?;
+            let hash: [u8; 28] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                expected: 28,
+                actual: raw.len(),
+            })?;
             Some(hash)
         };
         Ok(Self {
@@ -392,12 +389,10 @@ fn decode_optional_script_hash(dec: &mut Decoder<'_>) -> Result<Option<[u8; 28]>
         Ok(None)
     } else {
         let raw = dec.bytes()?;
-        let hash: [u8; 28] =
-            raw.try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 28,
-                    actual: raw.len(),
-                })?;
+        let hash: [u8; 28] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+            expected: 28,
+            actual: raw.len(),
+        })?;
         Ok(Some(hash))
     }
 }
@@ -1124,11 +1119,10 @@ impl CborDecode for ConwayTxBody {
                 7 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     auxiliary_data_hash = Some(hash);
                 }
                 8 => {
@@ -1140,11 +1134,10 @@ impl CborDecode for ConwayTxBody {
                 11 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     script_data_hash = Some(hash);
                 }
                 13 => {
@@ -1161,11 +1154,10 @@ impl CborDecode for ConwayTxBody {
                     for _ in 0..count {
                         let raw = dec.bytes()?;
                         let hash: [u8; 28] =
-                            raw.try_into()
-                                .map_err(|_| LedgerError::CborInvalidLength {
-                                    expected: 28,
-                                    actual: raw.len(),
-                                })?;
+                            raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                                expected: 28,
+                                actual: raw.len(),
+                            })?;
                         sigs.push(hash);
                     }
                     required_signers = Some(sigs);
@@ -1379,7 +1371,10 @@ mod tests {
     use crate::eras::mary::Value;
 
     fn mk_txin(idx: u16) -> ShelleyTxIn {
-        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+        ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: idx,
+        }
     }
 
     fn mk_babbage_txout() -> BabbageTxOut {
@@ -1392,11 +1387,17 @@ mod tests {
     }
 
     fn mk_anchor() -> Anchor {
-        Anchor { url: "https://example.com".to_string(), data_hash: [0xDD; 32] }
+        Anchor {
+            url: "https://example.com".to_string(),
+            data_hash: [0xDD; 32],
+        }
     }
 
     fn mk_gov_action_id() -> GovActionId {
-        GovActionId { transaction_id: [0xBB; 32], gov_action_index: 0 }
+        GovActionId {
+            transaction_id: [0xBB; 32],
+            gov_action_index: 0,
+        }
     }
 
     // ── Vote ───────────────────────────────────────────────────────────
@@ -1497,8 +1498,14 @@ mod tests {
 
     #[test]
     fn gov_action_id_different_index() {
-        let a = GovActionId { transaction_id: [0x00; 32], gov_action_index: 0 };
-        let b = GovActionId { transaction_id: [0x00; 32], gov_action_index: 1 };
+        let a = GovActionId {
+            transaction_id: [0x00; 32],
+            gov_action_index: 0,
+        };
+        let b = GovActionId {
+            transaction_id: [0x00; 32],
+            gov_action_index: 1,
+        };
         assert_ne!(a.to_cbor_bytes(), b.to_cbor_bytes());
     }
 
@@ -1544,7 +1551,9 @@ mod tests {
 
     #[test]
     fn gov_action_no_confidence_null_prev_round_trip() {
-        let a = GovAction::NoConfidence { prev_action_id: None };
+        let a = GovAction::NoConfidence {
+            prev_action_id: None,
+        };
         let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, a);
     }
@@ -1589,7 +1598,10 @@ mod tests {
     #[test]
     fn gov_action_treasury_withdrawals_round_trip() {
         let mut wdrl = BTreeMap::new();
-        let ra = RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xE1; 28]) };
+        let ra = RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xE1; 28]),
+        };
         wdrl.insert(ra, 1_000_000u64);
         let a = GovAction::TreasuryWithdrawals {
             withdrawals: wdrl,
@@ -1608,7 +1620,10 @@ mod tests {
             prev_action_id: None,
             members_to_remove: vec![StakeCredential::ScriptHash([0x22; 28])],
             members_to_add: to_add,
-            quorum: UnitInterval { numerator: 2, denominator: 3 },
+            quorum: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
         };
         let decoded = GovAction::from_cbor_bytes(&a.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, a);
@@ -1656,7 +1671,10 @@ mod tests {
     fn voting_procedures_round_trip() {
         let voter = Voter::DRepKeyHash([0x44; 28]);
         let gid = mk_gov_action_id();
-        let vp = VotingProcedure { vote: Vote::Abstain, anchor: None };
+        let vp = VotingProcedure {
+            vote: Vote::Abstain,
+            anchor: None,
+        };
         let mut inner = BTreeMap::new();
         inner.insert(gid, vp);
         let mut procs = BTreeMap::new();
@@ -1668,7 +1686,9 @@ mod tests {
 
     #[test]
     fn voting_procedures_empty_round_trip() {
-        let vps = VotingProcedures { procedures: BTreeMap::new() };
+        let vps = VotingProcedures {
+            procedures: BTreeMap::new(),
+        };
         let decoded = VotingProcedures::from_cbor_bytes(&vps.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, vps);
     }
@@ -1712,7 +1732,13 @@ mod tests {
         let voter = Voter::StakePool([0x77; 28]);
         let gid = mk_gov_action_id();
         let mut inner = BTreeMap::new();
-        inner.insert(gid, VotingProcedure { vote: Vote::Yes, anchor: None });
+        inner.insert(
+            gid,
+            VotingProcedure {
+                vote: Vote::Yes,
+                anchor: None,
+            },
+        );
         let mut procs = BTreeMap::new();
         procs.insert(voter, inner);
 

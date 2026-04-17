@@ -1,11 +1,11 @@
 #![allow(clippy::unwrap_used)]
 use yggdrasil_ledger::{
-    Block, BlockHeader, BlockNo, CborEncode, Era, HeaderHash, LedgerState, MultiEraTxOut,
-    Point, ShelleyTxIn, ShelleyTxOut, SlotNo, Tx, TxId,
+    Block, BlockHeader, BlockNo, CborEncode, Era, HeaderHash, LedgerState, MultiEraTxOut, Point,
+    ShelleyTxIn, ShelleyTxOut, SlotNo, Tx, TxId,
 };
 use yggdrasil_storage::{
-    ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore,
-    InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile, LedgerStore, VolatileStore,
+    ChainDb, FileImmutable, FileLedgerStore, FileVolatile, ImmutableStore, InMemoryImmutable,
+    InMemoryLedgerStore, InMemoryVolatile, LedgerStore, VolatileStore,
 };
 
 /// Helper: build a minimal block with the given hash byte and slot.
@@ -81,7 +81,9 @@ fn immutable_suffix_after_returns_expected_range() {
     store.append_block(test_block(0x02, 20)).expect("append 20");
     store.append_block(test_block(0x03, 30)).expect("append 30");
 
-    let all = store.suffix_after(&Point::Origin).expect("suffix from origin");
+    let all = store
+        .suffix_after(&Point::Origin)
+        .expect("suffix from origin");
     assert_eq!(all.len(), 3);
 
     let after_first = store
@@ -114,12 +116,8 @@ fn immutable_rejects_duplicate() {
 #[test]
 fn volatile_add_and_rollback() {
     let mut store = InMemoryVolatile::default();
-    store
-        .add_block(test_block(0x01, 10))
-        .expect("add block 1");
-    store
-        .add_block(test_block(0x02, 11))
-        .expect("add block 2");
+    store.add_block(test_block(0x01, 10)).expect("add block 1");
+    store.add_block(test_block(0x02, 11)).expect("add block 2");
 
     assert_eq!(
         store.tip(),
@@ -141,9 +139,7 @@ fn volatile_add_and_rollback() {
 #[test]
 fn volatile_rejects_duplicate() {
     let mut store = InMemoryVolatile::default();
-    store
-        .add_block(test_block(0xDD, 1))
-        .expect("first add");
+    store.add_block(test_block(0xDD, 1)).expect("first add");
     store
         .add_block(test_block(0xDD, 2))
         .expect_err("duplicate hash should be rejected");
@@ -169,10 +165,7 @@ fn volatile_suffix_after_mid_block() {
     store.add_block(test_block(0x02, 11)).unwrap();
     store.add_block(test_block(0x03, 12)).unwrap();
 
-    let suffix = store.suffix_after(&Point::BlockPoint(
-        SlotNo(10),
-        HeaderHash([0x01; 32]),
-    ));
+    let suffix = store.suffix_after(&Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
     assert_eq!(suffix.len(), 2);
     assert_eq!(suffix[0].header.hash, HeaderHash([0x02; 32]));
     assert_eq!(suffix[1].header.hash, HeaderHash([0x03; 32]));
@@ -184,10 +177,7 @@ fn volatile_suffix_after_tip_returns_empty() {
     store.add_block(test_block(0x01, 10)).unwrap();
     store.add_block(test_block(0x02, 11)).unwrap();
 
-    let suffix = store.suffix_after(&Point::BlockPoint(
-        SlotNo(11),
-        HeaderHash([0x02; 32]),
-    ));
+    let suffix = store.suffix_after(&Point::BlockPoint(SlotNo(11), HeaderHash([0x02; 32])));
     assert!(suffix.is_empty());
 }
 
@@ -196,10 +186,7 @@ fn volatile_suffix_after_unknown_point_returns_empty() {
     let mut store = InMemoryVolatile::default();
     store.add_block(test_block(0x01, 10)).unwrap();
 
-    let suffix = store.suffix_after(&Point::BlockPoint(
-        SlotNo(99),
-        HeaderHash([0xFF; 32]),
-    ));
+    let suffix = store.suffix_after(&Point::BlockPoint(SlotNo(99), HeaderHash([0xFF; 32])));
     assert!(suffix.is_empty());
 }
 
@@ -226,9 +213,15 @@ fn ledger_store_snapshot_round_trip() {
 #[test]
 fn ledger_store_can_lookup_and_truncate_snapshots() {
     let mut store = InMemoryLedgerStore::default();
-    store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
-    store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
-    store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+    store
+        .save_snapshot(SlotNo(10), vec![0x0A])
+        .expect("save 10");
+    store
+        .save_snapshot(SlotNo(20), vec![0x14])
+        .expect("save 20");
+    store
+        .save_snapshot(SlotNo(30), vec![0x1E])
+        .expect("save 30");
 
     let (slot, data) = store
         .latest_snapshot_before_or_at(SlotNo(25))
@@ -249,10 +242,18 @@ fn ledger_store_can_lookup_and_truncate_snapshots() {
 #[test]
 fn ledger_store_replaces_same_slot_and_retains_latest_snapshots() {
     let mut store = InMemoryLedgerStore::default();
-    store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
-    store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
-    store.save_snapshot(SlotNo(20), vec![0x2A]).expect("replace 20");
-    store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+    store
+        .save_snapshot(SlotNo(10), vec![0x0A])
+        .expect("save 10");
+    store
+        .save_snapshot(SlotNo(20), vec![0x14])
+        .expect("save 20");
+    store
+        .save_snapshot(SlotNo(20), vec![0x2A])
+        .expect("replace 20");
+    store
+        .save_snapshot(SlotNo(30), vec![0x1E])
+        .expect("save 30");
 
     assert_eq!(store.count(), 3);
 
@@ -309,15 +310,11 @@ fn cross_store_block_flow() {
     };
 
     let mut volatile = InMemoryVolatile::default();
-    volatile
-        .add_block(block.clone())
-        .expect("volatile add");
+    volatile.add_block(block.clone()).expect("volatile add");
 
     // Finalize into immutable.
     let mut immutable = InMemoryImmutable::default();
-    immutable
-        .append_block(block)
-        .expect("immutable append");
+    immutable.append_block(block).expect("immutable append");
 
     assert_eq!(immutable.get_tip(), volatile.tip());
 }
@@ -368,9 +365,7 @@ fn file_immutable_suffix_after_returns_expected_range() {
 fn file_immutable_get_block() {
     let dir = tempfile::tempdir().expect("tmp dir");
     let mut store = FileImmutable::open(dir.path().join("imm")).expect("open");
-    store
-        .append_block(test_block(0xBB, 5))
-        .expect("append");
+    store.append_block(test_block(0xBB, 5)).expect("append");
 
     let hash = HeaderHash([0xBB; 32]);
     let block = store.get_block(&hash).expect("found");
@@ -433,8 +428,7 @@ fn file_immutable_reads_legacy_json_block_files() {
     let block = test_block(0xAC, 88);
     let hash_hex = hex_hash(&block.header.hash);
     let json = serde_json::to_vec(&block).expect("serialize legacy json block");
-    std::fs::write(path.join(format!("{hash_hex}.json")), json)
-        .expect("write legacy block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json).expect("write legacy block");
 
     let store = FileImmutable::open(&path).expect("open legacy store");
     assert_eq!(store.len(), 1);
@@ -457,11 +451,9 @@ fn file_immutable_open_prefers_cbor_over_json_for_same_hash() {
     let hash_hex = hex_hash(&cbor_block.header.hash);
 
     let cbor = serde_cbor::to_vec(&cbor_block).expect("serialize cbor block");
-    std::fs::write(path.join(format!("{hash_hex}.cbor")), cbor)
-        .expect("write cbor block");
+    std::fs::write(path.join(format!("{hash_hex}.cbor")), cbor).expect("write cbor block");
     let json = serde_json::to_vec(&json_block).expect("serialize json block");
-    std::fs::write(path.join(format!("{hash_hex}.json")), json)
-        .expect("write json block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json).expect("write json block");
 
     let store = FileImmutable::open(&path).expect("open store");
     assert_eq!(store.len(), 1);
@@ -502,9 +494,7 @@ fn file_volatile_rejects_duplicate() {
     let dir = tempfile::tempdir().expect("tmp dir");
     let mut store = FileVolatile::open(dir.path().join("vol")).expect("open");
     store.add_block(test_block(0xDD, 1)).expect("first");
-    store
-        .add_block(test_block(0xDD, 2))
-        .expect_err("duplicate");
+    store.add_block(test_block(0xDD, 2)).expect_err("duplicate");
 }
 
 #[test]
@@ -553,11 +543,13 @@ fn file_volatile_reads_legacy_json_block_files() {
     let block = test_block(0xBB, 91);
     let hash_hex = hex_hash(&block.header.hash);
     let json = serde_json::to_vec(&block).expect("serialize legacy json block");
-    std::fs::write(path.join(format!("{hash_hex}.json")), json)
-        .expect("write legacy block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json).expect("write legacy block");
 
     let store = FileVolatile::open(&path).expect("open legacy store");
-    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(91), HeaderHash([0xBB; 32])));
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(91), HeaderHash([0xBB; 32]))
+    );
     assert!(store.get_block(&HeaderHash([0xBB; 32])).is_some());
 }
 
@@ -572,15 +564,16 @@ fn file_volatile_open_prefers_cbor_over_json_for_same_hash() {
     let hash_hex = hex_hash(&cbor_block.header.hash);
 
     let cbor = serde_cbor::to_vec(&cbor_block).expect("serialize cbor block");
-    std::fs::write(path.join(format!("{hash_hex}.cbor")), cbor)
-        .expect("write cbor block");
+    std::fs::write(path.join(format!("{hash_hex}.cbor")), cbor).expect("write cbor block");
     let json = serde_json::to_vec(&json_block).expect("serialize json block");
-    std::fs::write(path.join(format!("{hash_hex}.json")), json)
-        .expect("write json block");
+    std::fs::write(path.join(format!("{hash_hex}.json")), json).expect("write json block");
 
     let store = FileVolatile::open(&path).expect("open store");
     assert!(store.get_block(&HeaderHash([0xBC; 32])).is_some());
-    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(101), HeaderHash([0xBC; 32])));
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(101), HeaderHash([0xBC; 32]))
+    );
 }
 
 #[test]
@@ -600,7 +593,10 @@ fn volatile_prefix_helpers_promote_prefixes() {
     store
         .prune_up_to(&Point::BlockPoint(SlotNo(11), HeaderHash([0x02; 32])))
         .expect("prune through block 2");
-    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(12), HeaderHash([0x03; 32])));
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(12), HeaderHash([0x03; 32]))
+    );
     assert!(store.get_block(&HeaderHash([0x01; 32])).is_none());
     assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
     assert!(store.get_block(&HeaderHash([0x03; 32])).is_some());
@@ -634,9 +630,7 @@ fn file_ledger_store_persists_across_reopens() {
 
     {
         let mut store = FileLedgerStore::open(&path).expect("open");
-        store
-            .save_snapshot(SlotNo(50), vec![0xAA])
-            .expect("save 1");
+        store.save_snapshot(SlotNo(50), vec![0xAA]).expect("save 1");
         store
             .save_snapshot(SlotNo(200), vec![0xBB, 0xCC])
             .expect("save 2");
@@ -656,9 +650,15 @@ fn file_ledger_store_can_lookup_and_truncate_snapshots() {
 
     {
         let mut store = FileLedgerStore::open(&path).expect("open");
-        store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
-        store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
-        store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+        store
+            .save_snapshot(SlotNo(10), vec![0x0A])
+            .expect("save 10");
+        store
+            .save_snapshot(SlotNo(20), vec![0x14])
+            .expect("save 20");
+        store
+            .save_snapshot(SlotNo(30), vec![0x1E])
+            .expect("save 30");
         store.truncate_after(Some(SlotNo(20))).expect("truncate");
     }
 
@@ -679,10 +679,18 @@ fn file_ledger_store_replaces_same_slot_and_retains_latest_snapshots() {
 
     {
         let mut store = FileLedgerStore::open(&path).expect("open");
-        store.save_snapshot(SlotNo(10), vec![0x0A]).expect("save 10");
-        store.save_snapshot(SlotNo(20), vec![0x14]).expect("save 20");
-        store.save_snapshot(SlotNo(20), vec![0x2A]).expect("replace 20");
-        store.save_snapshot(SlotNo(30), vec![0x1E]).expect("save 30");
+        store
+            .save_snapshot(SlotNo(10), vec![0x0A])
+            .expect("save 10");
+        store
+            .save_snapshot(SlotNo(20), vec![0x14])
+            .expect("save 20");
+        store
+            .save_snapshot(SlotNo(20), vec![0x2A])
+            .expect("replace 20");
+        store
+            .save_snapshot(SlotNo(30), vec![0x1E])
+            .expect("save 30");
         store.retain_latest(2).expect("retain latest");
     }
 
@@ -733,15 +741,24 @@ fn chaindb_promotes_volatile_prefix_and_prunes_snapshots_on_rollback() {
         .expect("promote prefix");
     assert_eq!(promoted, 2);
     assert_eq!(chain_db.immutable().len(), 2);
-    assert_eq!(chain_db.volatile().tip(), Point::BlockPoint(SlotNo(30), HeaderHash([0x03; 32])));
-    assert_eq!(chain_db.tip(), Point::BlockPoint(SlotNo(30), HeaderHash([0x03; 32])));
+    assert_eq!(
+        chain_db.volatile().tip(),
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x03; 32]))
+    );
+    assert_eq!(
+        chain_db.tip(),
+        Point::BlockPoint(SlotNo(30), HeaderHash([0x03; 32]))
+    );
 
     chain_db
         .rollback_to(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
         .expect("rollback to promoted point");
 
     let recovery = chain_db.recovery();
-    assert_eq!(recovery.tip, Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])));
+    assert_eq!(
+        recovery.tip,
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
+    );
     assert_eq!(recovery.ledger_snapshot_slot, Some(SlotNo(10)));
 }
 
@@ -915,14 +932,18 @@ fn chaindb_persist_ledger_checkpoint_prunes_to_retention_limit() {
         .expect("persist third checkpoint");
     assert_eq!(third.retained_snapshots, 2);
     assert_eq!(third.pruned_snapshots, 1);
-    assert!(chain_db
-        .latest_ledger_checkpoint_before_or_at(SlotNo(10))
-        .expect("lookup checkpoint")
-        .is_none());
-    assert!(chain_db
-        .latest_ledger_checkpoint_before_or_at(SlotNo(20))
-        .expect("lookup checkpoint")
-        .is_some());
+    assert!(
+        chain_db
+            .latest_ledger_checkpoint_before_or_at(SlotNo(10))
+            .expect("lookup checkpoint")
+            .is_none()
+    );
+    assert!(
+        chain_db
+            .latest_ledger_checkpoint_before_or_at(SlotNo(20))
+            .expect("lookup checkpoint")
+            .is_some()
+    );
 }
 
 #[test]
@@ -946,17 +967,26 @@ fn chaindb_checkpoint_truncation_and_clear_follow_points() {
             HeaderHash([0x14; 32]),
         ))
         .expect("truncate after point");
-    assert!(chain_db
-        .latest_ledger_checkpoint_before_or_at(SlotNo(30))
-        .expect("lookup checkpoint")
-        .is_some());
-    let latest = chain_db.latest_ledger_checkpoint().expect("latest checkpoint");
+    assert!(
+        chain_db
+            .latest_ledger_checkpoint_before_or_at(SlotNo(30))
+            .expect("lookup checkpoint")
+            .is_some()
+    );
+    let latest = chain_db
+        .latest_ledger_checkpoint()
+        .expect("latest checkpoint");
     assert_eq!(latest.expect("checkpoint present").0, SlotNo(20));
 
     chain_db
         .clear_ledger_checkpoints()
         .expect("clear checkpoints");
-    assert!(chain_db.latest_ledger_checkpoint().expect("latest checkpoint").is_none());
+    assert!(
+        chain_db
+            .latest_ledger_checkpoint()
+            .expect("latest checkpoint")
+            .is_none()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,7 +1094,10 @@ fn file_ledger_store_does_not_leave_temp_files() {
                 .is_some_and(|ext| ext == "tmp")
         })
         .collect();
-    assert!(tmp_files.is_empty(), "no temp files should remain after atomic write");
+    assert!(
+        tmp_files.is_empty(),
+        "no temp files should remain after atomic write"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1089,12 +1122,32 @@ fn promote_volatile_prefix_moves_blocks_to_immutable() {
 
     // First two blocks are now immutable.
     assert_eq!(chain_db.immutable().len(), 2);
-    assert!(chain_db.immutable().get_block(&HeaderHash([0x01; 32])).is_some());
-    assert!(chain_db.immutable().get_block(&HeaderHash([0x02; 32])).is_some());
+    assert!(
+        chain_db
+            .immutable()
+            .get_block(&HeaderHash([0x01; 32]))
+            .is_some()
+    );
+    assert!(
+        chain_db
+            .immutable()
+            .get_block(&HeaderHash([0x02; 32]))
+            .is_some()
+    );
 
     // Third block remains volatile.
-    assert!(chain_db.volatile().get_block(&HeaderHash([0x03; 32])).is_some());
-    assert!(chain_db.volatile().get_block(&HeaderHash([0x01; 32])).is_none());
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&HeaderHash([0x03; 32]))
+            .is_some()
+    );
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&HeaderHash([0x01; 32]))
+            .is_none()
+    );
 }
 
 #[test]
@@ -1153,10 +1206,9 @@ fn promote_then_rollback_volatile_preserves_immutable() {
     assert_eq!(chain_db.immutable().len(), 1);
 
     // Rollback volatile to the middle block.
-    chain_db.volatile_mut().rollback_to(&Point::BlockPoint(
-        SlotNo(20),
-        HeaderHash([0x02; 32]),
-    ));
+    chain_db
+        .volatile_mut()
+        .rollback_to(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])));
 
     // Immutable is untouched, volatile only has block at slot 20.
     assert_eq!(chain_db.immutable().len(), 1);
@@ -1164,7 +1216,12 @@ fn promote_then_rollback_volatile_preserves_immutable() {
         chain_db.volatile().tip(),
         Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
     );
-    assert!(chain_db.volatile().get_block(&HeaderHash([0x03; 32])).is_none());
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&HeaderHash([0x03; 32]))
+            .is_none()
+    );
 }
 
 #[test]
@@ -1176,9 +1233,12 @@ fn promote_volatile_prefix_point_not_found() {
     );
     chain_db.add_volatile_block(test_block(0x01, 10)).unwrap();
 
-    let result = chain_db
-        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(99), HeaderHash([0xFF; 32])));
-    assert!(result.is_err(), "promoting a non-existent point should fail");
+    let result =
+        chain_db.promote_volatile_prefix(&Point::BlockPoint(SlotNo(99), HeaderHash([0xFF; 32])));
+    assert!(
+        result.is_err(),
+        "promoting a non-existent point should fail"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1492,7 +1552,12 @@ fn chaindb_gc_preserves_volatile_and_ledger() {
     assert_eq!(chain_db.immutable().len(), 1);
 
     // Volatile and ledger stores are untouched
-    assert!(chain_db.volatile().get_block(&HeaderHash([0x03; 32])).is_some());
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&HeaderHash([0x03; 32]))
+            .is_some()
+    );
     assert!(chain_db.ledger().latest_snapshot().is_some());
 }
 
@@ -1506,7 +1571,9 @@ fn immutable_get_block_by_slot_found() {
     store.append_block(test_block(0x01, 10)).unwrap();
     store.append_block(test_block(0x02, 20)).unwrap();
 
-    let block = store.get_block_by_slot(SlotNo(20)).expect("should find slot 20");
+    let block = store
+        .get_block_by_slot(SlotNo(20))
+        .expect("should find slot 20");
     assert_eq!(block.header.hash, HeaderHash([0x02; 32]));
 }
 
@@ -1525,7 +1592,9 @@ fn file_immutable_get_block_by_slot() {
     store.append_block(test_block(0x02, 20)).unwrap();
     store.append_block(test_block(0x03, 30)).unwrap();
 
-    let block = store.get_block_by_slot(SlotNo(20)).expect("should find slot 20");
+    let block = store
+        .get_block_by_slot(SlotNo(20))
+        .expect("should find slot 20");
     assert_eq!(block.header.hash, HeaderHash([0x02; 32]));
 
     assert!(store.get_block_by_slot(SlotNo(15)).is_none());
@@ -1565,7 +1634,10 @@ fn file_volatile_open_skips_corrupted_files() {
     std::fs::write(dir.path().join("badbad.json"), b"{{{{").unwrap();
 
     let store = FileVolatile::open(dir.path()).expect("reopen should succeed");
-    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]))
+    );
     assert_eq!(store.skipped_on_open(), 1);
 }
 

@@ -1,7 +1,7 @@
-use super::*;
 use super::ledger_state_basic::make_shelley_block_with_txs;
 use super::txbody_keys::sample_reward_account;
 use super::types_and_certs::{sample_hash28, sample_pool_params};
+use super::*;
 
 #[test]
 fn ledger_state_snapshot_exposes_pool_and_reward_state() {
@@ -46,10 +46,9 @@ fn ledger_state_checkpoint_restores_stake_pool_and_rewards_state() {
     let checkpoint = state.checkpoint();
 
     state.pool_state_mut().retire(operator, EpochNo(99));
-    state.reward_accounts_mut().insert(
-        reward_account,
-        RewardAccountState::new(1_000_000, None),
-    );
+    state
+        .reward_accounts_mut()
+        .insert(reward_account, RewardAccountState::new(1_000_000, None));
 
     state.rollback_to_checkpoint(&checkpoint);
 
@@ -84,12 +83,16 @@ fn ledger_state_checkpoint_cbor_round_trip_preserves_state() {
         reward_account,
         RewardAccountState::new(9_000_000, Some(operator)),
     );
-    state
-        .drep_state_mut()
-        .register(drep, RegisteredDrep::new(2_000_000, Some(Anchor {
-            url: "https://example.com/drep".to_owned(),
-            data_hash: [0x55; 32],
-        })));
+    state.drep_state_mut().register(
+        drep,
+        RegisteredDrep::new(
+            2_000_000,
+            Some(Anchor {
+                url: "https://example.com/drep".to_owned(),
+                data_hash: [0x55; 32],
+            }),
+        ),
+    );
     state.multi_era_utxo_mut().insert(
         ShelleyTxIn {
             transaction_id: [0xAA; 32],
@@ -284,7 +287,9 @@ fn ledger_state_rejects_delegation_for_unregistered_stake_credential() {
         }],
     );
 
-    let err = state.apply_block(&block).expect_err("unregistered delegation should fail");
+    let err = state
+        .apply_block(&block)
+        .expect_err("unregistered delegation should fail");
     assert_eq!(err, LedgerError::StakeCredentialNotRegistered(credential));
 }
 
@@ -383,7 +388,9 @@ fn ledger_state_rejects_unregistration_with_nonzero_rewards() {
         }],
     );
 
-    let err = state.apply_block(&block).expect_err("nonzero rewards should fail");
+    let err = state
+        .apply_block(&block)
+        .expect_err("nonzero rewards should fail");
     assert_eq!(
         err,
         LedgerError::StakeCredentialHasRewards {
@@ -529,7 +536,10 @@ fn ledger_state_allows_builtin_drep_delegation_without_registration() {
             }],
             fee: 100_000,
             ttl: 20,
-            certificates: Some(vec![DCert::DelegationToDrep(credential, DRep::AlwaysAbstain)]),
+            certificates: Some(vec![DCert::DelegationToDrep(
+                credential,
+                DRep::AlwaysAbstain,
+            )]),
             withdrawals: None,
             update: None,
             auxiliary_data_hash: None,
@@ -585,6 +595,8 @@ fn ledger_state_rejects_unregistered_drep_delegation() {
         }],
     );
 
-    let err = state.apply_block(&block).expect_err("unregistered drep should fail");
+    let err = state
+        .apply_block(&block)
+        .expect_err("unregistered drep should fail");
     assert_eq!(err, LedgerError::DelegateeDRepNotRegistered(drep));
 }

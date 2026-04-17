@@ -37,7 +37,10 @@ fn babbage_txout_with_typed_inline_datum() {
         amount: Value::Coin(5_000_000),
         datum_option: Some(DatumOption::Inline(PlutusData::Constr(
             0,
-            vec![PlutusData::Integer(100), PlutusData::Bytes(vec![0xCA, 0xFE])],
+            vec![
+                PlutusData::Integer(100),
+                PlutusData::Bytes(vec![0xCA, 0xFE]),
+            ],
         ))),
         script_ref: None,
     };
@@ -55,7 +58,9 @@ fn babbage_txout_with_inline_datum_and_script_ref_typed() {
             PlutusData::Integer(1),
             PlutusData::Integer(2),
         ]))),
-        script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey([0x00; 28])))),
+        script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey(
+            [0x00; 28],
+        )))),
     };
     let encoded = txout.to_cbor_bytes();
     let decoded = BabbageTxOut::from_cbor_bytes(&encoded)
@@ -129,7 +134,9 @@ fn babbage_txout_with_inline_datum_and_script_ref() {
         address: vec![0x03; 28],
         amount: Value::Coin(10_000_000),
         datum_option: Some(DatumOption::Inline(PlutusData::Integer(5))),
-        script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey([0x00; 28])))),
+        script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey(
+            [0x00; 28],
+        )))),
     };
     let mut enc = Encoder::new();
     txout.encode_cbor(&mut enc);
@@ -155,7 +162,10 @@ fn babbage_txout_pre_babbage_array_decode() {
 #[test]
 fn babbage_txout_pre_babbage_array_with_datum_hash() {
     let mut enc = Encoder::new();
-    enc.array(3).bytes(&[0x05; 28]).unsigned(1_000_000).bytes(&[0xCC; 32]);
+    enc.array(3)
+        .bytes(&[0x05; 28])
+        .unsigned(1_000_000)
+        .bytes(&[0xCC; 32]);
     let bytes = enc.into_bytes();
     let mut dec = Decoder::new(&bytes);
     let decoded = BabbageTxOut::decode_cbor(&mut dec).expect("decode");
@@ -259,7 +269,11 @@ fn babbage_tx_body_unknown_keys_skipped() {
     }
     .encode_cbor(&mut enc);
     enc.unsigned(1).array(1);
-    enc.map(2).unsigned(0).bytes(&[0x01; 28]).unsigned(1).unsigned(500_000);
+    enc.map(2)
+        .unsigned(0)
+        .bytes(&[0x01; 28])
+        .unsigned(1)
+        .unsigned(500_000);
     enc.unsigned(2).unsigned(100_000);
     enc.unsigned(99).unsigned(42);
     let bytes = enc.into_bytes();

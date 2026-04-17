@@ -179,8 +179,7 @@ fn shelley_witness_set_cbor_round_trip() {
         plutus_v3_scripts: vec![],
     };
     let bytes = wset.to_cbor_bytes();
-    let decoded =
-        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("ShelleyWitnessSet round-trip");
+    let decoded = ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("ShelleyWitnessSet round-trip");
     assert_eq!(wset, decoded);
 }
 
@@ -298,8 +297,7 @@ fn witness_set_with_plutus_data_round_trip() {
         plutus_v3_scripts: vec![],
     };
     let bytes = wset.to_cbor_bytes();
-    let decoded =
-        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with plutus data");
+    let decoded = ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with plutus data");
     assert_eq!(wset, decoded);
 }
 
@@ -324,8 +322,7 @@ fn witness_set_with_redeemers_round_trip() {
         plutus_v3_scripts: vec![],
     };
     let bytes = wset.to_cbor_bytes();
-    let decoded =
-        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with redeemers");
+    let decoded = ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("witness set with redeemers");
     assert_eq!(wset, decoded);
 }
 
@@ -455,8 +452,7 @@ fn witness_set_conway_map_redeemers_round_trip() {
     ws_enc.raw(&eu_bytes); // ex_units
 
     let bytes = ws_enc.into_bytes();
-    let decoded =
-        ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("Conway map-format redeemers");
+    let decoded = ShelleyWitnessSet::from_cbor_bytes(&bytes).expect("Conway map-format redeemers");
     assert_eq!(decoded.redeemers.len(), 1);
     assert_eq!(decoded.redeemers[0].tag, 0);
     assert_eq!(decoded.redeemers[0].index, 0);
@@ -573,7 +569,10 @@ fn shelley_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
 
     assert_eq!(decoded, tx);
     assert_eq!(decoded.raw_cbor, bytes);
-    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.body.to_cbor_bytes()));
+    assert_eq!(
+        decoded.tx_id(),
+        compute_tx_id(&decoded.body.to_cbor_bytes())
+    );
 }
 
 #[test]
@@ -622,7 +621,10 @@ fn alonzo_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
 
     assert_eq!(decoded, tx);
     assert_eq!(decoded.raw_cbor, bytes);
-    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.body.to_cbor_bytes()));
+    assert_eq!(
+        decoded.tx_id(),
+        compute_tx_id(&decoded.body.to_cbor_bytes())
+    );
 }
 
 #[test]
@@ -704,14 +706,20 @@ fn multi_era_submitted_tx_decodes_shelley_and_alonzo_shapes() {
 
     assert_eq!(shelley_decoded.era(), Era::Shelley);
     assert_eq!(alonzo_decoded.era(), Era::Alonzo);
-    assert_eq!(shelley_decoded.tx_id(), compute_tx_id(&match &shelley_decoded {
-        MultiEraSubmittedTx::Shelley(tx) => tx.body.to_cbor_bytes(),
-        _ => unreachable!("decoded Shelley tx should stay Shelley"),
-    }));
-    assert_eq!(alonzo_decoded.tx_id(), compute_tx_id(&match &alonzo_decoded {
-        MultiEraSubmittedTx::Alonzo(tx) => tx.body.to_cbor_bytes(),
-        _ => unreachable!("decoded Alonzo tx should stay Alonzo"),
-    }));
+    assert_eq!(
+        shelley_decoded.tx_id(),
+        compute_tx_id(&match &shelley_decoded {
+            MultiEraSubmittedTx::Shelley(tx) => tx.body.to_cbor_bytes(),
+            _ => unreachable!("decoded Shelley tx should stay Shelley"),
+        })
+    );
+    assert_eq!(
+        alonzo_decoded.tx_id(),
+        compute_tx_id(&match &alonzo_decoded {
+            MultiEraSubmittedTx::Alonzo(tx) => tx.body.to_cbor_bytes(),
+            _ => unreachable!("decoded Alonzo tx should stay Alonzo"),
+        })
+    );
     assert_eq!(shelley_decoded.raw_cbor(), shelley);
     assert_eq!(alonzo_decoded.raw_cbor(), alonzo);
 }
@@ -729,8 +737,7 @@ fn shelley_tx_body_unknown_keys_skipped() {
     enc.unsigned(99).text("future extension"); // unknown key
 
     let bytes = enc.into_bytes();
-    let decoded =
-        ShelleyTxBody::from_cbor_bytes(&bytes).expect("should skip unknown map key");
+    let decoded = ShelleyTxBody::from_cbor_bytes(&bytes).expect("should skip unknown map key");
     assert_eq!(decoded.fee, 100);
     assert_eq!(decoded.ttl, 200);
     assert!(decoded.inputs.is_empty());
@@ -793,19 +800,31 @@ fn utxo_apply_tx_happy_path() {
         .expect("valid tx should apply");
 
     // Original input consumed.
-    assert!(utxo.get(&ShelleyTxIn { transaction_id: genesis_hash, index: 0 }).is_none());
+    assert!(
+        utxo.get(&ShelleyTxIn {
+            transaction_id: genesis_hash,
+            index: 0
+        })
+        .is_none()
+    );
     // Two new outputs produced.
     assert_eq!(utxo.len(), 2);
     assert_eq!(
-        utxo.get(&ShelleyTxIn { transaction_id: tx_id, index: 0 })
-            .expect("output 0")
-            .amount,
+        utxo.get(&ShelleyTxIn {
+            transaction_id: tx_id,
+            index: 0
+        })
+        .expect("output 0")
+        .amount,
         8_000_000,
     );
     assert_eq!(
-        utxo.get(&ShelleyTxIn { transaction_id: tx_id, index: 1 })
-            .expect("output 1")
-            .amount,
+        utxo.get(&ShelleyTxIn {
+            transaction_id: tx_id,
+            index: 1
+        })
+        .expect("output 1")
+        .amount,
         1_800_000,
     );
 }
@@ -816,8 +835,14 @@ fn utxo_rejects_expired_tx() {
     seed_utxo(&mut utxo, [0x01; 32], 0, 5_000_000);
 
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 4_800_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x00; 57],
+            amount: 4_800_000,
+        }],
         fee: 200_000,
         ttl: 99,
         certificates: None,
@@ -826,7 +851,9 @@ fn utxo_rejects_expired_tx() {
         auxiliary_data_hash: None,
     };
 
-    let err = utxo.apply_tx([0xBB; 32], &body, 100).expect_err("ttl = 99, slot = 100");
+    let err = utxo
+        .apply_tx([0xBB; 32], &body, 100)
+        .expect_err("ttl = 99, slot = 100");
     assert_eq!(err, LedgerError::TxExpired { ttl: 99, slot: 100 });
     // UTxO unchanged.
     assert_eq!(utxo.len(), 1);
@@ -838,8 +865,14 @@ fn utxo_rejects_missing_input() {
     seed_utxo(&mut utxo, [0x01; 32], 0, 5_000_000);
 
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xFF; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 4_800_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xFF; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x00; 57],
+            amount: 4_800_000,
+        }],
         fee: 200_000,
         ttl: 1000,
         certificates: None,
@@ -848,7 +881,9 @@ fn utxo_rejects_missing_input() {
         auxiliary_data_hash: None,
     };
 
-    let err = utxo.apply_tx([0xCC; 32], &body, 500).expect_err("input not in utxo");
+    let err = utxo
+        .apply_tx([0xCC; 32], &body, 500)
+        .expect_err("input not in utxo");
     assert_eq!(err, LedgerError::InputNotInUtxo);
     assert_eq!(utxo.len(), 1);
 }
@@ -860,8 +895,14 @@ fn utxo_rejects_value_not_preserved() {
 
     // Output + fee > consumed (try to create value from thin air).
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 10_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x00; 57],
+            amount: 10_000_000,
+        }],
         fee: 200_000,
         ttl: 1000,
         certificates: None,
@@ -870,7 +911,9 @@ fn utxo_rejects_value_not_preserved() {
         auxiliary_data_hash: None,
     };
 
-    let err = utxo.apply_tx([0xDD; 32], &body, 500).expect_err("value not preserved");
+    let err = utxo
+        .apply_tx([0xDD; 32], &body, 500)
+        .expect_err("value not preserved");
     assert_eq!(
         err,
         LedgerError::ValueNotPreserved {
@@ -887,7 +930,10 @@ fn utxo_rejects_no_inputs() {
     let mut utxo = ShelleyUtxo::new();
     let body = ShelleyTxBody {
         inputs: vec![],
-        outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 0 }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x00; 57],
+            amount: 0,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -895,7 +941,9 @@ fn utxo_rejects_no_inputs() {
         update: None,
         auxiliary_data_hash: None,
     };
-    let err = utxo.apply_tx([0xEE; 32], &body, 500).expect_err("no inputs");
+    let err = utxo
+        .apply_tx([0xEE; 32], &body, 500)
+        .expect_err("no inputs");
     assert_eq!(err, LedgerError::NoInputs);
 }
 
@@ -907,7 +955,10 @@ fn utxo_accepts_empty_outputs() {
     seed_utxo(&mut utxo, [0x01; 32], 0, 5_000_000);
 
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![],
         fee: 5_000_000,
         ttl: 1000,
@@ -916,7 +967,8 @@ fn utxo_accepts_empty_outputs() {
         update: None,
         auxiliary_data_hash: None,
     };
-    utxo.apply_tx([0xFF; 32], &body, 500).expect("empty outputs should be accepted");
+    utxo.apply_tx([0xFF; 32], &body, 500)
+        .expect("empty outputs should be accepted");
     assert_eq!(utxo.len(), 0);
 }
 
@@ -926,8 +978,14 @@ fn utxo_ttl_equal_to_slot_is_valid() {
     seed_utxo(&mut utxo, [0x01; 32], 0, 1_000_000);
 
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 800_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x00; 57],
+            amount: 800_000,
+        }],
         fee: 200_000,
         ttl: 500,
         certificates: None,
@@ -950,13 +1008,28 @@ fn utxo_multi_input_multi_output() {
     let tx_id = [0xBB; 32];
     let body = ShelleyTxBody {
         inputs: vec![
-            ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-            ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+            ShelleyTxIn {
+                transaction_id: [0x01; 32],
+                index: 0,
+            },
+            ShelleyTxIn {
+                transaction_id: [0x02; 32],
+                index: 0,
+            },
         ],
         outputs: vec![
-            ShelleyTxOut { address: vec![0x00; 57], amount: 4_000_000 },
-            ShelleyTxOut { address: vec![0x01; 57], amount: 3_000_000 },
-            ShelleyTxOut { address: vec![0x02; 57], amount: 2_500_000 },
+            ShelleyTxOut {
+                address: vec![0x00; 57],
+                amount: 4_000_000,
+            },
+            ShelleyTxOut {
+                address: vec![0x01; 57],
+                amount: 3_000_000,
+            },
+            ShelleyTxOut {
+                address: vec![0x02; 57],
+                amount: 2_500_000,
+            },
         ],
         fee: 500_000,
         ttl: 10_000,
@@ -966,11 +1039,24 @@ fn utxo_multi_input_multi_output() {
         auxiliary_data_hash: None,
     };
 
-    utxo.apply_tx(tx_id, &body, 100).expect("multi-input/output tx");
+    utxo.apply_tx(tx_id, &body, 100)
+        .expect("multi-input/output tx");
     // Both original inputs consumed, 3 new outputs created.
     assert_eq!(utxo.len(), 3);
-    assert!(utxo.get(&ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }).is_none());
-    assert!(utxo.get(&ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }).is_none());
+    assert!(
+        utxo.get(&ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0
+        })
+        .is_none()
+    );
+    assert!(
+        utxo.get(&ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0
+        })
+        .is_none()
+    );
 }
 
 #[test]
@@ -981,10 +1067,19 @@ fn utxo_chained_transactions() {
     // Tx 1: spend genesis, produce two outputs.
     let tx1_id = [0x11; 32];
     let body1 = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x00; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x00; 32],
+            index: 0,
+        }],
         outputs: vec![
-            ShelleyTxOut { address: vec![0xA0; 57], amount: 30_000_000 },
-            ShelleyTxOut { address: vec![0xB0; 57], amount: 19_800_000 },
+            ShelleyTxOut {
+                address: vec![0xA0; 57],
+                amount: 30_000_000,
+            },
+            ShelleyTxOut {
+                address: vec![0xB0; 57],
+                amount: 19_800_000,
+            },
         ],
         fee: 200_000,
         ttl: 10_000,
@@ -999,8 +1094,14 @@ fn utxo_chained_transactions() {
     // Tx 2: spend first output of tx1.
     let tx2_id = [0x22; 32];
     let body2 = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: tx1_id, index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0xC0; 57], amount: 29_700_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: tx1_id,
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0xC0; 57],
+            amount: 29_700_000,
+        }],
         fee: 300_000,
         ttl: 10_000,
         certificates: None,
@@ -1011,9 +1112,27 @@ fn utxo_chained_transactions() {
     utxo.apply_tx(tx2_id, &body2, 200).expect("tx2");
     // tx1 output 0 consumed, tx1 output 1 still there, tx2 output 0 added.
     assert_eq!(utxo.len(), 2);
-    assert!(utxo.get(&ShelleyTxIn { transaction_id: tx1_id, index: 0 }).is_none());
-    assert!(utxo.get(&ShelleyTxIn { transaction_id: tx1_id, index: 1 }).is_some());
-    assert!(utxo.get(&ShelleyTxIn { transaction_id: tx2_id, index: 0 }).is_some());
+    assert!(
+        utxo.get(&ShelleyTxIn {
+            transaction_id: tx1_id,
+            index: 0
+        })
+        .is_none()
+    );
+    assert!(
+        utxo.get(&ShelleyTxIn {
+            transaction_id: tx1_id,
+            index: 1
+        })
+        .is_some()
+    );
+    assert!(
+        utxo.get(&ShelleyTxIn {
+            transaction_id: tx2_id,
+            index: 0
+        })
+        .is_some()
+    );
 }
 
 // ===========================================================================
@@ -1136,8 +1255,14 @@ fn shelley_block_cbor_round_trip_no_txs() {
 #[test]
 fn shelley_block_cbor_round_trip_with_txs() {
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x00; 57], amount: 1_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x00; 57],
+            amount: 1_000_000,
+        }],
         fee: 200_000,
         ttl: 1000,
         certificates: None,

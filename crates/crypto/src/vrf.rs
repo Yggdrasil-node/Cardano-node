@@ -1,11 +1,11 @@
 use crate::{CryptoError, SigningKey};
-use curve25519_elligator2::{edwards::EdwardsPoint as LegacyEdwardsPoint, elligator2::Legacy};
+use curve25519_dalek::traits::IsIdentity;
 use curve25519_dalek::{
     edwards::{CompressedEdwardsY, EdwardsPoint},
     scalar::Scalar,
     traits::VartimeMultiscalarMul,
 };
-use curve25519_dalek::traits::IsIdentity;
+use curve25519_elligator2::{edwards::EdwardsPoint as LegacyEdwardsPoint, elligator2::Legacy};
 use sha2::{Digest, Sha512};
 use std::fmt;
 use subtle::ConstantTimeEq;
@@ -185,13 +185,8 @@ impl VrfSecretKey {
         let k_b_bytes = k_b.compress().to_bytes();
         let k_h_bytes = k_h.compress().to_bytes();
 
-        let challenge = batchcompat_challenge(
-            &vk_bytes,
-            &h_bytes,
-            &gamma_bytes,
-            &k_b_bytes,
-            &k_h_bytes,
-        );
+        let challenge =
+            batchcompat_challenge(&vk_bytes, &h_bytes, &gamma_bytes, &k_b_bytes, &k_h_bytes);
         let challenge_scalar = truncated_challenge_scalar(challenge);
         let response = challenge_scalar * secret_scalar + nonce;
 
@@ -271,8 +266,7 @@ impl VrfVerificationKey {
         let h_point = encode_standard_hash_point(&self.0, message)?;
         let h_bytes = h_point.compress().to_bytes();
 
-        let challenge_scalar =
-            truncated_challenge_scalar(decoded.challenge);
+        let challenge_scalar = truncated_challenge_scalar(decoded.challenge);
         let neg_challenge = -challenge_scalar;
 
         let u_point = EdwardsPoint::vartime_double_scalar_mul_basepoint(
@@ -316,7 +310,8 @@ impl VrfVerificationKey {
         self.validate()?;
 
         let decoded = decode_batchcompat_proof(&proof.0)?;
-        let public_key = parse_point(&self.0).map_err(|_| CryptoError::InvalidVrfVerificationKey)?;
+        let public_key =
+            parse_point(&self.0).map_err(|_| CryptoError::InvalidVrfVerificationKey)?;
         let h_point = encode_batchcompat_hash_point(&self.0, message)?;
 
         let challenge = batchcompat_challenge(
@@ -358,8 +353,7 @@ impl VrfVerificationKey {
             .try_into()
             .expect("announcement_2 slice should match the fixed point length");
 
-        if expected_u != announcement_1_bytes || expected_v != announcement_2_bytes
-        {
+        if expected_u != announcement_1_bytes || expected_v != announcement_2_bytes {
             return Err(CryptoError::InvalidVrfProof);
         }
 
@@ -438,7 +432,10 @@ impl VrfOutput {
     }
 }
 
-fn proof_to_output<const N: usize>(proof: &[u8; N], batch_compat: bool) -> Result<VrfOutput, CryptoError> {
+fn proof_to_output<const N: usize>(
+    proof: &[u8; N],
+    batch_compat: bool,
+) -> Result<VrfOutput, CryptoError> {
     let gamma_bytes = parse_gamma_bytes(proof)?;
     let mut hash = Sha512::new();
     hash.update([SUITE, THREE]);
@@ -458,11 +455,8 @@ fn encode_batchcompat_hash_point(
     string_to_hash.extend_from_slice(verification_key);
     string_to_hash.extend_from_slice(message);
 
-    let expanded = cardano_h2c_string_to_hash_sha512(
-        48,
-        RFC9380_EDWARDS25519_ELL2_NU_SUITE,
-        &string_to_hash,
-    );
+    let expanded =
+        cardano_h2c_string_to_hash_sha512(48, RFC9380_EDWARDS25519_ELL2_NU_SUITE, &string_to_hash);
 
     let mut hash_input = [0_u8; 64];
     for (index, value) in expanded.iter().rev().enumerate() {
@@ -536,8 +530,8 @@ fn cardano_h2c_string_to_hash_sha512(h_len: u8, dst: &[u8], message: &[u8]) -> V
         effective_dst = hash.finalize().to_vec();
     }
 
-    let dst_len_u8 = u8::try_from(effective_dst.len())
-        .expect("effective DST length should fit in one byte");
+    let dst_len_u8 =
+        u8::try_from(effective_dst.len()).expect("effective DST length should fit in one byte");
     let mut t = [0_u8, h_len, 0_u8];
 
     let mut hash = Sha512::new();
@@ -713,7 +707,8 @@ fn derive_secret_scalar_and_nonce(signing_key: &[u8; VRF_SIGNING_KEY_SIZE]) -> (
     clamped[31] |= 64;
 
     let secret_scalar = Scalar::from_bytes_mod_order(clamped);
-    let nonce_prefix: [u8; 32] = az[32..].try_into()
+    let nonce_prefix: [u8; 32] = az[32..]
+        .try_into()
         .expect("nonce prefix slice should match 32 bytes");
 
     az.zeroize();
@@ -734,7 +729,9 @@ fn derive_nonce(nonce_prefix: &[u8; 32], h_bytes: &[u8; 32]) -> Scalar {
     Scalar::from_bytes_mod_order_wide(&nonce_hash)
 }
 
-fn decode_standard_proof(proof: &[u8; VRF_PROOF_SIZE]) -> Result<DecodedStandardProof, CryptoError> {
+fn decode_standard_proof(
+    proof: &[u8; VRF_PROOF_SIZE],
+) -> Result<DecodedStandardProof, CryptoError> {
     let gamma = parse_point(
         &proof[..32]
             .try_into()
@@ -841,7 +838,7 @@ struct DecodedBatchCompatProof {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::test_vectors::{vrf_praos_test_vectors, vrf_praos_batchcompat_test_vectors};
+    use crate::test_vectors::{vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors};
 
     // ── Proof decoding (existing) ────────────────────────────────────────
 

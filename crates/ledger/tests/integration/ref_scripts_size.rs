@@ -95,18 +95,30 @@ fn total_ref_scripts_size_counts_spending_and_reference_inputs() {
     let mut utxo = MultiEraUtxo::new();
     // Spending input with 1000-byte script
     utxo.insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 3_000_000, 1_000)),
     );
     // Reference input with 2000-byte script
     utxo.insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 2_000_000, 2_000)),
     );
 
     let total = utxo.total_ref_scripts_size(
-        &[ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(&[ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        &[ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(&[ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
     );
     assert_eq!(total, 3_000);
 }
@@ -118,7 +130,10 @@ fn total_ref_scripts_size_skips_outputs_without_scripts() {
     let mut utxo = MultiEraUtxo::new();
     // Output without script_ref
     utxo.insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -128,13 +143,22 @@ fn total_ref_scripts_size_skips_outputs_without_scripts() {
     );
     // Output with script_ref
     utxo.insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 2_000_000, 500)),
     );
 
     let total = utxo.total_ref_scripts_size(
-        &[ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(&[ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        &[ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(&[ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
     );
     assert_eq!(total, 500);
 }
@@ -159,7 +183,10 @@ fn conway_submitted_tx_rejects_oversized_ref_scripts() {
 
     // Spending input with no script
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -169,25 +196,39 @@ fn conway_submitted_tx_rejects_oversized_ref_scripts() {
     );
     // Reference input with script exceeding 204,800 bytes
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 3_000_000, 204_801)),
     );
 
     let body = conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::TxRefScriptsSizeTooBig { actual: 204_801, max_allowed: 204_800 })),
+        matches!(
+            result,
+            Err(LedgerError::TxRefScriptsSizeTooBig {
+                actual: 204_801,
+                max_allowed: 204_800
+            })
+        ),
         "expected TxRefScriptsSizeTooBig, got: {:?}",
         result,
     );
@@ -201,7 +242,10 @@ fn conway_submitted_tx_accepts_ref_scripts_at_limit() {
     state.set_protocol_params(mainnet_params());
 
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -211,24 +255,36 @@ fn conway_submitted_tx_accepts_ref_scripts_at_limit() {
     );
     // Exactly 204,800 bytes — should pass
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 3_000_000, 204_800)),
     );
 
     let body = conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "ref scripts at exact limit should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "ref scripts at exact limit should succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -239,7 +295,10 @@ fn conway_submitted_tx_accepts_no_ref_scripts() {
     state.set_protocol_params(mainnet_params());
 
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -249,26 +308,37 @@ fn conway_submitted_tx_accepts_no_ref_scripts() {
     );
 
     let body = conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         None,
         addr,
     );
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "no ref scripts should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "no ref scripts should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
 // Conway block-application path
 // ===========================================================================
 
-fn make_conway_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_conway_block(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Conway,
         header: BlockHeader {
@@ -292,7 +362,10 @@ fn conway_block_rejects_oversized_ref_scripts() {
     state.set_protocol_params(mainnet_params());
 
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -302,31 +375,49 @@ fn conway_block_rejects_oversized_ref_scripts() {
     );
     // Over-limit reference script
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 3_000_000, 204_801)),
     );
 
     let body = conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let body_bytes = body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_conway_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_conway_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
-        matches!(result, Err(LedgerError::TxRefScriptsSizeTooBig { actual: 204_801, max_allowed: 204_800 })),
+        matches!(
+            result,
+            Err(LedgerError::TxRefScriptsSizeTooBig {
+                actual: 204_801,
+                max_allowed: 204_800
+            })
+        ),
         "expected TxRefScriptsSizeTooBig in block path, got: {:?}",
         result,
     );
@@ -340,7 +431,10 @@ fn conway_block_accepts_ref_scripts_under_limit() {
     state.set_protocol_params(mainnet_params());
 
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -350,30 +444,46 @@ fn conway_block_accepts_ref_scripts_under_limit() {
     );
     // Small script — well under limit
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 3_000_000, 1_000)),
     );
 
     let body = conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let body_bytes = body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_conway_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_conway_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
-    assert!(result.is_ok(), "ref scripts under limit should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "ref scripts under limit should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -389,30 +499,47 @@ fn conway_submitted_tx_cumulates_scripts_across_both_input_types() {
 
     // Spending input with 102,401 byte script
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 5_000_000, 102_401)),
     );
     // Reference input with 102,400 byte script → total = 204,801 (over limit)
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(babbage_txout_with_ref_script(&addr, 3_000_000, 102_400)),
     );
 
     let body = conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::TxRefScriptsSizeTooBig { actual: 204_801, max_allowed: 204_800 })),
+        matches!(
+            result,
+            Err(LedgerError::TxRefScriptsSizeTooBig {
+                actual: 204_801,
+                max_allowed: 204_800
+            })
+        ),
         "expected cumulative size to trigger rejection, got: {:?}",
         result,
     );

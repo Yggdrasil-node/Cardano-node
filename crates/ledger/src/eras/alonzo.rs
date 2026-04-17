@@ -20,8 +20,8 @@ use std::collections::HashMap;
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
-use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::eras::shelley::ShelleyUpdate;
+use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
 use crate::error::LedgerError;
 use crate::plutus::PlutusData;
 use crate::types::{DCert, HeaderHash, RewardAccount};
@@ -164,12 +164,10 @@ impl CborDecode for AlonzoTxOut {
         let amount = Value::decode_cbor(dec)?;
         let datum_hash = if len == 3 {
             let raw = dec.bytes()?;
-            let hash: [u8; 32] =
-                raw.try_into()
-                    .map_err(|_| LedgerError::CborInvalidLength {
-                        expected: 32,
-                        actual: raw.len(),
-                    })?;
+            let hash: [u8; 32] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: raw.len(),
+            })?;
             Some(hash)
         } else {
             None
@@ -441,11 +439,10 @@ impl CborDecode for AlonzoTxBody {
                 7 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     auxiliary_data_hash = Some(hash);
                 }
                 8 => {
@@ -457,11 +454,10 @@ impl CborDecode for AlonzoTxBody {
                 11 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     script_data_hash = Some(hash);
                 }
                 13 => {
@@ -478,11 +474,10 @@ impl CborDecode for AlonzoTxBody {
                     for _ in 0..count {
                         let raw = dec.bytes()?;
                         let hash: [u8; 28] =
-                            raw.try_into()
-                                .map_err(|_| LedgerError::CborInvalidLength {
-                                    expected: 28,
-                                    actual: raw.len(),
-                                })?;
+                            raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                                expected: 28,
+                                actual: raw.len(),
+                            })?;
                         sigs.push(hash);
                     }
                     required_signers = Some(sigs);
@@ -655,7 +650,10 @@ mod tests {
     use crate::eras::mary::Value;
 
     fn mk_txin(idx: u16) -> ShelleyTxIn {
-        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+        ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: idx,
+        }
     }
 
     fn mk_alonzo_txout() -> AlonzoTxOut {
@@ -670,7 +668,10 @@ mod tests {
 
     #[test]
     fn ex_units_round_trip() {
-        let eu = ExUnits { mem: 1_000_000, steps: 2_000_000 };
+        let eu = ExUnits {
+            mem: 1_000_000,
+            steps: 2_000_000,
+        };
         let decoded = ExUnits::from_cbor_bytes(&eu.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, eu);
     }
@@ -690,7 +691,10 @@ mod tests {
             tag: 0,
             index: 0,
             data: PlutusData::Integer(42),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
         let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, r);
@@ -702,7 +706,10 @@ mod tests {
             tag: 1,
             index: 3,
             data: PlutusData::Bytes(vec![0xDE, 0xAD]),
-            ex_units: ExUnits { mem: 500, steps: 600 },
+            ex_units: ExUnits {
+                mem: 500,
+                steps: 600,
+            },
         };
         let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, r);
@@ -726,7 +733,10 @@ mod tests {
             tag: 3,
             index: 1,
             data: PlutusData::Constr(0, vec![]),
-            ex_units: ExUnits { mem: 300, steps: 400 },
+            ex_units: ExUnits {
+                mem: 300,
+                steps: 400,
+            },
         };
         let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, r);

@@ -151,12 +151,8 @@ impl TxSubmissionServer {
         ack: u16,
         req: u16,
     ) -> Result<TxIdsReply, TxSubmissionServerError> {
-        self.send_msg(&TxSubmissionMessage::MsgRequestTxIds {
-            blocking,
-            ack,
-            req,
-        })
-        .await?;
+        self.send_msg(&TxSubmissionMessage::MsgRequestTxIds { blocking, ack, req })
+            .await?;
 
         // Blocking requests use `waitForever` (client must eventually reply);
         // non-blocking requests use `PROTOCOL_RECV_TIMEOUT` (upstream

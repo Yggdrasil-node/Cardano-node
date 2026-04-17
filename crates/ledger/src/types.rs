@@ -16,19 +16,55 @@ use crate::error::LedgerError;
 /// Absolute slot number on the blockchain.
 ///
 /// Reference: `Cardano.Slotting.Slot` — `SlotNo`.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct SlotNo(pub u64);
 
 /// Absolute block number (height of the chain).
 ///
 /// Reference: `Cardano.Slotting.Block` — `BlockNo`.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct BlockNo(pub u64);
 
 /// Epoch number.
 ///
 /// Reference: `Cardano.Slotting.Slot` — `EpochNo`.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct EpochNo(pub u64);
 
 // ---------------------------------------------------------------------------
@@ -38,7 +74,9 @@ pub struct EpochNo(pub u64);
 /// Blake2b-256 hash of a block header, used as the primary block identifier.
 ///
 /// Reference: `Ouroboros.Consensus.Block.Abstract` — `HeaderHash`.
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct HeaderHash(pub [u8; 32]);
 
 impl fmt::Debug for HeaderHash {
@@ -56,7 +94,9 @@ impl fmt::Display for HeaderHash {
 /// Blake2b-256 hash of a serialized transaction body.
 ///
 /// Reference: `Cardano.Ledger.TxIn` — `TxId`.
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct TxId(pub [u8; 32]);
 
 impl fmt::Debug for TxId {
@@ -81,8 +121,7 @@ impl fmt::Display for TxId {
 ///
 /// Reference: `Ouroboros.Network.Block` — `Point` (with `GenesisPoint` and
 /// `BlockPoint` patterns).
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Point {
     /// The genesis pseudo-block (before any real block).
     Origin,
@@ -115,8 +154,7 @@ impl Point {
 /// Wire encoding:
 /// - `[]` — genesis tip
 /// - `[slot, hash, blockNo]` — specific tip
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Tip {
     /// The genesis tip (no blocks yet).
     TipGenesis,
@@ -148,14 +186,11 @@ impl Tip {
 
 /// Abbreviated hex for display (first 8 bytes).
 fn hex_short(bytes: &[u8; 32]) -> String {
-    bytes[..8]
-        .iter()
-        .fold(String::new(), |mut acc, b| {
-            use std::fmt::Write;
-            let _ = write!(acc, "{b:02x}");
-            acc
-        })
-        + "…"
+    bytes[..8].iter().fold(String::new(), |mut acc, b| {
+        use std::fmt::Write;
+        let _ = write!(acc, "{b:02x}");
+        acc
+    }) + "…"
 }
 
 // ---------------------------------------------------------------------------
@@ -473,9 +508,9 @@ impl Address {
             // Base addresses: 0x0 = key/key, 0x1 = script/key,
             //                 0x2 = key/script, 0x3 = script/script
             0x0..=0x3 => {
-                    if !is_valid_network_id(network) {
-                        return None;
-                    }
+                if !is_valid_network_id(network) {
+                    return None;
+                }
                 if bytes.len() != 57 {
                     return None;
                 }
@@ -499,9 +534,9 @@ impl Address {
             }
             // Pointer addresses: 0x4 = key, 0x5 = script
             0x4..=0x5 => {
-                    if !is_valid_network_id(network) {
-                        return None;
-                    }
+                if !is_valid_network_id(network) {
+                    return None;
+                }
                 if bytes.len() < 30 {
                     return None;
                 }
@@ -515,9 +550,9 @@ impl Address {
                 let slot = decode_variable_nat(bytes, &mut pos)?;
                 let tx_index = decode_variable_nat(bytes, &mut pos)?;
                 let cert_index = decode_variable_nat(bytes, &mut pos)?;
-                    if pos != bytes.len() {
-                        return None;
-                    }
+                if pos != bytes.len() {
+                    return None;
+                }
                 Some(Self::Pointer(PointerAddress {
                     network,
                     payment,
@@ -528,9 +563,9 @@ impl Address {
             }
             // Enterprise addresses: 0x6 = key, 0x7 = script
             0x6..=0x7 => {
-                    if !is_valid_network_id(network) {
-                        return None;
-                    }
+                if !is_valid_network_id(network) {
+                    return None;
+                }
                 if bytes.len() != 29 {
                     return None;
                 }
@@ -625,22 +660,14 @@ impl Address {
             }
             Self::Enterprise(e) => {
                 let mut out = Vec::with_capacity(29);
-                let type_nibble = if e.payment.is_key_hash() {
-                    0x60
-                } else {
-                    0x70
-                };
+                let type_nibble = if e.payment.is_key_hash() { 0x60 } else { 0x70 };
                 out.push(type_nibble | (e.network & 0x0f));
                 out.extend_from_slice(e.payment.hash());
                 out
             }
             Self::Pointer(p) => {
                 let mut out = Vec::with_capacity(32);
-                let type_nibble = if p.payment.is_key_hash() {
-                    0x40
-                } else {
-                    0x50
-                };
+                let type_nibble = if p.payment.is_key_hash() { 0x40 } else { 0x50 };
                 out.push(type_nibble | (p.network & 0x0f));
                 out.extend_from_slice(p.payment.hash());
                 encode_variable_nat(p.slot, &mut out);
@@ -856,7 +883,6 @@ pub enum DRep {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DCert {
     // -- Shelley (tags 0–5) --------------------------------------------------
-
     /// Tag 0: Account registration (`account_registration_cert`).
     AccountRegistration(StakeCredential),
     /// Tag 1: Account unregistration (`account_unregistration_cert`).
@@ -878,7 +904,6 @@ pub enum DCert {
     MoveInstantaneousReward(MirPot, MirTarget),
 
     // -- Conway (tags 7–18) --------------------------------------------------
-
     /// Tag 7: Account registration with deposit (`account_registration_deposit_cert`).
     AccountRegistrationDeposit(StakeCredential, u64),
     /// Tag 8: Account unregistration with deposit refund (`account_unregistration_deposit_cert`).
@@ -942,16 +967,24 @@ fn validate_network_id(network: u8) -> Result<(), LedgerError> {
 
 fn validate_byron_address_bytes(raw: &[u8]) -> Result<(), LedgerError> {
     let mut dec = Decoder::new(raw);
-    let len = dec.array().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
+    let len = dec
+        .array()
+        .map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
     if len != 2 {
         return Err(LedgerError::InvalidByronAddressStructure(raw.to_vec()));
     }
-    let tag = dec.tag().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
+    let tag = dec
+        .tag()
+        .map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
     if tag != 24 {
         return Err(LedgerError::InvalidByronAddressStructure(raw.to_vec()));
     }
-    let payload = dec.bytes().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
-    let checksum = dec.unsigned().map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))? as u32;
+    let payload = dec
+        .bytes()
+        .map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))?;
+    let checksum =
+        dec.unsigned()
+            .map_err(|_| LedgerError::InvalidByronAddressStructure(raw.to_vec()))? as u32;
     if dec.position() != raw.len() {
         return Err(LedgerError::InvalidByronAddressStructure(raw.to_vec()));
     }
@@ -1686,7 +1719,10 @@ mod tests {
             vrf_keyhash: [0x02; 32],
             pledge: 500_000_000,
             cost: 340_000_000,
-            margin: UnitInterval { numerator: 1, denominator: 100 },
+            margin: UnitInterval {
+                numerator: 1,
+                denominator: 100,
+            },
             reward_account: RewardAccount {
                 network: 1,
                 credential: StakeCredential::AddrKeyHash([0x03; 28]),

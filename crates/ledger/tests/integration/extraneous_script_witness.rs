@@ -242,11 +242,17 @@ fn shelley_submitted_tx_rejects_extraneous_native_script() {
     state.set_protocol_params(permissive_params());
 
     // Seed a VKey-locked UTxO whose address matches the signer.
-    let input = ShelleyTxIn { transaction_id: [0xB1; 32], index: 0 };
-    state.utxo_mut().insert(input.clone(), ShelleyTxOut {
-        address: signer.enterprise_addr(),
-        amount: 5_000_000,
-    });
+    let input = ShelleyTxIn {
+        transaction_id: [0xB1; 32],
+        index: 0,
+    };
+    state.utxo_mut().insert(
+        input.clone(),
+        ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        },
+    );
 
     let body = ShelleyTxBody {
         inputs: vec![input],
@@ -355,11 +361,17 @@ fn shelley_block_rejects_extraneous_native_script() {
     let mut state = LedgerState::new(Era::Shelley);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xB3; 32], index: 0 };
-    state.utxo_mut().insert(input.clone(), ShelleyTxOut {
-        address: signer.enterprise_addr(),
-        amount: 5_000_000,
-    });
+    let input = ShelleyTxIn {
+        transaction_id: [0xB3; 32],
+        index: 0,
+    };
+    state.utxo_mut().insert(
+        input.clone(),
+        ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        },
+    );
 
     let body = ShelleyTxBody {
         inputs: vec![input],

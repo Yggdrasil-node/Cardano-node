@@ -7,9 +7,9 @@
 //! <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/plutus-core/src/PlutusCore/Crypto/BLS12_381>
 
 use bls12_381::{
-    G1Affine, G1Projective, G2Affine, G2Projective, Gt, MillerLoopResult, Scalar,
+    G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, MillerLoopResult, Scalar,
     hash_to_curve::{ExpandMsgXmd, HashToCurve},
-    multi_miller_loop, G2Prepared,
+    multi_miller_loop,
 };
 
 use crate::CryptoError;
@@ -73,7 +73,11 @@ pub fn g1_neg(a: &G1Element) -> G1Element {
 pub fn g1_scalar_mul(magnitude: &[u8], negative: bool, point: &G1Element) -> G1Element {
     let scalar = bytes_to_scalar(magnitude);
     let result = point.0 * scalar;
-    if negative { G1Element(-result) } else { G1Element(result) }
+    if negative {
+        G1Element(-result)
+    } else {
+        G1Element(result)
+    }
 }
 
 /// Tests two G1 elements for equality.
@@ -88,9 +92,7 @@ pub fn g1_compress(point: &G1Element) -> [u8; 48] {
 
 /// Decompresses 48 bytes into a G1 element with subgroup membership check.
 pub fn g1_uncompress(bytes: &[u8]) -> Result<G1Element, CryptoError> {
-    let arr: [u8; 48] = bytes
-        .try_into()
-        .map_err(|_| CryptoError::InvalidLength)?;
+    let arr: [u8; 48] = bytes.try_into().map_err(|_| CryptoError::InvalidLength)?;
     let affine = ct_option_ok(G1Affine::from_compressed(&arr))?;
     Ok(G1Element(G1Projective::from(affine)))
 }
@@ -141,7 +143,11 @@ pub fn g2_neg(a: &G2Element) -> G2Element {
 pub fn g2_scalar_mul(magnitude: &[u8], negative: bool, point: &G2Element) -> G2Element {
     let scalar = bytes_to_scalar(magnitude);
     let result = point.0 * scalar;
-    if negative { G2Element(-result) } else { G2Element(result) }
+    if negative {
+        G2Element(-result)
+    } else {
+        G2Element(result)
+    }
 }
 
 /// Tests two G2 elements for equality.
@@ -156,9 +162,7 @@ pub fn g2_compress(point: &G2Element) -> [u8; 96] {
 
 /// Decompresses 96 bytes into a G2 element with subgroup membership check.
 pub fn g2_uncompress(bytes: &[u8]) -> Result<G2Element, CryptoError> {
-    let arr: [u8; 96] = bytes
-        .try_into()
-        .map_err(|_| CryptoError::InvalidLength)?;
+    let arr: [u8; 96] = bytes.try_into().map_err(|_| CryptoError::InvalidLength)?;
     let affine = ct_option_ok(G2Affine::from_compressed(&arr))?;
     Ok(G2Element(G2Projective::from(affine)))
 }
@@ -416,10 +420,7 @@ mod tests {
         let real = miller_loop(&p, &q);
         let trivial = miller_loop(&id, &q);
 
-        assert!(
-            !final_verify(&real, &trivial),
-            "e(G1, G2) != e(O, G2)"
-        );
+        assert!(!final_verify(&real, &trivial), "e(G1, G2) != e(O, G2)");
     }
 
     #[test]
@@ -452,11 +453,20 @@ mod tests {
 
     #[test]
     fn g2_hash_to_group_different_messages_differ() {
-        let a = g2_hash_to_group(b"message A", b"QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_")
-            .expect("valid");
-        let b = g2_hash_to_group(b"message B", b"QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_")
-            .expect("valid");
-        assert!(!g2_equal(&a, &b), "different messages should hash to different G2 points");
+        let a = g2_hash_to_group(
+            b"message A",
+            b"QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_",
+        )
+        .expect("valid");
+        let b = g2_hash_to_group(
+            b"message B",
+            b"QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_",
+        )
+        .expect("valid");
+        assert!(
+            !g2_equal(&a, &b),
+            "different messages should hash to different G2 points"
+        );
     }
 
     #[test]
@@ -480,8 +490,7 @@ mod tests {
     fn g2_hash_to_group_not_identity() {
         // The hash-to-curve spec guarantees output is on the curve and
         // in the prime-order subgroup; it must not be the identity.
-        let point = g2_hash_to_group(b"non-trivial", b"DST")
-            .expect("valid");
+        let point = g2_hash_to_group(b"non-trivial", b"DST").expect("valid");
         assert!(
             !g2_equal(&point, &g2_identity()),
             "hash-to-group output must not be identity"
@@ -490,8 +499,11 @@ mod tests {
 
     #[test]
     fn g2_hash_to_group_compress_round_trip() {
-        let point = g2_hash_to_group(b"round trip test", b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_")
-            .expect("valid");
+        let point = g2_hash_to_group(
+            b"round trip test",
+            b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_",
+        )
+        .expect("valid");
         let compressed = g2_compress(&point);
         let decompressed = g2_uncompress(&compressed).expect("uncompress hashed point");
         assert!(g2_equal(&point, &decompressed));
@@ -513,10 +525,7 @@ mod tests {
     fn g2_scalar_mul_by_zero() {
         let g = g2_generator();
         let result = g2_scalar_mul(&[], false, &g);
-        assert!(
-            g2_equal(&result, &g2_identity()),
-            "0 * G2 == identity"
-        );
+        assert!(g2_equal(&result, &g2_identity()), "0 * G2 == identity");
     }
 
     #[test]
@@ -645,10 +654,7 @@ mod tests {
         let q = g2_generator();
         let result = miller_loop(&id, &q);
         let trivial = miller_loop(&id, &q);
-        assert!(
-            final_verify(&result, &trivial),
-            "e(O, Q) == e(O, Q)"
-        );
+        assert!(final_verify(&result, &trivial), "e(O, Q) == e(O, Q)");
     }
 
     #[test]
@@ -658,9 +664,6 @@ mod tests {
         let id = g2_identity();
         let result = miller_loop(&p, &id);
         let trivial = miller_loop(&g1_identity(), &g2_generator());
-        assert!(
-            final_verify(&result, &trivial),
-            "e(P, O) == e(O, G2)"
-        );
+        assert!(final_verify(&result, &trivial), "e(P, O) == e(O, G2)");
     }
 }

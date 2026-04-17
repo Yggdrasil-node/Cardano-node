@@ -448,7 +448,10 @@ fn conway_block_is_valid_true_rejects_wrong_treasury_value() {
 
     let result = state.apply_block_validated(&block, None);
     assert!(
-        matches!(result, Err(LedgerError::CurrentTreasuryValueIncorrect { .. })),
+        matches!(
+            result,
+            Err(LedgerError::CurrentTreasuryValueIncorrect { .. })
+        ),
         "is_valid=true tx with wrong treasury value must be rejected, got: {:?}",
         result,
     );
@@ -479,18 +482,27 @@ fn alonzo_block_is_valid_false_skips_ppup_collection() {
         },
     );
 
-    let spend_input = ShelleyTxIn { transaction_id: [0x50; 32], index: 0 };
-    let collateral_input = ShelleyTxIn { transaction_id: [0x51; 32], index: 0 };
+    let spend_input = ShelleyTxIn {
+        transaction_id: [0x50; 32],
+        index: 0,
+    };
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0x51; 32],
+        index: 0,
+    };
     seed_utxo(&mut state, spend_input.clone(), &addr, 5_000_000);
     seed_utxo(&mut state, collateral_input.clone(), &addr, 3_000_000);
 
     let update = ShelleyUpdate {
         proposed_protocol_parameter_updates: {
             let mut m = std::collections::BTreeMap::new();
-            m.insert(genesis_hash, ProtocolParameterUpdate {
-                min_fee_a: Some(999),
-                ..Default::default()
-            });
+            m.insert(
+                genesis_hash,
+                ProtocolParameterUpdate {
+                    min_fee_a: Some(999),
+                    ..Default::default()
+                },
+            );
             m
         },
         epoch: 1,
@@ -568,13 +580,22 @@ fn babbage_block_is_valid_false_skips_mir_collection() {
     state.set_protocol_params(params);
 
     let cred = StakeCredential::AddrKeyHash([0xF1; 28]);
-    let acct = RewardAccount { network: 1, credential: cred };
+    let acct = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
     state
         .reward_accounts_mut()
         .insert(acct, RewardAccountState::new(0, None));
 
-    let spend_input = ShelleyTxIn { transaction_id: [0x60; 32], index: 0 };
-    let collateral_input = ShelleyTxIn { transaction_id: [0x61; 32], index: 0 };
+    let spend_input = ShelleyTxIn {
+        transaction_id: [0x60; 32],
+        index: 0,
+    };
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0x61; 32],
+        index: 0,
+    };
     seed_utxo(&mut state, spend_input.clone(), &addr, 5_000_000);
     seed_utxo(&mut state, collateral_input.clone(), &addr, 3_000_000);
 
@@ -588,16 +609,14 @@ fn babbage_block_is_valid_false_skips_mir_collection() {
         }],
         fee: 0,
         ttl: Some(1_000),
-        certificates: Some(vec![
-            DCert::MoveInstantaneousReward(
-                yggdrasil_ledger::MirPot::Reserves,
-                yggdrasil_ledger::MirTarget::StakeCredentials({
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert(cred, 1_000_000i64);
-                    m
-                }),
-            ),
-        ]),
+        certificates: Some(vec![DCert::MoveInstantaneousReward(
+            yggdrasil_ledger::MirPot::Reserves,
+            yggdrasil_ledger::MirTarget::StakeCredentials({
+                let mut m = std::collections::BTreeMap::new();
+                m.insert(cred, 1_000_000i64);
+                m
+            }),
+        )]),
         withdrawals: None,
         update: None,
         auxiliary_data_hash: None,

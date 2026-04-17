@@ -99,10 +99,7 @@ pub enum PeerSharingTransitionError {
 impl PeerSharingState {
     /// Computes the next state given an incoming message, or returns
     /// an error if the transition is illegal.
-    pub fn transition(
-        self,
-        msg: &PeerSharingMessage,
-    ) -> Result<Self, PeerSharingTransitionError> {
+    pub fn transition(self, msg: &PeerSharingMessage) -> Result<Self, PeerSharingTransitionError> {
         match (self, msg) {
             (Self::StClient, PeerSharingMessage::MsgShareRequest { .. }) => Ok(Self::StServer),
             (Self::StClient, PeerSharingMessage::MsgDone) => Ok(Self::StDone),
@@ -123,8 +120,8 @@ impl PeerSharingState {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
 use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 impl SharedPeerAddress {
     /// Encode a single peer address: `[ip_type, ip_bytes, port]`.
@@ -284,9 +281,10 @@ mod tests {
     #[test]
     fn illegal_client_share_peers() {
         let s = PeerSharingState::StClient;
-        assert!(s
-            .transition(&PeerSharingMessage::MsgSharePeers { peers: vec![] })
-            .is_err());
+        assert!(
+            s.transition(&PeerSharingMessage::MsgSharePeers { peers: vec![] })
+                .is_err()
+        );
     }
 
     #[test]

@@ -14,7 +14,9 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// Build an Alonzo-era ledger state with cost_models set to the given map.
-fn alonzo_state_with_cost_models(cost_models: std::collections::BTreeMap<u8, Vec<i64>>) -> LedgerState {
+fn alonzo_state_with_cost_models(
+    cost_models: std::collections::BTreeMap<u8, Vec<i64>>,
+) -> LedgerState {
     let mut state = LedgerState::new(Era::Alonzo);
     let mut pp = ProtocolParameters::default();
     pp.protocol_version = Some((6, 0)); // Alonzo
@@ -28,7 +30,9 @@ fn alonzo_state_with_cost_models(cost_models: std::collections::BTreeMap<u8, Vec
 }
 
 /// Build a Babbage-era ledger state with cost_models set to the given map.
-fn babbage_state_with_cost_models(cost_models: std::collections::BTreeMap<u8, Vec<i64>>) -> LedgerState {
+fn babbage_state_with_cost_models(
+    cost_models: std::collections::BTreeMap<u8, Vec<i64>>,
+) -> LedgerState {
     let mut state = LedgerState::new(Era::Babbage);
     let mut pp = ProtocolParameters::default();
     pp.protocol_version = Some((8, 0)); // Babbage
@@ -42,7 +46,9 @@ fn babbage_state_with_cost_models(cost_models: std::collections::BTreeMap<u8, Ve
 }
 
 /// Build a Conway-era ledger state with cost_models set to the given map.
-fn conway_state_with_cost_models(cost_models: std::collections::BTreeMap<u8, Vec<i64>>) -> LedgerState {
+fn conway_state_with_cost_models(
+    cost_models: std::collections::BTreeMap<u8, Vec<i64>>,
+) -> LedgerState {
     let mut state = LedgerState::new(Era::Conway);
     let mut pp = ProtocolParameters::default();
     pp.protocol_version = Some((10, 0)); // Conway
@@ -56,30 +62,33 @@ fn conway_state_with_cost_models(cost_models: std::collections::BTreeMap<u8, Vec
 }
 
 /// Seed a MultiEra UTxO with a script-locked Alonzo output.
-fn seed_script_utxo(
-    state: &mut LedgerState,
-    tx_id: [u8; 32],
-    script_hash: [u8; 28],
-    coin: u64,
-) {
+fn seed_script_utxo(state: &mut LedgerState, tx_id: [u8; 32], script_hash: [u8; 28], coin: u64) {
     let address = Address::Enterprise(EnterpriseAddress {
         network: 1,
         payment: StakeCredential::ScriptHash(script_hash),
     })
     .to_bytes();
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: tx_id, index: 0 },
+        ShelleyTxIn {
+            transaction_id: tx_id,
+            index: 0,
+        },
         MultiEraTxOut::Alonzo(AlonzoTxOut {
             address,
             amount: Value::Coin(coin),
-            datum_hash: Some(yggdrasil_crypto::blake2b::hash_bytes_256(&spending_datum().to_cbor_bytes()).0),
+            datum_hash: Some(
+                yggdrasil_crypto::blake2b::hash_bytes_256(&spending_datum().to_cbor_bytes()).0,
+            ),
         }),
     );
 }
 
 /// Seed a VKey-locked collateral UTxO suitable for Alonzo-family script txs.
 fn seed_collateral_utxo(state: &mut LedgerState, tx_id: [u8; 32], coin: u64) -> ShelleyTxIn {
-    let input = ShelleyTxIn { transaction_id: tx_id, index: 1 };
+    let input = ShelleyTxIn {
+        transaction_id: tx_id,
+        index: 1,
+    };
     let address = Address::Enterprise(EnterpriseAddress {
         network: 1,
         payment: StakeCredential::AddrKeyHash([0xAB; 28]),
@@ -87,7 +96,10 @@ fn seed_collateral_utxo(state: &mut LedgerState, tx_id: [u8; 32], coin: u64) -> 
     .to_bytes();
     state.multi_era_utxo_mut().insert(
         input.clone(),
-        MultiEraTxOut::Shelley(ShelleyTxOut { address, amount: coin }),
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address,
+            amount: coin,
+        }),
     );
     input
 }
@@ -119,17 +131,26 @@ fn alonzo_block_with_plutus_v1_mint(
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![script_bytes],
         plutus_data: vec![spending_datum()],
-        redeemers: vec![Redeemer {
-            tag: 0, // spending
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }, Redeemer {
-            tag: 1, // minting
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }],
+        redeemers: vec![
+            Redeemer {
+                tag: 0, // spending
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+            Redeemer {
+                tag: 1, // minting
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+        ],
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![],
     };
@@ -137,12 +158,16 @@ fn alonzo_block_with_plutus_v1_mint(
     let witness_bytes = ws.to_cbor_bytes();
 
     let body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_txid, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_txid,
+            index: 0,
+        }],
         outputs: vec![AlonzoTxOut {
-            address: vec![0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01],
+            address: vec![
+                0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01,
+            ],
             amount: Value::Coin(1_000_000),
             datum_hash: None,
         }],
@@ -204,17 +229,26 @@ fn babbage_block_with_plutus_v2_mint(
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
         plutus_data: vec![spending_datum()],
-        redeemers: vec![Redeemer {
-            tag: 0,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }, Redeemer {
-            tag: 1,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }],
+        redeemers: vec![
+            Redeemer {
+                tag: 0,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+            Redeemer {
+                tag: 1,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+        ],
         plutus_v2_scripts: vec![script_bytes],
         plutus_v3_scripts: vec![],
     };
@@ -222,12 +256,16 @@ fn babbage_block_with_plutus_v2_mint(
     let witness_bytes = ws.to_cbor_bytes();
 
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_txid, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_txid,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
-            address: vec![0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01],
+            address: vec![
+                0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01,
+            ],
             amount: Value::Coin(1_000_000),
             datum_option: None,
             script_ref: None,
@@ -292,29 +330,42 @@ fn conway_submitted_tx_with_plutus_v3_mint(
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
         plutus_data: vec![spending_datum()],
-        redeemers: vec![Redeemer {
-            tag: 0,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }, Redeemer {
-            tag: 1,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }],
+        redeemers: vec![
+            Redeemer {
+                tag: 0,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+            Redeemer {
+                tag: 1,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+        ],
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![script_bytes],
     };
     let sdh = compute_test_script_data_hash(&ws, pp, true);
 
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_txid, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_txid,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
-            address: vec![0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01],
+            address: vec![
+                0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01,
+            ],
             amount: Value::Coin(1_000_000),
             datum_option: None,
             script_ref: None,
@@ -345,12 +396,7 @@ fn conway_submitted_tx_with_plutus_v3_mint(
         current_treasury_value: None,
     };
 
-    MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws,
-        true,
-        None,
-    ))
+    MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None))
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +417,13 @@ fn alonzo_block_rejects_v1_when_no_v1_cost_model() {
     seed_script_utxo(&mut state, [0xBB; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xBC; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral, state.protocol_params());
+    let block = alonzo_block_with_plutus_v1_mint(
+        script_bytes,
+        policy_hash,
+        [0xBB; 32],
+        collateral,
+        state.protocol_params(),
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(
@@ -394,7 +446,13 @@ fn alonzo_block_accepts_v1_when_v1_cost_model_present() {
     seed_script_utxo(&mut state, [0xBB; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xBC; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral, state.protocol_params());
+    let block = alonzo_block_with_plutus_v1_mint(
+        script_bytes,
+        policy_hash,
+        [0xBB; 32],
+        collateral,
+        state.protocol_params(),
+    );
 
     // This should NOT fail with NoCostModel. It may fail with other errors
     // (e.g. script_data_hash mismatch, evaluator errors) but NoCostModel
@@ -421,7 +479,13 @@ fn alonzo_block_rejects_v1_when_cost_models_empty() {
     seed_script_utxo(&mut state, [0xBB; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xBC; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xBB; 32], collateral, state.protocol_params());
+    let block = alonzo_block_with_plutus_v1_mint(
+        script_bytes,
+        policy_hash,
+        [0xBB; 32],
+        collateral,
+        state.protocol_params(),
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(
@@ -454,29 +518,42 @@ fn alonzo_submitted_tx_rejects_v1_when_no_cost_model() {
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![script_bytes],
         plutus_data: vec![spending_datum()],
-        redeemers: vec![Redeemer {
-            tag: 0, // spending
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }, Redeemer {
-            tag: 1, // minting
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }],
+        redeemers: vec![
+            Redeemer {
+                tag: 0, // spending
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+            Redeemer {
+                tag: 1, // minting
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+        ],
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![],
     };
     let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
 
     let body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xCC; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xCC; 32],
+            index: 0,
+        }],
         outputs: vec![AlonzoTxOut {
-            address: vec![0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01],
+            address: vec![
+                0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01,
+            ],
             amount: Value::Coin(1_000_000),
             datum_hash: None,
         }],
@@ -525,7 +602,13 @@ fn babbage_block_rejects_v2_when_only_v1_cost_model() {
     seed_script_utxo(&mut state, [0xB2; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xB4; 32], 2_000_000);
 
-    let block = babbage_block_with_plutus_v2_mint(script_bytes, policy_hash, [0xB2; 32], collateral, state.protocol_params());
+    let block = babbage_block_with_plutus_v2_mint(
+        script_bytes,
+        policy_hash,
+        [0xB2; 32],
+        collateral,
+        state.protocol_params(),
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(
@@ -553,29 +636,42 @@ fn babbage_submitted_tx_rejects_v2_when_no_cost_model() {
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
         plutus_data: vec![spending_datum()],
-        redeemers: vec![Redeemer {
-            tag: 0,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }, Redeemer {
-            tag: 1,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }],
+        redeemers: vec![
+            Redeemer {
+                tag: 0,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+            Redeemer {
+                tag: 1,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+        ],
         plutus_v2_scripts: vec![script_bytes],
         plutus_v3_scripts: vec![],
     };
     let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
 
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xB3; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xB3; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
-            address: vec![0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01],
+            address: vec![
+                0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01,
+            ],
             amount: Value::Coin(1_000_000),
             datum_option: None,
             script_ref: None,
@@ -603,14 +699,12 @@ fn babbage_submitted_tx_rejects_v2_when_no_cost_model() {
         reference_inputs: None,
     };
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws,
-        true,
-        None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
-    let err = state.apply_submitted_tx(&submitted, SlotNo(10), None).unwrap_err();
+    let err = state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
+        .unwrap_err();
     assert!(
         matches!(err, LedgerError::NoCostModel { language: 1 }),
         "expected NoCostModel for V2 (language 1), got: {err:?}",
@@ -637,7 +731,13 @@ fn no_cost_model_skipped_when_cost_models_field_absent() {
     seed_script_utxo(&mut state, [0xDD; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xDE; 32], 2_000_000);
 
-    let block = alonzo_block_with_plutus_v1_mint(script_bytes, policy_hash, [0xDD; 32], collateral, state.protocol_params());
+    let block = alonzo_block_with_plutus_v1_mint(
+        script_bytes,
+        policy_hash,
+        [0xDD; 32],
+        collateral,
+        state.protocol_params(),
+    );
 
     // Should NOT produce NoCostModel when PP has no cost_models at all.
     let result = state.apply_block(&block);
@@ -671,17 +771,26 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
         plutus_data: vec![spending_datum()],
-        redeemers: vec![Redeemer {
-            tag: 0,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }, Redeemer {
-            tag: 1,
-            index: 0,
-            data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 1000, steps: 2000 },
-        }],
+        redeemers: vec![
+            Redeemer {
+                tag: 0,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+            Redeemer {
+                tag: 1,
+                index: 0,
+                data: PlutusData::Integer(0.into()),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            },
+        ],
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![script_bytes],
     };
@@ -689,12 +798,16 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
     let witness_bytes = ws.to_cbor_bytes();
 
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xEE; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xEE; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
-            address: vec![0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-                          0x01, 0x01, 0x01, 0x01, 0x01],
+            address: vec![
+                0x61, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                0x01,
+            ],
             amount: Value::Coin(1_000_000),
             datum_option: None,
             script_ref: None,
@@ -768,9 +881,17 @@ fn conway_submitted_tx_rejects_v3_when_only_v1_v2_cost_models() {
     seed_script_utxo(&mut state, [0xF0; 32], policy_hash, 2_000_000);
     let collateral = seed_collateral_utxo(&mut state, [0xF1; 32], 2_000_000);
 
-    let submitted = conway_submitted_tx_with_plutus_v3_mint(script_bytes, policy_hash, [0xF0; 32], collateral, state.protocol_params());
+    let submitted = conway_submitted_tx_with_plutus_v3_mint(
+        script_bytes,
+        policy_hash,
+        [0xF0; 32],
+        collateral,
+        state.protocol_params(),
+    );
 
-    let err = state.apply_submitted_tx(&submitted, SlotNo(10), None).unwrap_err();
+    let err = state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
+        .unwrap_err();
     assert!(
         matches!(err, LedgerError::NoCostModel { language: 2 }),
         "expected NoCostModel for V3 (language 2), got: {err:?}",

@@ -101,7 +101,10 @@ fn plutus_data_constr_compact_round_trip() {
 
 #[test]
 fn plutus_data_constr_general_form_round_trip() {
-    let pd = PlutusData::Constr(7, vec![PlutusData::Bytes(vec![0x01]), PlutusData::Integer(99)]);
+    let pd = PlutusData::Constr(
+        7,
+        vec![PlutusData::Bytes(vec![0x01]), PlutusData::Integer(99)],
+    );
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(pd, decoded);

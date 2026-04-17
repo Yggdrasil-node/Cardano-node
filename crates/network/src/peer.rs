@@ -14,12 +14,10 @@
 
 use std::collections::HashMap;
 
-use crate::handshake::{
-    HandshakeMessage, HandshakeVersion, NodeToNodeVersionData, RefuseReason,
-};
+use crate::handshake::{HandshakeMessage, HandshakeVersion, NodeToNodeVersionData, RefuseReason};
+use crate::multiplexer::MiniProtocolDir;
 use crate::multiplexer::MiniProtocolNum;
 use crate::mux::{self, MuxError, MuxHandle, ProtocolHandle};
-use crate::multiplexer::MiniProtocolDir;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -117,8 +115,12 @@ pub async fn connect(
 ) -> Result<PeerConnection, PeerError> {
     let stream = tokio::net::TcpStream::connect(addr).await?;
 
-    let (mut handles, mux_handle) =
-        mux::start(stream, MiniProtocolDir::Initiator, &N2N_PROTOCOLS, DEFAULT_BUFFER);
+    let (mut handles, mux_handle) = mux::start(
+        stream,
+        MiniProtocolDir::Initiator,
+        &N2N_PROTOCOLS,
+        DEFAULT_BUFFER,
+    );
 
     // Take the handshake handle — it will be consumed during negotiation.
     let mut hs = handles
@@ -130,9 +132,12 @@ pub async fn connect(
     hs.send(propose.to_cbor()).await?;
 
     // Receive the server's response.
-    let response_bytes = hs.recv().await.ok_or_else(|| PeerError::HandshakeProtocol {
-        detail: "connection closed before handshake response".into(),
-    })?;
+    let response_bytes = hs
+        .recv()
+        .await
+        .ok_or_else(|| PeerError::HandshakeProtocol {
+            detail: "connection closed before handshake response".into(),
+        })?;
 
     let response =
         HandshakeMessage::from_cbor(&response_bytes).map_err(|e| PeerError::HandshakeProtocol {
@@ -171,17 +176,24 @@ pub async fn accept(
     network_magic: u32,
     supported_versions: &[HandshakeVersion],
 ) -> Result<PeerConnection, PeerError> {
-    let (mut handles, mux_handle) =
-        mux::start(stream, MiniProtocolDir::Responder, &N2N_PROTOCOLS, DEFAULT_BUFFER);
+    let (mut handles, mux_handle) = mux::start(
+        stream,
+        MiniProtocolDir::Responder,
+        &N2N_PROTOCOLS,
+        DEFAULT_BUFFER,
+    );
 
     let mut hs = handles
         .remove(&MiniProtocolNum::HANDSHAKE)
         .expect("handshake handle must be registered");
 
     // Receive ProposeVersions from the client.
-    let propose_bytes = hs.recv().await.ok_or_else(|| PeerError::HandshakeProtocol {
-        detail: "connection closed before handshake proposal".into(),
-    })?;
+    let propose_bytes = hs
+        .recv()
+        .await
+        .ok_or_else(|| PeerError::HandshakeProtocol {
+            detail: "connection closed before handshake proposal".into(),
+        })?;
 
     let propose =
         HandshakeMessage::from_cbor(&propose_bytes).map_err(|e| PeerError::HandshakeProtocol {
@@ -193,7 +205,7 @@ pub async fn accept(
         other => {
             return Err(PeerError::HandshakeProtocol {
                 detail: format!("expected ProposeVersions, got {}", other.tag_name()),
-            })
+            });
         }
     };
 

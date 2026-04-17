@@ -60,7 +60,10 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     let script_hash = native_script_hash(&native);
 
     // Spending UTxO (script-locked by native script)
-    let input = ShelleyTxIn { transaction_id: [0xA1; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xA1; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -71,7 +74,10 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     );
 
     // Collateral UTxO (VKey-locked)
-    let coll_input = ShelleyTxIn { transaction_id: [0xC1; 32], index: 0 };
+    let coll_input = ShelleyTxIn {
+        transaction_id: [0xC1; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         coll_input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -84,10 +90,13 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     let mut ws = empty_witness_set();
     ws.native_scripts.push(native);
     ws.redeemers.push(Redeemer {
-        tag: 0,   // Spending
+        tag: 0, // Spending
         index: 0,
         data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
 
     let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
@@ -136,7 +145,10 @@ fn alonzo_submitted_tx_no_redeemers_passes() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xA2; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xA2; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -172,12 +184,14 @@ fn alonzo_submitted_tx_no_redeemers_passes() {
         vkey_witnesses: vec![signer.witness(&tx_body_hash)],
         ..empty_witness_set()
     };
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "expected Ok for redeemer-free Alonzo submitted tx, got: {result:?}");
+    assert!(
+        result.is_ok(),
+        "expected Ok for redeemer-free Alonzo submitted tx, got: {result:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +208,10 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     let native = NativeScript::ScriptAll(vec![]);
     let script_hash = native_script_hash(&native);
 
-    let input = ShelleyTxIn { transaction_id: [0xB1; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xB1; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -205,7 +222,10 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         }),
     );
 
-    let coll_input = ShelleyTxIn { transaction_id: [0xC2; 32], index: 0 };
+    let coll_input = ShelleyTxIn {
+        transaction_id: [0xC2; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         coll_input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -222,7 +242,10 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
 
     let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), false);
@@ -282,7 +305,10 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     let native = NativeScript::ScriptAll(vec![]);
     let script_hash = native_script_hash(&native);
 
-    let input = ShelleyTxIn { transaction_id: [0xD1; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xD1; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -293,7 +319,10 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         }),
     );
 
-    let coll_input = ShelleyTxIn { transaction_id: [0xC3; 32], index: 0 };
+    let coll_input = ShelleyTxIn {
+        transaction_id: [0xC3; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         coll_input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -310,7 +339,10 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
 
     let sdh = compute_test_script_data_hash(&ws, state.protocol_params(), true);
@@ -367,7 +399,10 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xD2; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xD2; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -378,7 +413,10 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
         }),
     );
 
-    let coll_input = ShelleyTxIn { transaction_id: [0xC4; 32], index: 0 };
+    let coll_input = ShelleyTxIn {
+        transaction_id: [0xC4; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         coll_input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -403,7 +441,10 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
         tag: 1,   // Minting
         index: 0, // first sorted policy
         data: PlutusData::Integer(0.into()),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     };
     let sdh_ws = ShelleyWitnessSet {
         redeemers: vec![redeemer.clone()],
@@ -446,9 +487,8 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
     ws.native_scripts.push(native);
     ws.redeemers.push(redeemer);
 
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(

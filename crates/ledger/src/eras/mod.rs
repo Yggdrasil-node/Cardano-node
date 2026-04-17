@@ -13,22 +13,21 @@ pub use alonzo::{AlonzoBlock, AlonzoTxBody, AlonzoTxOut, ExUnits, Redeemer};
 pub use babbage::BABBAGE_NAME;
 pub use babbage::{BabbageBlock, BabbageTxBody, BabbageTxOut, DatumOption};
 pub use byron::BYRON_NAME;
-pub use byron::{ByronBlock, ByronTx, ByronTxAux, ByronTxIn, ByronTxOut, ByronTxWitness, BYRON_SLOTS_PER_EPOCH};
+pub use byron::{
+    BYRON_SLOTS_PER_EPOCH, ByronBlock, ByronTx, ByronTxAux, ByronTxIn, ByronTxOut, ByronTxWitness,
+};
 pub use conway::CONWAY_NAME;
 pub use conway::{
     Constitution, ConwayBlock, ConwayTxBody, GovAction, GovActionId, ProposalProcedure, Vote,
     Voter, VotingProcedure, VotingProcedures,
 };
 pub use mary::MARY_NAME;
-pub use mary::{
-    AssetName, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, PolicyId, Value,
-};
+pub use mary::{AssetName, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, PolicyId, Value};
 pub use shelley::SHELLEY_NAME;
 pub use shelley::{
-    BootstrapWitness, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet,
-    compute_block_body_hash,
+    BootstrapWitness, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
+    ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUpdate, ShelleyUtxo,
+    ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, compute_block_body_hash,
 };
 
 /// Supported Cardano eras in canonical order from Byron through Conway.
@@ -36,7 +35,9 @@ pub use shelley::{
 /// The discriminant ordering (0 = Byron … 6 = Conway) is part of the public
 /// API and is relied upon by `era_ordinal()` comparisons and the hard-fork
 /// era-regression guard in `LedgerState::apply_block_validated`.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub enum Era {
     Byron,
     Shelley,
@@ -57,13 +58,13 @@ impl Era {
     /// Reference: `Ouroboros.Consensus.HardFork.Combinator` — era numbering.
     pub fn era_ordinal(self) -> u8 {
         match self {
-            Self::Byron   => 0,
+            Self::Byron => 0,
             Self::Shelley => 1,
             Self::Allegra => 2,
-            Self::Mary    => 3,
-            Self::Alonzo  => 4,
+            Self::Mary => 3,
+            Self::Alonzo => 4,
             Self::Babbage => 5,
-            Self::Conway  => 6,
+            Self::Conway => 6,
         }
     }
 

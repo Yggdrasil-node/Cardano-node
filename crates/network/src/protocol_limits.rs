@@ -251,7 +251,10 @@ mod tests {
 
     #[test]
     fn txsubmission_non_blocking_is_10s() {
-        assert_eq!(txsubmission::ST_TX_IDS_NON_BLOCKING, Some(Duration::from_secs(10)));
+        assert_eq!(
+            txsubmission::ST_TX_IDS_NON_BLOCKING,
+            Some(Duration::from_secs(10))
+        );
     }
 
     #[test]

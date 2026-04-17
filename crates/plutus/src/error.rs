@@ -100,19 +100,19 @@ impl MachineError {
         matches!(
             self,
             Self::TypeMismatch { .. }
-            | Self::BuiltinError { .. }
-            | Self::DivisionByZero
-            | Self::IntegerOverflow
-            | Self::IndexOutOfBounds { .. }
-            | Self::EmptyList
-            | Self::InvalidUtf8
-            | Self::CryptoError(_)
-            | Self::NonConstrScrutinized
-            | Self::NonFunctionApplication
-            | Self::NonPolymorphicForce
-            | Self::BuiltinTermArgumentExpected { .. }
-            | Self::UnexpectedConstructorTag { .. }
-            | Self::EvaluationFailure
+                | Self::BuiltinError { .. }
+                | Self::DivisionByZero
+                | Self::IntegerOverflow
+                | Self::IndexOutOfBounds { .. }
+                | Self::EmptyList
+                | Self::InvalidUtf8
+                | Self::CryptoError(_)
+                | Self::NonConstrScrutinized
+                | Self::NonFunctionApplication
+                | Self::NonPolymorphicForce
+                | Self::BuiltinTermArgumentExpected { .. }
+                | Self::UnexpectedConstructorTag { .. }
+                | Self::EvaluationFailure
         )
     }
 
@@ -281,19 +281,34 @@ mod tests {
     #[test]
     fn operational_errors_are_classified_correctly() {
         let ops = vec![
-            MachineError::TypeMismatch { expected: "Bool", actual: "Int".into() },
-            MachineError::BuiltinError { builtin: "AddInteger".into(), message: "x".into() },
+            MachineError::TypeMismatch {
+                expected: "Bool",
+                actual: "Int".into(),
+            },
+            MachineError::BuiltinError {
+                builtin: "AddInteger".into(),
+                message: "x".into(),
+            },
             MachineError::DivisionByZero,
             MachineError::IntegerOverflow,
-            MachineError::IndexOutOfBounds { index: 0, length: 0 },
+            MachineError::IndexOutOfBounds {
+                index: 0,
+                length: 0,
+            },
             MachineError::EmptyList,
             MachineError::InvalidUtf8,
             MachineError::CryptoError("bad".into()),
             MachineError::NonConstrScrutinized,
             MachineError::NonFunctionApplication,
             MachineError::NonPolymorphicForce,
-            MachineError::BuiltinTermArgumentExpected { expected: "term argument", received: "type force" },
-            MachineError::UnexpectedConstructorTag { tag: 0, branches: 0 },
+            MachineError::BuiltinTermArgumentExpected {
+                expected: "term argument",
+                received: "type force",
+            },
+            MachineError::UnexpectedConstructorTag {
+                tag: 0,
+                branches: 0,
+            },
             MachineError::EvaluationFailure,
         ];
         for e in &ops {
@@ -328,10 +343,16 @@ mod tests {
     #[test]
     fn into_ledger_error_collapses_all_operational_variants() {
         let ops = vec![
-            MachineError::TypeMismatch { expected: "A", actual: "B".into() },
+            MachineError::TypeMismatch {
+                expected: "A",
+                actual: "B".into(),
+            },
             MachineError::CryptoError("x".into()),
             MachineError::NonConstrScrutinized,
-            MachineError::BuiltinTermArgumentExpected { expected: "term argument", received: "type force" },
+            MachineError::BuiltinTermArgumentExpected {
+                expected: "term argument",
+                received: "type force",
+            },
         ];
         for e in ops {
             assert!(

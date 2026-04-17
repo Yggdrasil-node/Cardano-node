@@ -91,7 +91,10 @@ impl FileLedgerStore {
             let entry = entry?;
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if let Some(slot_str) = name.strip_prefix("snapshot_").and_then(|s| s.strip_suffix(".dat")) {
+                if let Some(slot_str) = name
+                    .strip_prefix("snapshot_")
+                    .and_then(|s| s.strip_suffix(".dat"))
+                {
                     if let Ok(slot) = slot_str.parse::<u64>() {
                         match fs::read(&path) {
                             Ok(data) => snapshots.push((SlotNo(slot), data)),
@@ -112,7 +115,11 @@ impl FileLedgerStore {
             let _ = fs::remove_file(&dirty_path);
         }
 
-        Ok(Self { data_dir, dirty_path, snapshots })
+        Ok(Self {
+            data_dir,
+            dirty_path,
+            snapshots,
+        })
     }
 
     fn mark_dirty(&self) -> std::io::Result<()> {
@@ -150,7 +157,8 @@ impl LedgerStore for FileLedgerStore {
             *existing = data;
         } else {
             self.snapshots.push((slot, data));
-            self.snapshots.sort_by_key(|(snapshot_slot, _)| *snapshot_slot);
+            self.snapshots
+                .sort_by_key(|(snapshot_slot, _)| *snapshot_slot);
         }
         self.mark_clean()?;
         Ok(())

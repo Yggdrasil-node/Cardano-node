@@ -8,9 +8,7 @@
 
 use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
-use crate::protocols::{
-    BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange,
-};
+use crate::protocols::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
 
 // ---------------------------------------------------------------------------
 // Server error
@@ -130,9 +128,7 @@ impl BlockFetchServer {
                 Ok(BlockFetchServerRequest::RequestRange(range))
             }
             BlockFetchMessage::MsgClientDone => Ok(BlockFetchServerRequest::ClientDone),
-            msg => Err(BlockFetchServerError::UnexpectedMessage(format!(
-                "{msg:?}"
-            ))),
+            msg => Err(BlockFetchServerError::UnexpectedMessage(format!("{msg:?}"))),
         }
     }
 
@@ -168,10 +164,7 @@ impl BlockFetchServer {
     ///
     /// If `blocks` is empty, sends `MsgNoBlocks`. Otherwise sends
     /// `MsgStartBatch`, streams each block, then sends `MsgBatchDone`.
-    pub async fn serve_batch(
-        &mut self,
-        blocks: Vec<Vec<u8>>,
-    ) -> Result<(), BlockFetchServerError> {
+    pub async fn serve_batch(&mut self, blocks: Vec<Vec<u8>>) -> Result<(), BlockFetchServerError> {
         if blocks.is_empty() {
             self.no_blocks().await
         } else {

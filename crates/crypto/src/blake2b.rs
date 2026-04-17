@@ -1,5 +1,5 @@
-use blake2::{Blake2b512, Digest};
 use blake2::digest::consts::{U28, U32};
+use blake2::{Blake2b512, Digest};
 
 type Blake2b256 = blake2::Blake2b<U32>;
 type Blake2b224 = blake2::Blake2b<U28>;

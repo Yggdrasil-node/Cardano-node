@@ -162,9 +162,9 @@ impl<'a> FlatDecoder<'a> {
         loop {
             let byte = self.read_bits8(8)?;
             let val = u64::from(byte & 0x7F);
-            result |= val.checked_shl(shift).ok_or_else(|| {
-                MachineError::FlatDecodeError("natural number too large".into())
-            })?;
+            result |= val
+                .checked_shl(shift)
+                .ok_or_else(|| MachineError::FlatDecodeError("natural number too large".into()))?;
             if byte & 0x80 == 0 {
                 break;
             }
@@ -186,17 +186,15 @@ impl<'a> FlatDecoder<'a> {
         loop {
             let byte = self.read_bits8(8)?;
             let val = u128::from(byte & 0x7F);
-            result |= val.checked_shl(shift).ok_or_else(|| {
-                MachineError::FlatDecodeError("integer too large".into())
-            })?;
+            result |= val
+                .checked_shl(shift)
+                .ok_or_else(|| MachineError::FlatDecodeError("integer too large".into()))?;
             if byte & 0x80 == 0 {
                 break;
             }
             shift += 7;
             if shift > 127 {
-                return Err(MachineError::FlatDecodeError(
-                    "integer overflow".into(),
-                ));
+                return Err(MachineError::FlatDecodeError("integer overflow".into()));
             }
         }
         // Zigzag decode: even → positive, odd → negative.
@@ -543,19 +541,21 @@ impl<'a> FlatDecoder<'a> {
             }
             Type::Bls12_381_G1_Element => {
                 let bs = self.read_bytestring()?;
-                let elem = yggdrasil_crypto::bls12_381::g1_uncompress(&bs)
-                    .map_err(|e| MachineError::FlatDecodeError(format!("invalid G1 element: {e}")))?;
+                let elem = yggdrasil_crypto::bls12_381::g1_uncompress(&bs).map_err(|e| {
+                    MachineError::FlatDecodeError(format!("invalid G1 element: {e}"))
+                })?;
                 Ok(Constant::Bls12_381_G1_Element(elem))
             }
             Type::Bls12_381_G2_Element => {
                 let bs = self.read_bytestring()?;
-                let elem = yggdrasil_crypto::bls12_381::g2_uncompress(&bs)
-                    .map_err(|e| MachineError::FlatDecodeError(format!("invalid G2 element: {e}")))?;
+                let elem = yggdrasil_crypto::bls12_381::g2_uncompress(&bs).map_err(|e| {
+                    MachineError::FlatDecodeError(format!("invalid G2 element: {e}"))
+                })?;
                 Ok(Constant::Bls12_381_G2_Element(elem))
             }
-            Type::Bls12_381_MlResult => {
-                Err(MachineError::FlatDecodeError("MlResult cannot appear in Flat-encoded programs".into()))
-            }
+            Type::Bls12_381_MlResult => Err(MachineError::FlatDecodeError(
+                "MlResult cannot appear in Flat-encoded programs".into(),
+            )),
         }
     }
 
@@ -797,7 +797,7 @@ mod tests {
         let data = bits_to_bytes(&[
             0, 1, 0, 0, // tag=4 (Constant)
             0, 1, 0, 0, // type tag=4 (Bool)
-            1,           // bool value = true
+            1, // bool value = true
         ]);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
@@ -809,7 +809,7 @@ mod tests {
         let data = bits_to_bytes(&[
             0, 1, 0, 0, // tag=4 (Constant)
             0, 1, 0, 0, // type tag=4 (Bool)
-            0,           // bool value = false
+            0, // bool value = false
         ]);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
@@ -821,8 +821,8 @@ mod tests {
         // Constant = tag 4, Type = Integer (tag 0).
         // Integer 0: zigzag(0) = 0, encoded as 8-bit group: 0x00.
         let data = bits_to_bytes(&[
-            0, 1, 0, 0,             // tag=4 (Constant)
-            0, 0, 0, 0,             // type tag=0 (Integer)
+            0, 1, 0, 0, // tag=4 (Constant)
+            0, 0, 0, 0, // type tag=0 (Integer)
             0, 0, 0, 0, 0, 0, 0, 0, // integer byte 0x00 (value=0, MSB=0 → stop)
         ]);
         let mut dec = FlatDecoder::new(&data);
@@ -845,7 +845,7 @@ mod tests {
         let data = bits_to_bytes(&[
             0, 1, 1, 1, // tag=7 (Builtin)
             1, 1, 0, 0, 1, 0, 0, // builtin 100
-            0,                     // padding
+            0, // padding
         ]);
         let mut dec = FlatDecoder::new(&data);
         assert!(dec.decode_term().is_err());
@@ -874,10 +874,10 @@ mod tests {
     fn test_decode_constr_empty() {
         // Constr = tag 8 (1000), natural tag 0 (0x00), empty list (0-bit).
         let data = bits_to_bytes(&[
-            1, 0, 0, 0,             // tag=8 (Constr)
+            1, 0, 0, 0, // tag=8 (Constr)
             0, 0, 0, 0, 0, 0, 0, 0, // natural=0
-            0,                       // empty list (continuation=0)
-            0, 0, 0,                 // padding
+            0, // empty list (continuation=0)
+            0, 0, 0, // padding
         ]);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
@@ -890,8 +890,8 @@ mod tests {
         let data = bits_to_bytes(&[
             1, 0, 0, 1, // tag=9 (Case)
             0, 1, 1, 0, // Error (scrutinee)
-            0,           // empty branch list
-            0, 0, 0,     // padding
+            0, // empty branch list
+            0, 0, 0, // padding
         ]);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");

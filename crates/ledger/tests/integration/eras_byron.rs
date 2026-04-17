@@ -90,7 +90,10 @@ fn byron_main_block_first_slot() {
 fn byron_main_block_last_slot() {
     let raw = build_byron_main(7, 21599, &[0x44; 32]);
     let block = ByronBlock::decode_main(&raw).expect("decode last slot");
-    assert_eq!(block.absolute_slot(BYRON_SLOTS_PER_EPOCH), 7 * 21600 + 21599);
+    assert_eq!(
+        block.absolute_slot(BYRON_SLOTS_PER_EPOCH),
+        7 * 21600 + 21599
+    );
 }
 
 #[test]
@@ -152,8 +155,14 @@ fn byron_txout_cbor_round_trip() {
 fn byron_tx_cbor_round_trip() {
     let tx = ByronTx {
         inputs: vec![
-            ByronTxIn { txid: [0x11; 32], index: 0 },
-            ByronTxIn { txid: [0x22; 32], index: 1 },
+            ByronTxIn {
+                txid: [0x11; 32],
+                index: 0,
+            },
+            ByronTxIn {
+                txid: [0x22; 32],
+                index: 1,
+            },
         ],
         outputs: vec![ByronTxOut {
             address: vec![0xD8, 0x18, 0x43, 0x01, 0x02, 0x03], // tag 24 + 3 bytes
@@ -173,7 +182,10 @@ fn byron_tx_cbor_round_trip() {
 #[test]
 fn byron_tx_id_deterministic() {
     let tx = ByronTx {
-        inputs: vec![ByronTxIn { txid: [0xFF; 32], index: 0 }],
+        inputs: vec![ByronTxIn {
+            txid: [0xFF; 32],
+            index: 0,
+        }],
         outputs: vec![ByronTxOut {
             address: vec![0xD8, 0x18, 0x43, 0x01, 0x02, 0x03],
             amount: 42,
@@ -212,7 +224,10 @@ fn byron_tx_witness_cbor_round_trip() {
 fn byron_tx_aux_cbor_round_trip() {
     let tx_aux = ByronTxAux {
         tx: ByronTx {
-            inputs: vec![ByronTxIn { txid: [0x33; 32], index: 2 }],
+            inputs: vec![ByronTxIn {
+                txid: [0x33; 32],
+                index: 2,
+            }],
             outputs: vec![ByronTxOut {
                 address: vec![0xD8, 0x18, 0x43, 0x04, 0x05, 0x06],
                 amount: 999_999,
@@ -259,7 +274,11 @@ fn byron_main_block_with_transactions() {
     tx_enc.map(0);
     // witnesses: [PkWitness]
     tx_enc.array(1);
-    tx_enc.array(2).unsigned(0).tag(24).bytes(&[0x82, 0x40, 0x40]);
+    tx_enc
+        .array(2)
+        .unsigned(0)
+        .tag(24)
+        .bytes(&[0x82, 0x40, 0x40]);
     let tx_aux_bytes = tx_enc.into_bytes();
 
     // Build main block with tx_payload containing 1 TxAux

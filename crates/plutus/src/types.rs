@@ -339,9 +339,8 @@ impl DefaultFun {
         use DefaultFun::*;
         match self {
             // Integer arithmetic — monomorphic, 2 args
-            AddInteger | SubtractInteger | MultiplyInteger
-            | DivideInteger | QuotientInteger | RemainderInteger
-            | ModInteger => (0, 2),
+            AddInteger | SubtractInteger | MultiplyInteger | DivideInteger | QuotientInteger
+            | RemainderInteger | ModInteger => (0, 2),
             EqualsInteger | LessThanInteger | LessThanEqualsInteger => (0, 2),
 
             // ByteString
@@ -666,8 +665,18 @@ mod tests {
 
     #[test]
     fn program_ne() {
-        let a = Program { major: 1, minor: 0, patch: 0, term: Term::Error };
-        let b = Program { major: 2, minor: 0, patch: 0, term: Term::Error };
+        let a = Program {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            term: Term::Error,
+        };
+        let b = Program {
+            major: 2,
+            minor: 0,
+            patch: 0,
+            term: Term::Error,
+        };
         assert_ne!(a, b);
     }
 
@@ -764,10 +773,13 @@ mod tests {
 
     #[test]
     fn term_constr_with_fields() {
-        let t = Term::Constr(1, vec![
-            Term::Constant(Constant::Integer(1)),
-            Term::Constant(Constant::Integer(2)),
-        ]);
+        let t = Term::Constr(
+            1,
+            vec![
+                Term::Constant(Constant::Integer(1)),
+                Term::Constant(Constant::Integer(2)),
+            ],
+        );
         if let Term::Constr(tag, fields) = &t {
             assert_eq!(*tag, 1);
             assert_eq!(fields.len(), 2);
@@ -820,7 +832,10 @@ mod tests {
     #[test]
     fn type_pair() {
         let t = Type::Pair(Box::new(Type::Integer), Box::new(Type::ByteString));
-        assert_eq!(t.clone(), Type::Pair(Box::new(Type::Integer), Box::new(Type::ByteString)));
+        assert_eq!(
+            t.clone(),
+            Type::Pair(Box::new(Type::Integer), Box::new(Type::ByteString))
+        );
     }
 
     #[test]
@@ -861,7 +876,10 @@ mod tests {
 
     #[test]
     fn constant_string_eq() {
-        assert_eq!(Constant::String("abc".into()), Constant::String("abc".into()));
+        assert_eq!(
+            Constant::String("abc".into()),
+            Constant::String("abc".into())
+        );
     }
 
     #[test]
@@ -978,15 +996,24 @@ mod tests {
         assert_eq!(DefaultFun::SubtractInteger.name(), "subtractInteger");
         assert_eq!(DefaultFun::MultiplyInteger.name(), "multiplyInteger");
         assert_eq!(DefaultFun::Sha2_256.name(), "sha2_256");
-        assert_eq!(DefaultFun::LessThanEqualsByteString.name(), "lessThanEqualsByteString");
+        assert_eq!(
+            DefaultFun::LessThanEqualsByteString.name(),
+            "lessThanEqualsByteString"
+        );
         assert_eq!(DefaultFun::IfThenElse.name(), "ifThenElse");
         assert_eq!(DefaultFun::HeadList.name(), "headList");
         assert_eq!(DefaultFun::ConstrData.name(), "constrData");
         assert_eq!(DefaultFun::EqualsData.name(), "equalsData");
-        assert_eq!(DefaultFun::VerifyEcdsaSecp256k1Signature.name(), "verifyEcdsaSecp256k1Signature");
+        assert_eq!(
+            DefaultFun::VerifyEcdsaSecp256k1Signature.name(),
+            "verifyEcdsaSecp256k1Signature"
+        );
         assert_eq!(DefaultFun::Bls12_381_G1_Add.name(), "bls12_381_G1_add");
         assert_eq!(DefaultFun::Keccak_256.name(), "keccak_256");
-        assert_eq!(DefaultFun::IntegerToByteString.name(), "integerToByteString");
+        assert_eq!(
+            DefaultFun::IntegerToByteString.name(),
+            "integerToByteString"
+        );
         assert_eq!(DefaultFun::AndByteString.name(), "andByteString");
         assert_eq!(DefaultFun::ExpModInteger.name(), "expModInteger");
     }
@@ -1362,15 +1389,13 @@ mod tests {
 
     #[test]
     fn env_lookup_zero_is_error() {
-        let env = Environment::new()
-            .extend(Value::Constant(Constant::Unit));
+        let env = Environment::new().extend(Value::Constant(Constant::Unit));
         assert!(env.lookup(0).is_err());
     }
 
     #[test]
     fn env_lookup_out_of_range() {
-        let env = Environment::new()
-            .extend(Value::Constant(Constant::Unit));
+        let env = Environment::new().extend(Value::Constant(Constant::Unit));
         assert!(env.lookup(2).is_err());
     }
 
@@ -1384,8 +1409,7 @@ mod tests {
 
     #[test]
     fn env_extend_does_not_mutate_original() {
-        let env1 = Environment::new()
-            .extend(Value::Constant(Constant::Integer(1)));
+        let env1 = Environment::new().extend(Value::Constant(Constant::Integer(1)));
         let env2 = env1.extend(Value::Constant(Constant::Integer(2)));
 
         // env1 should still have only 1 binding.
@@ -1425,14 +1449,12 @@ mod tests {
     fn constant_proto_list_of_pairs() {
         let c = Constant::ProtoList(
             Type::Pair(Box::new(Type::Data), Box::new(Type::Data)),
-            vec![
-                Constant::ProtoPair(
-                    Type::Data,
-                    Type::Data,
-                    Box::new(Constant::Data(PlutusData::Integer(1))),
-                    Box::new(Constant::Data(PlutusData::Integer(2))),
-                ),
-            ],
+            vec![Constant::ProtoPair(
+                Type::Data,
+                Type::Data,
+                Box::new(Constant::Data(PlutusData::Integer(1))),
+                Box::new(Constant::Data(PlutusData::Integer(2))),
+            )],
         );
         if let Constant::ProtoList(ty, items) = &c {
             assert_eq!(*ty, Type::Pair(Box::new(Type::Data), Box::new(Type::Data)));

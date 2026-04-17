@@ -34,15 +34,32 @@ fn empty_witness_set() -> ShelleyWitnessSet {
 
 fn seed_shelley_utxo(state: &mut LedgerState, signer: &TestSigner, tx_hash: [u8; 32], amount: u64) {
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: tx_hash, index: 0 },
-        ShelleyTxOut { address: signer.enterprise_addr(), amount },
+        ShelleyTxIn {
+            transaction_id: tx_hash,
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount,
+        },
     );
 }
 
-fn seed_multi_era_utxo(state: &mut LedgerState, signer: &TestSigner, tx_hash: [u8; 32], amount: u64) {
+fn seed_multi_era_utxo(
+    state: &mut LedgerState,
+    signer: &TestSigner,
+    tx_hash: [u8; 32],
+    amount: u64,
+) {
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: tx_hash, index: 0 },
-        ShelleyTxOut { address: signer.enterprise_addr(), amount },
+        ShelleyTxIn {
+            transaction_id: tx_hash,
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount,
+        },
     );
 }
 
@@ -92,8 +109,14 @@ fn allegra_block_rejects_bytes_65() {
 
     let aux = shelley_metadata_with_value(1, &cbor_bytes(65));
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -141,8 +164,14 @@ fn allegra_block_rejects_text_65() {
 
     let aux = shelley_metadata_with_value(1, &cbor_text(65));
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x04; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x04; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -196,8 +225,14 @@ fn allegra_block_rejects_nested_oversized_bytes_in_array() {
 
     let aux = shelley_metadata_with_value(1, &value_cbor);
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x07; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x07; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -252,8 +287,14 @@ fn allegra_block_rejects_nested_oversized_text_in_map() {
 
     let aux = shelley_metadata_with_value(42, &value_cbor);
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x08; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x08; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -306,8 +347,14 @@ fn submitted_allegra_accepts_bytes_64() {
 
     let aux = shelley_metadata_with_value(1, &cbor_bytes(64));
     let body = AllegraTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: Some(1000),
         certificates: None,
@@ -319,10 +366,10 @@ fn submitted_allegra_accepts_bytes_64() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)),
-    );
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted =
+        MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)));
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("64-byte bytes metadatum should be accepted");
 }
 
@@ -336,8 +383,14 @@ fn submitted_allegra_accepts_text_64() {
 
     let aux = shelley_metadata_with_value(1, &cbor_text(64));
     let body = AllegraTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x03; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x03; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: Some(1000),
         certificates: None,
@@ -349,10 +402,10 @@ fn submitted_allegra_accepts_text_64() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)),
-    );
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted =
+        MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)));
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("64-byte text metadatum should be accepted");
 }
 
@@ -368,8 +421,14 @@ fn submitted_allegra_accepts_large_integer() {
     let int_cbor = vec![0x1B, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
     let aux = shelley_metadata_with_value(1, &int_cbor);
     let body = AllegraTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x09; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x09; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: Some(1000),
         certificates: None,
@@ -381,10 +440,10 @@ fn submitted_allegra_accepts_large_integer() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)),
-    );
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted =
+        MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)));
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("large integer metadatum should be accepted");
 }
 
@@ -398,8 +457,14 @@ fn submitted_allegra_accepts_empty_bytes() {
 
     let aux = shelley_metadata_with_value(1, &cbor_bytes(0));
     let body = AllegraTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x0E; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x0E; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: Some(1000),
         certificates: None,
@@ -411,10 +476,10 @@ fn submitted_allegra_accepts_empty_bytes() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)),
-    );
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted =
+        MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux)));
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("0-length bytes metadatum should be accepted");
 }
 
@@ -427,8 +492,14 @@ fn submitted_allegra_accepts_no_auxiliary_data() {
     seed_multi_era_utxo(&mut state, &signer, [0x0D; 32], 5_000_000);
 
     let body = AllegraTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x0D; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x0D; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: Some(1000),
         certificates: None,
@@ -440,10 +511,9 @@ fn submitted_allegra_accepts_no_auxiliary_data() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, ws, None),
-    );
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(body, ws, None));
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("no auxiliary data means no metadata validation");
 }
 
@@ -461,8 +531,14 @@ fn submitted_allegra_rejects_oversized_bytes_metadata() {
 
     let aux = shelley_metadata_with_value(1, &cbor_bytes(65));
     let body = AllegraTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x0A; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x0A; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: Some(1000),
         certificates: None,
@@ -471,10 +547,14 @@ fn submitted_allegra_rejects_oversized_bytes_metadata() {
         auxiliary_data_hash: Some(aux_hash(&aux)),
         validity_interval_start: None,
     };
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, empty_witness_set(), Some(aux)),
-    );
-    let err = state.apply_submitted_tx(&submitted, SlotNo(10), None).unwrap_err();
+    let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(
+        body,
+        empty_witness_set(),
+        Some(aux),
+    ));
+    let err = state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
+        .unwrap_err();
     assert!(
         matches!(err, LedgerError::InvalidMetadata),
         "submitted tx with 65-byte bytes should trigger InvalidMetadata, got: {err:?}",
@@ -494,7 +574,10 @@ fn submitted_conway_rejects_oversized_text_metadata() {
 
     let aux = shelley_metadata_with_value(1, &cbor_text(65));
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x0C; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x0C; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
@@ -520,10 +603,15 @@ fn submitted_conway_rejects_oversized_text_metadata() {
         current_treasury_value: None,
         treasury_donation: None,
     };
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, empty_witness_set(), true, Some(aux)),
-    );
-    let err = state.apply_submitted_tx(&submitted, SlotNo(10), None).unwrap_err();
+    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
+        body,
+        empty_witness_set(),
+        true,
+        Some(aux),
+    ));
+    let err = state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
+        .unwrap_err();
     assert!(
         matches!(err, LedgerError::InvalidMetadata),
         "Conway submitted tx with 65-byte text should trigger InvalidMetadata, got: {err:?}",
@@ -545,8 +633,14 @@ fn submitted_shelley_pv2_allows_oversized_bytes() {
 
     let aux = shelley_metadata_with_value(1, &cbor_bytes(100));
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x0B; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x0B; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -557,10 +651,13 @@ fn submitted_shelley_pv2_allows_oversized_bytes() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Shelley(
-        ShelleyTx { body, witness_set: ws, auxiliary_data: Some(aux) },
-    );
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: Some(aux),
+    });
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("PV 2.0 should skip metadata size validation");
 }
 
@@ -574,8 +671,14 @@ fn submitted_shelley_pv2_allows_oversized_text() {
 
     let aux = shelley_metadata_with_value(1, &cbor_text(100));
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x06; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: signer.enterprise_addr(), amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x06; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: signer.enterprise_addr(),
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -586,9 +689,12 @@ fn submitted_shelley_pv2_allows_oversized_text() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Shelley(
-        ShelleyTx { body, witness_set: ws, auxiliary_data: Some(aux) },
-    );
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: Some(aux),
+    });
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("PV 2.0 should skip metadata size validation for text");
 }

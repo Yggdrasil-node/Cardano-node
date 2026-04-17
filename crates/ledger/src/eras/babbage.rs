@@ -75,11 +75,10 @@ impl CborDecode for DatumOption {
             0 => {
                 let raw = dec.bytes()?;
                 let hash: [u8; 32] =
-                    raw.try_into()
-                        .map_err(|_| LedgerError::CborInvalidLength {
-                            expected: 32,
-                            actual: raw.len(),
-                        })?;
+                    raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 32,
+                        actual: raw.len(),
+                    })?;
                 Ok(Self::Hash(hash))
             }
             1 => {
@@ -555,11 +554,10 @@ impl CborDecode for BabbageTxBody {
                 7 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     auxiliary_data_hash = Some(hash);
                 }
                 8 => {
@@ -571,11 +569,10 @@ impl CborDecode for BabbageTxBody {
                 11 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     script_data_hash = Some(hash);
                 }
                 13 => {
@@ -592,11 +589,10 @@ impl CborDecode for BabbageTxBody {
                     for _ in 0..count {
                         let raw = dec.bytes()?;
                         let hash: [u8; 28] =
-                            raw.try_into()
-                                .map_err(|_| LedgerError::CborInvalidLength {
-                                    expected: 28,
-                                    actual: raw.len(),
-                                })?;
+                            raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                                expected: 28,
+                                actual: raw.len(),
+                            })?;
                         sigs.push(hash);
                     }
                     required_signers = Some(sigs);
@@ -784,7 +780,10 @@ mod tests {
     use crate::eras::mary::Value;
 
     fn mk_txin(idx: u16) -> ShelleyTxIn {
-        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+        ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: idx,
+        }
     }
 
     fn mk_babbage_txout() -> BabbageTxOut {
@@ -814,10 +813,10 @@ mod tests {
 
     #[test]
     fn datum_option_inline_complex_round_trip() {
-        let d = DatumOption::Inline(PlutusData::Constr(0, vec![
-            PlutusData::Bytes(vec![0x01, 0x02]),
-            PlutusData::Integer(-1),
-        ]));
+        let d = DatumOption::Inline(PlutusData::Constr(
+            0,
+            vec![PlutusData::Bytes(vec![0x01, 0x02]), PlutusData::Integer(-1)],
+        ));
         let decoded = DatumOption::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
     }

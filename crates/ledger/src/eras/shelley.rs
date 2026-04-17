@@ -51,11 +51,10 @@ impl CborDecode for ShelleyTxIn {
         }
         let raw = dec.bytes()?;
         let transaction_id: [u8; 32] =
-            raw.try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 32,
-                    actual: raw.len(),
-                })?;
+            raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: raw.len(),
+            })?;
         let index = dec.unsigned()? as u16;
         Ok(Self {
             transaction_id,
@@ -333,11 +332,10 @@ impl CborDecode for ShelleyTxBody {
                 7 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     auxiliary_data_hash = Some(hash);
                 }
                 _ => {
@@ -405,13 +403,12 @@ impl CborDecode for ShelleyVkeyWitness {
             });
         }
         let vkey_raw = dec.bytes()?;
-        let vkey: [u8; 32] =
-            vkey_raw
-                .try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 32,
-                    actual: vkey_raw.len(),
-                })?;
+        let vkey: [u8; 32] = vkey_raw
+            .try_into()
+            .map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: vkey_raw.len(),
+            })?;
         let sig_raw = dec.bytes()?;
         let signature: [u8; 64] =
             sig_raw
@@ -970,7 +967,9 @@ impl ShelleyUtxo {
             .iter()
             .map(|o| o.amount)
             .fold(0u64, u64::saturating_add);
-        let available = consumed.saturating_add(withdrawal_total).saturating_add(refunds);
+        let available = consumed
+            .saturating_add(withdrawal_total)
+            .saturating_add(refunds);
         if available != produced.saturating_add(body.fee).saturating_add(deposits) {
             return Err(LedgerError::ValueNotPreserved {
                 consumed: available,
@@ -1029,13 +1028,12 @@ impl CborDecode for ShelleyVrfCert {
         }
         let output = dec.bytes()?.to_vec();
         let proof_raw = dec.bytes()?;
-        let proof: [u8; 80] =
-            proof_raw
-                .try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 80,
-                    actual: proof_raw.len(),
-                })?;
+        let proof: [u8; 80] = proof_raw
+            .try_into()
+            .map_err(|_| LedgerError::CborInvalidLength {
+                expected: 80,
+                actual: proof_raw.len(),
+            })?;
         Ok(Self { output, proof })
     }
 }
@@ -1094,13 +1092,12 @@ impl ShelleyOpCert {
         let sequence_number = dec.unsigned()?;
         let kes_period = dec.unsigned()?;
         let sig_raw = dec.bytes()?;
-        let sigma: [u8; 64] =
-            sig_raw
-                .try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 64,
-                    actual: sig_raw.len(),
-                })?;
+        let sigma: [u8; 64] = sig_raw
+            .try_into()
+            .map_err(|_| LedgerError::CborInvalidLength {
+                expected: 64,
+                actual: sig_raw.len(),
+            })?;
         Ok(Self {
             hot_vkey,
             sequence_number,
@@ -1166,8 +1163,12 @@ impl CborEncode for ShelleyHeaderBody {
 
         // prev_hash: hash32 / nil
         match &self.prev_hash {
-            Some(h) => { enc.bytes(h); }
-            None => { enc.null(); }
+            Some(h) => {
+                enc.bytes(h);
+            }
+            None => {
+                enc.null();
+            }
         }
 
         enc.bytes(&self.issuer_vkey);
@@ -1207,12 +1208,10 @@ impl CborDecode for ShelleyHeaderBody {
             None
         } else {
             let raw = dec.bytes()?;
-            let h: [u8; 32] =
-                raw.try_into()
-                    .map_err(|_| LedgerError::CborInvalidLength {
-                        expected: 32,
-                        actual: raw.len(),
-                    })?;
+            let h: [u8; 32] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: raw.len(),
+            })?;
             Some(h)
         };
 
@@ -1226,13 +1225,12 @@ impl CborDecode for ShelleyHeaderBody {
                 })?;
 
         let vv_raw = dec.bytes()?;
-        let vrf_vkey: [u8; 32] =
-            vv_raw
-                .try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 32,
-                    actual: vv_raw.len(),
-                })?;
+        let vrf_vkey: [u8; 32] = vv_raw
+            .try_into()
+            .map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: vv_raw.len(),
+            })?;
 
         let nonce_vrf = ShelleyVrfCert::decode_cbor(dec)?;
         let leader_vrf = ShelleyVrfCert::decode_cbor(dec)?;
@@ -1386,8 +1384,12 @@ impl CborEncode for PraosHeaderBody {
 
         // prev_hash: hash32 / nil
         match &self.prev_hash {
-            Some(h) => { enc.bytes(h); }
-            None => { enc.null(); }
+            Some(h) => {
+                enc.bytes(h);
+            }
+            None => {
+                enc.null();
+            }
         }
 
         enc.bytes(&self.issuer_vkey);
@@ -1426,12 +1428,10 @@ impl CborDecode for PraosHeaderBody {
             None
         } else {
             let raw = dec.bytes()?;
-            let h: [u8; 32] =
-                raw.try_into()
-                    .map_err(|_| LedgerError::CborInvalidLength {
-                        expected: 32,
-                        actual: raw.len(),
-                    })?;
+            let h: [u8; 32] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: raw.len(),
+            })?;
             Some(h)
         };
 
@@ -1445,13 +1445,12 @@ impl CborDecode for PraosHeaderBody {
                 })?;
 
         let vv_raw = dec.bytes()?;
-        let vrf_vkey: [u8; 32] =
-            vv_raw
-                .try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 32,
-                    actual: vv_raw.len(),
-                })?;
+        let vrf_vkey: [u8; 32] = vv_raw
+            .try_into()
+            .map_err(|_| LedgerError::CborInvalidLength {
+                expected: 32,
+                actual: vv_raw.len(),
+            })?;
 
         let vrf_result = ShelleyVrfCert::decode_cbor(dec)?;
 
@@ -1701,12 +1700,18 @@ mod tests {
     use crate::cbor::{CborDecode, CborEncode};
 
     fn mk_txin(byte: u8, idx: u16) -> ShelleyTxIn {
-        ShelleyTxIn { transaction_id: [byte; 32], index: idx }
+        ShelleyTxIn {
+            transaction_id: [byte; 32],
+            index: idx,
+        }
     }
 
     #[allow(dead_code)]
     fn mk_txout(amt: u64) -> ShelleyTxOut {
-        ShelleyTxOut { address: vec![0x61; 29], amount: amt }
+        ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount: amt,
+        }
     }
 
     fn mk_witness_set_empty() -> ShelleyWitnessSet {
@@ -1725,7 +1730,10 @@ mod tests {
     fn mk_shelley_body() -> ShelleyTxBody {
         ShelleyTxBody {
             inputs: vec![mk_txin(0x01, 0)],
-            outputs: vec![ShelleyTxOut { address: vec![0x61; 29], amount: 2_000_000 }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 2_000_000,
+            }],
             fee: 200_000,
             ttl: 100,
             certificates: None,
@@ -1755,7 +1763,10 @@ mod tests {
 
     #[test]
     fn txout_round_trip() {
-        let to = ShelleyTxOut { address: vec![0x61; 29], amount: 5_000_000 };
+        let to = ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount: 5_000_000,
+        };
         let decoded = ShelleyTxOut::from_cbor_bytes(&to.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, to);
     }
@@ -1773,7 +1784,10 @@ mod tests {
     fn tx_body_with_optional_fields_round_trip() {
         let body = ShelleyTxBody {
             inputs: vec![mk_txin(0x01, 0)],
-            outputs: vec![ShelleyTxOut { address: vec![0x61; 29], amount: 1_000_000 }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1_000_000,
+            }],
             fee: 100_000,
             ttl: 50,
             certificates: Some(vec![]),
@@ -1789,7 +1803,10 @@ mod tests {
 
     #[test]
     fn vkey_witness_round_trip() {
-        let w = ShelleyVkeyWitness { vkey: [0x01; 32], signature: [0x02; 64] };
+        let w = ShelleyVkeyWitness {
+            vkey: [0x01; 32],
+            signature: [0x02; 64],
+        };
         let decoded = ShelleyVkeyWitness::from_cbor_bytes(&w.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, w);
     }
@@ -1820,7 +1837,10 @@ mod tests {
     #[test]
     fn witness_set_with_vkeys_round_trip() {
         let mut ws = mk_witness_set_empty();
-        ws.vkey_witnesses.push(ShelleyVkeyWitness { vkey: [0x01; 32], signature: [0x02; 64] });
+        ws.vkey_witnesses.push(ShelleyVkeyWitness {
+            vkey: [0x01; 32],
+            signature: [0x02; 64],
+        });
         let decoded = ShelleyWitnessSet::from_cbor_bytes(&ws.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, ws);
     }
@@ -1841,7 +1861,8 @@ mod tests {
     #[test]
     fn witness_set_with_native_scripts_round_trip() {
         let mut ws = mk_witness_set_empty();
-        ws.native_scripts.push(NativeScript::ScriptPubkey([0xab; 28]));
+        ws.native_scripts
+            .push(NativeScript::ScriptPubkey([0xab; 28]));
         let decoded = ShelleyWitnessSet::from_cbor_bytes(&ws.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, ws);
     }
@@ -1874,9 +1895,14 @@ mod tests {
 
     #[test]
     fn shelley_utxo_insert_and_get() {
-        let mut utxo = ShelleyUtxo { entries: HashMap::new() };
+        let mut utxo = ShelleyUtxo {
+            entries: HashMap::new(),
+        };
         let ti = mk_txin(0x01, 0);
-        let to = ShelleyTxOut { address: vec![0x61; 29], amount: 1_000_000 };
+        let to = ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount: 1_000_000,
+        };
         utxo.entries.insert(ti.clone(), to.clone());
         assert_eq!(utxo.entries.get(&ti), Some(&to));
         assert_eq!(utxo.entries.len(), 1);
@@ -1886,7 +1912,10 @@ mod tests {
 
     #[test]
     fn vrf_cert_round_trip() {
-        let vc = ShelleyVrfCert { output: vec![0x01; 32], proof: [0x02; 80] };
+        let vc = ShelleyVrfCert {
+            output: vec![0x01; 32],
+            proof: [0x02; 80],
+        };
         let decoded = ShelleyVrfCert::from_cbor_bytes(&vc.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, vc);
     }
@@ -1915,7 +1944,10 @@ mod tests {
     // ── ShelleyHeaderBody ──────────────────────────────────────────────
 
     fn mk_vrf_cert() -> ShelleyVrfCert {
-        ShelleyVrfCert { output: vec![0x00; 32], proof: [0x00; 80] }
+        ShelleyVrfCert {
+            output: vec![0x00; 32],
+            proof: [0x00; 80],
+        }
     }
 
     fn mk_opcert() -> ShelleyOpCert {

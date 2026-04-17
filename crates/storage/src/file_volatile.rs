@@ -161,10 +161,8 @@ impl FileVolatile {
         blocks.sort_by_key(|b| b.header.slot_no);
 
         let chain: Vec<HeaderHash> = blocks.iter().map(|b| b.header.hash).collect();
-        let index: HashMap<HeaderHash, Block> = blocks
-            .into_iter()
-            .map(|b| (b.header.hash, b))
-            .collect();
+        let index: HashMap<HeaderHash, Block> =
+            blocks.into_iter().map(|b| (b.header.hash, b)).collect();
 
         // Stale dirty sentinel has been recovered; clear it so subsequent
         // opens do not produce spurious warnings.
@@ -175,7 +173,13 @@ impl FileVolatile {
             }
         }
 
-        Ok(Self { data_dir, dirty_path, chain, index, skipped_on_open: skipped })
+        Ok(Self {
+            data_dir,
+            dirty_path,
+            chain,
+            index,
+            skipped_on_open: skipped,
+        })
     }
 
     /// Returns the number of block files that were skipped during open
@@ -263,8 +267,8 @@ impl VolatileStore for FileVolatile {
 
         self.mark_dirty()?;
         let path = self.block_path(&block.header.hash);
-        let cbor = serde_cbor::to_vec(&block)
-            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        let cbor =
+            serde_cbor::to_vec(&block).map_err(|e| StorageError::Serialization(e.to_string()))?;
         atomic_write_file(&path, &cbor)?;
 
         self.chain.push(block.header.hash);
@@ -366,12 +370,10 @@ impl VolatileStore for FileVolatile {
     fn suffix_after(&self, point: &Point) -> Vec<Block> {
         let start = match point {
             Point::Origin => 0,
-            Point::BlockPoint(_, hash) => {
-                match self.chain.iter().position(|h| h == hash) {
-                    Some(pos) => pos + 1,
-                    None => return Vec::new(),
-                }
-            }
+            Point::BlockPoint(_, hash) => match self.chain.iter().position(|h| h == hash) {
+                Some(pos) => pos + 1,
+                None => return Vec::new(),
+            },
         };
         if start >= self.chain.len() {
             return Vec::new();
@@ -411,8 +413,7 @@ impl VolatileStore for FileVolatile {
             self.index.remove(hash);
         }
 
-        let remove_set: std::collections::HashSet<HeaderHash> =
-            to_remove.into_iter().collect();
+        let remove_set: std::collections::HashSet<HeaderHash> = to_remove.into_iter().collect();
         self.chain.retain(|h| !remove_set.contains(h));
         let _ = self.mark_clean();
         count
@@ -425,11 +426,13 @@ impl VolatileStore for FileVolatile {
 
 /// Encode a byte slice as lowercase hex.
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
-        use std::fmt::Write;
-        let _ = write!(acc, "{b:02x}");
-        acc
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
 }
 
 /// Decode a 64-character hex string into a 32-byte `HeaderHash`.

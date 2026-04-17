@@ -11,53 +11,26 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::block_producer::{
-    BlockProducerCredentials, SlotClock, ShouldForge, assemble_block_body,
-    check_should_forge, forge_block, forged_block_to_storage_block,
-    make_block_context, serialize_forged_block_cbor, ForgedBlock,
+    BlockProducerCredentials, ForgedBlock, ShouldForge, SlotClock, assemble_block_body,
+    check_should_forge, forge_block, forged_block_to_storage_block, make_block_context,
+    serialize_forged_block_cbor,
 };
-use crate::config::{derive_peer_snapshot_freshness, load_peer_snapshot_file};
+use crate::config::load_peer_snapshot_file;
 use crate::sync::{
-    decode_multi_era_block,
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
     MultiEraSyncProgress, MultiEraSyncStep, SyncError, VerifiedSyncServiceConfig,
-    VrfVerificationContext, apply_verified_progress_to_chaindb,
-    apply_nonce_evolution_to_progress, extract_tx_ids, extract_consumed_inputs, recover_ledger_state_chaindb,
-    multi_era_block_to_block, validate_block_body_size,
-    validate_block_protocol_version, verify_block_body_hash,
-    sync_batch_apply_verified,
-    sync_batch_verified_with_tentative, track_chain_state,
+    VrfVerificationContext, apply_nonce_evolution_to_progress, apply_verified_progress_to_chaindb,
+    decode_multi_era_block, extract_consumed_inputs, extract_tx_ids, multi_era_block_to_block,
+    recover_ledger_state_chaindb, sync_batch_apply_verified, sync_batch_verified_with_tentative,
+    track_chain_state, validate_block_body_size, validate_block_protocol_version,
+    verify_block_body_hash,
 };
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
-use serde_json::json;
 use serde_json::Value;
-use yggdrasil_consensus::{
-    ChainState, NonceEvolutionConfig, NonceEvolutionState, TentativeState,
-    kes_period_of_slot,
-};
+use serde_json::json;
 use yggdrasil_consensus::praos::ActiveSlotCoeff;
-use yggdrasil_network::{
-    AbstractState, AcquireOutboundResult,
-    AfterSlot, BlockFetchClient, ChainSyncClient, HandshakeVersion, KeepAliveClient,
-    CmAction, ConnectionManagerState, DataFlow,
-    ControlMessage, TemperatureBundle,
-    ConsensusMode,
-    DnsRefreshPolicy, DnsRootPeerProvider,
-    GovernorAction, GovernorState, GovernorTargets, LedgerPeerSnapshot,
-    LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
-    LocalRootTargets, MiniProtocolNum, NodeToNodeVersionData, PeerAccessPoint,
-    NodePeerSharing, PeerConnection, PeerError, PeerRegistry,
-    PeerSelectionTimeouts, PeerSharingClient, PeerSource, PeerStatus,
-    PeerStateAction,
-    PeerSnapshotFreshness, PeerAttemptState, TxIdAndSize, TxServerRequest,
-    RootPeerProviderState, TopologyConfig, TxSubmissionClient,
-    TxSubmissionClientError, UseLedgerPeers, judge_ledger_peer_usage,
-    governor_action_to_peer_state_action,
-    peer_attempt_state, reconcile_ledger_peer_registry_with_policy,
-    ReleaseOutboundResult,
-    refresh_root_peer_state_and_registry, resolve_peer_access_points,
-    churn_mode_from_fetch_mode, compute_association_mode,
-    fetch_mode_from_judgement, peer_selection_mode, pick_churn_regime,
-    PeerSelectionCounters,
+use yggdrasil_consensus::{
+    ChainState, NonceEvolutionConfig, NonceEvolutionState, TentativeState, kes_period_of_slot,
 };
 use yggdrasil_ledger::{
     BlockNo, Decoder, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
@@ -65,9 +38,24 @@ use yggdrasil_ledger::{
     plutus_validation::PlutusEvaluator,
 };
 use yggdrasil_mempool::{
-    Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
-    SharedMempool, MEMPOOL_ZERO_IDX, SharedTxSubmissionMempoolReader,
-    TxSubmissionMempoolReader,
+    MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
+    SharedMempool, SharedTxSubmissionMempoolReader, TxSubmissionMempoolReader,
+};
+use yggdrasil_network::{
+    AbstractState, AcquireOutboundResult, AfterSlot, BlockFetchClient, ChainSyncClient, CmAction,
+    ConnectionManagerState, ConsensusMode, ControlMessage, DataFlow, DnsRefreshPolicy,
+    DnsRootPeerProvider, GovernorAction, GovernorState, GovernorTargets, HandshakeVersion,
+    KeepAliveClient, LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
+    LocalRootConfig, LocalRootTargets, MiniProtocolNum, NodePeerSharing, NodeToNodeVersionData,
+    PeerAccessPoint, PeerAttemptState, PeerConnection, PeerError, PeerRegistry,
+    PeerSelectionCounters, PeerSelectionTimeouts, PeerSharingClient, PeerSnapshotFreshness,
+    PeerSource, PeerStateAction, PeerStatus, ReleaseOutboundResult, RootPeerProviderState,
+    TemperatureBundle, TopologyConfig, TxIdAndSize, TxServerRequest, TxSubmissionClient,
+    TxSubmissionClientError, UseLedgerPeers, churn_mode_from_fetch_mode, compute_association_mode,
+    derive_peer_snapshot_freshness, eligible_ledger_peer_candidates, fetch_mode_from_judgement,
+    governor_action_to_peer_state_action, merge_ledger_peer_snapshots, peer_attempt_state,
+    peer_selection_mode, pick_churn_regime, reconcile_ledger_peer_registry_with_policy,
+    refresh_root_peer_state_and_registry, resolve_peer_access_points,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
@@ -219,7 +207,8 @@ fn extract_inner_block_bytes(raw_envelope: &[u8]) -> Result<&[u8], SyncError> {
     let body_start = dec.position();
     dec.skip().map_err(SyncError::LedgerDecode)?;
     let body_end = dec.position();
-    dec.slice(body_start, body_end).map_err(SyncError::LedgerDecode)
+    dec.slice(body_start, body_end)
+        .map_err(SyncError::LedgerDecode)
 }
 
 fn self_validate_forged_block(forged: &ForgedBlock) -> Result<(), SyncError> {
@@ -234,13 +223,17 @@ fn self_validate_forged_block(forged: &ForgedBlock) -> Result<(), SyncError> {
 
     let decoded_block = multi_era_block_to_block(&decoded);
     if decoded_block.header.hash != forged.header_hash {
-        return Err(SyncError::Recovery("forged header hash mismatch".to_owned()));
+        return Err(SyncError::Recovery(
+            "forged header hash mismatch".to_owned(),
+        ));
     }
     if decoded_block.header.slot_no != forged.slot {
         return Err(SyncError::Recovery("forged slot mismatch".to_owned()));
     }
     if decoded_block.header.block_no != forged.block_number {
-        return Err(SyncError::Recovery("forged block number mismatch".to_owned()));
+        return Err(SyncError::Recovery(
+            "forged block number mismatch".to_owned(),
+        ));
     }
 
     Ok(())
@@ -448,10 +441,7 @@ impl OutboundPeerManager {
                     "warm peer connection established",
                     trace_fields([
                         ("peer", json!(peer.to_string())),
-                        (
-                            "connectedPeer",
-                            json!(connected_peer_addr.to_string()),
-                        ),
+                        ("connectedPeer", json!(connected_peer_addr.to_string())),
                     ]),
                 );
                 true
@@ -556,9 +546,7 @@ impl OutboundPeerManager {
                         yggdrasil_network::TypedIntersectResponse::NotFound { tip } => *tip,
                     };
                     if let Some(slot) = tip.slot() {
-                        governor_state
-                            .metrics
-                            .record_upstreamyness(peer, slot.0);
+                        governor_state.metrics.record_upstreamyness(peer, slot.0);
                     }
                     if let Ok(mut registry) = peer_registry.write() {
                         let _ = registry.set_hot_tip_slot(peer, tip.slot().map(|slot| slot.0));
@@ -605,9 +593,7 @@ impl OutboundPeerManager {
         self.warm_peers
             .iter()
             .filter(|(_, m)| m.is_hot && m.last_known_tip.is_some())
-            .max_by_key(|(_, m)| {
-                m.last_known_tip.as_ref().and_then(|tip| tip.slot())
-            })
+            .max_by_key(|(_, m)| m.last_known_tip.as_ref().and_then(|tip| tip.slot()))
             .map(|(addr, _)| *addr)
     }
 
@@ -671,12 +657,13 @@ impl RuntimeRootPeerSources {
             DnsRootPeerProvider::local_roots(topology.local_roots.clone())
                 .with_policy(policy.clone())
         });
-        let bootstrap_peers = (!topology.bootstrap_peers.configured_peers().is_empty()).then(|| {
-            DnsRootPeerProvider::bootstrap_peers(
-                topology.bootstrap_peers.configured_peers().to_vec(),
-            )
-            .with_policy(policy.clone())
-        });
+        let bootstrap_peers =
+            (!topology.bootstrap_peers.configured_peers().is_empty()).then(|| {
+                DnsRootPeerProvider::bootstrap_peers(
+                    topology.bootstrap_peers.configured_peers().to_vec(),
+                )
+                .with_policy(policy.clone())
+            });
         let public_config_peers = (!topology.public_roots.is_empty()).then(|| {
             DnsRootPeerProvider::public_config_peers(topology.public_roots.clone())
                 .with_policy(policy)
@@ -718,9 +705,7 @@ impl RuntimeRootPeerSources {
         if let Some(provider) = &mut self.public_config_peers {
             match refresh_root_peer_state_and_registry(&mut self.state, registry, provider) {
                 Ok(provider_changed) => changed |= provider_changed,
-                Err(err) => {
-                    trace_root_refresh_error(tracer, "PublicConfigPeers", err.to_string())
-                }
+                Err(err) => trace_root_refresh_error(tracer, "PublicConfigPeers", err.to_string()),
             }
         }
 
@@ -738,10 +723,7 @@ fn trace_root_refresh_error(tracer: &NodeTracer, source: &str, error: String) {
 }
 
 /// Seed a peer registry from the primary peer and current topology-owned root sources.
-pub fn seed_peer_registry(
-    primary_peer: SocketAddr,
-    topology: &TopologyConfig,
-) -> PeerRegistry {
+pub fn seed_peer_registry(primary_peer: SocketAddr, topology: &TopologyConfig) -> PeerRegistry {
     let mut registry = PeerRegistry::default();
     registry.sync_root_peers(&topology.resolved_root_providers());
     // Insert the primary peer after syncing root peers so that sync_root_peers
@@ -753,9 +735,7 @@ pub fn seed_peer_registry(
 }
 
 /// Derive local-root governor targets from resolved topology groups.
-pub fn local_root_targets_from_config(
-    local_roots: &[LocalRootConfig],
-) -> Vec<LocalRootTargets> {
+pub fn local_root_targets_from_config(local_roots: &[LocalRootConfig]) -> Vec<LocalRootTargets> {
     local_roots
         .iter()
         .filter_map(|group| {
@@ -870,11 +850,8 @@ fn prepare_reconnect_attempt_state(
 ) -> (PeerAttemptState, Option<(SocketAddr, &'static str)>) {
     let reconnect_preference =
         reconnect_preferred_peer_with_source(peer_registry, previous_preferred_peer);
-    let ordered_fallback_peers = ordered_reconnect_fallback_peers(
-        primary_peer,
-        refreshed_fallback_peers,
-        peer_registry,
-    );
+    let ordered_fallback_peers =
+        ordered_reconnect_fallback_peers(primary_peer, refreshed_fallback_peers, peer_registry);
     let mut attempt_state = peer_attempt_state(primary_peer, &ordered_fallback_peers);
     if let Some((peer_addr, _)) = reconnect_preference {
         attempt_state.record_success(peer_addr);
@@ -913,24 +890,12 @@ fn extend_unique_ledger_peers(
     }
 }
 
-fn merge_ledger_peer_snapshots(
-    ledger_snapshot: &LedgerPeerSnapshot,
-    snapshot_file: Option<LedgerPeerSnapshot>,
-) -> LedgerPeerSnapshot {
-    let mut merged_ledger_peers = ledger_snapshot.ledger_peers.clone();
-    let mut merged_big_ledger_peers = ledger_snapshot.big_ledger_peers.clone();
-
-    if let Some(snapshot_file) = snapshot_file {
-        extend_unique_peers(&mut merged_ledger_peers, snapshot_file.ledger_peers);
-        extend_unique_peers(&mut merged_big_ledger_peers, snapshot_file.big_ledger_peers);
-    }
-
-    LedgerPeerSnapshot::new(merged_ledger_peers, merged_big_ledger_peers)
-}
-
 fn ledger_peer_snapshot_from_ledger_state(ledger_state: &LedgerState) -> LedgerPeerSnapshot {
     let mut ledger_peers = Vec::new();
-    extend_unique_ledger_peers(&mut ledger_peers, ledger_state.pool_state().relay_access_points());
+    extend_unique_ledger_peers(
+        &mut ledger_peers,
+        ledger_state.pool_state().relay_access_points(),
+    );
     LedgerPeerSnapshot::new(ledger_peers, Vec::new())
 }
 
@@ -1096,9 +1061,7 @@ fn update_registry_status_from_cm(
             .expect("connection manager lock poisoned");
         cm.abstract_state_of(&peer)
     };
-    let mut registry = peer_registry
-        .write()
-        .expect("peer registry lock poisoned");
+    let mut registry = peer_registry.write().expect("peer registry lock poisoned");
     registry.set_status(peer, peer_status_from_cm_state(state))
 }
 
@@ -1123,9 +1086,7 @@ fn apply_cm_actions(
                 let peer = conn_id.remote;
                 let connection_changed = peer_manager.demote_to_cold(peer);
                 let status_changed = {
-                    let mut registry = peer_registry
-                        .write()
-                        .expect("peer registry lock poisoned");
+                    let mut registry = peer_registry.write().expect("peer registry lock poisoned");
                     registry.set_status(peer, PeerStatus::PeerCold)
                 };
                 changed |= connection_changed || status_changed;
@@ -1142,9 +1103,8 @@ fn apply_cm_actions(
                 for peer in peers {
                     let connection_changed = peer_manager.demote_to_cold(peer);
                     let status_changed = {
-                        let mut registry = peer_registry
-                            .write()
-                            .expect("peer registry lock poisoned");
+                        let mut registry =
+                            peer_registry.write().expect("peer registry lock poisoned");
                         registry.set_status(peer, PeerStatus::PeerCold)
                     };
                     changed |= connection_changed || status_changed;
@@ -2210,7 +2170,10 @@ fn add_tx_with<F>(
     mut insert_entry: F,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError>
 where
-    F: FnMut(MempoolEntry, Option<&yggdrasil_ledger::ProtocolParameters>) -> Result<(), MempoolError>,
+    F: FnMut(
+        MempoolEntry,
+        Option<&yggdrasil_ledger::ProtocolParameters>,
+    ) -> Result<(), MempoolError>,
 {
     let tx_id = tx.tx_id();
     let mut staged_ledger = ledger.clone();
@@ -2238,9 +2201,13 @@ pub fn add_tx_to_mempool(
     current_slot: SlotNo,
     evaluator: Option<&dyn PlutusEvaluator>,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, evaluator, |entry, protocol_params| {
-        mempool.insert_checked(entry, current_slot, protocol_params)
-    })
+    add_tx_with(
+        ledger,
+        tx,
+        current_slot,
+        evaluator,
+        |entry, protocol_params| mempool.insert_checked(entry, current_slot, protocol_params),
+    )
 }
 
 /// Validate and add a single transaction to a shared mempool.
@@ -2255,9 +2222,13 @@ pub fn add_tx_to_shared_mempool(
     current_slot: SlotNo,
     evaluator: Option<&dyn PlutusEvaluator>,
 ) -> Result<MempoolAddTxResult, MempoolAddTxError> {
-    add_tx_with(ledger, tx, current_slot, evaluator, |entry, protocol_params| {
-        mempool.insert_checked(entry, current_slot, protocol_params)
-    })
+    add_tx_with(
+        ledger,
+        tx,
+        current_slot,
+        evaluator,
+        |entry, protocol_params| mempool.insert_checked(entry, current_slot, protocol_params),
+    )
 }
 
 /// Validate and add a sequence of transactions to the mempool in order.
@@ -2941,10 +2912,7 @@ fn evict_mempool_after_roll_forward(
     recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
     checkpoint_tracking: Option<&LedgerCheckpointTracking>,
 ) -> (usize, usize, usize, usize, usize) {
-    let confirmed_ids: Vec<TxId> = blocks
-        .iter()
-        .flat_map(extract_tx_ids)
-        .collect();
+    let confirmed_ids: Vec<TxId> = blocks.iter().flat_map(extract_tx_ids).collect();
     if confirmed_ids.is_empty() {
         return (0, 0, 0, 0, 0);
     }
@@ -2953,10 +2921,7 @@ fn evict_mempool_after_roll_forward(
     // Evict mempool txs whose inputs were consumed by
     // a *different* on-chain tx (double-spend conflict).
     // Reference: syncWithLedger / revalidateTxsFor.
-    let consumed: Vec<ShelleyTxIn> = blocks
-        .iter()
-        .flat_map(extract_consumed_inputs)
-        .collect();
+    let consumed: Vec<ShelleyTxIn> = blocks.iter().flat_map(extract_consumed_inputs).collect();
     let conflicting = mempool.remove_conflicting_inputs(&consumed);
     let tip_slot = tip.slot().unwrap_or(SlotNo(0));
     let purged = mempool.purge_expired(tip_slot);
@@ -2966,13 +2931,11 @@ fn evict_mempool_after_roll_forward(
     let revalidated = if let Some(tracking) = checkpoint_tracking {
         let mut scratch = tracking.ledger_state.clone();
         let eval = tracking.plutus_evaluator.clone();
-        mempool.revalidate_with_ledger(|entry| {
-            match entry.to_multi_era_submitted_tx() {
-                Ok(tx) => scratch.apply_submitted_tx(
-                    &tx, tip_slot, Some(&eval),
-                ).is_ok(),
-                Err(_) => false,
-            }
+        mempool.revalidate_with_ledger(|entry| match entry.to_multi_era_submitted_tx() {
+            Ok(tx) => scratch
+                .apply_submitted_tx(&tx, tip_slot, Some(&eval))
+                .is_ok(),
+            Err(_) => false,
         })
     } else {
         0
@@ -3027,7 +2990,10 @@ impl ReconnectingRunState {
             return std::time::Duration::ZERO;
         }
         let exp = (self.consecutive_failures - 1).min(6); // cap at 2^6 = 64s
-        let secs = 1u64.checked_shl(exp.saturating_sub(1)).unwrap_or(64).min(60);
+        let secs = 1u64
+            .checked_shl(exp.saturating_sub(1))
+            .unwrap_or(64)
+            .min(60);
         std::time::Duration::from_secs(secs)
     }
 
@@ -3098,10 +3064,7 @@ fn record_verified_batch_progress(
     }
 }
 
-fn peer_point_trace_fields(
-    peer_addr: SocketAddr,
-    current_point: Point,
-) -> BTreeMap<String, Value> {
+fn peer_point_trace_fields(peer_addr: SocketAddr, current_point: Point) -> BTreeMap<String, Value> {
     trace_fields([
         ("peer", json!(peer_addr.to_string())),
         ("currentPoint", json!(format!("{:?}", current_point))),
@@ -3138,10 +3101,16 @@ fn verified_sync_batch_trace_fields(
     extras: BatchTraceExtras,
 ) -> BTreeMap<String, Value> {
     let mut fields = peer_point_trace_fields(peer_addr, current_point);
-    fields.insert("batchFetchedBlocks".to_owned(), json!(progress.fetched_blocks));
+    fields.insert(
+        "batchFetchedBlocks".to_owned(),
+        json!(progress.fetched_blocks),
+    );
     fields.insert("batchRollbacks".to_owned(), json!(progress.rollback_count));
     fields.insert("totalBlocks".to_owned(), json!(run_state.total_blocks));
-    fields.insert("batchesCompleted".to_owned(), json!(run_state.batches_completed));
+    fields.insert(
+        "batchesCompleted".to_owned(),
+        json!(run_state.batches_completed),
+    );
     if let Some(stable_block_count) = extras.stable_block_count {
         fields.insert("stableBlocks".to_owned(), json!(stable_block_count));
     }
@@ -3161,11 +3130,7 @@ fn trace_shutdown_before_bootstrap(tracer: &NodeTracer) {
     );
 }
 
-fn trace_shutdown_during_session(
-    tracer: &NodeTracer,
-    peer_addr: SocketAddr,
-    current_point: Point,
-) {
+fn trace_shutdown_during_session(tracer: &NodeTracer, peer_addr: SocketAddr, current_point: Point) {
     tracer.trace_runtime(
         "Node.Shutdown",
         "Notice",
@@ -3234,13 +3199,7 @@ fn trace_verified_sync_batch_applied(
         "ChainSync.Client",
         "Info",
         "verified sync batch applied",
-        verified_sync_batch_trace_fields(
-            peer_addr,
-            current_point,
-            progress,
-            run_state,
-            extras,
-        ),
+        verified_sync_batch_trace_fields(peer_addr, current_point, progress, run_state, extras),
     );
 }
 
@@ -3326,7 +3285,11 @@ fn refresh_chain_db_reconnect_fallback_peers(
     };
 
     let use_ledger_peers = use_ledger_peers.unwrap_or(UseLedgerPeers::DontUseLedgerPeers);
-    let latest_slot = checkpoint_tracking.ledger_state.tip.slot().map(|slot| slot.0);
+    let latest_slot = checkpoint_tracking
+        .ledger_state
+        .tip
+        .slot()
+        .map(|slot| slot.0);
     let ledger_allowed = match use_ledger_peers {
         UseLedgerPeers::DontUseLedgerPeers => false,
         UseLedgerPeers::UseLedgerPeers(AfterSlot::Always) => true,
@@ -3339,7 +3302,11 @@ fn refresh_chain_db_reconnect_fallback_peers(
 
     let mut ledger_peers = Vec::new();
     if ledger_allowed {
-        for access_point in checkpoint_tracking.ledger_state.pool_state().relay_access_points() {
+        for access_point in checkpoint_tracking
+            .ledger_state
+            .pool_state()
+            .relay_access_points()
+        {
             let peer_access_point = PeerAccessPoint {
                 address: access_point.address,
                 port: access_point.port,
@@ -3353,20 +3320,14 @@ fn refresh_chain_db_reconnect_fallback_peers(
 
     let mut snapshot_slot = None;
     let mut snapshot_available = peer_snapshot_path.is_none();
-    let mut snapshot = LedgerPeerSnapshot::new(ledger_peers, Vec::new());
+    let mut snapshot_overlay = None;
 
     if let Some(peer_snapshot_path) = peer_snapshot_path {
         match load_peer_snapshot_file(peer_snapshot_path) {
             Ok(loaded_snapshot) => {
                 snapshot_slot = loaded_snapshot.slot;
                 snapshot_available = true;
-                let mut merged_ledger_peers = snapshot.ledger_peers;
-                extend_unique_socket_addrs(&mut merged_ledger_peers, loaded_snapshot.snapshot.ledger_peers);
-
-                snapshot = LedgerPeerSnapshot::new(
-                    merged_ledger_peers,
-                    loaded_snapshot.snapshot.big_ledger_peers,
-                );
+                snapshot_overlay = Some(loaded_snapshot.snapshot);
             }
             Err(err) => {
                 snapshot_available = false;
@@ -3375,7 +3336,10 @@ fn refresh_chain_db_reconnect_fallback_peers(
                     "Warning",
                     "failed to refresh reconnect peer snapshot",
                     trace_fields([
-                        ("snapshotPath", json!(peer_snapshot_path.display().to_string())),
+                        (
+                            "snapshotPath",
+                            json!(peer_snapshot_path.display().to_string()),
+                        ),
                         ("error", json!(err.to_string())),
                     ]),
                 );
@@ -3383,6 +3347,10 @@ fn refresh_chain_db_reconnect_fallback_peers(
         }
     }
 
+    let snapshot = merge_ledger_peer_snapshots(
+        &LedgerPeerSnapshot::new(ledger_peers, Vec::new()),
+        snapshot_overlay,
+    );
     let freshness: PeerSnapshotFreshness = derive_peer_snapshot_freshness(
         use_ledger_peers,
         peer_snapshot_path.is_some(),
@@ -3390,7 +3358,11 @@ fn refresh_chain_db_reconnect_fallback_peers(
         latest_slot,
         snapshot_available,
     );
-    let decision = judge_ledger_peer_usage(
+    let mut blocked_peers = refreshed.clone();
+    blocked_peers.push(primary_peer);
+    let (decision, eligible_peers) = eligible_ledger_peer_candidates(
+        &snapshot,
+        &blocked_peers,
         use_ledger_peers,
         latest_slot,
         LedgerStateJudgement::YoungEnough,
@@ -3415,14 +3387,7 @@ fn refresh_chain_db_reconnect_fallback_peers(
         return refreshed;
     }
 
-    extend_unique_socket_addrs(
-        &mut refreshed,
-        snapshot
-            .ledger_peers
-            .into_iter()
-            .chain(snapshot.big_ledger_peers)
-            .filter(|peer| *peer != primary_peer),
-    );
+    extend_unique_socket_addrs(&mut refreshed, eligible_peers);
     refreshed
 }
 
@@ -3480,9 +3445,10 @@ fn trace_checkpoint_outcome(
     let (severity, message) = match outcome {
         CheckpointPersistenceOutcome::Persisted { .. } => ("Info", "ledger checkpoint persisted"),
         CheckpointPersistenceOutcome::Skipped { .. } => ("Info", "ledger checkpoint skipped"),
-        CheckpointPersistenceOutcome::ClearedDisabled => {
-            ("Notice", "ledger checkpoints cleared because persistence is disabled")
-        }
+        CheckpointPersistenceOutcome::ClearedDisabled => (
+            "Notice",
+            "ledger checkpoints cleared because persistence is disabled",
+        ),
         CheckpointPersistenceOutcome::ClearedOrigin => {
             ("Notice", "ledger checkpoints cleared at origin")
         }
@@ -3513,12 +3479,24 @@ fn trace_epoch_boundary_events(tracer: &NodeTracer, events: &[EpochBoundaryEvent
                 ("unclaimedRewards", json!(ev.unclaimed_rewards)),
                 ("deltaReserves", json!(ev.delta_reserves)),
                 ("accountsRewarded", json!(ev.accounts_rewarded)),
-                ("governanceActionsExpired", json!(ev.governance_actions_expired)),
-                ("governanceDepositRefunds", json!(ev.governance_deposit_refunds)),
+                (
+                    "governanceActionsExpired",
+                    json!(ev.governance_actions_expired),
+                ),
+                (
+                    "governanceDepositRefunds",
+                    json!(ev.governance_deposit_refunds),
+                ),
                 ("drepsExpired", json!(ev.dreps_expired)),
-                ("governanceActionsEnacted", json!(ev.governance_actions_enacted)),
+                (
+                    "governanceActionsEnacted",
+                    json!(ev.governance_actions_enacted),
+                ),
                 ("enactedDepositRefunds", json!(ev.enacted_deposit_refunds)),
-                ("unclaimedGovernanceDeposits", json!(ev.unclaimed_governance_deposits)),
+                (
+                    "unclaimedGovernanceDeposits",
+                    json!(ev.unclaimed_governance_deposits),
+                ),
                 ("donationsTransferred", json!(ev.donations_transferred)),
             ]),
         );
@@ -3610,11 +3588,18 @@ where
                 ("fallbackPeerCount", json!(refreshed_fallback_peers.len())),
                 (
                     "latestSlot",
-                    json!(checkpoint_tracking
-                        .as_ref()
-                        .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
+                    json!(
+                        checkpoint_tracking.as_ref().and_then(|tracking| tracking
+                            .ledger_state
+                            .tip
+                            .slot()
+                            .map(|slot| slot.0))
+                    ),
                 ),
-                ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+                (
+                    "useLedgerPeers",
+                    json!(use_ledger_peers.map(|policy| format!("{policy:?}"))),
+                ),
                 (
                     "preferredPeer",
                     json!(reconnect_preference.map(|(peer, _)| peer.to_string())),
@@ -3979,11 +3964,18 @@ where
                 ("fallbackPeerCount", json!(refreshed_fallback_peers.len())),
                 (
                     "latestSlot",
-                    json!(checkpoint_tracking
-                        .as_ref()
-                        .and_then(|tracking| tracking.ledger_state.tip.slot().map(|slot| slot.0))),
+                    json!(
+                        checkpoint_tracking.as_ref().and_then(|tracking| tracking
+                            .ledger_state
+                            .tip
+                            .slot()
+                            .map(|slot| slot.0))
+                    ),
                 ),
-                ("useLedgerPeers", json!(use_ledger_peers.map(|policy| format!("{policy:?}")))),
+                (
+                    "useLedgerPeers",
+                    json!(use_ledger_peers.map(|policy| format!("{policy:?}"))),
+                ),
                 (
                     "preferredPeer",
                     json!(reconnect_preference.map(|(peer, _)| peer.to_string())),
@@ -4475,8 +4467,10 @@ where
     F: Future<Output = ()>,
 {
     let tracer = NodeTracer::disabled();
-    resume_reconnecting_verified_sync_service_chaindb_with_tracer(chain_db, request, &tracer, shutdown)
-        .await
+    resume_reconnecting_verified_sync_service_chaindb_with_tracer(
+        chain_db, request, &tracer, shutdown,
+    )
+    .await
 }
 
 /// Run the reconnecting verified sync loop while emitting runtime trace events.
@@ -4664,8 +4658,14 @@ where
         "recovered ledger state from coordinated storage",
         trace_fields([
             ("point", json!(format!("{:?}", recovery.point))),
-            ("checkpointSlot", json!(recovery.checkpoint_slot.map(|slot| slot.0))),
-            ("replayedVolatileBlocks", json!(recovery.replayed_volatile_blocks)),
+            (
+                "checkpointSlot",
+                json!(recovery.checkpoint_slot.map(|slot| slot.0)),
+            ),
+            (
+                "replayedVolatileBlocks",
+                json!(recovery.replayed_volatile_blocks),
+            ),
         ]),
     );
 
@@ -4674,7 +4674,10 @@ where
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
         plutus_evaluator: config.build_plutus_evaluator(),
-        stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
+        stake_snapshots: config
+            .nonce_config
+            .as_ref()
+            .map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
         pool_block_counts: std::collections::BTreeMap::new(),
     };
@@ -4721,10 +4724,7 @@ where
 {
     let tracer = NodeTracer::disabled();
     resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer(
-        chain_db,
-        request,
-        &tracer,
-        shutdown,
+        chain_db, request, &tracer, shutdown,
     )
     .await
 }
@@ -4768,8 +4768,14 @@ where
         "recovered ledger state from coordinated storage",
         trace_fields([
             ("point", json!(format!("{:?}", recovery.point))),
-            ("checkpointSlot", json!(recovery.checkpoint_slot.map(|slot| slot.0))),
-            ("replayedVolatileBlocks", json!(recovery.replayed_volatile_blocks)),
+            (
+                "checkpointSlot",
+                json!(recovery.checkpoint_slot.map(|slot| slot.0)),
+            ),
+            (
+                "replayedVolatileBlocks",
+                json!(recovery.replayed_volatile_blocks),
+            ),
         ]),
     );
 
@@ -4778,7 +4784,10 @@ where
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
         plutus_evaluator: config.build_plutus_evaluator(),
-        stake_snapshots: config.nonce_config.as_ref().map(|_| yggdrasil_ledger::StakeSnapshots::new()),
+        stake_snapshots: config
+            .nonce_config
+            .as_ref()
+            .map(|_| yggdrasil_ledger::StakeSnapshots::new()),
         epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
         pool_block_counts: std::collections::BTreeMap::new(),
     };
@@ -4838,11 +4847,7 @@ where
         tentative_state,
     } = request;
     let checkpoint_tracking = {
-        let mut ct = crate::sync::default_checkpoint_tracking(
-            chain_db,
-            base_ledger_state,
-            config,
-        )?;
+        let mut ct = crate::sync::default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
         if let Some(ref nonce_cfg) = config.nonce_config {
             ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
             ct.epoch_size = Some(nonce_cfg.epoch_size);
@@ -4880,31 +4885,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
-        NodeConfig, ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
-        VerifiedSyncServiceConfig,
-        peer_share_request_amount,
-        ReconnectingRunState, checkpoint_trace_fields, handle_reconnect_batch_error,
-        local_root_targets_from_config, record_verified_batch_progress,
-        mempool_entries_for_forging, tip_context_from_chain_db,
-        preferred_hot_peer_from_registry,
-        preferred_hot_peer_handoff_target,
-        ordered_reconnect_fallback_peers,
-        prepare_reconnect_attempt_state,
-        reconnect_preferred_peer_with_source,
-        reconnect_preferred_peer,
-        refresh_ledger_peer_sources_from_chain_db,
-        self_validate_forged_block,
-        seed_peer_registry, session_established_trace_fields, sync_error_trace_fields,
-        verified_sync_batch_trace_fields, kes_expiry_warning_from_periods,
+        BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome, NodeConfig,
+        ReconnectingRunState, ReconnectingVerifiedSyncRequest,
+        ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig, checkpoint_trace_fields,
+        handle_reconnect_batch_error, kes_expiry_warning_from_periods,
+        local_root_targets_from_config, mempool_entries_for_forging,
+        ordered_reconnect_fallback_peers, peer_share_request_amount,
+        preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
+        prepare_reconnect_attempt_state, reconnect_preferred_peer,
+        reconnect_preferred_peer_with_source, record_verified_batch_progress,
+        refresh_ledger_peer_sources_from_chain_db, seed_peer_registry, self_validate_forged_block,
+        session_established_trace_fields, sync_error_trace_fields, tip_context_from_chain_db,
+        verified_sync_batch_trace_fields,
     };
+    use crate::sync::LedgerCheckpointPolicy;
     use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
     use crate::tracer::NodeTracer;
-    use crate::sync::LedgerCheckpointPolicy;
     use serde_json::json;
     use std::collections::BTreeMap;
-    use std::sync::{Arc, RwLock};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::{Arc, RwLock};
     use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
     use yggdrasil_consensus::{HeaderBody as ConsensusHeaderBody, OpCert};
     use yggdrasil_crypto::blake2b::hash_bytes_256;
@@ -4912,18 +4912,16 @@ mod tests {
     use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
     use yggdrasil_crypto::vrf::VrfVerificationKey;
     use yggdrasil_ledger::{
-        BlockNo, Encoder, Era, HeaderHash, LedgerState, Nonce, Point, PoolParams,
-        PraosHeader, PraosHeaderBody, Relay, RewardAccount, ShelleyOpCert,
-        ShelleyVrfCert, SlotNo, StakeCredential, UnitInterval,
-    };
-    use yggdrasil_network::{
-        AfterSlot, BlockFetchClientError, ChainSyncClientError, LocalRootConfig,
-        GovernorTargets, HandshakeVersion, PeerAccessPoint, PeerRegistry, PeerSource,
-        PeerStatus, TopologyConfig,
-        UseBootstrapPeers,
-        UseLedgerPeers,
+        BlockNo, Encoder, Era, HeaderHash, LedgerState, Nonce, Point, PoolParams, PraosHeader,
+        PraosHeaderBody, Relay, RewardAccount, ShelleyOpCert, ShelleyVrfCert, SlotNo,
+        StakeCredential, UnitInterval,
     };
     use yggdrasil_mempool::SharedMempool;
+    use yggdrasil_network::{
+        AfterSlot, BlockFetchClientError, ChainSyncClientError, GovernorTargets, HandshakeVersion,
+        LocalRootConfig, PeerAccessPoint, PeerRegistry, PeerSource, PeerStatus, TopologyConfig,
+        UseBootstrapPeers, UseLedgerPeers,
+    };
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
     fn local_addr(port: u16) -> SocketAddr {
@@ -5227,7 +5225,9 @@ mod tests {
         assert!(req.nonce_state.is_some());
         assert_eq!(
             req.use_ledger_peers,
-            Some(UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always))
+            Some(UseLedgerPeers::UseLedgerPeers(
+                yggdrasil_network::AfterSlot::Always
+            ))
         );
         assert_eq!(req.peer_snapshot_path, Some(path));
     }
@@ -5283,7 +5283,9 @@ mod tests {
         assert!(req.nonce_state.is_some());
         assert_eq!(
             req.use_ledger_peers,
-            Some(UseLedgerPeers::UseLedgerPeers(yggdrasil_network::AfterSlot::Always))
+            Some(UseLedgerPeers::UseLedgerPeers(
+                yggdrasil_network::AfterSlot::Always
+            ))
         );
         assert_eq!(req.peer_snapshot_path, Some(path));
         assert!(req.metrics.is_some());
@@ -5493,7 +5495,10 @@ mod tests {
 
         assert_eq!(fields.get("peer"), Some(&json!("127.0.0.1:3003")));
         assert_eq!(fields.get("currentPoint"), Some(&json!("Origin")));
-        assert_eq!(fields.get("error"), Some(&json!("recovery error: checkpoint gap")));
+        assert_eq!(
+            fields.get("error"),
+            Some(&json!("recovery error: checkpoint gap"))
+        );
     }
 
     #[test]
@@ -5541,7 +5546,10 @@ mod tests {
             Point::Origin,
             &SyncError::BlockBodyHashMismatch,
         );
-        assert!(matches!(body_hash, BatchErrorDisposition::ReconnectAndPunish));
+        assert!(matches!(
+            body_hash,
+            BatchErrorDisposition::ReconnectAndPunish
+        ));
 
         // Consensus verification failure → bad header
         let consensus = handle_reconnect_batch_error(
@@ -5740,7 +5748,10 @@ mod tests {
 
         // Simulate adding a warm peer directly.
         let session = fake_peer_session(addr);
-        mgr.warm_peers.insert(addr, super::ManagedWarmPeer::new(session, std::time::Instant::now()));
+        mgr.warm_peers.insert(
+            addr,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
 
         // First promotion succeeds.
         assert!(mgr.promote_to_hot(addr));
@@ -5760,7 +5771,10 @@ mod tests {
         let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
         let mut mgr = OutboundPeerManager::new();
         let session = fake_peer_session(addr);
-        mgr.warm_peers.insert(addr, super::ManagedWarmPeer::new(session, std::time::Instant::now()));
+        mgr.warm_peers.insert(
+            addr,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
 
         mgr.promote_to_hot(addr);
         assert!(mgr.warm_peers[&addr].is_hot);
@@ -5817,9 +5831,15 @@ mod tests {
 
         // Insert two warm peers.
         let sess_a = fake_peer_session(addr_a);
-        mgr.warm_peers.insert(addr_a, super::ManagedWarmPeer::new(sess_a, std::time::Instant::now()));
+        mgr.warm_peers.insert(
+            addr_a,
+            super::ManagedWarmPeer::new(sess_a, std::time::Instant::now()),
+        );
         let sess_b = fake_peer_session(addr_b);
-        mgr.warm_peers.insert(addr_b, super::ManagedWarmPeer::new(sess_b, std::time::Instant::now()));
+        mgr.warm_peers.insert(
+            addr_b,
+            super::ManagedWarmPeer::new(sess_b, std::time::Instant::now()),
+        );
 
         // No hot peers → no best peer.
         assert!(mgr.best_hot_peer().is_none());
@@ -5832,19 +5852,16 @@ mod tests {
         assert!(mgr.best_hot_peer().is_none());
 
         // Give peer A a higher slot tip.
-        mgr.warm_peers.get_mut(&addr_a).unwrap().last_known_tip = Some(
-            Point::BlockPoint(SlotNo(200), HeaderHash([0xAA; 32])),
-        );
-        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip = Some(
-            Point::BlockPoint(SlotNo(100), HeaderHash([0xBB; 32])),
-        );
+        mgr.warm_peers.get_mut(&addr_a).unwrap().last_known_tip =
+            Some(Point::BlockPoint(SlotNo(200), HeaderHash([0xAA; 32])));
+        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip =
+            Some(Point::BlockPoint(SlotNo(100), HeaderHash([0xBB; 32])));
 
         assert_eq!(mgr.best_hot_peer(), Some(addr_a));
 
         // Switch — peer B gets a higher slot.
-        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip = Some(
-            Point::BlockPoint(SlotNo(300), HeaderHash([0xCC; 32])),
-        );
+        mgr.warm_peers.get_mut(&addr_b).unwrap().last_known_tip =
+            Some(Point::BlockPoint(SlotNo(300), HeaderHash([0xCC; 32])));
 
         assert_eq!(mgr.best_hot_peer(), Some(addr_b));
     }
@@ -5905,7 +5922,10 @@ mod tests {
         registry.set_hot_tip_slot(other, Some(200));
 
         let shared = Arc::new(RwLock::new(registry));
-        assert_eq!(preferred_hot_peer_handoff_target(Some(&shared), current), None);
+        assert_eq!(
+            preferred_hot_peer_handoff_target(Some(&shared), current),
+            None
+        );
     }
 
     #[test]
@@ -5928,7 +5948,10 @@ mod tests {
     #[test]
     fn reconnect_preferred_peer_falls_back_to_previous_peer() {
         let previous = local_addr(3203);
-        assert_eq!(reconnect_preferred_peer(None, Some(previous)), Some(previous));
+        assert_eq!(
+            reconnect_preferred_peer(None, Some(previous)),
+            Some(previous)
+        );
     }
 
     #[test]
@@ -5992,12 +6015,8 @@ mod tests {
         let fallback = local_addr(3306);
         let previous = fallback;
 
-        let (attempt_state, preference) = prepare_reconnect_attempt_state(
-            primary,
-            &[fallback],
-            None,
-            Some(previous),
-        );
+        let (attempt_state, preference) =
+            prepare_reconnect_attempt_state(primary, &[fallback], None, Some(previous));
 
         assert_eq!(preference, Some((previous, "previous")));
         assert_eq!(attempt_state.preferred_peer(), Some(previous));
@@ -6020,21 +6039,16 @@ mod tests {
         registry.set_hot_tip_slot(hot_high, Some(200));
 
         let shared = Arc::new(RwLock::new(registry));
-        let ordered = ordered_reconnect_fallback_peers(
-            primary,
-            &[cold, hot_low, hot_high],
-            Some(&shared),
-        );
+        let ordered =
+            ordered_reconnect_fallback_peers(primary, &[cold, hot_low, hot_high], Some(&shared));
 
         assert_eq!(ordered, vec![hot_high, hot_low, cold]);
     }
 
     /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
     fn fake_peer_session(addr: std::net::SocketAddr) -> super::PeerSession {
-        use yggdrasil_network::{
-            HandshakeVersion, NodeToNodeVersionData,
-        };
         use yggdrasil_network::multiplexer::MiniProtocolNum;
+        use yggdrasil_network::{HandshakeVersion, NodeToNodeVersionData};
 
         // We need real protocol handles. Create a TCP loopback pair and mux it.
         // However, that requires async. For pure unit tests we can use an

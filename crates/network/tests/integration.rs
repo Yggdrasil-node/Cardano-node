@@ -1,21 +1,22 @@
 #![allow(clippy::unwrap_used)]
+use yggdrasil_ledger::{
+    AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, BlockNo, CborDecode, CborEncode,
+    HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
+    ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert,
+    ShelleyWitnessSet, SlotNo, Tip, TxId, Value,
+};
 use yggdrasil_network::{
     BatchResponse, Bearer, BearerError, BlockFetchClient, BlockFetchMessage, BlockFetchState,
-    ChainRange, ChainSyncMessage,
-    ChainSyncState, ChainSyncClient, IntersectResponse, NextResponse,
-    DecodedHeaderNextResponse, TypedIntersectResponse, TypedNextResponse,
-    HandshakeMessage, HandshakeRequest, HandshakeState,
-    HandshakeVersion, KeepAliveClient, KeepAliveMessage, KeepAliveState,
-    MessageChannel, MiniProtocolDir, MiniProtocolNum, MuxChannel,
-    NodeToNodeVersionData, RefuseReason, Sdu, SduDecodeError, SduHeader,
-    TcpBearer, TxIdAndSize, TxServerRequest, TxSubmissionClient, TxSubmissionMessage,
-    TxSubmissionState, SDU_HEADER_SIZE, MAX_SEGMENT_SIZE,
-    start_mux, peer_connect, peer_accept, PeerError,
-    LocalRootConfig, LocalRootTargets, PeerAccessPoint, PeerAttemptState,
-    PeerBootstrapTargets, PeerDiffusionMode, PeerRegistry, PeerRegistryEntry,
-    PeerSource, PeerStatus,
+    ChainRange, ChainSyncClient, ChainSyncMessage, ChainSyncState, DecodedHeaderNextResponse,
+    HandshakeMessage, HandshakeRequest, HandshakeState, HandshakeVersion, IntersectResponse,
+    KeepAliveClient, KeepAliveMessage, KeepAliveState, LocalRootConfig, LocalRootTargets,
+    MAX_SEGMENT_SIZE, MessageChannel, MiniProtocolDir, MiniProtocolNum, MuxChannel, NextResponse,
+    NodeToNodeVersionData, PeerAccessPoint, PeerAttemptState, PeerBootstrapTargets,
+    PeerDiffusionMode, PeerError, PeerRegistry, PeerRegistryEntry, PeerSource, PeerStatus,
+    RefuseReason, SDU_HEADER_SIZE, Sdu, SduDecodeError, SduHeader, TcpBearer, TxIdAndSize,
+    TxServerRequest, TxSubmissionClient, TxSubmissionMessage, TxSubmissionState,
+    TypedIntersectResponse, TypedNextResponse, peer_accept, peer_connect, start_mux,
 };
-use yggdrasil_ledger::{AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, BlockNo, CborDecode, CborEncode, HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, Tip, TxId, Value};
 
 fn sample_vrf_cert(seed: u8) -> ShelleyVrfCert {
     ShelleyVrfCert {
@@ -253,9 +254,7 @@ fn handshake_message_propose_and_accept() {
         peer_sharing: 1,
         query: false,
     };
-    let propose = HandshakeMessage::ProposeVersions(vec![
-        (HandshakeVersion::V14, vdata.clone()),
-    ]);
+    let propose = HandshakeMessage::ProposeVersions(vec![(HandshakeVersion::V14, vdata.clone())]);
     let accept = HandshakeMessage::AcceptVersion(HandshakeVersion::V14, vdata.clone());
     // Just verify construction doesn't panic and Debug works
     let _ = format!("{propose:?}");
@@ -335,7 +334,11 @@ fn handshake_propose_with_mixed_legacy_and_modern_versions() {
     enc.unsigned(10); // version 10
     enc.array(2).unsigned(764824073).bool(false); // 2-element
     enc.unsigned(14); // version 14
-    enc.array(4).unsigned(764824073).bool(false).unsigned(1).bool(false); // 4-element
+    enc.array(4)
+        .unsigned(764824073)
+        .bool(false)
+        .unsigned(1)
+        .bool(false); // 4-element
     let bytes = enc.into_bytes();
     let msg = HandshakeMessage::from_cbor(&bytes).expect("should decode mixed version proposal");
     match msg {
@@ -357,7 +360,8 @@ fn handshake_propose_with_mixed_legacy_and_modern_versions() {
 #[test]
 fn chainsync_happy_path_request_next_roll_forward() {
     let s = ChainSyncState::StIdle;
-    let s = s.transition(&ChainSyncMessage::MsgRequestNext)
+    let s = s
+        .transition(&ChainSyncMessage::MsgRequestNext)
         .expect("MsgRequestNext should be legal from StIdle");
     assert_eq!(s, ChainSyncState::StCanAwait);
     let s = s
@@ -372,9 +376,11 @@ fn chainsync_happy_path_request_next_roll_forward() {
 #[test]
 fn chainsync_await_then_roll_backward() {
     let s = ChainSyncState::StIdle;
-    let s = s.transition(&ChainSyncMessage::MsgRequestNext)
+    let s = s
+        .transition(&ChainSyncMessage::MsgRequestNext)
         .expect("MsgRequestNext from StIdle");
-    let s = s.transition(&ChainSyncMessage::MsgAwaitReply)
+    let s = s
+        .transition(&ChainSyncMessage::MsgAwaitReply)
         .expect("MsgAwaitReply from StCanAwait");
     assert_eq!(s, ChainSyncState::StMustReply);
     let s = s
@@ -421,7 +427,8 @@ fn chainsync_find_intersect_not_found() {
 #[test]
 fn chainsync_done_from_idle() {
     let s = ChainSyncState::StIdle;
-    let s = s.transition(&ChainSyncMessage::MsgDone)
+    let s = s
+        .transition(&ChainSyncMessage::MsgDone)
         .expect("MsgDone from StIdle");
     assert_eq!(s, ChainSyncState::StDone);
 }
@@ -503,18 +510,18 @@ fn blockfetch_happy_path_stream_blocks() {
         .expect("MsgRequestRange from StIdle");
     assert_eq!(s, BlockFetchState::StBusy);
 
-    let s = s.transition(&BlockFetchMessage::MsgStartBatch)
+    let s = s
+        .transition(&BlockFetchMessage::MsgStartBatch)
         .expect("MsgStartBatch from StBusy");
     assert_eq!(s, BlockFetchState::StStreaming);
 
     let s = s
-        .transition(&BlockFetchMessage::MsgBlock {
-            block: vec![0xAB],
-        })
+        .transition(&BlockFetchMessage::MsgBlock { block: vec![0xAB] })
         .expect("MsgBlock from StStreaming");
     assert_eq!(s, BlockFetchState::StStreaming);
 
-    let s = s.transition(&BlockFetchMessage::MsgBatchDone)
+    let s = s
+        .transition(&BlockFetchMessage::MsgBatchDone)
         .expect("MsgBatchDone from StStreaming");
     assert_eq!(s, BlockFetchState::StIdle);
 }
@@ -529,7 +536,8 @@ fn blockfetch_no_blocks() {
     let s = s
         .transition(&BlockFetchMessage::MsgRequestRange(range))
         .expect("MsgRequestRange from StIdle");
-    let s = s.transition(&BlockFetchMessage::MsgNoBlocks)
+    let s = s
+        .transition(&BlockFetchMessage::MsgNoBlocks)
         .expect("MsgNoBlocks from StBusy");
     assert_eq!(s, BlockFetchState::StIdle);
 }
@@ -537,7 +545,8 @@ fn blockfetch_no_blocks() {
 #[test]
 fn blockfetch_client_done() {
     let s = BlockFetchState::StIdle;
-    let s = s.transition(&BlockFetchMessage::MsgClientDone)
+    let s = s
+        .transition(&BlockFetchMessage::MsgClientDone)
         .expect("MsgClientDone from StIdle");
     assert_eq!(s, BlockFetchState::StDone);
 }
@@ -581,10 +590,7 @@ fn blockfetch_wire_tags() {
     assert_eq!(BlockFetchMessage::MsgClientDone.wire_tag(), 1);
     assert_eq!(BlockFetchMessage::MsgStartBatch.wire_tag(), 2);
     assert_eq!(BlockFetchMessage::MsgNoBlocks.wire_tag(), 3);
-    assert_eq!(
-        BlockFetchMessage::MsgBlock { block: vec![] }.wire_tag(),
-        4
-    );
+    assert_eq!(BlockFetchMessage::MsgBlock { block: vec![] }.wire_tag(), 4);
     assert_eq!(BlockFetchMessage::MsgBatchDone.wire_tag(), 5);
 }
 
@@ -619,12 +625,18 @@ fn keepalive_illegal_transition_rejected() {
     let err = KeepAliveState::StServer
         .transition(&KeepAliveMessage::MsgDone)
         .expect_err("MsgDone should be illegal from StServer");
-    assert_eq!(err.to_string(), "illegal keep-alive transition from StServer via MsgDone");
+    assert_eq!(
+        err.to_string(),
+        "illegal keep-alive transition from StServer via MsgDone"
+    );
 
     let err = KeepAliveState::StDone
         .transition(&KeepAliveMessage::MsgKeepAlive { cookie: 1 })
         .expect_err("MsgKeepAlive should be illegal from StDone");
-    assert_eq!(err.to_string(), "illegal keep-alive transition from StDone via MsgKeepAlive");
+    assert_eq!(
+        err.to_string(),
+        "illegal keep-alive transition from StDone via MsgKeepAlive"
+    );
 }
 
 // ===========================================================================
@@ -678,10 +690,10 @@ fn chainsync_cbor_roll_forward_round_trip() {
     // header is inline CBOR (must be a valid CBOR item); tip is also inline CBOR
     let msg = ChainSyncMessage::MsgRollForward {
         header: vec![0x84, 0x01, 0x02, 0x03, 0x04],
-        tip: vec![0x83, 0x18, 0x2A, 0x58, 0x20,
-                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-                  0x01], // [42, h'00..00', 1]
+        tip: vec![
+            0x83, 0x18, 0x2A, 0x58, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ], // [42, h'00..00', 1]
     };
     let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
     assert_eq!(msg, decoded);
@@ -691,7 +703,7 @@ fn chainsync_cbor_roll_forward_round_trip() {
 fn chainsync_cbor_roll_backward_round_trip() {
     // point and tip are inline CBOR
     let msg = ChainSyncMessage::MsgRollBackward {
-        point: vec![0x80],        // [] (Origin)
+        point: vec![0x80],           // [] (Origin)
         tip: vec![0x82, 0x01, 0x02], // [1, 2]
     };
     let decoded = ChainSyncMessage::from_cbor(&msg.to_cbor()).expect("decode");
@@ -805,12 +817,15 @@ fn mainnet_version_data() -> NodeToNodeVersionData {
 fn handshake_cbor_propose_versions_round_trip() {
     let msg = HandshakeMessage::ProposeVersions(vec![
         (HandshakeVersion::V14, mainnet_version_data()),
-        (HandshakeVersion::V15, NodeToNodeVersionData {
-            network_magic: 764824073,
-            initiator_only_diffusion_mode: true,
-            peer_sharing: 0,
-            query: true,
-        }),
+        (
+            HandshakeVersion::V15,
+            NodeToNodeVersionData {
+                network_magic: 764824073,
+                initiator_only_diffusion_mode: true,
+                peer_sharing: 0,
+                query: true,
+            },
+        ),
     ]);
     let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode ProposeVersions");
     assert_eq!(msg, decoded);
@@ -829,7 +844,8 @@ fn handshake_cbor_refuse_version_mismatch_round_trip() {
         HandshakeVersion(10),
         HandshakeVersion(11),
     ]));
-    let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode Refuse VersionMismatch");
+    let decoded =
+        HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode Refuse VersionMismatch");
     assert_eq!(msg, decoded);
 }
 
@@ -855,9 +871,7 @@ fn handshake_cbor_refuse_refused_round_trip() {
 
 #[test]
 fn handshake_cbor_query_reply_round_trip() {
-    let msg = HandshakeMessage::QueryReply(vec![
-        (HandshakeVersion::V14, mainnet_version_data()),
-    ]);
+    let msg = HandshakeMessage::QueryReply(vec![(HandshakeVersion::V14, mainnet_version_data())]);
     let decoded = HandshakeMessage::from_cbor(&msg.to_cbor()).expect("decode QueryReply");
     assert_eq!(msg, decoded);
 }
@@ -870,9 +884,10 @@ fn handshake_cbor_query_reply_round_trip() {
 fn handshake_transition_propose_to_confirm() {
     let state = HandshakeState::StPropose;
     let state = state
-        .transition(&HandshakeMessage::ProposeVersions(vec![
-            (HandshakeVersion::V14, mainnet_version_data()),
-        ]))
+        .transition(&HandshakeMessage::ProposeVersions(vec![(
+            HandshakeVersion::V14,
+            mainnet_version_data(),
+        )]))
         .expect("ProposeVersions from StPropose");
     assert_eq!(state, HandshakeState::StConfirm);
 }
@@ -893,7 +908,9 @@ fn handshake_transition_confirm_to_done_accept() {
 fn handshake_transition_confirm_to_done_refuse() {
     let state = HandshakeState::StConfirm;
     let state = state
-        .transition(&HandshakeMessage::Refuse(RefuseReason::VersionMismatch(vec![])))
+        .transition(&HandshakeMessage::Refuse(RefuseReason::VersionMismatch(
+            vec![],
+        )))
         .expect("Refuse from StConfirm");
     assert_eq!(state, HandshakeState::StDone);
 }
@@ -903,7 +920,10 @@ fn handshake_transition_illegal_from_done() {
     let err = HandshakeState::StDone
         .transition(&HandshakeMessage::ProposeVersions(vec![]))
         .expect_err("ProposeVersions should be illegal from StDone");
-    assert_eq!(err.to_string(), "illegal handshake transition from StDone via ProposeVersions");
+    assert_eq!(
+        err.to_string(),
+        "illegal handshake transition from StDone via ProposeVersions"
+    );
 }
 
 // ===========================================================================
@@ -1174,7 +1194,10 @@ async fn tcp_bearer_connection_closed_on_eof() {
 
     send_handle.await.expect("join send task");
 
-    let err = server.recv().await.expect_err("should get connection closed");
+    let err = server
+        .recv()
+        .await
+        .expect_err("should get connection closed");
     assert!(
         matches!(err, BearerError::ConnectionClosed),
         "expected ConnectionClosed, got {err:?}"
@@ -1245,7 +1268,9 @@ async fn mux_single_protocol_round_trip() {
     let client_handle = tokio::spawn(async move {
         let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
         let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
-        let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+        let ch = handles
+            .get_mut(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("handle");
         ch.send(vec![0xCA, 0xFE]).await.expect("send");
         // Wait briefly for the server to process, then abort.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1254,7 +1279,9 @@ async fn mux_single_protocol_round_trip() {
 
     let (stream, _) = listener.accept().await.expect("accept");
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
-    let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+    let ch = handles
+        .get_mut(&MiniProtocolNum::CHAIN_SYNC)
+        .expect("handle");
     let received = ch.recv().await.expect("recv payload");
     assert_eq!(received, payload);
     mux.abort();
@@ -1328,7 +1355,9 @@ async fn mux_bidirectional_exchange() {
     let client_handle = tokio::spawn(async move {
         let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
         let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
-        let ch = handles.get_mut(&MiniProtocolNum::KEEP_ALIVE).expect("handle");
+        let ch = handles
+            .get_mut(&MiniProtocolNum::KEEP_ALIVE)
+            .expect("handle");
 
         // Client sends ping.
         ch.send(vec![0xAA]).await.expect("send ping");
@@ -1342,7 +1371,9 @@ async fn mux_bidirectional_exchange() {
 
     let (stream, _) = listener.accept().await.expect("accept");
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
-    let ch = handles.get_mut(&MiniProtocolNum::KEEP_ALIVE).expect("handle");
+    let ch = handles
+        .get_mut(&MiniProtocolNum::KEEP_ALIVE)
+        .expect("handle");
 
     // Server receives ping.
     let ping = ch.recv().await.expect("recv ping");
@@ -1411,7 +1442,9 @@ async fn mux_empty_payload_round_trip() {
 
     let (stream, _) = listener.accept().await.expect("accept");
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
-    let h = handles.get_mut(&MiniProtocolNum::HANDSHAKE).expect("handle");
+    let h = handles
+        .get_mut(&MiniProtocolNum::HANDSHAKE)
+        .expect("handle");
     let received = h.recv().await.expect("recv empty payload");
     assert!(received.is_empty());
     mux.abort();
@@ -1452,7 +1485,9 @@ async fn mux_multiple_messages_same_protocol() {
 
     let (stream, _) = listener.accept().await.expect("accept");
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
-    let bf = handles.get_mut(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+    let bf = handles
+        .get_mut(&MiniProtocolNum::BLOCK_FETCH)
+        .expect("handle");
     for expected in &messages {
         let received = bf.recv().await.expect("recv");
         assert_eq!(&received, expected);
@@ -1481,7 +1516,10 @@ async fn mux_clean_shutdown_on_handle_drop() {
         // Drop all protocol handles — writer should exit cleanly.
         drop(handles);
         let writer_result = mux.writer.await.expect("writer should not panic");
-        assert!(writer_result.is_ok(), "writer should exit cleanly on handle drop");
+        assert!(
+            writer_result.is_ok(),
+            "writer should exit cleanly on handle drop"
+        );
         mux.reader.abort();
     });
 
@@ -1519,7 +1557,9 @@ async fn sdu_segmentation_large_payload_round_trip() {
     let client_handle = tokio::spawn(async move {
         let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
         let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
-        let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+        let handle = handles
+            .remove(&MiniProtocolNum::BLOCK_FETCH)
+            .expect("handle");
         let ch = MessageChannel::new(handle);
         ch.send(send_payload).await.expect("send large payload");
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1528,7 +1568,9 @@ async fn sdu_segmentation_large_payload_round_trip() {
 
     let (stream, _) = listener.accept().await.expect("accept");
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
-    let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+    let handle = handles
+        .remove(&MiniProtocolNum::BLOCK_FETCH)
+        .expect("handle");
     let mut ch = MessageChannel::new(handle);
     let received = ch.recv().await.expect("recv reassembled message");
     assert_eq!(received.len(), payload.len());
@@ -1563,16 +1605,22 @@ async fn sdu_segmentation_exact_multiple() {
     let client_handle = tokio::spawn(async move {
         let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
         let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
-        let handle = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+        let handle = handles
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("handle");
         let ch = MessageChannel::new(handle);
-        ch.send(send_payload).await.expect("send exact-multiple payload");
+        ch.send(send_payload)
+            .await
+            .expect("send exact-multiple payload");
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         mux.abort();
     });
 
     let (stream, _) = listener.accept().await.expect("accept");
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
-    let handle = handles.remove(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+    let handle = handles
+        .remove(&MiniProtocolNum::CHAIN_SYNC)
+        .expect("handle");
     let mut ch = MessageChannel::new(handle);
     let received = ch.recv().await.expect("recv");
     assert_eq!(received, payload);
@@ -1616,7 +1664,9 @@ async fn sdu_segmentation_multiple_large_messages() {
     let client_handle = tokio::spawn(async move {
         let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
         let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
-        let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+        let handle = handles
+            .remove(&MiniProtocolNum::BLOCK_FETCH)
+            .expect("handle");
         let ch = MessageChannel::new(handle);
         for msg in &send_messages {
             ch.send(msg.clone()).await.expect("send");
@@ -1627,11 +1677,20 @@ async fn sdu_segmentation_multiple_large_messages() {
 
     let (stream, _) = listener.accept().await.expect("accept");
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Responder, &protos, 8);
-    let handle = handles.remove(&MiniProtocolNum::BLOCK_FETCH).expect("handle");
+    let handle = handles
+        .remove(&MiniProtocolNum::BLOCK_FETCH)
+        .expect("handle");
     let mut ch = MessageChannel::new(handle);
     for (i, expected) in messages.iter().enumerate() {
-        let received = ch.recv().await.unwrap_or_else(|| panic!("recv message {i}"));
-        assert_eq!(received.len(), expected.len(), "message {i} length mismatch");
+        let received = ch
+            .recv()
+            .await
+            .unwrap_or_else(|| panic!("recv message {i}"));
+        assert_eq!(
+            received.len(),
+            expected.len(),
+            "message {i} length mismatch"
+        );
         assert_eq!(&received, expected, "message {i} content mismatch");
     }
     mux.abort();
@@ -1708,17 +1767,17 @@ fn cbor_item_length_unit_tests() {
     use yggdrasil_network::mux::cbor_item_length;
 
     // Unsigned integers.
-    assert_eq!(cbor_item_length(&[0x00]), Some(1));          // uint 0
-    assert_eq!(cbor_item_length(&[0x17]), Some(1));          // uint 23
-    assert_eq!(cbor_item_length(&[0x18, 0x18]), Some(2));    // uint 24
+    assert_eq!(cbor_item_length(&[0x00]), Some(1)); // uint 0
+    assert_eq!(cbor_item_length(&[0x17]), Some(1)); // uint 23
+    assert_eq!(cbor_item_length(&[0x18, 0x18]), Some(2)); // uint 24
     assert_eq!(cbor_item_length(&[0x19, 0x01, 0x00]), Some(3)); // uint 256
 
     // Byte strings.
     assert_eq!(cbor_item_length(&[0x43, 0xAA, 0xBB, 0xCC]), Some(4)); // bstr(3)
-    assert_eq!(cbor_item_length(&[0x43, 0xAA, 0xBB]), None);          // incomplete bstr
+    assert_eq!(cbor_item_length(&[0x43, 0xAA, 0xBB]), None); // incomplete bstr
 
     // Empty array.
-    assert_eq!(cbor_item_length(&[0x80]), Some(1));          // array(0)
+    assert_eq!(cbor_item_length(&[0x80]), Some(1)); // array(0)
 
     // Array with elements.
     assert_eq!(cbor_item_length(&[0x82, 0x01, 0x02]), Some(3)); // [1, 2]
@@ -1731,7 +1790,7 @@ fn cbor_item_length_unit_tests() {
     assert_eq!(cbor_item_length(&[0xA1, 0x01, 0x02]), Some(3)); // {1: 2}
 
     // Tag.
-    assert_eq!(cbor_item_length(&[0xC0, 0x01]), Some(2));       // tag(0, uint 1)
+    assert_eq!(cbor_item_length(&[0xC0, 0x01]), Some(2)); // tag(0, uint 1)
 
     // Incomplete data.
     assert_eq!(cbor_item_length(&[]), None);
@@ -1769,9 +1828,10 @@ async fn mux_ingress_queue_overrun() {
             ingress_limit: 32,
             weight: 1,
         }];
-        let (mut handles, mux) =
-            start_configured(stream, MiniProtocolDir::Responder, &configs, 8);
-        let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+        let (mut handles, mux) = start_configured(stream, MiniProtocolDir::Responder, &configs, 8);
+        let ch = handles
+            .get_mut(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("handle");
         // First small recv should succeed.
         let _first = ch.recv().await;
         // The second large payload should trigger IngressQueueOverRun in
@@ -1794,7 +1854,9 @@ async fn mux_ingress_queue_overrun() {
     let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
     let protos = [MiniProtocolNum::CHAIN_SYNC];
     let (mut handles, mux) = start_mux(stream, MiniProtocolDir::Initiator, &protos, 8);
-    let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+    let ch = handles
+        .get_mut(&MiniProtocolNum::CHAIN_SYNC)
+        .expect("handle");
     // Send a small payload (within limit).
     ch.send(vec![0x01; 16]).await.expect("send small");
     // Send a large payload that will push over the 32-byte limit.
@@ -1824,7 +1886,12 @@ async fn mux_egress_buffer_overflow() {
     // Spawn a server that never reads — egress will back up.
     let server_handle = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept");
-        let (_handles, _mux) = start_mux(stream, MiniProtocolDir::Responder, &[MiniProtocolNum::CHAIN_SYNC], 2);
+        let (_handles, _mux) = start_mux(
+            stream,
+            MiniProtocolDir::Responder,
+            &[MiniProtocolNum::CHAIN_SYNC],
+            2,
+        );
         // Hold the stream open but don't read.
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     });
@@ -1838,16 +1905,20 @@ async fn mux_egress_buffer_overflow() {
         ingress_limit: 2_000_000,
         weight: 1,
     }];
-    let (mut handles, mux) =
-        start_configured(stream, MiniProtocolDir::Initiator, &configs, 2);
-    let ch = handles.get_mut(&MiniProtocolNum::CHAIN_SYNC).expect("handle");
+    let (mut handles, mux) = start_configured(stream, MiniProtocolDir::Initiator, &configs, 2);
+    let ch = handles
+        .get_mut(&MiniProtocolNum::CHAIN_SYNC)
+        .expect("handle");
 
     // Send a payload larger than EGRESS_SOFT_LIMIT (262143).
     // First send something to accumulate bytes.
     let large = vec![0xAA; yggdrasil_network::EGRESS_SOFT_LIMIT + 1];
     let result = ch.send(large).await;
     assert!(
-        matches!(result, Err(yggdrasil_network::MuxError::EgressBufferOverflow { .. })),
+        matches!(
+            result,
+            Err(yggdrasil_network::MuxError::EgressBufferOverflow { .. })
+        ),
         "expected EgressBufferOverflow, got {:?}",
         result
     );
@@ -2242,7 +2313,10 @@ async fn chainsync_client_request_next_await_reply() {
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
 
-    let resp = client.request_next().await.expect("request_next with await");
+    let resp = client
+        .request_next()
+        .await
+        .expect("request_next with await");
     assert_eq!(
         resp,
         NextResponse::AwaitRollForward {
@@ -2276,11 +2350,11 @@ async fn chainsync_client_request_next_typed_decodes_points() {
         sh.send(reply.to_cbor()).await.expect("send reply");
     });
 
-    let resp = client.request_next_typed().await.expect("request_next_typed");
-    assert_eq!(
-        resp,
-        TypedNextResponse::RollBackward { point, tip }
-    );
+    let resp = client
+        .request_next_typed()
+        .await
+        .expect("request_next_typed");
+    assert_eq!(resp, TypedNextResponse::RollBackward { point, tip });
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -2313,7 +2387,10 @@ async fn chainsync_client_request_next_decoded_header_decodes_shelley_header() {
         .expect("request_next_decoded_header");
     assert_eq!(
         resp,
-        DecodedHeaderNextResponse::RollForward { header: expected_header, tip }
+        DecodedHeaderNextResponse::RollForward {
+            header: expected_header,
+            tip
+        }
     );
 
     server.await.expect("server task");
@@ -2342,7 +2419,10 @@ async fn chainsync_client_request_next_decoded_header_rejects_invalid_header() {
         .request_next_decoded_header::<ShelleyHeader>()
         .await
         .expect_err("invalid header should fail");
-    assert!(matches!(err, yggdrasil_network::ChainSyncClientError::HeaderDecode(_)));
+    assert!(matches!(
+        err,
+        yggdrasil_network::ChainSyncClientError::HeaderDecode(_)
+    ));
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -2437,7 +2517,10 @@ async fn chainsync_client_find_intersect_points_decodes_points() {
         let msg = ChainSyncMessage::from_cbor(&raw).expect("decode");
         match msg {
             ChainSyncMessage::MsgFindIntersect { points } => {
-                assert_eq!(points, vec![wanted.to_cbor_bytes(), Point::Origin.to_cbor_bytes()]);
+                assert_eq!(
+                    points,
+                    vec![wanted.to_cbor_bytes(), Point::Origin.to_cbor_bytes()]
+                );
             }
             _ => panic!("expected MsgFindIntersect"),
         }
@@ -2758,7 +2841,10 @@ async fn blockfetch_client_recv_block_decoded_rejects_invalid_block() {
         .recv_block_decoded::<ShelleyBlock>()
         .await
         .expect_err("invalid block should fail");
-    assert!(matches!(err, yggdrasil_network::BlockFetchClientError::BlockDecode(_)));
+    assert!(matches!(
+        err,
+        yggdrasil_network::BlockFetchClientError::BlockDecode(_)
+    ));
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -2804,7 +2890,13 @@ async fn blockfetch_client_recv_block_raw_with_returns_raw_and_decoded() {
     assert_eq!(raw, sample_shelley_block_bytes());
     assert_eq!(blk.header.body.block_number, 1);
 
-    assert_eq!(client.recv_block_raw_decoded::<ShelleyBlock>().await.expect("done"), None);
+    assert_eq!(
+        client
+            .recv_block_raw_decoded::<ShelleyBlock>()
+            .await
+            .expect("done"),
+        None
+    );
 
     server.await.expect("server task");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -2847,7 +2939,11 @@ async fn blockfetch_client_request_range_collect_decoded_collects_full_batch() {
         .await
         .expect("request_range_collect_decoded");
     assert_eq!(blocks.len(), 2);
-    assert!(blocks.iter().all(|block| block.header.body.block_number == 1));
+    assert!(
+        blocks
+            .iter()
+            .all(|block| block.header.body.block_number == 1)
+    );
     assert_eq!(client.state(), BlockFetchState::StIdle);
 
     server.await.expect("server task");
@@ -2947,14 +3043,9 @@ async fn blockfetch_client_request_range_multiple_blocks() {
             .await
             .expect("start_batch");
         for i in 0u8..5 {
-            sh.send(
-                BlockFetchMessage::MsgBlock {
-                    block: vec![i; 16],
-                }
-                .to_cbor(),
-            )
-            .await
-            .expect("send block");
+            sh.send(BlockFetchMessage::MsgBlock { block: vec![i; 16] }.to_cbor())
+                .await
+                .expect("send block");
         }
         sh.send(BlockFetchMessage::MsgBatchDone.to_cbor())
             .await
@@ -3496,10 +3587,7 @@ async fn txsubmission_client_done_from_blocking() {
     let req = client.recv_request().await.expect("recv_request");
     assert!(matches!(
         req,
-        TxServerRequest::RequestTxIds {
-            blocking: true,
-            ..
-        }
+        TxServerRequest::RequestTxIds { blocking: true, .. }
     ));
 
     client.done().await.expect("done");
@@ -3616,10 +3704,7 @@ async fn txsubmission_client_full_session() {
     let req = client.recv_request().await.expect("3");
     assert!(matches!(
         req,
-        TxServerRequest::RequestTxIds {
-            blocking: true,
-            ..
-        }
+        TxServerRequest::RequestTxIds { blocking: true, .. }
     ));
     client.done().await.expect("done");
 
@@ -3848,7 +3933,10 @@ async fn txsubmission_client_rejects_blocking_request_with_outstanding_txids() {
         .await
         .expect("reply txids");
 
-    let err = client.recv_request().await.expect_err("blocking request should fail");
+    let err = client
+        .recv_request()
+        .await
+        .expect_err("blocking request should fail");
     assert!(matches!(
         err,
         yggdrasil_network::TxSubmissionClientError::BlockingRequestHasOutstandingTxIds {
@@ -3904,7 +3992,10 @@ async fn txsubmission_client_rejects_unavailable_tx_requests() {
         .await
         .expect("reply txids");
 
-    let err = client.recv_request().await.expect_err("unknown txid request should fail");
+    let err = client
+        .recv_request()
+        .await
+        .expect_err("unknown txid request should fail");
     assert!(matches!(
         err,
         yggdrasil_network::TxSubmissionClientError::RequestedUnavailableTxId { txid }
@@ -4084,8 +4175,14 @@ fn peer_registry_entry_is_root_peer_mixed_sources() {
 fn local_root_targets_from_config() {
     let config = LocalRootConfig {
         access_points: vec![
-            PeerAccessPoint { address: "127.0.0.1".to_owned(), port: 3001 },
-            PeerAccessPoint { address: "127.0.0.2".to_owned(), port: 3002 },
+            PeerAccessPoint {
+                address: "127.0.0.1".to_owned(),
+                port: 3001,
+            },
+            PeerAccessPoint {
+                address: "127.0.0.2".to_owned(),
+                port: 3002,
+            },
         ],
         advertise: false,
         trustable: true,
@@ -4111,9 +4208,10 @@ fn local_root_targets_from_config() {
 #[test]
 fn local_root_targets_from_config_defaults_warm_to_hot() {
     let config = LocalRootConfig {
-        access_points: vec![
-            PeerAccessPoint { address: "127.0.0.1".to_owned(), port: 3001 },
-        ],
+        access_points: vec![PeerAccessPoint {
+            address: "127.0.0.1".to_owned(),
+            port: 3001,
+        }],
         advertise: false,
         trustable: false,
         hot_valency: 3,
@@ -4121,9 +4219,8 @@ fn local_root_targets_from_config_defaults_warm_to_hot() {
         diffusion_mode: PeerDiffusionMode::InitiatorOnlyDiffusionMode,
     };
 
-    let resolved: Vec<std::net::SocketAddr> = vec![
-        "127.0.0.1:3001".parse().expect("parse resolved"),
-    ];
+    let resolved: Vec<std::net::SocketAddr> =
+        vec!["127.0.0.1:3001".parse().expect("parse resolved")];
 
     let targets = LocalRootTargets::from_config(&config, resolved.clone());
 

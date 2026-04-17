@@ -11,11 +11,10 @@ use std::time::{Duration, Instant};
 
 use crate::peer_registry::PeerRegistry;
 use crate::peer_selection::{
-    resolve_peer_access_points, LocalRootConfig, PeerAccessPoint, PublicRootConfig,
+    LocalRootConfig, PeerAccessPoint, PublicRootConfig, resolve_peer_access_points,
 };
 use crate::root_peers::{
-    ResolvedLocalRootGroup, ResolvedPublicRootPeers, RootPeerProviderState,
-    TopologyConfig,
+    ResolvedLocalRootGroup, ResolvedPublicRootPeers, RootPeerProviderState, TopologyConfig,
 };
 
 /// The root source a provider is responsible for refreshing.
@@ -285,7 +284,9 @@ impl ScriptedRootPeerProvider {
     /// Create a provider from scripted refresh results.
     pub fn new(
         kind: RootPeerProviderKind,
-        scripted_refreshes: impl IntoIterator<Item = Result<Option<RootPeerProviderRefresh>, RootPeerProviderError>>,
+        scripted_refreshes: impl IntoIterator<
+            Item = Result<Option<RootPeerProviderRefresh>, RootPeerProviderError>,
+        >,
     ) -> Self {
         Self {
             kind,
@@ -467,7 +468,8 @@ mod tests {
             peer_snapshot_file: None,
         });
         let before = state.providers().clone();
-        let mut provider = ScriptedRootPeerProvider::new(RootPeerProviderKind::PublicRoots, [Ok(None)]);
+        let mut provider =
+            ScriptedRootPeerProvider::new(RootPeerProviderKind::PublicRoots, [Ok(None)]);
 
         assert!(!refresh_root_peer_state(&mut state, &mut provider).expect("refresh"));
         assert_eq!(state.providers(), &before);
@@ -483,7 +485,9 @@ mod tests {
         });
         let mut provider = ScriptedRootPeerProvider::new(
             RootPeerProviderKind::LocalRoots,
-            [Err(RootPeerProviderError::RefreshFailed("dns timeout".to_owned()))],
+            [Err(RootPeerProviderError::RefreshFailed(
+                "dns timeout".to_owned(),
+            ))],
         );
 
         assert_eq!(
@@ -525,12 +529,19 @@ mod tests {
 
         let mut provider = ScriptedRootPeerProvider::new(
             RootPeerProviderKind::BootstrapPeers,
-            [Ok(Some(RootPeerProviderRefresh::BootstrapPeers(vec![new_bootstrap])))],
+            [Ok(Some(RootPeerProviderRefresh::BootstrapPeers(vec![
+                new_bootstrap,
+            ])))],
         );
 
-        assert!(refresh_root_peer_state_and_registry(&mut state, &mut registry, &mut provider)
-            .expect("refresh"));
-        assert_eq!(state.providers().public_roots.bootstrap_peers, vec![new_bootstrap]);
+        assert!(
+            refresh_root_peer_state_and_registry(&mut state, &mut registry, &mut provider)
+                .expect("refresh")
+        );
+        assert_eq!(
+            state.providers().public_roots.bootstrap_peers,
+            vec![new_bootstrap]
+        );
 
         let local_entry = registry.get(&local_peer).expect("local peer");
         assert_eq!(local_entry.status, PeerStatus::PeerWarm);
@@ -633,10 +644,12 @@ mod tests {
         assert_eq!(provider.kind(), RootPeerProviderKind::PublicRoots);
         assert_eq!(
             provider.refresh().expect("refresh"),
-            Some(RootPeerProviderRefresh::PublicRoots(ResolvedPublicRootPeers {
-                bootstrap_peers: vec!["127.0.0.30:3001".parse().expect("addr")],
-                public_config_peers: vec!["127.0.0.31:3001".parse().expect("addr")],
-            }))
+            Some(RootPeerProviderRefresh::PublicRoots(
+                ResolvedPublicRootPeers {
+                    bootstrap_peers: vec!["127.0.0.30:3001".parse().expect("addr")],
+                    public_config_peers: vec!["127.0.0.31:3001".parse().expect("addr")],
+                }
+            ))
         );
     }
 
@@ -757,8 +770,10 @@ mod tests {
             diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
         }]);
 
-        assert!(refresh_root_peer_state_and_registry(&mut state, &mut registry, &mut provider)
-            .expect("refresh"));
+        assert!(
+            refresh_root_peer_state_and_registry(&mut state, &mut registry, &mut provider)
+                .expect("refresh")
+        );
 
         let peer_addr: SocketAddr = "127.0.0.60:3001".parse().expect("addr");
         let entry = registry.get(&peer_addr).expect("local root peer");

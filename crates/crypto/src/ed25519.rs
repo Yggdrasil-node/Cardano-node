@@ -1,5 +1,7 @@
 use crate::CryptoError;
-use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey as DalekSigningKey, VerifyingKey};
+use ed25519_dalek::{
+    Signature as DalekSignature, Signer, SigningKey as DalekSigningKey, VerifyingKey,
+};
 use std::fmt;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -73,8 +75,8 @@ impl VerificationKey {
 
     /// Verifies a message and signature pair using strict Ed25519 verification.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), CryptoError> {
-        let verification_key = VerifyingKey::from_bytes(&self.0)
-            .map_err(|_| CryptoError::InvalidVerificationKey)?;
+        let verification_key =
+            VerifyingKey::from_bytes(&self.0).map_err(|_| CryptoError::InvalidVerificationKey)?;
         let signature = DalekSignature::from_bytes(&signature.0);
 
         verification_key
@@ -120,8 +122,12 @@ mod tests {
 
     #[test]
     fn different_seeds_produce_different_verification_keys() {
-        let vk1 = SigningKey::from_bytes([0x01; 32]).verification_key().unwrap();
-        let vk2 = SigningKey::from_bytes([0x02; 32]).verification_key().unwrap();
+        let vk1 = SigningKey::from_bytes([0x01; 32])
+            .verification_key()
+            .unwrap();
+        let vk2 = SigningKey::from_bytes([0x02; 32])
+            .verification_key()
+            .unwrap();
         assert_ne!(vk1, vk2);
     }
 

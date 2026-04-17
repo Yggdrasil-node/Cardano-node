@@ -96,17 +96,17 @@ impl U256 {
         let (mid, carry_mid) = lh.overflowing_add(hl);
         let lo = ll.wrapping_add(mid << 64);
         let carry_lo: u128 = if lo < ll { 1 } else { 0 };
-        let hi = hh
-            + (mid >> 64)
-            + if carry_mid { 1u128 << 64 } else { 0 }
-            + carry_lo;
+        let hi = hh + (mid >> 64) + if carry_mid { 1u128 << 64 } else { 0 } + carry_lo;
         U256 { hi, lo }
     }
 
     /// Add two U256 values (wrapping on overflow beyond 256 bits).
     fn add(self, other: Self) -> Self {
         let (lo, c) = self.lo.overflowing_add(other.lo);
-        let hi = self.hi.wrapping_add(other.hi).wrapping_add(if c { 1 } else { 0 });
+        let hi = self
+            .hi
+            .wrapping_add(other.hi)
+            .wrapping_add(if c { 1 } else { 0 });
         U256 { hi, lo }
     }
 
@@ -261,9 +261,15 @@ pub struct EpochRewardPot {
 pub fn compute_epoch_reward_pot(params: &RewardParams) -> EpochRewardPot {
     // η clamped to 1: min(1, eta).
     let eta_clamped = if params.eta.denominator == 0 {
-        UnitInterval { numerator: 1, denominator: 1 }
+        UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        }
     } else if params.eta.numerator >= params.eta.denominator {
-        UnitInterval { numerator: 1, denominator: 1 }
+        UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        }
     } else {
         params.eta
     };
@@ -602,7 +608,8 @@ pub fn compute_pool_reward(
 
     // combined_num = m_num * pool + (m_den - m_num) * owner
     // combined_den = m_den * pool
-    let combined_num = m_num.saturating_mul(pool)
+    let combined_num = m_num
+        .saturating_mul(pool)
         .saturating_add(one_minus_m_num.saturating_mul(own));
     let combined_den = m_den.saturating_mul(pool);
 
@@ -634,8 +641,11 @@ pub fn compute_pool_reward(
         // floor(profit * (1-m) * memberStake / poolStake)
         let member_reward = if member_den > 0 {
             // floor(profit * (m_den - m_num) * memberStake / (m_den * poolStake))
-            floor_mul_div(p, one_minus_m_num.saturating_mul(member_stake as u128), member_den)
-                as u64
+            floor_mul_div(
+                p,
+                one_minus_m_num.saturating_mul(member_stake as u128),
+                member_den,
+            ) as u64
         } else {
             0
         };
@@ -828,7 +838,10 @@ mod tests {
             reserves,
             fee_pot,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         }
     }
 
@@ -920,8 +933,7 @@ mod tests {
             denominator: 1,
         };
 
-        let breakdown =
-            compute_pool_reward(100, &params, &pool, &snapshot, &pool_dist, perfect);
+        let breakdown = compute_pool_reward(100, &params, &pool, &snapshot, &pool_dist, perfect);
 
         // The apparent reward (100 lovelace pot, tiny pool) < cost of 340 ADA.
         assert_eq!(breakdown.leader_reward, 0);
@@ -948,7 +960,10 @@ mod tests {
             reserves: 0,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
 
         let pool = test_pool(1);
@@ -980,8 +995,7 @@ mod tests {
         };
 
         // Use a direct rewards pot to test distribution.
-        let breakdown =
-            compute_pool_reward(10_000, &params, &pool, &snapshot, &pool_dist, perfect);
+        let breakdown = compute_pool_reward(10_000, &params, &pool, &snapshot, &pool_dist, perfect);
 
         // The pool has 100% of total stake, n_opt=1, a0=0.
         // maxPool with a0=0 simplifies to R × σ' (since the pledge term vanishes).
@@ -1018,7 +1032,10 @@ mod tests {
             reserves: 100_000,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
 
         let pool = test_pool(1);
@@ -1068,15 +1085,27 @@ mod tests {
         // delta_reserves should only depend on reserves × rho,
         // NOT on the fee_pot.
         let params_no_fees = RewardParams {
-            rho: UnitInterval { numerator: 5, denominator: 100 },
-            tau: UnitInterval { numerator: 0, denominator: 1 },
-            a0: UnitInterval { numerator: 0, denominator: 1 },
+            rho: UnitInterval {
+                numerator: 5,
+                denominator: 100,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             n_opt: 1,
             min_pool_cost: 0,
             reserves: 200_000,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
         let params_with_fees = RewardParams {
             fee_pot: 50_000,
@@ -1089,10 +1118,24 @@ mod tests {
         snapshot.delegations.insert(test_cred(1), pool);
         snapshot.pool_params.insert(
             pool,
-            test_pool_params(1, 1000, 0, UnitInterval { numerator: 0, denominator: 1 }),
+            test_pool_params(
+                1,
+                1000,
+                0,
+                UnitInterval {
+                    numerator: 0,
+                    denominator: 1,
+                },
+            ),
         );
 
-        let perf = BTreeMap::from([(pool, UnitInterval { numerator: 1, denominator: 1 })]);
+        let perf = BTreeMap::from([(
+            pool,
+            UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
+        )]);
 
         let dist_no_fees = compute_epoch_rewards(&params_no_fees, &snapshot, &perf);
         let dist_with_fees = compute_epoch_rewards(&params_with_fees, &snapshot, &perf);
@@ -1154,20 +1197,30 @@ mod tests {
                 1,
                 500_000_000_000,
                 500_000_000_000, // cost = 500B (very high)
-                UnitInterval { numerator: 1, denominator: 10 },
+                UnitInterval {
+                    numerator: 1,
+                    denominator: 10,
+                },
             ),
         );
 
         let pool_dist = snapshot.pool_stake_distribution();
-        let perfect = UnitInterval { numerator: 1, denominator: 1 };
+        let perfect = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
 
         // Use a small pot so apparent < cost.
-        let breakdown = compute_pool_reward(1_000_000, &params, &pool, &snapshot, &pool_dist, perfect);
+        let breakdown =
+            compute_pool_reward(1_000_000, &params, &pool, &snapshot, &pool_dist, perfect);
 
         // apparent is non-zero but < cost → leader should get the full apparent amount.
         assert!(breakdown.apparent_performance_reward > 0);
         assert!(breakdown.apparent_performance_reward <= 1_000_000);
-        assert_eq!(breakdown.leader_reward, breakdown.apparent_performance_reward);
+        assert_eq!(
+            breakdown.leader_reward,
+            breakdown.apparent_performance_reward
+        );
         assert!(breakdown.member_rewards.is_empty());
     }
 
@@ -1185,7 +1238,10 @@ mod tests {
             vrf_keyhash: [1; 32],
             pledge: 0,
             cost: 0,
-            margin: UnitInterval { numerator: 0, denominator: 1 },
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             reward_account: test_reward_account(1),
             pool_owners: vec![operator, second_owner],
             relays: vec![],
@@ -1193,37 +1249,77 @@ mod tests {
         };
 
         let mut snapshot = StakeSnapshot::empty();
-        snapshot.stake.add(StakeCredential::AddrKeyHash(operator), 3000);
-        snapshot.stake.add(StakeCredential::AddrKeyHash(second_owner), 3000);
-        snapshot.stake.add(StakeCredential::AddrKeyHash(member), 4000);
-        snapshot.delegations.insert(StakeCredential::AddrKeyHash(operator), pool_id);
-        snapshot.delegations.insert(StakeCredential::AddrKeyHash(second_owner), pool_id);
-        snapshot.delegations.insert(StakeCredential::AddrKeyHash(member), pool_id);
+        snapshot
+            .stake
+            .add(StakeCredential::AddrKeyHash(operator), 3000);
+        snapshot
+            .stake
+            .add(StakeCredential::AddrKeyHash(second_owner), 3000);
+        snapshot
+            .stake
+            .add(StakeCredential::AddrKeyHash(member), 4000);
+        snapshot
+            .delegations
+            .insert(StakeCredential::AddrKeyHash(operator), pool_id);
+        snapshot
+            .delegations
+            .insert(StakeCredential::AddrKeyHash(second_owner), pool_id);
+        snapshot
+            .delegations
+            .insert(StakeCredential::AddrKeyHash(member), pool_id);
         snapshot.pool_params.insert(pool_id, pool_params);
 
         let pool_dist = snapshot.pool_stake_distribution();
-        let perfect = UnitInterval { numerator: 1, denominator: 1 };
+        let perfect = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
 
         let params = RewardParams {
-            rho: UnitInterval { numerator: 1, denominator: 10 },
-            tau: UnitInterval { numerator: 0, denominator: 1 },
-            a0: UnitInterval { numerator: 0, denominator: 1 },
+            rho: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             n_opt: 1,
             min_pool_cost: 0,
             reserves: 0,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
 
-        let breakdown = compute_pool_reward(10_000, &params, &pool_id, &snapshot, &pool_dist, perfect);
+        let breakdown =
+            compute_pool_reward(10_000, &params, &pool_id, &snapshot, &pool_dist, perfect);
 
         // Both owners are excluded from member_rewards.
-        assert!(!breakdown.member_rewards.contains_key(&StakeCredential::AddrKeyHash(operator)));
-        assert!(!breakdown.member_rewards.contains_key(&StakeCredential::AddrKeyHash(second_owner)));
+        assert!(
+            !breakdown
+                .member_rewards
+                .contains_key(&StakeCredential::AddrKeyHash(operator))
+        );
+        assert!(
+            !breakdown
+                .member_rewards
+                .contains_key(&StakeCredential::AddrKeyHash(second_owner))
+        );
 
         // Only the non-owner member gets a member reward.
-        assert!(breakdown.member_rewards.contains_key(&StakeCredential::AddrKeyHash(member)));
+        assert!(
+            breakdown
+                .member_rewards
+                .contains_key(&StakeCredential::AddrKeyHash(member))
+        );
         assert_eq!(breakdown.member_rewards.len(), 1);
 
         // Leader absorbs cost + margin + ALL owners' delegated shares.
@@ -1233,7 +1329,13 @@ mod tests {
         assert_eq!(breakdown.leader_reward, 6000);
 
         // Member gets floor(profit * 1 * 4000/10000) = floor(4000) = 4000
-        assert_eq!(*breakdown.member_rewards.get(&StakeCredential::AddrKeyHash(member)).unwrap(), 4000);
+        assert_eq!(
+            *breakdown
+                .member_rewards
+                .get(&StakeCredential::AddrKeyHash(member))
+                .unwrap(),
+            4000
+        );
     }
 
     #[test]
@@ -1254,26 +1356,45 @@ mod tests {
                 1,
                 3333,
                 100,
-                UnitInterval { numerator: 1, denominator: 3 }, // margin = 1/3
+                UnitInterval {
+                    numerator: 1,
+                    denominator: 3,
+                }, // margin = 1/3
             ),
         );
 
         let pool_dist = snapshot.pool_stake_distribution();
-        let perfect = UnitInterval { numerator: 1, denominator: 1 };
+        let perfect = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
 
         let params = RewardParams {
-            rho: UnitInterval { numerator: 1, denominator: 10 },
-            tau: UnitInterval { numerator: 0, denominator: 1 },
-            a0: UnitInterval { numerator: 0, denominator: 1 },
+            rho: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             n_opt: 1,
             min_pool_cost: 0,
             reserves: 0,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
 
-        let breakdown = compute_pool_reward(10_000, &params, &pool_id, &snapshot, &pool_dist, perfect);
+        let breakdown =
+            compute_pool_reward(10_000, &params, &pool_id, &snapshot, &pool_dist, perfect);
 
         // profit = 10000 - 100 = 9900
         // m = 1/3, s/sigma = 3333/10000
@@ -1296,7 +1417,7 @@ mod tests {
         let pool_id = test_pool(1);
 
         let mut snapshot = StakeSnapshot::empty();
-        snapshot.stake.add(test_cred(1), 500);    // owner has only 500
+        snapshot.stake.add(test_cred(1), 500); // owner has only 500
         snapshot.stake.add(test_cred(2), 9500);
         snapshot.delegations.insert(test_cred(1), pool_id);
         snapshot.delegations.insert(test_cred(2), pool_id);
@@ -1306,25 +1427,44 @@ mod tests {
                 1,
                 1000, // pledge = 1000, but owner only has 500
                 0,
-                UnitInterval { numerator: 0, denominator: 1 },
+                UnitInterval {
+                    numerator: 0,
+                    denominator: 1,
+                },
             ),
         );
 
         let pool_dist = snapshot.pool_stake_distribution();
-        let perfect = UnitInterval { numerator: 1, denominator: 1 };
+        let perfect = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         let params = RewardParams {
-            rho: UnitInterval { numerator: 1, denominator: 10 },
-            tau: UnitInterval { numerator: 0, denominator: 1 },
-            a0: UnitInterval { numerator: 0, denominator: 1 },
+            rho: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             n_opt: 1,
             min_pool_cost: 0,
             reserves: 0,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
 
-        let breakdown = compute_pool_reward(10_000, &params, &pool_id, &snapshot, &pool_dist, perfect);
+        let breakdown =
+            compute_pool_reward(10_000, &params, &pool_id, &snapshot, &pool_dist, perfect);
 
         assert_eq!(breakdown.leader_reward, 0);
         assert!(breakdown.member_rewards.is_empty());
@@ -1345,24 +1485,42 @@ mod tests {
                 1,
                 10_000_000,
                 0,
-                UnitInterval { numerator: 0, denominator: 1 },
+                UnitInterval {
+                    numerator: 0,
+                    denominator: 1,
+                },
             ),
         );
 
         let pool_dist = snapshot.pool_stake_distribution();
-        let perfect = UnitInterval { numerator: 1, denominator: 1 };
+        let perfect = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
 
         // Without max_lovelace_supply (falls back to active stake).
         let params_no_supply = RewardParams {
-            rho: UnitInterval { numerator: 1, denominator: 10 },
-            tau: UnitInterval { numerator: 0, denominator: 1 },
-            a0: UnitInterval { numerator: 3, denominator: 10 },
+            rho: UnitInterval {
+                numerator: 1,
+                denominator: 10,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 3,
+                denominator: 10,
+            },
             n_opt: 1,
             min_pool_cost: 0,
             reserves: 1_000_000_000,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
 
         // With max_lovelace_supply → circulation = 10B - 1B = 9B.
@@ -1371,33 +1529,65 @@ mod tests {
             ..params_no_supply.clone()
         };
 
-        let b1 = compute_pool_reward(1_000_000, &params_no_supply, &pool_id, &snapshot, &pool_dist, perfect);
-        let b2 = compute_pool_reward(1_000_000, &params_with_supply, &pool_id, &snapshot, &pool_dist, perfect);
+        let b1 = compute_pool_reward(
+            1_000_000,
+            &params_no_supply,
+            &pool_id,
+            &snapshot,
+            &pool_dist,
+            perfect,
+        );
+        let b2 = compute_pool_reward(
+            1_000_000,
+            &params_with_supply,
+            &pool_id,
+            &snapshot,
+            &pool_dist,
+            perfect,
+        );
 
         // With circulation-based sigma, the pool's relative stake is much
         // smaller (10M/9B vs 10M/10M), so its reward is smaller.
-        assert!(b2.leader_reward < b1.leader_reward,
+        assert!(
+            b2.leader_reward < b1.leader_reward,
             "circulation sigma ({}) should produce smaller reward than active-stake sigma ({})",
-            b2.leader_reward, b1.leader_reward);
+            b2.leader_reward,
+            b1.leader_reward
+        );
     }
 
     #[test]
     fn eta_scales_monetary_expansion() {
         // When eta < 1, monetary expansion is reduced.
         let params_full = RewardParams {
-            rho: UnitInterval { numerator: 3, denominator: 1000 },
-            tau: UnitInterval { numerator: 0, denominator: 1 },
-            a0: UnitInterval { numerator: 0, denominator: 1 },
+            rho: UnitInterval {
+                numerator: 3,
+                denominator: 1000,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             n_opt: 1,
             min_pool_cost: 0,
             reserves: 10_000_000_000,
             fee_pot: 0,
             max_lovelace_supply: 0,
-            eta: UnitInterval { numerator: 1, denominator: 1 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         };
 
         let params_half = RewardParams {
-            eta: UnitInterval { numerator: 1, denominator: 2 },
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
             ..params_full.clone()
         };
 
@@ -1413,11 +1603,11 @@ mod tests {
     #[test]
     fn floor_mul_div_basic() {
         // Non-overflowing cases.
-        assert_eq!(floor_mul_div(10, 3, 4), 7);   // 30/4 = 7
+        assert_eq!(floor_mul_div(10, 3, 4), 7); // 30/4 = 7
         assert_eq!(floor_mul_div(100, 7, 10), 70); // 700/10 = 70
         assert_eq!(floor_mul_div(0, 100, 1), 0);
         assert_eq!(floor_mul_div(100, 0, 1), 0);
-        assert_eq!(floor_mul_div(100, 1, 0), 0);   // division by zero → 0
+        assert_eq!(floor_mul_div(100, 1, 0), 0); // division by zero → 0
     }
 
     #[test]
@@ -1440,17 +1630,11 @@ mod tests {
     #[test]
     fn u256_widening_mul_basic() {
         // Small values.
-        assert_eq!(
-            U256::widening_mul(7, 13),
-            U256 { hi: 0, lo: 91 }
-        );
+        assert_eq!(U256::widening_mul(7, 13), U256 { hi: 0, lo: 91 });
         // One operand zero.
         assert_eq!(U256::widening_mul(0, u128::MAX), U256::ZERO);
         // Max × 1 = MAX.
-        assert_eq!(
-            U256::widening_mul(u128::MAX, 1),
-            U256::from_u128(u128::MAX)
-        );
+        assert_eq!(U256::widening_mul(u128::MAX, 1), U256::from_u128(u128::MAX));
     }
 
     #[test]
@@ -1522,16 +1706,28 @@ mod tests {
         // Choose values where floor(reserves × rho) loses a fractional
         // lovelace that matters after the second multiply.
         let params = RewardParams {
-            rho: UnitInterval { numerator: 1, denominator: 3 },
-            tau: UnitInterval { numerator: 0, denominator: 1 },
-            a0: UnitInterval { numerator: 0, denominator: 1 },
+            rho: UnitInterval {
+                numerator: 1,
+                denominator: 3,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
             n_opt: 1,
             min_pool_cost: 0,
             reserves: 100,
             fee_pot: 0,
             max_lovelace_supply: 0,
             // eta = 2/3
-            eta: UnitInterval { numerator: 2, denominator: 3 },
+            eta: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
         };
 
         let pot = compute_epoch_reward_pot(&params);
@@ -1541,8 +1737,14 @@ mod tests {
         // In this case they agree. Let's try another:
 
         let params2 = RewardParams {
-            rho: UnitInterval { numerator: 7, denominator: 1000 },
-            eta: UnitInterval { numerator: 997, denominator: 1000 },
+            rho: UnitInterval {
+                numerator: 7,
+                denominator: 1000,
+            },
+            eta: UnitInterval {
+                numerator: 997,
+                denominator: 1000,
+            },
             reserves: 14_000_000_000_000_000, // 14B ADA
             ..params.clone()
         };
@@ -1572,13 +1774,16 @@ mod tests {
         //          = floor(R / 1.3 × (1/500 + 0.3/500))
         //          = floor(R / 1.3 × 1.3/500)
         //          = floor(R / 500)
-        let a0 = UnitInterval { numerator: 3, denominator: 10 };
+        let a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
         let reward = max_pool_reward(
             30_000_000_000_000, // 30M ADA
             500,
             a0,
-            70_000_000_000_000, // 70M ADA (above saturation → σ'=z)
-            70_000_000_000_000, // pledge also above z
+            70_000_000_000_000,     // 70M ADA (above saturation → σ'=z)
+            70_000_000_000_000,     // pledge also above z
             35_000_000_000_000_000, // 35B ADA circulation
         );
         // floor(30000000000000 / 500) = 60_000_000_000 exactly.
@@ -1588,13 +1793,16 @@ mod tests {
     #[test]
     fn max_pool_reward_non_saturated_with_pledge() {
         // Non-saturated pool where pledge influence matters.
-        let a0 = UnitInterval { numerator: 3, denominator: 10 };
+        let a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
         let reward = max_pool_reward(
-            30_000_000_000_000, // R = 30T lovelace
-            500,                // k = 500
-            a0,                 // a0 = 0.3
-            35_000_000_000_000, // pool_stake = 35T (σ = 35T/35000T = 0.001, < z=0.002)
-            1_000_000_000_000,  // pledge = 1T
+            30_000_000_000_000,     // R = 30T lovelace
+            500,                    // k = 500
+            a0,                     // a0 = 0.3
+            35_000_000_000_000,     // pool_stake = 35T (σ = 35T/35000T = 0.001, < z=0.002)
+            1_000_000_000_000,      // pledge = 1T
             35_000_000_000_000_000, // total = 35000T
         );
         // This pool is not saturated (σ < z). The reward depends on both
@@ -1606,7 +1814,10 @@ mod tests {
 
     #[test]
     fn max_pool_reward_zero_pledge_no_panic() {
-        let a0 = UnitInterval { numerator: 3, denominator: 10 };
+        let a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
         let reward = max_pool_reward(
             10_000_000_000,
             500,

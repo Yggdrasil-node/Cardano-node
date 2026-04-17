@@ -71,9 +71,7 @@ pub fn select_preferred(
     }
 
     // Step 2a: same issuer at the same slot → higher OCert issue number.
-    if let (Some(l_issuer), Some(r_issuer)) =
-        (left.issuer_vkey_hash, right.issuer_vkey_hash)
-    {
+    if let (Some(l_issuer), Some(r_issuer)) = (left.issuer_vkey_hash, right.issuer_vkey_hash) {
         if l_issuer == r_issuer && left.slot_no == right.slot_no {
             if let (Some(l_no), Some(r_no)) = (left.ocert_issue_no, right.ocert_issue_no) {
                 return match r_no.cmp(&l_no) {

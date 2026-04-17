@@ -259,7 +259,13 @@ fn multi_era_utxo_mary_with_mint() {
     assert_eq!(out.coin(), 9_800_000);
     let value = out.value();
     let ma = value.multi_asset().expect("should have multi-asset");
-    assert_eq!(*ma.get(&policy).expect("policy").get(&asset_name).expect("asset"), 100);
+    assert_eq!(
+        *ma.get(&policy)
+            .expect("policy")
+            .get(&asset_name)
+            .expect("asset"),
+        100
+    );
 }
 
 #[test]
@@ -314,7 +320,15 @@ fn multi_era_utxo_mary_burn_tokens() {
 
     // Seed with an input that already has 200 tokens.
     let mut utxo = MultiEraUtxo::new();
-    seed_multi_era_mary(&mut utxo, [0x01; 32], 0, 10_000_000, policy, asset_name.clone(), 200);
+    seed_multi_era_mary(
+        &mut utxo,
+        [0x01; 32],
+        0,
+        10_000_000,
+        policy,
+        asset_name.clone(),
+        200,
+    );
 
     // Burn 50 tokens: consumed=200, mint=-50 → expected=150, produced must be 150.
     let mut output_assets = BTreeMap::new();
@@ -356,7 +370,13 @@ fn multi_era_utxo_mary_burn_tokens() {
         })
         .expect("output");
     let ma = out.value().multi_asset().expect("has multi-asset").clone();
-    assert_eq!(*ma.get(&policy).expect("policy").get(&asset_name).expect("asset"), 150);
+    assert_eq!(
+        *ma.get(&policy)
+            .expect("policy")
+            .get(&asset_name)
+            .expect("asset"),
+        150
+    );
 }
 
 #[test]
@@ -367,7 +387,15 @@ fn multi_era_utxo_mary_transfer_existing_tokens() {
 
     // Seed: input has 500 tokens.
     let mut utxo = MultiEraUtxo::new();
-    seed_multi_era_mary(&mut utxo, [0x01; 32], 0, 10_000_000, policy, asset_name.clone(), 500);
+    seed_multi_era_mary(
+        &mut utxo,
+        [0x01; 32],
+        0,
+        10_000_000,
+        policy,
+        asset_name.clone(),
+        500,
+    );
 
     // Transfer: split into two outputs, 300 + 200, no mint.
     let mut out1_assets = BTreeMap::new();
@@ -618,4 +646,3 @@ fn multi_era_utxo_coin_accessors() {
     });
     assert_eq!(babbage.coin(), 300);
 }
-

@@ -189,9 +189,8 @@ impl<'de> Deserialize<'de> for UseBootstrapPeers {
             where
                 A: SeqAccess<'de>,
             {
-                let peers = Deserialize::deserialize(
-                    serde::de::value::SeqAccessDeserializer::new(seq),
-                )?;
+                let peers =
+                    Deserialize::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
                 Ok(UseBootstrapPeers::UseBootstrapPeers(peers))
             }
         }
@@ -384,10 +383,7 @@ impl RootPeerProviderState {
     /// roots.
     ///
     /// Returns `true` when the reconciled provider snapshot changed.
-    pub fn replace_public_config_peers(
-        &mut self,
-        public_config_peers: Vec<SocketAddr>,
-    ) -> bool {
+    pub fn replace_public_config_peers(&mut self, public_config_peers: Vec<SocketAddr>) -> bool {
         self.replace_public_roots(ResolvedPublicRootPeers {
             bootstrap_peers: self.providers.public_roots.bootstrap_peers.clone(),
             public_config_peers,
@@ -398,7 +394,9 @@ impl RootPeerProviderState {
     pub fn apply_refresh(&mut self, refresh: RootPeerProviderRefresh) -> bool {
         match refresh {
             RootPeerProviderRefresh::Topology(topology) => self.replace_topology(&topology),
-            RootPeerProviderRefresh::LocalRoots(local_roots) => self.replace_local_roots(local_roots),
+            RootPeerProviderRefresh::LocalRoots(local_roots) => {
+                self.replace_local_roots(local_roots)
+            }
             RootPeerProviderRefresh::BootstrapPeers(bootstrap_peers) => {
                 self.replace_bootstrap_peers(bootstrap_peers)
             }
@@ -515,7 +513,9 @@ pub fn reconcile_root_peer_providers(
     }
 }
 
-fn reconcile_local_root_groups(local_roots: Vec<ResolvedLocalRootGroup>) -> Vec<ResolvedLocalRootGroup> {
+fn reconcile_local_root_groups(
+    local_roots: Vec<ResolvedLocalRootGroup>,
+) -> Vec<ResolvedLocalRootGroup> {
     let mut seen = Vec::new();
 
     local_roots
@@ -589,10 +589,8 @@ mod tests {
             UseBootstrapPeers::DontUseBootstrapPeers
         );
         assert_eq!(
-            serde_json::from_str::<UseBootstrapPeers>(
-                r#"[{"address":"127.0.0.10","port":3001}]"#
-            )
-            .expect("parse"),
+            serde_json::from_str::<UseBootstrapPeers>(r#"[{"address":"127.0.0.10","port":3001}]"#)
+                .expect("parse"),
             UseBootstrapPeers::UseBootstrapPeers(vec![PeerAccessPoint {
                 address: "127.0.0.10".to_owned(),
                 port: 3001,
@@ -624,7 +622,10 @@ mod tests {
             parsed.use_ledger_peers,
             UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)
         );
-        assert_eq!(parsed.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(
+            parsed.peer_snapshot_file.as_deref(),
+            Some("peer-snapshot.json")
+        );
     }
 
     #[test]
@@ -691,7 +692,10 @@ mod tests {
             Some("peer-snapshot.json".to_owned()),
         );
 
-        assert_eq!(providers.public_roots.bootstrap_peers, vec!["127.0.0.10:3001".parse().expect("addr")]);
+        assert_eq!(
+            providers.public_roots.bootstrap_peers,
+            vec!["127.0.0.10:3001".parse().expect("addr")]
+        );
         assert_eq!(
             providers.public_roots.public_config_peers,
             vec!["127.0.0.14:3001".parse().expect("addr")]
@@ -707,7 +711,10 @@ mod tests {
             ]
         );
         assert_eq!(providers.use_ledger_peers.to_after_slot(), Some(99));
-        assert_eq!(providers.peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(
+            providers.peer_snapshot_file.as_deref(),
+            Some("peer-snapshot.json")
+        );
     }
 
     #[test]
@@ -751,7 +758,10 @@ mod tests {
         );
         assert_eq!(
             state.providers().public_roots.public_config_peers,
-            vec!["127.0.0.10:3001".parse().expect("addr"), "127.0.0.13:3001".parse().expect("addr")]
+            vec![
+                "127.0.0.10:3001".parse().expect("addr"),
+                "127.0.0.13:3001".parse().expect("addr")
+            ]
         );
     }
 
@@ -833,7 +843,10 @@ mod tests {
         }));
 
         assert_eq!(state.providers().use_ledger_peers.to_after_slot(), Some(77));
-        assert_eq!(state.providers().peer_snapshot_file.as_deref(), Some("peer-snapshot.json"));
+        assert_eq!(
+            state.providers().peer_snapshot_file.as_deref(),
+            Some("peer-snapshot.json")
+        );
         assert!(!state.replace_topology(&TopologyConfig {
             bootstrap_peers: UseBootstrapPeers::DontUseBootstrapPeers,
             local_roots: vec![],

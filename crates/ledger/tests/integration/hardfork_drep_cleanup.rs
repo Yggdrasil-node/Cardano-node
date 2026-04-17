@@ -15,9 +15,8 @@
 use super::*;
 use std::collections::BTreeMap;
 use yggdrasil_ledger::{
+    GovernanceActionState, StakeSnapshot, StakeSnapshots, apply_epoch_boundary,
     compute_stake_snapshot,
-    apply_epoch_boundary, GovernanceActionState,
-    StakeSnapshot, StakeSnapshots,
 };
 
 // -----------------------------------------------------------------------
@@ -78,16 +77,46 @@ fn bootstrap_state_with_governance() -> LedgerState {
     pp.drep_activity = Some(100);
     pp.pool_voting_thresholds = Some(yggdrasil_ledger::PoolVotingThresholds::default());
     pp.drep_voting_thresholds = Some(yggdrasil_ledger::DRepVotingThresholds {
-        motion_no_confidence: UnitInterval { numerator: 51, denominator: 100 },
-        committee_normal: UnitInterval { numerator: 51, denominator: 100 },
-        committee_no_confidence: UnitInterval { numerator: 51, denominator: 100 },
-        update_to_constitution: UnitInterval { numerator: 51, denominator: 100 },
-        hard_fork_initiation: UnitInterval { numerator: 51, denominator: 100 },
-        pp_network_group: UnitInterval { numerator: 51, denominator: 100 },
-        pp_economic_group: UnitInterval { numerator: 51, denominator: 100 },
-        pp_technical_group: UnitInterval { numerator: 51, denominator: 100 },
-        pp_gov_group: UnitInterval { numerator: 51, denominator: 100 },
-        treasury_withdrawal: UnitInterval { numerator: 51, denominator: 100 },
+        motion_no_confidence: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        committee_normal: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        committee_no_confidence: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        update_to_constitution: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        hard_fork_initiation: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        pp_network_group: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        pp_economic_group: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        pp_technical_group: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        pp_gov_group: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
+        treasury_withdrawal: UnitInterval {
+            numerator: 51,
+            denominator: 100,
+        },
     });
     state.set_protocol_params(pp);
     state.set_current_epoch(EpochNo(100));
@@ -95,47 +124,65 @@ fn bootstrap_state_with_governance() -> LedgerState {
 
     // --- Committee (one member, quorum 1/1) ---
     let cold_cred = StakeCredential::AddrKeyHash([0xC1; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
-    state.enact_state_mut().committee_quorum = UnitInterval { numerator: 1, denominator: 1 };
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
+    state.enact_state_mut().committee_quorum = UnitInterval {
+        numerator: 1,
+        denominator: 1,
+    };
     state.enact_state_mut().has_committee = true;
     // Authorize hot key via a block so it goes through proper cert processing.
     {
-        let auth_input = ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 };
+        let auth_input = ShelleyTxIn {
+            transaction_id: [0xE1; 32],
+            index: 0,
+        };
         state.multi_era_utxo_mut().insert_shelley(
             auth_input.clone(),
-            ShelleyTxOut { address: vec![0x01], amount: 1_000_000 },
+            ShelleyTxOut {
+                address: vec![0x01],
+                amount: 1_000_000,
+            },
         );
-        let auth_block = make_conway_block_hf(1, 1, 0xE1, vec![ConwayTxBody {
-            inputs: vec![auth_input],
-            outputs: vec![BabbageTxOut {
-                address: vec![0x02],
-                amount: Value::Coin(1_000_000),
-                datum_option: None,
-                script_ref: None,
+        let auth_block = make_conway_block_hf(
+            1,
+            1,
+            0xE1,
+            vec![ConwayTxBody {
+                inputs: vec![auth_input],
+                outputs: vec![BabbageTxOut {
+                    address: vec![0x02],
+                    amount: Value::Coin(1_000_000),
+                    datum_option: None,
+                    script_ref: None,
+                }],
+                fee: 0,
+                ttl: Some(100),
+                certificates: Some(vec![DCert::CommitteeAuthorization(
+                    StakeCredential::AddrKeyHash([0xC1; 28]),
+                    StakeCredential::AddrKeyHash([0xC2; 28]),
+                )]),
+                validity_interval_start: None,
+                mint: None,
+                collateral: None,
+                required_signers: None,
+                network_id: None,
+                collateral_return: None,
+                total_collateral: None,
+                reference_inputs: None,
+                script_data_hash: None,
+                withdrawals: None,
+                voting_procedures: None,
+                proposal_procedures: None,
+                treasury_donation: None,
+                current_treasury_value: None,
+                auxiliary_data_hash: None,
             }],
-            fee: 0,
-            ttl: Some(100),
-            certificates: Some(vec![DCert::CommitteeAuthorization(
-                StakeCredential::AddrKeyHash([0xC1; 28]),
-                StakeCredential::AddrKeyHash([0xC2; 28]),
-            )]),
-            validity_interval_start: None,
-            mint: None,
-            collateral: None,
-            required_signers: None,
-            network_id: None,
-            collateral_return: None,
-            total_collateral: None,
-            reference_inputs: None,
-            script_data_hash: None,
-            withdrawals: None,
-            voting_procedures: None,
-            proposal_procedures: None,
-            treasury_donation: None,
-            current_treasury_value: None,
-            auxiliary_data_hash: None,
-        }]);
-        state.apply_block(&auth_block).expect("committee authorization block");
+        );
+        state
+            .apply_block(&auth_block)
+            .expect("committee authorization block");
     }
 
     // --- DRep (registered, 100% delegated stake) ---
@@ -144,17 +191,21 @@ fn bootstrap_state_with_governance() -> LedgerState {
         drep,
         RegisteredDrep::new_active(500_000, None, EpochNo(100)),
     );
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xD1; 28]),
-    );
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xD1; 28]),
-    ) {
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xD1; 28]));
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xD1; 28]))
+    {
         sc.set_delegated_pool(Some([0x50; 28]));
         sc.set_delegated_drep(Some(drep));
     }
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xD1; 28]) },
+        RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xD1; 28]),
+        },
         RewardAccountState::new(1_000_000, None),
     );
 
@@ -165,7 +216,10 @@ fn bootstrap_state_with_governance() -> LedgerState {
         vrf_keyhash: [0x01; 32],
         pledge: 1_000_000,
         cost: 340_000_000,
-        margin: UnitInterval { numerator: 1, denominator: 100 },
+        margin: UnitInterval {
+            numerator: 1,
+            denominator: 100,
+        },
         reward_account: RewardAccount {
             network: 1,
             credential: StakeCredential::AddrKeyHash([0x50; 28]),
@@ -177,7 +231,10 @@ fn bootstrap_state_with_governance() -> LedgerState {
 
     // Proposal return account.
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA1; 28]) },
+        RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xA1; 28]),
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -188,7 +245,10 @@ fn bootstrap_state_with_governance() -> LedgerState {
 /// committee + DRep + SPO vote Yes so it passes ratification at the
 /// next epoch boundary.
 fn seed_hardfork_proposal(state: &mut LedgerState) -> GovActionId {
-    let gov_id = GovActionId { transaction_id: [0xAB; 32], gov_action_index: 0 };
+    let gov_id = GovActionId {
+        transaction_id: [0xAB; 32],
+        gov_action_index: 0,
+    };
     let proposal = ProposalProcedure {
         deposit: 100_000,
         reward_account: reward_account_bytes_hf([0xA1; 28]),
@@ -208,7 +268,9 @@ fn seed_hardfork_proposal(state: &mut LedgerState) -> GovActionId {
     action.record_vote(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
     // SPO votes Yes.
     action.record_vote(Voter::StakePool([0x50; 28]), Vote::Yes);
-    state.governance_actions_mut().insert(gov_id.clone(), action);
+    state
+        .governance_actions_mut()
+        .insert(gov_id.clone(), action);
     gov_id
 }
 
@@ -243,18 +305,21 @@ fn hardfork_pv9_to_10_clears_dangling_drep_delegation() {
     // Register a stake credential that delegates to an UNREGISTERED DRep.
     // During bootstrap (PV 9), this is accepted by `preserveIncorrectDelegation`.
     let unregistered_drep = DRep::KeyHash([0xDD; 28]);
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xBB; 28]),
-    );
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xBB; 28]),
-    ) {
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xBB; 28]));
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xBB; 28]))
+    {
         sc.set_delegated_drep(Some(unregistered_drep));
     }
 
     // Confirm the delegation is present before the hardfork.
     assert_eq!(
-        state.stake_credentials().get(&StakeCredential::AddrKeyHash([0xBB; 28]))
+        state
+            .stake_credentials()
+            .get(&StakeCredential::AddrKeyHash([0xBB; 28]))
             .and_then(|s| s.delegated_drep()),
         Some(unregistered_drep),
         "dangling delegation should exist before PV 9→10 transition",
@@ -266,9 +331,8 @@ fn hardfork_pv9_to_10_clears_dangling_drep_delegation() {
     // Run epoch boundary → ratification enacts HardFork → HARDFORK rule
     // triggers updateDRepDelegations.
     let mut snapshots = snapshots_with_stake(&state);
-    let _event = apply_epoch_boundary(
-        &mut state, EpochNo(101), &mut snapshots, &BTreeMap::new(),
-    ).unwrap();
+    let _event =
+        apply_epoch_boundary(&mut state, EpochNo(101), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Hardfork should have been enacted.
     assert!(
@@ -283,7 +347,9 @@ fn hardfork_pv9_to_10_clears_dangling_drep_delegation() {
 
     // The dangling delegation to the unregistered DRep should be cleared.
     assert_eq!(
-        state.stake_credentials().get(&StakeCredential::AddrKeyHash([0xBB; 28]))
+        state
+            .stake_credentials()
+            .get(&StakeCredential::AddrKeyHash([0xBB; 28]))
             .and_then(|s| s.delegated_drep()),
         None,
         "dangling DRep delegation should have been removed by \
@@ -303,35 +369,38 @@ fn hardfork_pv9_to_10_preserves_valid_and_builtin_delegations() {
     let registered_drep = DRep::KeyHash([0xD1; 28]);
 
     // Delegation to AlwaysAbstain (builtin).
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xB1; 28]),
-    );
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xB1; 28]),
-    ) {
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xB1; 28]));
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xB1; 28]))
+    {
         sc.set_delegated_drep(Some(DRep::AlwaysAbstain));
     }
 
     // Delegation to AlwaysNoConfidence (builtin).
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xB2; 28]),
-    );
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xB2; 28]),
-    ) {
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xB2; 28]));
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xB2; 28]))
+    {
         sc.set_delegated_drep(Some(DRep::AlwaysNoConfidence));
     }
 
     // Seed HardForkInitiation and run epoch boundary.
     let _gov_id = seed_hardfork_proposal(&mut state);
     let mut snapshots = snapshots_with_stake(&state);
-    let _event = apply_epoch_boundary(
-        &mut state, EpochNo(101), &mut snapshots, &BTreeMap::new(),
-    ).unwrap();
+    let _event =
+        apply_epoch_boundary(&mut state, EpochNo(101), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Registered DRep delegation preserved.
     assert_eq!(
-        state.stake_credentials().get(&StakeCredential::AddrKeyHash([0xD1; 28]))
+        state
+            .stake_credentials()
+            .get(&StakeCredential::AddrKeyHash([0xD1; 28]))
             .and_then(|s| s.delegated_drep()),
         Some(registered_drep),
         "delegation to registered DRep should be preserved after PV 9→10 transition",
@@ -339,7 +408,9 @@ fn hardfork_pv9_to_10_preserves_valid_and_builtin_delegations() {
 
     // AlwaysAbstain delegation preserved.
     assert_eq!(
-        state.stake_credentials().get(&StakeCredential::AddrKeyHash([0xB1; 28]))
+        state
+            .stake_credentials()
+            .get(&StakeCredential::AddrKeyHash([0xB1; 28]))
             .and_then(|s| s.delegated_drep()),
         Some(DRep::AlwaysAbstain),
         "AlwaysAbstain delegation should be preserved (builtin DRep)",
@@ -347,7 +418,9 @@ fn hardfork_pv9_to_10_preserves_valid_and_builtin_delegations() {
 
     // AlwaysNoConfidence delegation preserved.
     assert_eq!(
-        state.stake_credentials().get(&StakeCredential::AddrKeyHash([0xB2; 28]))
+        state
+            .stake_credentials()
+            .get(&StakeCredential::AddrKeyHash([0xB2; 28]))
             .and_then(|s| s.delegated_drep()),
         Some(DRep::AlwaysNoConfidence),
         "AlwaysNoConfidence delegation should be preserved (builtin DRep)",
@@ -365,12 +438,13 @@ fn non_hardfork_epoch_does_not_trigger_drep_cleanup() {
 
     // Register a dangling delegation.
     let unregistered_drep = DRep::KeyHash([0xDD; 28]);
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xBB; 28]),
-    );
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xBB; 28]),
-    ) {
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xBB; 28]));
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xBB; 28]))
+    {
         sc.set_delegated_drep(Some(unregistered_drep));
     }
 
@@ -378,9 +452,8 @@ fn non_hardfork_epoch_does_not_trigger_drep_cleanup() {
 
     // Run epoch boundary → no hardfork, no cleanup.
     let mut snapshots = snapshots_with_stake(&state);
-    let _event = apply_epoch_boundary(
-        &mut state, EpochNo(101), &mut snapshots, &BTreeMap::new(),
-    ).unwrap();
+    let _event =
+        apply_epoch_boundary(&mut state, EpochNo(101), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Protocol version unchanged.
     assert_eq!(
@@ -390,7 +463,9 @@ fn non_hardfork_epoch_does_not_trigger_drep_cleanup() {
 
     // Dangling delegation still present.
     assert_eq!(
-        state.stake_credentials().get(&StakeCredential::AddrKeyHash([0xBB; 28]))
+        state
+            .stake_credentials()
+            .get(&StakeCredential::AddrKeyHash([0xBB; 28]))
             .and_then(|s| s.delegated_drep()),
         Some(unregistered_drep),
         "dangling delegation should remain when no hardfork is enacted",
@@ -407,22 +482,30 @@ fn hardfork_pv10_to_11_does_not_trigger_drep_cleanup() {
     let mut state = bootstrap_state_with_governance();
 
     // Start at PV 10 (post-bootstrap).
-    state.protocol_params_mut().as_mut().unwrap().protocol_version = Some((10, 0));
+    state
+        .protocol_params_mut()
+        .as_mut()
+        .unwrap()
+        .protocol_version = Some((10, 0));
 
     // Register a dangling delegation (unlikely in practice after PV 10,
     // but test the gate logic).
     let unregistered_drep = DRep::KeyHash([0xDD; 28]);
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xBB; 28]),
-    );
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xBB; 28]),
-    ) {
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xBB; 28]));
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xBB; 28]))
+    {
         sc.set_delegated_drep(Some(unregistered_drep));
     }
 
     // Seed HardForkInitiation to PV 11.
-    let gov_id = GovActionId { transaction_id: [0xAC; 32], gov_action_index: 0 };
+    let gov_id = GovActionId {
+        transaction_id: [0xAC; 32],
+        gov_action_index: 0,
+    };
     let proposal = ProposalProcedure {
         deposit: 100_000,
         reward_account: reward_account_bytes_hf([0xA1; 28]),
@@ -439,12 +522,13 @@ fn hardfork_pv10_to_11_does_not_trigger_drep_cleanup() {
     action.record_vote(Voter::CommitteeKeyHash([0xC2; 28]), Vote::Yes);
     action.record_vote(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
     action.record_vote(Voter::StakePool([0x50; 28]), Vote::Yes);
-    state.governance_actions_mut().insert(gov_id.clone(), action);
+    state
+        .governance_actions_mut()
+        .insert(gov_id.clone(), action);
 
     let mut snapshots = snapshots_with_stake(&state);
-    let _event = apply_epoch_boundary(
-        &mut state, EpochNo(101), &mut snapshots, &BTreeMap::new(),
-    ).unwrap();
+    let _event =
+        apply_epoch_boundary(&mut state, EpochNo(101), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Hardfork should be enacted.
     assert_eq!(
@@ -455,7 +539,9 @@ fn hardfork_pv10_to_11_does_not_trigger_drep_cleanup() {
     // Dangling delegation should still be present (PV 11 cleanup is
     // populateVRFKeyHashes, not updateDRepDelegations).
     assert_eq!(
-        state.stake_credentials().get(&StakeCredential::AddrKeyHash([0xBB; 28]))
+        state
+            .stake_credentials()
+            .get(&StakeCredential::AddrKeyHash([0xBB; 28]))
             .and_then(|s| s.delegated_drep()),
         Some(unregistered_drep),
         "dangling delegation should persist at PV 10→11 transition \

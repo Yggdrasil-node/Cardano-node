@@ -26,7 +26,10 @@ fn enterprise_addr() -> Vec<u8> {
 
 /// Build a multi-asset value with `n_policies × n_assets` entries.
 /// Each asset name is ~10 bytes and each quantity is a large u64.
-fn large_multi_asset(n_policies: usize, n_assets: usize) -> BTreeMap<[u8; 28], BTreeMap<Vec<u8>, u64>> {
+fn large_multi_asset(
+    n_policies: usize,
+    n_assets: usize,
+) -> BTreeMap<[u8; 28], BTreeMap<Vec<u8>, u64>> {
     let mut ma = BTreeMap::new();
     for p in 0..n_policies {
         let mut pid = [0u8; 28];
@@ -296,7 +299,10 @@ fn boot_addr_mixed_outputs_second_fails() {
         }),
     ];
     let result = yggdrasil_ledger::validate_output_boot_addr_attrs(&outputs);
-    assert!(matches!(result, Err(LedgerError::OutputBootAddrAttrsTooBig { .. })));
+    assert!(matches!(
+        result,
+        Err(LedgerError::OutputBootAddrAttrsTooBig { .. })
+    ));
 }
 
 // ---------------------------------------------------------------------------

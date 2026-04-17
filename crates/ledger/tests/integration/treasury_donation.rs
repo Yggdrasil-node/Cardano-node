@@ -34,10 +34,7 @@ fn seed_utxo(state: &mut LedgerState, txin: ShelleyTxIn, addr: &[u8], amount: u6
     );
 }
 
-fn make_conway_block(
-    txs: Vec<(ConwayTxBody, Option<bool>)>,
-    slot: u64,
-) -> Block {
+fn make_conway_block(txs: Vec<(ConwayTxBody, Option<bool>)>, slot: u64) -> Block {
     let mut transactions = Vec::new();
     for (body, is_valid) in txs {
         let body_bytes = body.to_cbor_bytes();
@@ -125,8 +122,8 @@ fn conway_treasury_donation_accumulates_to_utxos_donation() {
     let body = simple_conway_body(
         input,
         &addr,
-        9_500_000,    // output
-        200_000,      // fee
+        9_500_000,     // output
+        200_000,       // fee
         Some(300_000), // treasury_donation
     );
 
@@ -226,10 +223,7 @@ fn conway_multiple_txs_accumulate_donations() {
     let tx1 = simple_conway_body(input1, &addr, 9_500_000, 200_000, Some(300_000));
     let tx2 = simple_conway_body(input2, &addr, 9_400_000, 100_000, Some(500_000));
 
-    let block = make_conway_block(
-        vec![(tx1, Some(true)), (tx2, Some(true))],
-        400,
-    );
+    let block = make_conway_block(vec![(tx1, Some(true)), (tx2, Some(true))], 400);
     state
         .apply_block_validated(&block, None)
         .expect("multiple conway txs with donations");
@@ -261,11 +255,17 @@ fn conway_multiple_blocks_accumulate_donations() {
     seed_utxo(&mut state, input2.clone(), &addr, 10_000_000);
 
     let block1 = make_conway_block(
-        vec![(simple_conway_body(input1, &addr, 9_000_000, 500_000, Some(500_000)), Some(true))],
+        vec![(
+            simple_conway_body(input1, &addr, 9_000_000, 500_000, Some(500_000)),
+            Some(true),
+        )],
         500,
     );
     let block2 = make_conway_block(
-        vec![(simple_conway_body(input2, &addr, 8_000_000, 1_000_000, Some(1_000_000)), Some(true))],
+        vec![(
+            simple_conway_body(input2, &addr, 8_000_000, 1_000_000, Some(1_000_000)),
+            Some(true),
+        )],
         600,
     );
 
@@ -392,9 +392,7 @@ fn ledger_state_utxos_donation_defaults_to_zero_from_legacy_cbor() {
 
 #[test]
 fn epoch_boundary_transfers_donations_to_treasury() {
-    use yggdrasil_ledger::{
-        StakeSnapshot, StakeSnapshots, apply_epoch_boundary, EpochNo,
-    };
+    use yggdrasil_ledger::{EpochNo, StakeSnapshot, StakeSnapshots, apply_epoch_boundary};
 
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(permissive_params());
@@ -494,9 +492,8 @@ fn conway_zero_treasury_donation_rejected_submitted_tx() {
         plutus_v2_scripts: vec![],
         plutus_v3_scripts: vec![],
     };
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
     let err = state
         .apply_submitted_tx(&submitted, SlotNo(200), None)
         .expect_err("zero treasury donation should be rejected in submitted path");

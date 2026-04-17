@@ -164,12 +164,13 @@ fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, Ledg
     let mut ma = BTreeMap::new();
     for _ in 0..policy_count {
         let policy_raw = dec.bytes()?;
-        let policy: PolicyId = policy_raw
-            .try_into()
-            .map_err(|_| LedgerError::CborInvalidLength {
-                expected: 28,
-                actual: policy_raw.len(),
-            })?;
+        let policy: PolicyId =
+            policy_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 28,
+                    actual: policy_raw.len(),
+                })?;
         let asset_count = dec.map()?;
         let mut assets = BTreeMap::new();
         for _ in 0..asset_count {
@@ -204,12 +205,13 @@ pub(crate) fn decode_mint_asset(dec: &mut Decoder<'_>) -> Result<MintAsset, Ledg
     let mut ma = BTreeMap::new();
     for _ in 0..policy_count {
         let policy_raw = dec.bytes()?;
-        let policy: PolicyId = policy_raw
-            .try_into()
-            .map_err(|_| LedgerError::CborInvalidLength {
-                expected: 28,
-                actual: policy_raw.len(),
-            })?;
+        let policy: PolicyId =
+            policy_raw
+                .try_into()
+                .map_err(|_| LedgerError::CborInvalidLength {
+                    expected: 28,
+                    actual: policy_raw.len(),
+                })?;
         let asset_count = dec.map()?;
         let mut assets = BTreeMap::new();
         for _ in 0..asset_count {
@@ -466,11 +468,10 @@ impl CborDecode for MaryTxBody {
                 7 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     auxiliary_data_hash = Some(hash);
                 }
                 8 => {
@@ -514,7 +515,10 @@ mod tests {
     use super::*;
 
     fn mk_txin(idx: u16) -> ShelleyTxIn {
-        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+        ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: idx,
+        }
     }
 
     fn mk_policy() -> PolicyId {

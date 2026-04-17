@@ -132,10 +132,7 @@ pub struct ChainSyncTransitionError {
 
 impl ChainSyncState {
     /// Validate that `msg` is legal from `self` and return the resulting state.
-    pub fn transition(
-        self,
-        msg: &ChainSyncMessage,
-    ) -> Result<Self, ChainSyncTransitionError> {
+    pub fn transition(self, msg: &ChainSyncMessage) -> Result<Self, ChainSyncTransitionError> {
         match (&self, msg) {
             // Client agency — StIdle
             (Self::StIdle, ChainSyncMessage::MsgRequestNext) => Ok(Self::StCanAwait),

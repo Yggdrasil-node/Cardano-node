@@ -394,7 +394,13 @@ mod tests {
         state.apply_block(SlotNo(10), &[0x42; 64], Some(prev_hash), &c, d);
         let epoch_nonce_before = state.epoch_nonce;
         // Apply a block in epoch 1 (triggers TICKN transition)
-        state.apply_block(SlotNo(105), &[0xFF; 64], Some(HeaderHash([0xEE; 32])), &c, d);
+        state.apply_block(
+            SlotNo(105),
+            &[0xFF; 64],
+            Some(HeaderHash([0xEE; 32])),
+            &c,
+            d,
+        );
         assert_eq!(state.current_epoch, EpochNo(1));
         // epoch_nonce should have changed
         assert_ne!(state.epoch_nonce, epoch_nonce_before);

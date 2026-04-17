@@ -18,16 +18,16 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::cbor::{CborDecode, CborEncode};
-use crate::eras::conway::{ProposalProcedure, Voter, VotingProcedures};
-use crate::error::LedgerError;
 use crate::eras::alonzo::{ExUnits, Redeemer};
 use crate::eras::babbage::DatumOption;
+use crate::eras::conway::{ProposalProcedure, Voter, VotingProcedures};
 use crate::eras::mary::MintAsset;
 use crate::eras::shelley::ShelleyTxIn;
+use crate::error::LedgerError;
 use crate::plutus::PlutusData;
+use crate::protocol_params::ProtocolParameters;
 use crate::types::{Address, DCert, RewardAccount, StakeCredential};
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
-use crate::protocol_params::ProtocolParameters;
 
 // ---------------------------------------------------------------------------
 // Plutus language version
@@ -90,7 +90,10 @@ pub enum ScriptPurpose {
     /// Casting governance votes as a Conway voter (redeemer tag 4).
     Voting { voter: Voter },
     /// Submitting a governance proposal (redeemer tag 5).
-    Proposing { proposal_index: u64, proposal: ProposalProcedure },
+    Proposing {
+        proposal_index: u64,
+        proposal: ProposalProcedure,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +254,8 @@ pub fn compute_script_data_hash(
         },
     };
 
-    let redeemers_bytes = encode_redeemers_for_script_data_hash(&ws.redeemers, conway_redeemer_format);
+    let redeemers_bytes =
+        encode_redeemers_for_script_data_hash(&ws.redeemers, conway_redeemer_format);
     let datums_bytes = encode_datums_for_script_data_hash(&ws.plutus_data);
     let language_views = encode_language_views_for_script_data_hash(
         &ws,
@@ -262,9 +266,8 @@ pub fn compute_script_data_hash(
         required_script_hashes,
     );
 
-    let mut preimage = Vec::with_capacity(
-        redeemers_bytes.len() + datums_bytes.len() + language_views.len(),
-    );
+    let mut preimage =
+        Vec::with_capacity(redeemers_bytes.len() + datums_bytes.len() + language_views.len());
     preimage.extend_from_slice(&redeemers_bytes);
     preimage.extend_from_slice(&datums_bytes);
     preimage.extend_from_slice(&language_views);
@@ -317,14 +320,10 @@ pub fn validate_script_data_hash(
 
     match (declared, needs_hash) {
         (None, false) => Ok(()),
-        (Some(declared_hash), false) => {
-            Err(LedgerError::UnexpectedScriptIntegrityHash {
-                declared: declared_hash,
-            })
-        }
-        (None, true) => {
-            Err(LedgerError::MissingRequiredScriptIntegrityHash)
-        }
+        (Some(declared_hash), false) => Err(LedgerError::UnexpectedScriptIntegrityHash {
+            declared: declared_hash,
+        }),
+        (None, true) => Err(LedgerError::MissingRequiredScriptIntegrityHash),
         (Some(declared_hash), true) => {
             let computed = compute_script_data_hash(
                 witness_bytes,
@@ -419,9 +418,7 @@ fn encode_redeemers_for_script_data_hash(
         sorted.sort_by_key(|r| (r.tag, r.index));
         enc.map(sorted.len() as u64);
         for r in sorted {
-            enc.array(2)
-                .unsigned(r.tag as u64)
-                .unsigned(r.index);
+            enc.array(2).unsigned(r.tag as u64).unsigned(r.index);
             enc.array(2);
             r.data.encode_cbor(&mut enc);
             r.ex_units.encode_cbor(&mut enc);
@@ -543,11 +540,7 @@ fn encode_language_views_for_script_data_hash(
     pairs.sort_by(|a, b| {
         let la = a.0.len();
         let lb = b.0.len();
-        if la != lb {
-            la.cmp(&lb)
-        } else {
-            a.0.cmp(&b.0)
-        }
+        if la != lb { la.cmp(&lb) } else { a.0.cmp(&b.0) }
     });
 
     let mut enc = crate::cbor::Encoder::new();
@@ -627,7 +620,11 @@ pub fn resolve_script_purpose(
             let input = sorted_inputs.get(redeemer.index as usize).ok_or_else(|| {
                 LedgerError::MissingRedeemer {
                     hash: [0; 28],
-                    purpose: format!("spend index {} out of range ({})", redeemer.index, sorted_inputs.len()),
+                    purpose: format!(
+                        "spend index {} out of range ({})",
+                        redeemer.index,
+                        sorted_inputs.len()
+                    ),
                 }
             })?;
             Ok(ScriptPurpose::Spending {
@@ -637,12 +634,16 @@ pub fn resolve_script_purpose(
         }
         1 => {
             // Minting: index into sorted policy IDs
-            let policy = sorted_policy_ids.get(redeemer.index as usize).ok_or_else(|| {
-                LedgerError::MissingRedeemer {
+            let policy = sorted_policy_ids
+                .get(redeemer.index as usize)
+                .ok_or_else(|| LedgerError::MissingRedeemer {
                     hash: [0; 28],
-                    purpose: format!("mint index {} out of range ({})", redeemer.index, sorted_policy_ids.len()),
-                }
-            })?;
+                    purpose: format!(
+                        "mint index {} out of range ({})",
+                        redeemer.index,
+                        sorted_policy_ids.len()
+                    ),
+                })?;
             Ok(ScriptPurpose::Minting { policy_id: *policy })
         }
         2 => {
@@ -650,7 +651,11 @@ pub fn resolve_script_purpose(
             let certificate = certificates.get(redeemer.index as usize).ok_or_else(|| {
                 LedgerError::MissingRedeemer {
                     hash: [0; 28],
-                    purpose: format!("cert index {} out of range ({})", redeemer.index, certificates.len()),
+                    purpose: format!(
+                        "cert index {} out of range ({})",
+                        redeemer.index,
+                        certificates.len()
+                    ),
                 }
             })?;
             Ok(ScriptPurpose::Certifying {
@@ -660,25 +665,35 @@ pub fn resolve_script_purpose(
         }
         3 => {
             // Rewarding: index into sorted reward accounts
-            let acct = sorted_reward_accounts.get(redeemer.index as usize).ok_or_else(|| {
-                LedgerError::MissingRedeemer {
+            let acct = sorted_reward_accounts
+                .get(redeemer.index as usize)
+                .ok_or_else(|| LedgerError::MissingRedeemer {
                     hash: [0; 28],
-                    purpose: format!("reward index {} out of range ({})", redeemer.index, sorted_reward_accounts.len()),
-                }
-            })?;
-            let reward_account = RewardAccount::from_bytes(acct).ok_or_else(|| {
-                LedgerError::MissingRedeemer {
+                    purpose: format!(
+                        "reward index {} out of range ({})",
+                        redeemer.index,
+                        sorted_reward_accounts.len()
+                    ),
+                })?;
+            let reward_account =
+                RewardAccount::from_bytes(acct).ok_or_else(|| LedgerError::MissingRedeemer {
                     hash: [0; 28],
-                    purpose: format!("reward account at index {} is not a valid reward address", redeemer.index),
-                }
-            })?;
+                    purpose: format!(
+                        "reward account at index {} is not a valid reward address",
+                        redeemer.index
+                    ),
+                })?;
             Ok(ScriptPurpose::Rewarding { reward_account })
         }
         4 => {
             let voter = sorted_voters.get(redeemer.index as usize).ok_or_else(|| {
                 LedgerError::MissingRedeemer {
                     hash: [0; 28],
-                    purpose: format!("voting index {} out of range ({})", redeemer.index, sorted_voters.len()),
+                    purpose: format!(
+                        "voting index {} out of range ({})",
+                        redeemer.index,
+                        sorted_voters.len()
+                    ),
                 }
             })?;
             Ok(ScriptPurpose::Voting {
@@ -743,7 +758,9 @@ pub(crate) fn collect_all_plutus_scripts(
     // Collect Plutus reference scripts from spending + reference input UTxOs.
     // Upstream iterates `referenceInputsTxBodyL ∪ inputsTxBodyL`.
     let empty: &[crate::eras::shelley::ShelleyTxIn] = &[];
-    let all_inputs = reference_inputs.unwrap_or(empty).iter()
+    let all_inputs = reference_inputs
+        .unwrap_or(empty)
+        .iter()
         .chain(spending_inputs.unwrap_or(empty).iter());
     for txin in all_inputs {
         if let Some(txout) = utxo.get(txin) {
@@ -809,11 +826,18 @@ pub fn validate_supplemental_datums(
     let tx_hashes: HashSet<[u8; 32]> = collect_datum_map(&ws).into_keys().collect();
 
     // Collect Plutus scripts (witness + reference + spending) to identify Plutus-locked inputs.
-    let ref_txins: Vec<_> = reference_input_utxos.iter().map(|(txin, _)| txin.clone()).collect();
+    let ref_txins: Vec<_> = reference_input_utxos
+        .iter()
+        .map(|(txin, _)| txin.clone())
+        .collect();
     let plutus_scripts = collect_all_plutus_scripts(
         &ws,
         spending_utxo,
-        if ref_txins.is_empty() { None } else { Some(&ref_txins) },
+        if ref_txins.is_empty() {
+            None
+        } else {
+            Some(&ref_txins)
+        },
         Some(spending_inputs),
     );
 
@@ -905,7 +929,9 @@ pub fn validate_unspendable_utxo_no_datum_hash(
                 let has_datum = match &txout {
                     // Shelley/Mary: not Plutus-capable (no scripts)
                     MultiEraTxOut::Shelley(_) | MultiEraTxOut::Mary(_) => {
-                        unreachable!("spending_script_hash_from_txout returned Some but era doesn't support scripts")
+                        unreachable!(
+                            "spending_script_hash_from_txout returned Some but era doesn't support scripts"
+                        )
                     }
                     // Alonzo: requires datum_hash
                     MultiEraTxOut::Alonzo(out) => out.datum_hash.is_some(),
@@ -1012,7 +1038,8 @@ pub fn validate_no_extra_redeemers(
         return Ok(());
     }
 
-    let plutus_scripts = collect_all_plutus_scripts(&ws, spending_utxo, reference_inputs, Some(sorted_inputs));
+    let plutus_scripts =
+        collect_all_plutus_scripts(&ws, spending_utxo, reference_inputs, Some(sorted_inputs));
 
     for redeemer in &ws.redeemers {
         let purpose = resolve_script_purpose(
@@ -1090,18 +1117,11 @@ pub fn validate_no_missing_redeemers(
 
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
 
-    let plutus_scripts = collect_all_plutus_scripts(
-        &ws,
-        spending_utxo,
-        reference_inputs,
-        Some(sorted_inputs),
-    );
+    let plutus_scripts =
+        collect_all_plutus_scripts(&ws, spending_utxo, reference_inputs, Some(sorted_inputs));
 
-    let actual_redeemer_ptrs: std::collections::HashSet<(u8, u64)> = ws
-        .redeemers
-        .iter()
-        .map(|r| (r.tag, r.index))
-        .collect();
+    let actual_redeemer_ptrs: std::collections::HashSet<(u8, u64)> =
+        ws.redeemers.iter().map(|r| (r.tag, r.index)).collect();
 
     for expected in collect_required_plutus_redeemers(
         required_script_hashes,
@@ -1266,12 +1286,20 @@ pub fn validate_plutus_scripts(
     // them here, where all the raw data is in scope.
     let resolved_inputs: Vec<(ShelleyTxIn, MultiEraTxOut)> = sorted_inputs
         .iter()
-        .filter_map(|txin| spending_utxo.get(txin).map(|txout| (txin.clone(), txout.clone())))
+        .filter_map(|txin| {
+            spending_utxo
+                .get(txin)
+                .map(|txout| (txin.clone(), txout.clone()))
+        })
         .collect();
     let resolved_reference_inputs: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx_ctx
         .reference_inputs
         .iter()
-        .filter_map(|txin| spending_utxo.get(txin).map(|txout| (txin.clone(), txout.clone())))
+        .filter_map(|txin| {
+            spending_utxo
+                .get(txin)
+                .map(|txout| (txin.clone(), txout.clone()))
+        })
         .collect();
     let augmented_tx_ctx = TxContext {
         inputs: resolved_inputs,
@@ -1365,7 +1393,9 @@ pub fn validate_plutus_scripts(
                 credential_script_hash(&reward_account.credential)
             }
             ScriptPurpose::Voting { voter } => voting_voter_script_hash(voter),
-            ScriptPurpose::Proposing { proposal, .. } => proposal_script_hash_from_proposal(proposal),
+            ScriptPurpose::Proposing { proposal, .. } => {
+                proposal_script_hash_from_proposal(proposal)
+            }
         };
 
         // If we can identify the target script, evaluate it.
@@ -1543,8 +1573,10 @@ fn certifying_script_hash_from_cert(cert: &DCert) -> Option<[u8; 28]> {
                 _ => None,
             })
         }
-        DCert::PoolRegistration(_) | DCert::PoolRetirement(_, _)
-        | DCert::GenesisDelegation(_, _, _) | DCert::MoveInstantaneousReward(_, _) => None,
+        DCert::PoolRegistration(_)
+        | DCert::PoolRetirement(_, _)
+        | DCert::GenesisDelegation(_, _, _)
+        | DCert::MoveInstantaneousReward(_, _) => None,
     }
 }
 
@@ -1620,9 +1652,9 @@ fn resolve_spending_datum(
 mod tests {
     use super::*;
     use crate::cbor::CborEncode;
-    use crate::eras::conway::{GovAction, ProposalProcedure, Voter};
     use crate::eras::alonzo::AlonzoTxOut;
     use crate::eras::babbage::{BabbageTxOut, DatumOption};
+    use crate::eras::conway::{GovAction, ProposalProcedure, Voter};
     use crate::eras::mary::Value;
     use crate::eras::shelley::{ShelleyTxIn, ShelleyWitnessSet};
     use crate::types::{Address, DRep, EnterpriseAddress, RewardAccount, StakeCredential};
@@ -1633,9 +1665,7 @@ mod tests {
         let script_bytes = vec![0x01, 0x02, 0x03];
         let hash = plutus_script_hash(PlutusVersion::V1, &script_bytes);
         // Verify it's Blake2b-224 of [0x01, 0x01, 0x02, 0x03]
-        let expected = yggdrasil_crypto::blake2b::hash_bytes_224(
-            &[0x01, 0x01, 0x02, 0x03],
-        ).0;
+        let expected = yggdrasil_crypto::blake2b::hash_bytes_224(&[0x01, 0x01, 0x02, 0x03]).0;
         assert_eq!(hash, expected);
     }
 
@@ -1643,9 +1673,7 @@ mod tests {
     fn plutus_v2_script_hash_uses_tag_02() {
         let script_bytes = vec![0xAA, 0xBB];
         let hash = plutus_script_hash(PlutusVersion::V2, &script_bytes);
-        let expected = yggdrasil_crypto::blake2b::hash_bytes_224(
-            &[0x02, 0xAA, 0xBB],
-        ).0;
+        let expected = yggdrasil_crypto::blake2b::hash_bytes_224(&[0x02, 0xAA, 0xBB]).0;
         assert_eq!(hash, expected);
     }
 
@@ -1653,9 +1681,7 @@ mod tests {
     fn plutus_v3_script_hash_uses_tag_03() {
         let script_bytes = vec![0xFF];
         let hash = plutus_script_hash(PlutusVersion::V3, &script_bytes);
-        let expected = yggdrasil_crypto::blake2b::hash_bytes_224(
-            &[0x03, 0xFF],
-        ).0;
+        let expected = yggdrasil_crypto::blake2b::hash_bytes_224(&[0x03, 0xFF]).0;
         assert_eq!(hash, expected);
     }
 
@@ -1704,14 +1730,23 @@ mod tests {
     #[test]
     fn resolve_spending_purpose() {
         let inputs = vec![
-            crate::eras::shelley::ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 },
-            crate::eras::shelley::ShelleyTxIn { transaction_id: [0xBB; 32], index: 1 },
+            crate::eras::shelley::ShelleyTxIn {
+                transaction_id: [0xAA; 32],
+                index: 0,
+            },
+            crate::eras::shelley::ShelleyTxIn {
+                transaction_id: [0xBB; 32],
+                index: 1,
+            },
         ];
         let redeemer = Redeemer {
             tag: 0,
             index: 1,
             data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
         let purpose = resolve_script_purpose(&redeemer, &inputs, &[], &[], &[], &[], &[]).unwrap();
         assert!(matches!(
@@ -1727,9 +1762,13 @@ mod tests {
             tag: 1,
             index: 0,
             data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
-        let purpose = resolve_script_purpose(&redeemer, &[], &policies, &[], &[], &[], &[]).unwrap();
+        let purpose =
+            resolve_script_purpose(&redeemer, &[], &policies, &[], &[], &[], &[]).unwrap();
         assert!(matches!(purpose, ScriptPurpose::Minting { policy_id } if policy_id == [0xCC; 28]));
     }
 
@@ -1740,10 +1779,15 @@ mod tests {
             tag: 2,
             index: 0,
             data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
 
-        let purpose = resolve_script_purpose(&redeemer, &[], &[], &[certificate.clone()], &[], &[], &[]).unwrap();
+        let purpose =
+            resolve_script_purpose(&redeemer, &[], &[], &[certificate.clone()], &[], &[], &[])
+                .unwrap();
 
         assert!(matches!(
             purpose,
@@ -1759,10 +1803,14 @@ mod tests {
             tag: 4,
             index: 0,
             data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
 
-        let purpose = resolve_script_purpose(&redeemer, &[], &[], &[], &[], &[voter.clone()], &[]).unwrap();
+        let purpose =
+            resolve_script_purpose(&redeemer, &[], &[], &[], &[], &[voter.clone()], &[]).unwrap();
 
         assert!(matches!(purpose, ScriptPurpose::Voting { voter: carried } if carried == voter));
     }
@@ -1787,10 +1835,15 @@ mod tests {
             tag: 5,
             index: 0,
             data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
 
-        let purpose = resolve_script_purpose(&redeemer, &[], &[], &[], &[], &[], &[proposal.clone()]).unwrap();
+        let purpose =
+            resolve_script_purpose(&redeemer, &[], &[], &[], &[], &[], &[proposal.clone()])
+                .unwrap();
 
         assert!(matches!(
             purpose,
@@ -1807,7 +1860,10 @@ mod tests {
             tag: 0,
             index: 5,
             data: PlutusData::Integer(0.into()),
-            ex_units: ExUnits { mem: 100, steps: 200 },
+            ex_units: ExUnits {
+                mem: 100,
+                steps: 200,
+            },
         };
         let err = resolve_script_purpose(&redeemer, &[], &[], &[], &[], &[], &[]).unwrap_err();
         assert!(matches!(err, LedgerError::MissingRedeemer { .. }));
@@ -1817,7 +1873,11 @@ mod tests {
     struct AlwaysSucceeds;
 
     impl PlutusEvaluator for AlwaysSucceeds {
-        fn evaluate(&self, _eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
+        fn evaluate(
+            &self,
+            _eval: &PlutusScriptEval,
+            _tx_ctx: &TxContext,
+        ) -> Result<(), LedgerError> {
             Ok(())
         }
     }
@@ -1826,7 +1886,11 @@ mod tests {
     struct AlwaysFails;
 
     impl PlutusEvaluator for AlwaysFails {
-        fn evaluate(&self, eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
+        fn evaluate(
+            &self,
+            eval: &PlutusScriptEval,
+            _tx_ctx: &TxContext,
+        ) -> Result<(), LedgerError> {
             Err(LedgerError::PlutusScriptFailed {
                 hash: eval.script_hash,
                 reason: "always fails".to_string(),
@@ -1837,7 +1901,11 @@ mod tests {
     struct ExpectDatum(pub PlutusData);
 
     impl PlutusEvaluator for ExpectDatum {
-        fn evaluate(&self, eval: &PlutusScriptEval, _tx_ctx: &TxContext) -> Result<(), LedgerError> {
+        fn evaluate(
+            &self,
+            eval: &PlutusScriptEval,
+            _tx_ctx: &TxContext,
+        ) -> Result<(), LedgerError> {
             assert_eq!(eval.datum, Some(self.0.clone()));
             Ok(())
         }
@@ -1862,7 +1930,16 @@ mod tests {
         let wb = ws.to_cbor_bytes();
         let utxo = MultiEraUtxo::new();
         let result = validate_plutus_scripts(
-            None, Some(&wb), &required, &utxo, &[], &[], &[], &[], &[], &[],
+            None,
+            Some(&wb),
+            &required,
+            &utxo,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
             &TxContext::default(),
             None,
         );
@@ -1886,7 +1963,10 @@ mod tests {
                 tag: 1, // minting
                 index: 0,
                 data: PlutusData::Integer(42.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
@@ -1927,7 +2007,10 @@ mod tests {
                 tag: 1,
                 index: 0,
                 data: PlutusData::Integer(42.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
@@ -2002,7 +2085,16 @@ mod tests {
         let required = std::collections::HashSet::new();
         let utxo = MultiEraUtxo::new();
         let result = validate_plutus_scripts(
-            Some(&AlwaysSucceeds), None, &required, &utxo, &[], &[], &[], &[], &[], &[],
+            Some(&AlwaysSucceeds),
+            None,
+            &required,
+            &utxo,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
             &TxContext::default(),
             None,
         );
@@ -2033,7 +2125,10 @@ mod tests {
                 tag: 0,
                 index: 0,
                 data: PlutusData::Integer(42.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
@@ -2096,7 +2191,10 @@ mod tests {
                 tag: 0,
                 index: 0,
                 data: PlutusData::Integer(1.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![script_bytes],
             plutus_v3_scripts: vec![],
@@ -2159,7 +2257,10 @@ mod tests {
                 tag: 0,
                 index: 0,
                 data: PlutusData::Integer(0.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
@@ -2216,7 +2317,10 @@ mod tests {
                 tag: 2,
                 index: 0,
                 data: PlutusData::Integer(5.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![script_bytes],
             plutus_v3_scripts: vec![],
@@ -2265,7 +2369,10 @@ mod tests {
                 tag: 3,
                 index: 0,
                 data: PlutusData::Integer(8.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
@@ -2306,7 +2413,10 @@ mod tests {
                 tag: 4,
                 index: 0,
                 data: PlutusData::Integer(9.into()),
-                ex_units: ExUnits { mem: 1000, steps: 2000 },
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
             }],
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![script_bytes],
@@ -2347,11 +2457,23 @@ mod tests {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
-            plutus_v1_scripts: if version == PlutusVersion::V1 { vec![script.clone()] } else { vec![] },
+            plutus_v1_scripts: if version == PlutusVersion::V1 {
+                vec![script.clone()]
+            } else {
+                vec![]
+            },
             plutus_data: vec![],
             redeemers: vec![],
-            plutus_v2_scripts: if version == PlutusVersion::V2 { vec![script.clone()] } else { vec![] },
-            plutus_v3_scripts: if version == PlutusVersion::V3 { vec![script] } else { vec![] },
+            plutus_v2_scripts: if version == PlutusVersion::V2 {
+                vec![script.clone()]
+            } else {
+                vec![]
+            },
+            plutus_v3_scripts: if version == PlutusVersion::V3 {
+                vec![script]
+            } else {
+                vec![]
+            },
         };
         let mut pp = ProtocolParameters::default();
         let mut cm_map = std::collections::BTreeMap::new();
@@ -2371,7 +2493,10 @@ mod tests {
         assert_eq!(bytes[1], 0x41);
         assert_eq!(bytes[2], 0x00);
         // Value starts with a byte string header (major type 2)
-        assert!((bytes[3] & 0xe0) == 0x40, "V1 value should be a CBOR byte string");
+        assert!(
+            (bytes[3] & 0xe0) == 0x40,
+            "V1 value should be a CBOR byte string"
+        );
     }
 
     #[test]
@@ -2383,7 +2508,10 @@ mod tests {
         // Key: 0x01 = CBOR unsigned integer 1
         assert_eq!(bytes[1], 0x01);
         // Value starts with an array header (major type 4), NOT byte string
-        assert!((bytes[2] & 0xe0) == 0x80, "V2 value should be a CBOR array, not byte string");
+        assert!(
+            (bytes[2] & 0xe0) == 0x80,
+            "V2 value should be a CBOR array, not byte string"
+        );
     }
 
     #[test]
@@ -2421,9 +2549,16 @@ mod tests {
             panic!("unexpected byte string length encoding");
         };
         // First byte of payload should be indefinite array start
-        assert_eq!(bytes[payload_start], 0x9f, "V1 cost model should use indefinite array");
+        assert_eq!(
+            bytes[payload_start], 0x9f,
+            "V1 cost model should use indefinite array"
+        );
         // Last byte should be break
-        assert_eq!(*bytes.last().unwrap(), 0xff, "V1 cost model should end with break");
+        assert_eq!(
+            *bytes.last().unwrap(),
+            0xff,
+            "V1 cost model should end with break"
+        );
     }
 
     #[test]
@@ -2457,7 +2592,8 @@ mod tests {
         cm_map.insert(1u8, vec![3i64, 4]);
         pp.cost_models = Some(cm_map);
 
-        let bytes = encode_language_views_for_script_data_hash(&ws, Some(&pp), None, None, None, None);
+        let bytes =
+            encode_language_views_for_script_data_hash(&ws, Some(&pp), None, None, None, None);
         // Map(2) = 0xa2
         assert_eq!(bytes[0], 0xa2);
         // First key: V2 = 0x01 (unsigned int 1, 1 byte) — shorter
@@ -2490,12 +2626,12 @@ mod tests {
         // Upstream `getBabbageScriptsProvided` uses
         // `referenceInputsTxBodyL ∪ inputsTxBodyL` — scripts from
         // spending-input UTxOs should be collected, not just reference inputs.
-        use crate::utxo::MultiEraUtxo;
-        use crate::eras::shelley::ShelleyTxIn;
-        use crate::utxo::MultiEraTxOut;
         use crate::eras::babbage::BabbageTxOut;
         use crate::eras::mary::Value;
+        use crate::eras::shelley::ShelleyTxIn;
         use crate::plutus::{Script, ScriptRef};
+        use crate::utxo::MultiEraTxOut;
+        use crate::utxo::MultiEraUtxo;
 
         let script_bytes = vec![0xAA, 0xBB, 0xCC];
         let script_hash = plutus_script_hash(PlutusVersion::V2, &script_bytes);
@@ -2535,12 +2671,7 @@ mod tests {
         );
 
         // With spending_inputs — script should be found
-        let scripts_with = collect_all_plutus_scripts(
-            &ws,
-            &utxo,
-            None,
-            Some(&[spending_input]),
-        );
+        let scripts_with = collect_all_plutus_scripts(&ws, &utxo, None, Some(&[spending_input]));
         assert!(
             scripts_with.contains_key(&script_hash),
             "should find spending-input reference script when spending_inputs provided",
@@ -2559,11 +2690,15 @@ mod tests {
         let script_bytes = vec![0x01, 0x02, 0x03];
         let script_hash = plutus_script_hash(PlutusVersion::V1, &script_bytes);
 
-        let txin = ShelleyTxIn { transaction_id: [0xAB; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [0xAB; 32],
+            index: 0,
+        };
         let address = Address::Enterprise(EnterpriseAddress {
             network: 1,
             payment: StakeCredential::ScriptHash(script_hash),
-        }).to_bytes();
+        })
+        .to_bytes();
 
         let mut utxo = MultiEraUtxo::new();
         let datum_hash = [0x99; 32];
@@ -2589,13 +2724,7 @@ mod tests {
         };
         let wb = ws.to_cbor_bytes();
 
-        let result = validate_supplemental_datums(
-            Some(&wb),
-            &utxo,
-            &[txin],
-            &[],
-            &[],
-        );
+        let result = validate_supplemental_datums(Some(&wb), &utxo, &[txin], &[], &[]);
         assert!(
             matches!(result, Err(LedgerError::MissingRequiredDatums { hash }) if hash == datum_hash),
             "must reject with MissingRequiredDatums when datum hash not in witness set, got: {:?}",

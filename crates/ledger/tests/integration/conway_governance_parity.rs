@@ -87,7 +87,10 @@ fn conway_tx_single_cert(
     cert: DCert,
 ) -> ConwayTxBody {
     ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x02],
             amount: Value::Coin(output_coin),
@@ -122,7 +125,10 @@ fn conway_tx_with_votes(
     voting_procedures: VotingProcedures,
 ) -> ConwayTxBody {
     ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x02],
             amount: Value::Coin(output_coin),
@@ -157,7 +163,10 @@ fn conway_tx_with_proposal(
     proposals: Vec<ProposalProcedure>,
 ) -> ConwayTxBody {
     ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x02],
             amount: Value::Coin(output_coin),
@@ -196,7 +205,10 @@ fn reward_account_bytes(keyhash: [u8; 28]) -> Vec<u8> {
 fn add_utxo(state: &mut LedgerState, input: ShelleyTxIn, amount: u64) {
     state.multi_era_utxo_mut().insert_shelley(
         input,
-        ShelleyTxOut { address: vec![0x01], amount },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount,
+        },
     );
 }
 
@@ -229,41 +241,54 @@ fn authorize_committee_via_block(
     hot_cred: StakeCredential,
     utxo_seed: u8,
 ) {
-    let input = ShelleyTxIn { transaction_id: [utxo_seed; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [utxo_seed; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert_shelley(
         input.clone(),
-        ShelleyTxOut { address: vec![0x01], amount: 1_000_000 },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_000_000,
+        },
     );
 
-    let block = make_conway_block(1, 1, utxo_seed, vec![ConwayTxBody {
-        inputs: vec![input],
-        outputs: vec![BabbageTxOut {
-            address: vec![0x02],
-            amount: Value::Coin(1_000_000),
-            datum_option: None,
-            script_ref: None,
+    let block = make_conway_block(
+        1,
+        1,
+        utxo_seed,
+        vec![ConwayTxBody {
+            inputs: vec![input],
+            outputs: vec![BabbageTxOut {
+                address: vec![0x02],
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
+            }],
+            fee: 0,
+            ttl: Some(100),
+            certificates: Some(vec![DCert::CommitteeAuthorization(cold_cred, hot_cred)]),
+            validity_interval_start: None,
+            mint: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+            script_data_hash: None,
+            withdrawals: None,
+            voting_procedures: None,
+            proposal_procedures: None,
+            treasury_donation: None,
+            current_treasury_value: None,
+            auxiliary_data_hash: None,
         }],
-        fee: 0,
-        ttl: Some(100),
-        certificates: Some(vec![DCert::CommitteeAuthorization(cold_cred, hot_cred)]),
-        validity_interval_start: None,
-        mint: None,
-        collateral: None,
-        required_signers: None,
-        network_id: None,
-        collateral_return: None,
-        total_collateral: None,
-        reference_inputs: None,
-        script_data_hash: None,
-        withdrawals: None,
-        voting_procedures: None,
-        proposal_procedures: None,
-        treasury_donation: None,
-        current_treasury_value: None,
-        auxiliary_data_hash: None,
-    }]);
+    );
 
-    state.apply_block(&block).expect("committee authorization block");
+    state
+        .apply_block(&block)
+        .expect("committee authorization block");
 }
 
 // -----------------------------------------------------------------------
@@ -279,7 +304,9 @@ fn unelected_committee_voter_rejected_at_pv11() {
     // Register a cold committee member and authorize its hot credential.
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xDD; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF0);
 
     // An UNKNOWN hot credential that is NOT authorized by any member.
@@ -289,19 +316,35 @@ fn unelected_committee_voter_rejected_at_pv11() {
     let mut votes_for_voter = std::collections::BTreeMap::new();
     votes_for_voter.insert(
         gov_action_id,
-        VotingProcedure { vote: Vote::Yes, anchor: None },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
     );
     procedures.insert(Voter::CommitteeKeyHash(rogue_hot), votes_for_voter);
     let voting_procedures = VotingProcedures { procedures };
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 10_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 10_000_000,
+        },
     );
 
     let block = make_conway_block(
-        10, 2, 0x01,
-        vec![conway_tx_with_votes([0x01; 32], 10_000_000, 0, voting_procedures)],
+        10,
+        2,
+        0x01,
+        vec![conway_tx_with_votes(
+            [0x01; 32],
+            10_000_000,
+            0,
+            voting_procedures,
+        )],
     );
 
     let err = state.apply_block(&block).unwrap_err();
@@ -320,7 +363,9 @@ fn elected_committee_voter_accepted_at_pv11() {
 
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xDD; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF1);
 
     // Vote using the AUTHORIZED hot credential [0xDD; 28].
@@ -328,22 +373,40 @@ fn elected_committee_voter_accepted_at_pv11() {
     let mut votes_for_voter = std::collections::BTreeMap::new();
     votes_for_voter.insert(
         gov_action_id,
-        VotingProcedure { vote: Vote::Yes, anchor: None },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
     );
     procedures.insert(Voter::CommitteeKeyHash([0xDD; 28]), votes_for_voter);
     let voting_procedures = VotingProcedures { procedures };
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 10_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 10_000_000,
+        },
     );
 
     let block = make_conway_block(
-        10, 2, 0x02,
-        vec![conway_tx_with_votes([0x02; 32], 10_000_000, 0, voting_procedures)],
+        10,
+        2,
+        0x02,
+        vec![conway_tx_with_votes(
+            [0x02; 32],
+            10_000_000,
+            0,
+            voting_procedures,
+        )],
     );
 
-    state.apply_block(&block).expect("authorized hot credential should be accepted");
+    state
+        .apply_block(&block)
+        .expect("authorized hot credential should be accepted");
 }
 
 #[test]
@@ -354,7 +417,9 @@ fn unelected_committee_voter_allowed_at_pv9() {
 
     // Register a committee member but do NOT authorize any hot credential.
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
 
     // Vote with a completely unrelated hot credential — at PV 9 the
     // unelected-committee-voters check is skipped.
@@ -363,19 +428,35 @@ fn unelected_committee_voter_allowed_at_pv9() {
     let mut votes_for_voter = std::collections::BTreeMap::new();
     votes_for_voter.insert(
         gov_action_id,
-        VotingProcedure { vote: Vote::Yes, anchor: None },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
     );
     procedures.insert(Voter::CommitteeKeyHash(rogue_hot), votes_for_voter);
     let voting_procedures = VotingProcedures { procedures };
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x03; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 10_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x03; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 10_000_000,
+        },
     );
 
     let block = make_conway_block(
-        10, 2, 0x03,
-        vec![conway_tx_with_votes([0x03; 32], 10_000_000, 0, voting_procedures)],
+        10,
+        2,
+        0x03,
+        vec![conway_tx_with_votes(
+            [0x03; 32],
+            10_000_000,
+            0,
+            voting_procedures,
+        )],
     );
 
     let err = state.apply_block(&block).unwrap_err();
@@ -397,26 +478,44 @@ fn unelected_committee_voter_allowed_at_pv10() {
     let gov_action_id = seed_governance_action(&mut state);
 
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
 
     let rogue_hot = [0xEE; 28];
     let mut procedures = std::collections::BTreeMap::new();
     let mut votes_for_voter = std::collections::BTreeMap::new();
     votes_for_voter.insert(
         gov_action_id,
-        VotingProcedure { vote: Vote::Yes, anchor: None },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
     );
     procedures.insert(Voter::CommitteeKeyHash(rogue_hot), votes_for_voter);
     let voting_procedures = VotingProcedures { procedures };
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x07; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 10_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x07; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 10_000_000,
+        },
     );
 
     let block = make_conway_block(
-        10, 2, 0x07,
-        vec![conway_tx_with_votes([0x07; 32], 10_000_000, 0, voting_procedures)],
+        10,
+        2,
+        0x07,
+        vec![conway_tx_with_votes(
+            [0x07; 32],
+            10_000_000,
+            0,
+            voting_procedures,
+        )],
     );
 
     let err = state.apply_block(&block).unwrap_err();
@@ -438,42 +537,55 @@ fn resigned_committee_member_hot_cred_rejected_at_pv11() {
     // Register committee member and authorize hot credential via block.
     let cold_cred = StakeCredential::AddrKeyHash([0xCC; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xDD; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF2);
 
     // Resign the member through a block.
-    let resign_input = ShelleyTxIn { transaction_id: [0xF3; 32], index: 0 };
+    let resign_input = ShelleyTxIn {
+        transaction_id: [0xF3; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert_shelley(
         resign_input.clone(),
-        ShelleyTxOut { address: vec![0x01], amount: 1_000_000 },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 1_000_000,
+        },
     );
-    let resign_block = make_conway_block(2, 2, 0xF3, vec![ConwayTxBody {
-        inputs: vec![resign_input],
-        outputs: vec![BabbageTxOut {
-            address: vec![0x02],
-            amount: Value::Coin(1_000_000),
-            datum_option: None,
-            script_ref: None,
+    let resign_block = make_conway_block(
+        2,
+        2,
+        0xF3,
+        vec![ConwayTxBody {
+            inputs: vec![resign_input],
+            outputs: vec![BabbageTxOut {
+                address: vec![0x02],
+                amount: Value::Coin(1_000_000),
+                datum_option: None,
+                script_ref: None,
+            }],
+            fee: 0,
+            ttl: Some(100),
+            certificates: Some(vec![DCert::CommitteeResignation(cold_cred, None)]),
+            validity_interval_start: None,
+            mint: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+            script_data_hash: None,
+            withdrawals: None,
+            voting_procedures: None,
+            proposal_procedures: None,
+            treasury_donation: None,
+            current_treasury_value: None,
+            auxiliary_data_hash: None,
         }],
-        fee: 0,
-        ttl: Some(100),
-        certificates: Some(vec![DCert::CommitteeResignation(cold_cred, None)]),
-        validity_interval_start: None,
-        mint: None,
-        collateral: None,
-        required_signers: None,
-        network_id: None,
-        collateral_return: None,
-        total_collateral: None,
-        reference_inputs: None,
-        script_data_hash: None,
-        withdrawals: None,
-        voting_procedures: None,
-        proposal_procedures: None,
-        treasury_donation: None,
-        current_treasury_value: None,
-        auxiliary_data_hash: None,
-    }]);
+    );
     state.apply_block(&resign_block).expect("resignation block");
 
     // Vote using the formerly-authorized hot credential — should fail.
@@ -481,19 +593,35 @@ fn resigned_committee_member_hot_cred_rejected_at_pv11() {
     let mut votes_for_voter = std::collections::BTreeMap::new();
     votes_for_voter.insert(
         gov_action_id,
-        VotingProcedure { vote: Vote::Yes, anchor: None },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
     );
     procedures.insert(Voter::CommitteeKeyHash([0xDD; 28]), votes_for_voter);
     let voting_procedures = VotingProcedures { procedures };
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x04; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 10_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x04; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 10_000_000,
+        },
     );
 
     let block = make_conway_block(
-        10, 3, 0x04,
-        vec![conway_tx_with_votes([0x04; 32], 10_000_000, 0, voting_procedures)],
+        10,
+        3,
+        0x04,
+        vec![conway_tx_with_votes(
+            [0x04; 32],
+            10_000_000,
+            0,
+            voting_procedures,
+        )],
     );
 
     let err = state.apply_block(&block).unwrap_err();
@@ -517,7 +645,10 @@ fn delegation_to_unregistered_drep_returns_delegatee_error() {
     let cred = StakeCredential::AddrKeyHash([0xF1; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -526,16 +657,27 @@ fn delegation_to_unregistered_drep_returns_delegatee_error() {
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x10; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0x10; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x10, vec![conway_tx_single_cert(
-        [0x10; 32],
-        consumed,
-        0,
-        DCert::DelegationToDrep(cred, drep),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x10,
+        vec![conway_tx_single_cert(
+            [0x10; 32],
+            consumed,
+            0,
+            DCert::DelegationToDrep(cred, drep),
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(err, LedgerError::DelegateeDRepNotRegistered(drep));
@@ -548,24 +690,40 @@ fn delegation_to_always_abstain_succeeds_without_drep_registration() {
     let cred = StakeCredential::AddrKeyHash([0xF3; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(0, None),
     );
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x11; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0x11; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x11, vec![conway_tx_single_cert(
-        [0x11; 32],
-        consumed,
-        0,
-        DCert::DelegationToDrep(cred, DRep::AlwaysAbstain),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x11,
+        vec![conway_tx_single_cert(
+            [0x11; 32],
+            consumed,
+            0,
+            DCert::DelegationToDrep(cred, DRep::AlwaysAbstain),
+        )],
+    );
 
-    state.apply_block(&block).expect("AlwaysAbstain delegation should succeed");
+    state
+        .apply_block(&block)
+        .expect("AlwaysAbstain delegation should succeed");
 }
 
 #[test]
@@ -575,24 +733,40 @@ fn delegation_to_always_no_confidence_succeeds_without_drep_registration() {
     let cred = StakeCredential::AddrKeyHash([0xF4; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(0, None),
     );
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x12; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0x12; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x12, vec![conway_tx_single_cert(
-        [0x12; 32],
-        consumed,
-        0,
-        DCert::DelegationToDrep(cred, DRep::AlwaysNoConfidence),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x12,
+        vec![conway_tx_single_cert(
+            [0x12; 32],
+            consumed,
+            0,
+            DCert::DelegationToDrep(cred, DRep::AlwaysNoConfidence),
+        )],
+    );
 
-    state.apply_block(&block).expect("AlwaysNoConfidence delegation should succeed");
+    state
+        .apply_block(&block)
+        .expect("AlwaysNoConfidence delegation should succeed");
 }
 
 // -----------------------------------------------------------------------
@@ -608,29 +782,46 @@ fn conway_unreg_deposit_rejects_nonzero_rewards() {
     let cred = StakeCredential::AddrKeyHash([0xD1; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(5_000_000, None), // non-zero!
     );
     state.deposit_pot_mut().add_key_deposit(key_deposit);
 
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x20; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x20; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x20, vec![conway_tx_single_cert(
-        [0x20; 32],
-        input_amount + key_deposit,
-        0,
-        DCert::AccountUnregistrationDeposit(cred, key_deposit),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x20,
+        vec![conway_tx_single_cert(
+            [0x20; 32],
+            input_amount + key_deposit,
+            0,
+            DCert::AccountUnregistrationDeposit(cred, key_deposit),
+        )],
+    );
 
     // Upstream: ConwayUnRegCert asserts StakeKeyHasNonZeroAccountBalanceDELEG
     // just like Shelley tag 1 — non-zero rewards must be rejected.
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::StakeCredentialHasRewards { credential, balance } => {
+        LedgerError::StakeCredentialHasRewards {
+            credential,
+            balance,
+        } => {
             assert_eq!(credential, cred);
             assert_eq!(balance, 5_000_000);
         }
@@ -647,29 +838,46 @@ fn shelley_unreg_still_rejects_nonzero_rewards() {
     let cred = StakeCredential::AddrKeyHash([0xD2; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(5_000_000, None), // non-zero!
     );
     state.deposit_pot_mut().add_key_deposit(key_deposit);
 
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x21; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x21; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
     // Shelley-style AccountUnregistration (tag 1) in Conway era should
     // STILL reject non-zero reward balance.
-    let block = make_conway_block(10, 1, 0x21, vec![conway_tx_single_cert(
-        [0x21; 32],
-        input_amount + key_deposit,
-        0,
-        DCert::AccountUnregistration(cred),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x21,
+        vec![conway_tx_single_cert(
+            [0x21; 32],
+            input_amount + key_deposit,
+            0,
+            DCert::AccountUnregistration(cred),
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::StakeCredentialHasRewards { credential, balance } => {
+        LedgerError::StakeCredentialHasRewards {
+            credential,
+            balance,
+        } => {
             assert_eq!(credential, cred);
             assert_eq!(balance, 5_000_000);
         }
@@ -685,23 +893,37 @@ fn conway_unreg_deposit_with_zero_rewards_succeeds() {
     let cred = StakeCredential::AddrKeyHash([0xD3; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(0, None),
     );
     state.deposit_pot_mut().add_key_deposit(key_deposit);
 
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x22; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x22; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x22, vec![conway_tx_single_cert(
-        [0x22; 32],
-        input_amount + key_deposit,
-        0,
-        DCert::AccountUnregistrationDeposit(cred, key_deposit),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x22,
+        vec![conway_tx_single_cert(
+            [0x22; 32],
+            input_amount + key_deposit,
+            0,
+            DCert::AccountUnregistrationDeposit(cred, key_deposit),
+        )],
+    );
 
     state
         .apply_block(&block)
@@ -720,19 +942,43 @@ fn drep_unreg_clears_delegations() {
     // Register a DRep.
     let drep_cred = StakeCredential::AddrKeyHash([0xE1; 28]);
     let drep = DRep::KeyHash([0xE1; 28]);
-    state.drep_state_mut().register(drep, RegisteredDrep::new(500_000, None));
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new(500_000, None));
 
     // Register two stakers and delegate them to this DRep.
     let cred_a = StakeCredential::AddrKeyHash([0xA1; 28]);
     let cred_b = StakeCredential::AddrKeyHash([0xA2; 28]);
     state.stake_credentials_mut().register(cred_a);
     state.stake_credentials_mut().register(cred_b);
-    state.stake_credentials_mut().get_mut(&cred_a).unwrap().set_delegated_drep(Some(drep));
-    state.stake_credentials_mut().get_mut(&cred_b).unwrap().set_delegated_drep(Some(drep));
+    state
+        .stake_credentials_mut()
+        .get_mut(&cred_a)
+        .unwrap()
+        .set_delegated_drep(Some(drep));
+    state
+        .stake_credentials_mut()
+        .get_mut(&cred_b)
+        .unwrap()
+        .set_delegated_drep(Some(drep));
 
     // Verify delegations are set.
-    assert_eq!(state.stake_credentials().get(&cred_a).unwrap().delegated_drep(), Some(drep));
-    assert_eq!(state.stake_credentials().get(&cred_b).unwrap().delegated_drep(), Some(drep));
+    assert_eq!(
+        state
+            .stake_credentials()
+            .get(&cred_a)
+            .unwrap()
+            .delegated_drep(),
+        Some(drep)
+    );
+    assert_eq!(
+        state
+            .stake_credentials()
+            .get(&cred_b)
+            .unwrap()
+            .delegated_drep(),
+        Some(drep)
+    );
 
     // Seed UTxO for the DRep unregistration transaction.
     // Value preservation: input = output + fee + 0 (deposit refunded via cert)
@@ -740,25 +986,52 @@ fn drep_unreg_clears_delegations() {
     let input_amount = 10_000_000u64;
     state.deposit_pot_mut().add_drep_deposit(500_000);
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x30; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x30; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x30, vec![conway_tx_single_cert(
-        [0x30; 32],
-        input_amount + 500_000, // captures the refunded DRep deposit
-        0,
-        DCert::DrepUnregistration(drep_cred, 500_000),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x30,
+        vec![conway_tx_single_cert(
+            [0x30; 32],
+            input_amount + 500_000, // captures the refunded DRep deposit
+            0,
+            DCert::DrepUnregistration(drep_cred, 500_000),
+        )],
+    );
 
-    state.apply_block(&block).expect("DRep unregistration block");
+    state
+        .apply_block(&block)
+        .expect("DRep unregistration block");
 
     // DRep should be unregistered.
     assert!(!state.drep_state().is_registered(&drep));
 
     // Both stakers' DRep delegations should be cleared.
-    assert_eq!(state.stake_credentials().get(&cred_a).unwrap().delegated_drep(), None);
-    assert_eq!(state.stake_credentials().get(&cred_b).unwrap().delegated_drep(), None);
+    assert_eq!(
+        state
+            .stake_credentials()
+            .get(&cred_a)
+            .unwrap()
+            .delegated_drep(),
+        None
+    );
+    assert_eq!(
+        state
+            .stake_credentials()
+            .get(&cred_b)
+            .unwrap()
+            .delegated_drep(),
+        None
+    );
 }
 
 #[test]
@@ -768,39 +1041,78 @@ fn drep_unreg_does_not_clear_other_drep_delegations() {
     // Register two DReps.
     let drep_1 = DRep::KeyHash([0xE1; 28]);
     let drep_2 = DRep::KeyHash([0xE2; 28]);
-    state.drep_state_mut().register(drep_1, RegisteredDrep::new(500_000, None));
-    state.drep_state_mut().register(drep_2, RegisteredDrep::new(500_000, None));
+    state
+        .drep_state_mut()
+        .register(drep_1, RegisteredDrep::new(500_000, None));
+    state
+        .drep_state_mut()
+        .register(drep_2, RegisteredDrep::new(500_000, None));
 
     // Staker A -> DRep 1, Staker B -> DRep 2.
     let cred_a = StakeCredential::AddrKeyHash([0xA1; 28]);
     let cred_b = StakeCredential::AddrKeyHash([0xA2; 28]);
     state.stake_credentials_mut().register(cred_a);
     state.stake_credentials_mut().register(cred_b);
-    state.stake_credentials_mut().get_mut(&cred_a).unwrap().set_delegated_drep(Some(drep_1));
-    state.stake_credentials_mut().get_mut(&cred_b).unwrap().set_delegated_drep(Some(drep_2));
+    state
+        .stake_credentials_mut()
+        .get_mut(&cred_a)
+        .unwrap()
+        .set_delegated_drep(Some(drep_1));
+    state
+        .stake_credentials_mut()
+        .get_mut(&cred_b)
+        .unwrap()
+        .set_delegated_drep(Some(drep_2));
 
     // Unregister DRep 1.
     let drep_1_cred = StakeCredential::AddrKeyHash([0xE1; 28]);
     let input_amount = 10_000_000u64;
     state.deposit_pot_mut().add_drep_deposit(500_000);
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x31; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x31; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x31, vec![conway_tx_single_cert(
-        [0x31; 32],
-        input_amount + 500_000,
-        0,
-        DCert::DrepUnregistration(drep_1_cred, 500_000),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x31,
+        vec![conway_tx_single_cert(
+            [0x31; 32],
+            input_amount + 500_000,
+            0,
+            DCert::DrepUnregistration(drep_1_cred, 500_000),
+        )],
+    );
 
-    state.apply_block(&block).expect("DRep 1 unregistration block");
+    state
+        .apply_block(&block)
+        .expect("DRep 1 unregistration block");
 
     // Staker A's delegation should be cleared (was delegated to DRep 1).
-    assert_eq!(state.stake_credentials().get(&cred_a).unwrap().delegated_drep(), None);
+    assert_eq!(
+        state
+            .stake_credentials()
+            .get(&cred_a)
+            .unwrap()
+            .delegated_drep(),
+        None
+    );
     // Staker B's delegation to DRep 2 should be unaffected.
-    assert_eq!(state.stake_credentials().get(&cred_b).unwrap().delegated_drep(), Some(drep_2));
+    assert_eq!(
+        state
+            .stake_credentials()
+            .get(&cred_b)
+            .unwrap()
+            .delegated_drep(),
+        Some(drep_2)
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -831,7 +1143,10 @@ fn committee_auth_for_potential_future_member_succeeds() {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add,
-                quorum: UnitInterval { numerator: 2, denominator: 3 },
+                quorum: UnitInterval {
+                    numerator: 2,
+                    denominator: 3,
+                },
             },
             anchor: Anchor {
                 url: "https://example.com".to_string(),
@@ -843,22 +1158,38 @@ fn committee_auth_for_potential_future_member_succeeds() {
     // Authorize the cold credential — should succeed via isPotentialFutureMember.
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x40; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x40; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x40, vec![conway_tx_single_cert(
-        [0x40; 32],
-        input_amount,
-        0,
-        DCert::CommitteeAuthorization(cold_cred, hot_cred),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x40,
+        vec![conway_tx_single_cert(
+            [0x40; 32],
+            input_amount,
+            0,
+            DCert::CommitteeAuthorization(cold_cred, hot_cred),
+        )],
+    );
 
-    state.apply_block(&block).expect("isPotentialFutureMember authorization should succeed");
+    state
+        .apply_block(&block)
+        .expect("isPotentialFutureMember authorization should succeed");
 
     // The cold credential should now be registered and authorized.
     let member = state.committee_state().get(&cold_cred);
-    assert!(member.is_some(), "cold credential should be auto-registered");
+    assert!(
+        member.is_some(),
+        "cold credential should be auto-registered"
+    );
 }
 
 #[test]
@@ -871,16 +1202,27 @@ fn committee_auth_unknown_cred_without_proposal_fails() {
 
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x41; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x41; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x41, vec![conway_tx_single_cert(
-        [0x41; 32],
-        input_amount,
-        0,
-        DCert::CommitteeAuthorization(cold_cred, hot_cred),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x41,
+        vec![conway_tx_single_cert(
+            [0x41; 32],
+            input_amount,
+            0,
+            DCert::CommitteeAuthorization(cold_cred, hot_cred),
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(matches!(err, LedgerError::CommitteeIsUnknown(c) if c == cold_cred));
@@ -909,7 +1251,10 @@ fn committee_resign_for_potential_future_member_succeeds() {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add,
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
             anchor: Anchor {
                 url: "https://example.com".to_string(),
@@ -921,23 +1266,42 @@ fn committee_resign_for_potential_future_member_succeeds() {
     // Resign the cold credential — should succeed via isPotentialFutureMember.
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x42; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x42; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x42, vec![conway_tx_single_cert(
-        [0x42; 32],
-        input_amount,
-        0,
-        DCert::CommitteeResignation(cold_cred, None),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x42,
+        vec![conway_tx_single_cert(
+            [0x42; 32],
+            input_amount,
+            0,
+            DCert::CommitteeResignation(cold_cred, None),
+        )],
+    );
 
-    state.apply_block(&block).expect("isPotentialFutureMember resignation should succeed");
+    state
+        .apply_block(&block)
+        .expect("isPotentialFutureMember resignation should succeed");
 
     // The cold credential should now be registered as resigned.
     let member = state.committee_state().get(&cold_cred);
-    assert!(member.is_some(), "cold credential should be auto-registered");
-    assert!(member.unwrap().is_resigned(), "cold credential should be resigned");
+    assert!(
+        member.is_some(),
+        "cold credential should be auto-registered"
+    );
+    assert!(
+        member.unwrap().is_resigned(),
+        "cold credential should be resigned"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -961,23 +1325,47 @@ fn resigned_member_readded_via_update_committee_still_resigned() {
     // Register committee member and authorize a hot credential.
     let cold_cred = StakeCredential::AddrKeyHash([0xE1; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xE2; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xE0);
 
     // Resign the member through a block.
-    let resign_input = ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 };
+    let resign_input = ShelleyTxIn {
+        transaction_id: [0xE1; 32],
+        index: 0,
+    };
     add_utxo(&mut state, resign_input.clone(), 10_000_000);
-    let resign_block = make_conway_block(10, 2, 0xE1, vec![conway_tx_single_cert(
-        [0xE1; 32], 10_000_000, 0, DCert::CommitteeResignation(cold_cred, None),
-    )]);
-    state.apply_block(&resign_block).expect("resignation block should succeed");
-    assert!(state.committee_state().get(&cold_cred).unwrap().is_resigned());
+    let resign_block = make_conway_block(
+        10,
+        2,
+        0xE1,
+        vec![conway_tx_single_cert(
+            [0xE1; 32],
+            10_000_000,
+            0,
+            DCert::CommitteeResignation(cold_cred, None),
+        )],
+    );
+    state
+        .apply_block(&resign_block)
+        .expect("resignation block should succeed");
+    assert!(
+        state
+            .committee_state()
+            .get(&cold_cred)
+            .unwrap()
+            .is_resigned()
+    );
 
     // Re-add the resigned member via UpdateCommittee enactment.
     // This simulates the governance action being enacted — it should only
     // update committeeMembers (expires_at) without clearing resignation
     // state in csCommitteeCreds.
-    let action_id = GovActionId { transaction_id: [0xE2; 32], gov_action_index: 0 };
+    let action_id = GovActionId {
+        transaction_id: [0xE2; 32],
+        gov_action_index: 0,
+    };
     let mut members_to_add = std::collections::BTreeMap::new();
     members_to_add.insert(cold_cred, 300u64); // new term epoch
     state.enact_action(
@@ -986,7 +1374,10 @@ fn resigned_member_readded_via_update_committee_still_resigned() {
             prev_action_id: None,
             members_to_remove: vec![],
             members_to_add,
-            quorum: UnitInterval { numerator: 2, denominator: 3 },
+            quorum: UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
         },
     );
 
@@ -996,12 +1387,23 @@ fn resigned_member_readded_via_update_committee_still_resigned() {
     assert!(member.is_resigned(), "resignation should be preserved");
 
     // Attempt to re-authorize → should get CommitteeHasPreviouslyResigned.
-    let reauth_input = ShelleyTxIn { transaction_id: [0xE3; 32], index: 0 };
+    let reauth_input = ShelleyTxIn {
+        transaction_id: [0xE3; 32],
+        index: 0,
+    };
     add_utxo(&mut state, reauth_input.clone(), 10_000_000);
     let new_hot = StakeCredential::AddrKeyHash([0xE4; 28]);
-    let reauth_block = make_conway_block(20, 3, 0xE3, vec![conway_tx_single_cert(
-        [0xE3; 32], 10_000_000, 0, DCert::CommitteeAuthorization(cold_cred, new_hot),
-    )]);
+    let reauth_block = make_conway_block(
+        20,
+        3,
+        0xE3,
+        vec![conway_tx_single_cert(
+            [0xE3; 32],
+            10_000_000,
+            0,
+            DCert::CommitteeAuthorization(cold_cred, new_hot),
+        )],
+    );
     let err = state.apply_block(&reauth_block).unwrap_err();
     assert!(
         matches!(err, LedgerError::CommitteeHasPreviouslyResigned(c) if c == cold_cred),
@@ -1016,47 +1418,103 @@ fn no_confidence_then_readd_preserves_resignation() {
     // Register, authorize, then resign a committee member.
     let cold_cred = StakeCredential::AddrKeyHash([0xF1; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xF2; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xF0);
 
-    let resign_input = ShelleyTxIn { transaction_id: [0xF1; 32], index: 0 };
+    let resign_input = ShelleyTxIn {
+        transaction_id: [0xF1; 32],
+        index: 0,
+    };
     add_utxo(&mut state, resign_input.clone(), 10_000_000);
-    let resign_block = make_conway_block(10, 2, 0xF1, vec![conway_tx_single_cert(
-        [0xF1; 32], 10_000_000, 0, DCert::CommitteeResignation(cold_cred, None),
-    )]);
+    let resign_block = make_conway_block(
+        10,
+        2,
+        0xF1,
+        vec![conway_tx_single_cert(
+            [0xF1; 32],
+            10_000_000,
+            0,
+            DCert::CommitteeResignation(cold_cred, None),
+        )],
+    );
     state.apply_block(&resign_block).expect("resignation block");
-    assert!(state.committee_state().get(&cold_cred).unwrap().is_resigned());
+    assert!(
+        state
+            .committee_state()
+            .get(&cold_cred)
+            .unwrap()
+            .is_resigned()
+    );
 
     // Enact NoConfidence — clears membership but preserves resignation.
-    let nc_id = GovActionId { transaction_id: [0xF2; 32], gov_action_index: 0 };
-    state.enact_action(nc_id, &GovAction::NoConfidence { prev_action_id: None });
+    let nc_id = GovActionId {
+        transaction_id: [0xF2; 32],
+        gov_action_index: 0,
+    };
+    state.enact_action(
+        nc_id,
+        &GovAction::NoConfidence {
+            prev_action_id: None,
+        },
+    );
     let member = state.committee_state().get(&cold_cred).unwrap();
-    assert!(member.expires_at().is_none(), "membership cleared by NoConfidence");
-    assert!(member.is_resigned(), "resignation preserved after NoConfidence");
+    assert!(
+        member.expires_at().is_none(),
+        "membership cleared by NoConfidence"
+    );
+    assert!(
+        member.is_resigned(),
+        "resignation preserved after NoConfidence"
+    );
 
     // Re-add via UpdateCommittee.
-    let uc_id = GovActionId { transaction_id: [0xF3; 32], gov_action_index: 0 };
+    let uc_id = GovActionId {
+        transaction_id: [0xF3; 32],
+        gov_action_index: 0,
+    };
     let mut members_to_add = std::collections::BTreeMap::new();
     members_to_add.insert(cold_cred, 400u64);
-    state.enact_action(uc_id, &GovAction::UpdateCommittee {
-        prev_action_id: None,
-        members_to_remove: vec![],
-        members_to_add,
-        quorum: UnitInterval { numerator: 1, denominator: 2 },
-    });
+    state.enact_action(
+        uc_id,
+        &GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: vec![],
+            members_to_add,
+            quorum: UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            },
+        },
+    );
 
     // Verify: member re-enrolled but STILL resigned.
     let member = state.committee_state().get(&cold_cred).unwrap();
     assert_eq!(member.expires_at(), Some(400));
-    assert!(member.is_resigned(), "resignation preserved after NoConfidence + re-add");
+    assert!(
+        member.is_resigned(),
+        "resignation preserved after NoConfidence + re-add"
+    );
 
     // Re-auth attempt fails.
-    let reauth_input = ShelleyTxIn { transaction_id: [0xF4; 32], index: 0 };
+    let reauth_input = ShelleyTxIn {
+        transaction_id: [0xF4; 32],
+        index: 0,
+    };
     add_utxo(&mut state, reauth_input.clone(), 10_000_000);
     let new_hot = StakeCredential::AddrKeyHash([0xF5; 28]);
-    let reauth_block = make_conway_block(20, 3, 0xF4, vec![conway_tx_single_cert(
-        [0xF4; 32], 10_000_000, 0, DCert::CommitteeAuthorization(cold_cred, new_hot),
-    )]);
+    let reauth_block = make_conway_block(
+        20,
+        3,
+        0xF4,
+        vec![conway_tx_single_cert(
+            [0xF4; 32],
+            10_000_000,
+            0,
+            DCert::CommitteeAuthorization(cold_cred, new_hot),
+        )],
+    );
     let err = state.apply_block(&reauth_block).unwrap_err();
     assert!(
         matches!(err, LedgerError::CommitteeHasPreviouslyResigned(c) if c == cold_cred),
@@ -1075,7 +1533,10 @@ fn resignation_check_before_unknown_check() {
     // Seed a pending UpdateCommittee proposal so the credential qualifies
     // as a potential future member.
     let cold_cred = StakeCredential::AddrKeyHash([0xA1; 28]);
-    let gov_action_id = GovActionId { transaction_id: [0xAA; 32], gov_action_index: 0 };
+    let gov_action_id = GovActionId {
+        transaction_id: [0xAA; 32],
+        gov_action_index: 0,
+    };
     let mut members_to_add = std::collections::BTreeMap::new();
     members_to_add.insert(cold_cred, 100u64);
     state.governance_actions_mut().insert(
@@ -1087,32 +1548,68 @@ fn resignation_check_before_unknown_check() {
                 prev_action_id: None,
                 members_to_remove: vec![],
                 members_to_add,
-                quorum: UnitInterval { numerator: 1, denominator: 2 },
+                quorum: UnitInterval {
+                    numerator: 1,
+                    denominator: 2,
+                },
             },
-            anchor: Anchor { url: "https://example.com".to_string(), data_hash: [0u8; 32] },
+            anchor: Anchor {
+                url: "https://example.com".to_string(),
+                data_hash: [0u8; 32],
+            },
         }),
     );
 
     // Resign via isPotentialFutureMember path.
-    let resign_input = ShelleyTxIn { transaction_id: [0xA1; 32], index: 0 };
+    let resign_input = ShelleyTxIn {
+        transaction_id: [0xA1; 32],
+        index: 0,
+    };
     add_utxo(&mut state, resign_input.clone(), 10_000_000);
-    let resign_block = make_conway_block(10, 1, 0xA1, vec![conway_tx_single_cert(
-        [0xA1; 32], 10_000_000, 0, DCert::CommitteeResignation(cold_cred, None),
-    )]);
-    state.apply_block(&resign_block).expect("resignation via future member path");
-    assert!(state.committee_state().get(&cold_cred).unwrap().is_resigned());
+    let resign_block = make_conway_block(
+        10,
+        1,
+        0xA1,
+        vec![conway_tx_single_cert(
+            [0xA1; 32],
+            10_000_000,
+            0,
+            DCert::CommitteeResignation(cold_cred, None),
+        )],
+    );
+    state
+        .apply_block(&resign_block)
+        .expect("resignation via future member path");
+    assert!(
+        state
+            .committee_state()
+            .get(&cold_cred)
+            .unwrap()
+            .is_resigned()
+    );
 
     // Remove the proposal — now the credential is neither enacted nor a
     // future member, but it IS resigned.
     state.governance_actions_mut().remove(&gov_action_id);
 
     // Try to authorize — should get CommitteeHasPreviouslyResigned (not Unknown).
-    let auth_input = ShelleyTxIn { transaction_id: [0xA2; 32], index: 0 };
+    let auth_input = ShelleyTxIn {
+        transaction_id: [0xA2; 32],
+        index: 0,
+    };
     add_utxo(&mut state, auth_input.clone(), 10_000_000);
     let hot = StakeCredential::AddrKeyHash([0xA3; 28]);
-    let auth_block = make_conway_block(20, 2, 0xA2, vec![conway_tx_single_cert(
-        [0xA2; 32], 10_000_000, 0, DCert::CommitteeAuthorization(cold_cred, hot),
-    )]);
+    let auth_block = make_conway_block(
+        20,
+        2,
+        0xA2,
+        vec![conway_tx_single_cert(
+            [0xA2; 32],
+            10_000_000,
+            0,
+            DCert::CommitteeAuthorization(cold_cred, hot),
+        )],
+    );
     let err = state.apply_block(&auth_block).unwrap_err();
     assert!(
         matches!(err, LedgerError::CommitteeHasPreviouslyResigned(c) if c == cold_cred),
@@ -1136,14 +1633,20 @@ fn zero_treasury_withdrawal_blocked_during_bootstrap() {
     let ra_cred = StakeCredential::AddrKeyHash([0x99; 28]);
     state.stake_credentials_mut().register(ra_cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: ra_cred },
+        RewardAccount {
+            network: 1,
+            credential: ra_cred,
+        },
         RewardAccountState::new(0, None),
     );
 
     let target_cred = StakeCredential::AddrKeyHash([0xB1; 28]);
     state.stake_credentials_mut().register(target_cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: target_cred },
+        RewardAccount {
+            network: 1,
+            credential: target_cred,
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -1151,7 +1654,10 @@ fn zero_treasury_withdrawal_blocked_during_bootstrap() {
 
     let mut withdrawals = std::collections::BTreeMap::new();
     withdrawals.insert(
-        RewardAccount { network: 1, credential: target_cred },
+        RewardAccount {
+            network: 1,
+            credential: target_cred,
+        },
         0u64,
     );
 
@@ -1170,16 +1676,27 @@ fn zero_treasury_withdrawal_blocked_during_bootstrap() {
 
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x50; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x50; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x50, vec![conway_tx_with_proposal(
-        [0x50; 32],
-        input_amount,
-        0,
-        vec![proposal],
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x50,
+        vec![conway_tx_with_proposal(
+            [0x50; 32],
+            input_amount,
+            0,
+            vec![proposal],
+        )],
+    );
 
     // During bootstrap, TreasuryWithdrawals is not a valid action,
     // so the error is NOT ZeroTreasuryWithdrawals.
@@ -1200,14 +1717,20 @@ fn zero_treasury_withdrawal_rejected_after_bootstrap() {
     let ra_cred = StakeCredential::AddrKeyHash([0x99; 28]);
     state.stake_credentials_mut().register(ra_cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: ra_cred },
+        RewardAccount {
+            network: 1,
+            credential: ra_cred,
+        },
         RewardAccountState::new(0, None),
     );
 
     let target_cred = StakeCredential::AddrKeyHash([0xB2; 28]);
     state.stake_credentials_mut().register(target_cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: target_cred },
+        RewardAccount {
+            network: 1,
+            credential: target_cred,
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -1215,7 +1738,10 @@ fn zero_treasury_withdrawal_rejected_after_bootstrap() {
 
     let mut withdrawals = std::collections::BTreeMap::new();
     withdrawals.insert(
-        RewardAccount { network: 1, credential: target_cred },
+        RewardAccount {
+            network: 1,
+            credential: target_cred,
+        },
         0u64,
     );
 
@@ -1234,16 +1760,27 @@ fn zero_treasury_withdrawal_rejected_after_bootstrap() {
 
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x51; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x51; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x51, vec![conway_tx_with_proposal(
-        [0x51; 32],
-        input_amount,
-        0,
-        vec![proposal],
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x51,
+        vec![conway_tx_with_proposal(
+            [0x51; 32],
+            input_amount,
+            0,
+            vec![proposal],
+        )],
+    );
 
     // After bootstrap (PV 10), zero-sum treasury withdrawals are rejected.
     let err = state.apply_block(&block).unwrap_err();
@@ -1263,14 +1800,20 @@ fn nonzero_treasury_withdrawal_accepted_after_bootstrap() {
     let ra_cred = StakeCredential::AddrKeyHash([0x99; 28]);
     state.stake_credentials_mut().register(ra_cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: ra_cred },
+        RewardAccount {
+            network: 1,
+            credential: ra_cred,
+        },
         RewardAccountState::new(0, None),
     );
 
     let target_cred = StakeCredential::AddrKeyHash([0xB3; 28]);
     state.stake_credentials_mut().register(target_cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: target_cred },
+        RewardAccount {
+            network: 1,
+            credential: target_cred,
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -1278,7 +1821,10 @@ fn nonzero_treasury_withdrawal_accepted_after_bootstrap() {
 
     let mut withdrawals = std::collections::BTreeMap::new();
     withdrawals.insert(
-        RewardAccount { network: 1, credential: target_cred },
+        RewardAccount {
+            network: 1,
+            credential: target_cred,
+        },
         1_000_000u64, // non-zero
     );
 
@@ -1297,18 +1843,31 @@ fn nonzero_treasury_withdrawal_accepted_after_bootstrap() {
 
     let input_amount = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x52; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: input_amount },
+        ShelleyTxIn {
+            transaction_id: [0x52; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: input_amount,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0x52, vec![conway_tx_with_proposal(
-        [0x52; 32],
-        input_amount,
-        0,
-        vec![proposal],
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0x52,
+        vec![conway_tx_with_proposal(
+            [0x52; 32],
+            input_amount,
+            0,
+            vec![proposal],
+        )],
+    );
 
-    state.apply_block(&block).expect("non-zero treasury withdrawal should be accepted");
+    state
+        .apply_block(&block)
+        .expect("non-zero treasury withdrawal should be accepted");
 }
 
 // -----------------------------------------------------------------------
@@ -1326,7 +1885,10 @@ fn bootstrap_phase_allows_delegation_to_unregistered_drep() {
     let cred = StakeCredential::AddrKeyHash([0xB1; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -1336,20 +1898,31 @@ fn bootstrap_phase_allows_delegation_to_unregistered_drep() {
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xB0; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xB0; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xB0, vec![conway_tx_single_cert(
-        [0xB0; 32],
-        consumed,
-        0,
-        DCert::DelegationToDrep(cred, drep),
-    )]);
-
-    state.apply_block(&block).expect(
-        "bootstrap phase should allow delegation to unregistered DRep",
+    let block = make_conway_block(
+        10,
+        1,
+        0xB0,
+        vec![conway_tx_single_cert(
+            [0xB0; 32],
+            consumed,
+            0,
+            DCert::DelegationToDrep(cred, drep),
+        )],
     );
+
+    state
+        .apply_block(&block)
+        .expect("bootstrap phase should allow delegation to unregistered DRep");
 }
 
 /// Same scenario at PV 10 (post-bootstrap) must be rejected.
@@ -1360,7 +1933,10 @@ fn post_bootstrap_rejects_delegation_to_unregistered_drep() {
     let cred = StakeCredential::AddrKeyHash([0xB3; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -1368,16 +1944,27 @@ fn post_bootstrap_rejects_delegation_to_unregistered_drep() {
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xB5; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xB5; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xB5, vec![conway_tx_single_cert(
-        [0xB5; 32],
-        consumed,
-        0,
-        DCert::DelegationToDrep(cred, drep),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xB5,
+        vec![conway_tx_single_cert(
+            [0xB5; 32],
+            consumed,
+            0,
+            DCert::DelegationToDrep(cred, drep),
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(err, LedgerError::DelegateeDRepNotRegistered(drep));
@@ -1392,7 +1979,10 @@ fn bootstrap_phase_allows_dual_delegation_to_unregistered_drep() {
     let cred = StakeCredential::AddrKeyHash([0xB6; 28]);
     state.stake_credentials_mut().register(cred);
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: cred },
+        RewardAccount {
+            network: 1,
+            credential: cred,
+        },
         RewardAccountState::new(0, None),
     );
 
@@ -1403,8 +1993,14 @@ fn bootstrap_phase_allows_dual_delegation_to_unregistered_drep() {
         vrf_keyhash: [0u8; 32],
         pledge: 0,
         cost: 0,
-        margin: UnitInterval { numerator: 0, denominator: 1 },
-        reward_account: RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xB6; 28]) },
+        margin: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        reward_account: RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xB6; 28]),
+        },
         pool_owners: vec![pool_id],
         relays: vec![],
         pool_metadata: None,
@@ -1414,20 +2010,31 @@ fn bootstrap_phase_allows_dual_delegation_to_unregistered_drep() {
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xB8; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xB8; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xB8, vec![conway_tx_single_cert(
-        [0xB8; 32],
-        consumed,
-        0,
-        DCert::DelegationToStakePoolAndDrep(cred, pool_id, drep),
-    )]);
-
-    state.apply_block(&block).expect(
-        "bootstrap phase should allow dual delegation with unregistered DRep",
+    let block = make_conway_block(
+        10,
+        1,
+        0xB8,
+        vec![conway_tx_single_cert(
+            [0xB8; 32],
+            consumed,
+            0,
+            DCert::DelegationToStakePoolAndDrep(cred, pool_id, drep),
+        )],
     );
+
+    state
+        .apply_block(&block)
+        .expect("bootstrap phase should allow dual delegation with unregistered DRep");
 }
 
 /// AccountRegistrationDelegationToDrep with unregistered DRep during bootstrap.
@@ -1441,16 +2048,27 @@ fn bootstrap_phase_allows_reg_deleg_to_unregistered_drep() {
     let key_deposit = 2_000_000u64;
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xBC; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xBC; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xBC, vec![conway_tx_single_cert(
-        [0xBC; 32],
-        consumed - key_deposit,
-        0,
-        DCert::AccountRegistrationDelegationToDrep(cred, drep, key_deposit),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xBC,
+        vec![conway_tx_single_cert(
+            [0xBC; 32],
+            consumed - key_deposit,
+            0,
+            DCert::AccountRegistrationDelegationToDrep(cred, drep, key_deposit),
+        )],
+    );
 
     state.apply_block(&block).expect(
         "bootstrap phase should allow AccountRegistrationDelegationToDrep with unregistered DRep",
@@ -1471,7 +2089,10 @@ fn conway_tx_with_withdrawal(
     withdrawals: std::collections::BTreeMap<RewardAccount, u64>,
 ) -> ConwayTxBody {
     ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x02],
             amount: Value::Coin(output_coin),
@@ -1506,29 +2127,44 @@ fn post_bootstrap_rejects_withdrawal_without_drep_delegation() {
     let mut state = conway_state_pv(10, 0, 2_000_000);
 
     let cred = StakeCredential::AddrKeyHash([0xC1; 28]);
-    let account = RewardAccount { network: 1, credential: cred };
+    let account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
 
     // Register the stake credential (no DRep delegation).
     state.stake_credentials_mut().register(cred);
-    state.reward_accounts_mut()
+    state
+        .reward_accounts_mut()
         .insert(account.clone(), RewardAccountState::new(1_000, None));
 
     let consumed = 10_000_000u64;
     let withdrawal_amount = 1_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xC2; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xC2; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let mut wdrls = std::collections::BTreeMap::new();
     wdrls.insert(account, withdrawal_amount);
 
-    let block = make_conway_block(10, 1, 0xC2, vec![conway_tx_with_withdrawal(
-        [0xC2; 32],
-        consumed + withdrawal_amount,
-        0,
-        wdrls,
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xC2,
+        vec![conway_tx_with_withdrawal(
+            [0xC2; 32],
+            consumed + withdrawal_amount,
+            0,
+            wdrls,
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert!(
@@ -1545,37 +2181,58 @@ fn post_bootstrap_accepts_withdrawal_with_drep_delegation() {
 
     let cred = StakeCredential::AddrKeyHash([0xC3; 28]);
     let drep = DRep::KeyHash([0xC4; 28]);
-    let account = RewardAccount { network: 1, credential: cred };
+    let account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
 
     // Register the stake credential WITH a DRep delegation.
     state.stake_credentials_mut().register(cred);
-    state.stake_credentials_mut().get_mut(&cred).unwrap().set_delegated_drep(Some(drep));
-    state.reward_accounts_mut()
+    state
+        .stake_credentials_mut()
+        .get_mut(&cred)
+        .unwrap()
+        .set_delegated_drep(Some(drep));
+    state
+        .reward_accounts_mut()
         .insert(account.clone(), RewardAccountState::new(1_000, None));
 
     // Register the DRep (required for non-bootstrap).
-    state.drep_state_mut().register(drep, RegisteredDrep::new(0, None));
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new(0, None));
 
     let consumed = 10_000_000u64;
     let withdrawal_amount = 1_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xC5; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xC5; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let mut wdrls = std::collections::BTreeMap::new();
     wdrls.insert(account, withdrawal_amount);
 
-    let block = make_conway_block(10, 1, 0xC5, vec![conway_tx_with_withdrawal(
-        [0xC5; 32],
-        consumed + withdrawal_amount,
-        0,
-        wdrls,
-    )]);
-
-    state.apply_block(&block).expect(
-        "post-bootstrap withdrawal with DRep delegation should succeed",
+    let block = make_conway_block(
+        10,
+        1,
+        0xC5,
+        vec![conway_tx_with_withdrawal(
+            [0xC5; 32],
+            consumed + withdrawal_amount,
+            0,
+            wdrls,
+        )],
     );
+
+    state
+        .apply_block(&block)
+        .expect("post-bootstrap withdrawal with DRep delegation should succeed");
 }
 
 /// Bootstrap phase (PV 9): withdrawal from a credential without DRep
@@ -1585,33 +2242,48 @@ fn bootstrap_phase_allows_withdrawal_without_drep_delegation() {
     let mut state = conway_state_pv(9, 0, 2_000_000);
 
     let cred = StakeCredential::AddrKeyHash([0xC6; 28]);
-    let account = RewardAccount { network: 1, credential: cred };
+    let account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
 
     // Register the stake credential (no DRep delegation).
     state.stake_credentials_mut().register(cred);
-    state.reward_accounts_mut()
+    state
+        .reward_accounts_mut()
         .insert(account.clone(), RewardAccountState::new(500, None));
 
     let consumed = 10_000_000u64;
     let withdrawal_amount = 500u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xC7; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xC7; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let mut wdrls = std::collections::BTreeMap::new();
     wdrls.insert(account, withdrawal_amount);
 
-    let block = make_conway_block(10, 1, 0xC7, vec![conway_tx_with_withdrawal(
-        [0xC7; 32],
-        consumed + withdrawal_amount,
-        0,
-        wdrls,
-    )]);
-
-    state.apply_block(&block).expect(
-        "bootstrap phase should skip withdrawal delegation check",
+    let block = make_conway_block(
+        10,
+        1,
+        0xC7,
+        vec![conway_tx_with_withdrawal(
+            [0xC7; 32],
+            consumed + withdrawal_amount,
+            0,
+            wdrls,
+        )],
     );
+
+    state
+        .apply_block(&block)
+        .expect("bootstrap phase should skip withdrawal delegation check");
 }
 
 /// Post-bootstrap: script-hash withdrawal credentials are NOT checked
@@ -1624,29 +2296,44 @@ fn post_bootstrap_allows_script_hash_withdrawal_without_drep() {
     let mut state = conway_state_pv(10, 0, 2_000_000);
 
     let cred = StakeCredential::ScriptHash([0xC8; 28]);
-    let account = RewardAccount { network: 1, credential: cred };
+    let account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
 
     // Register the stake credential (script-hash, no DRep).
     state.stake_credentials_mut().register(cred);
-    state.reward_accounts_mut()
+    state
+        .reward_accounts_mut()
         .insert(account.clone(), RewardAccountState::new(800, None));
 
     let consumed = 10_000_000u64;
     let withdrawal_amount = 800u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xC9; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xC9; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let mut wdrls = std::collections::BTreeMap::new();
     wdrls.insert(account, withdrawal_amount);
 
-    let block = make_conway_block(10, 1, 0xC9, vec![conway_tx_with_withdrawal(
-        [0xC9; 32],
-        consumed + withdrawal_amount,
-        0,
-        wdrls,
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xC9,
+        vec![conway_tx_with_withdrawal(
+            [0xC9; 32],
+            consumed + withdrawal_amount,
+            0,
+            wdrls,
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     // Must NOT be WithdrawalNotDelegatedToDRep — script-hash credentials
@@ -1672,20 +2359,35 @@ fn conway_proposal_chaining_across_txs_succeeds() {
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xE1; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xE2; 28]);
     state.stake_credentials_mut().register(cred);
-    let return_account = RewardAccount { network: 1, credential: cred };
-    state.reward_accounts_mut()
+    let return_account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
+    state
+        .reward_accounts_mut()
         .insert(return_account, RewardAccountState::new(0, None));
 
     // --- Block 1: Stage a ParameterChange proposal (prev_action_id = None) ---
     let proposal_0 = ProposalProcedure {
         deposit: 0,
-        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        reward_account: RewardAccount {
+            network: 1,
+            credential: cred,
+        }
+        .to_bytes()
+        .to_vec(),
         gov_action: GovAction::ParameterChange {
             prev_action_id: None,
             protocol_param_update: {
@@ -1702,7 +2404,10 @@ fn conway_proposal_chaining_across_txs_succeeds() {
     };
 
     let body_0 = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xE1; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x01],
             amount: Value::Coin(consumed),
@@ -1731,18 +2436,31 @@ fn conway_proposal_chaining_across_txs_succeeds() {
     let tx_id_0 = compute_tx_id(&body_0.to_cbor_bytes()).0;
 
     let block1 = make_conway_block(10, 1, 0xE1, vec![body_0]);
-    state.apply_block(&block1).expect("block 1 with initial proposal should succeed");
+    state
+        .apply_block(&block1)
+        .expect("block 1 with initial proposal should succeed");
 
     // --- Block 2: Chain a second ParameterChange referencing proposal 0 ---
     let consumed_2 = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xE5; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed_2 },
+        ShelleyTxIn {
+            transaction_id: [0xE5; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed_2,
+        },
     );
 
     let proposal_1 = ProposalProcedure {
         deposit: 0,
-        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        reward_account: RewardAccount {
+            network: 1,
+            credential: cred,
+        }
+        .to_bytes()
+        .to_vec(),
         gov_action: GovAction::ParameterChange {
             prev_action_id: Some(GovActionId {
                 transaction_id: tx_id_0,
@@ -1762,7 +2480,10 @@ fn conway_proposal_chaining_across_txs_succeeds() {
     };
 
     let body_1 = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xE5; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xE5; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x01],
             amount: Value::Coin(consumed_2),
@@ -1804,18 +2525,31 @@ fn conway_same_tx_forward_reference_rejected() {
 
     let consumed = 10_000_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xF1; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xF1; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xF2; 28]);
     state.stake_credentials_mut().register(cred);
-    let return_account = RewardAccount { network: 1, credential: cred };
-    state.reward_accounts_mut()
+    let return_account = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
+    state
+        .reward_accounts_mut()
         .insert(return_account, RewardAccountState::new(0, None));
 
     let body_template = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xF1; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xF1; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x01],
             amount: Value::Coin(consumed),
@@ -1846,7 +2580,12 @@ fn conway_same_tx_forward_reference_rejected() {
     // Proposal 0 references proposal 1 (forward reference — index 1 >= own index 0)
     let proposal_0_fwd = ProposalProcedure {
         deposit: 0,
-        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        reward_account: RewardAccount {
+            network: 1,
+            credential: cred,
+        }
+        .to_bytes()
+        .to_vec(),
         gov_action: GovAction::ParameterChange {
             prev_action_id: Some(GovActionId {
                 transaction_id: tx_id_bytes,
@@ -1867,7 +2606,12 @@ fn conway_same_tx_forward_reference_rejected() {
 
     let proposal_1_info = ProposalProcedure {
         deposit: 0,
-        reward_account: RewardAccount { network: 1, credential: cred }.to_bytes().to_vec(),
+        reward_account: RewardAccount {
+            network: 1,
+            credential: cred,
+        }
+        .to_bytes()
+        .to_vec(),
         gov_action: GovAction::InfoAction,
         anchor: Anchor {
             url: "https://example.invalid/forward-ref-1".to_string(),
@@ -1905,11 +2649,10 @@ fn conway_same_tx_forward_reference_rejected() {
 
 #[test]
 fn ratification_thresholds_evolve_after_parameter_change() {
-    use yggdrasil_ledger::{
-        apply_epoch_boundary, GovernanceActionState,
-        StakeSnapshot, StakeSnapshots,
-    };
     use std::collections::BTreeMap;
+    use yggdrasil_ledger::{
+        GovernanceActionState, StakeSnapshot, StakeSnapshots, apply_epoch_boundary,
+    };
 
     // Set up Conway PV 10 state (non-bootstrap).
     let mut state = conway_state_pv(10, 0, 2_000_000);
@@ -1919,16 +2662,46 @@ fn ratification_thresholds_evolve_after_parameter_change() {
     {
         let pp = state.protocol_params_mut().as_mut().unwrap();
         pp.drep_voting_thresholds = Some(yggdrasil_ledger::DRepVotingThresholds {
-            motion_no_confidence: UnitInterval { numerator: 67, denominator: 100 },
-            committee_normal: UnitInterval { numerator: 67, denominator: 100 },
-            committee_no_confidence: UnitInterval { numerator: 60, denominator: 100 },
-            update_to_constitution: UnitInterval { numerator: 75, denominator: 100 },
-            hard_fork_initiation: UnitInterval { numerator: 60, denominator: 100 },
-            pp_network_group: UnitInterval { numerator: 67, denominator: 100 },
-            pp_economic_group: UnitInterval { numerator: 67, denominator: 100 },
-            pp_technical_group: UnitInterval { numerator: 67, denominator: 100 },
-            pp_gov_group: UnitInterval { numerator: 75, denominator: 100 },
-            treasury_withdrawal: UnitInterval { numerator: 67, denominator: 100 },
+            motion_no_confidence: UnitInterval {
+                numerator: 67,
+                denominator: 100,
+            },
+            committee_normal: UnitInterval {
+                numerator: 67,
+                denominator: 100,
+            },
+            committee_no_confidence: UnitInterval {
+                numerator: 60,
+                denominator: 100,
+            },
+            update_to_constitution: UnitInterval {
+                numerator: 75,
+                denominator: 100,
+            },
+            hard_fork_initiation: UnitInterval {
+                numerator: 60,
+                denominator: 100,
+            },
+            pp_network_group: UnitInterval {
+                numerator: 67,
+                denominator: 100,
+            },
+            pp_economic_group: UnitInterval {
+                numerator: 67,
+                denominator: 100,
+            },
+            pp_technical_group: UnitInterval {
+                numerator: 67,
+                denominator: 100,
+            },
+            pp_gov_group: UnitInterval {
+                numerator: 75,
+                denominator: 100,
+            },
+            treasury_withdrawal: UnitInterval {
+                numerator: 67,
+                denominator: 100,
+            },
         });
 
         // SPO pool thresholds default — TreasuryWithdrawals never requires SPO
@@ -1945,9 +2718,14 @@ fn ratification_thresholds_evolve_after_parameter_change() {
     // --- Committee (one member, quorum 1/1) ---
     let cold_cred = StakeCredential::AddrKeyHash([0xC1; 28]);
     let hot_cred = StakeCredential::AddrKeyHash([0xC2; 28]);
-    state.committee_state_mut().register_with_term(cold_cred, 200);
+    state
+        .committee_state_mut()
+        .register_with_term(cold_cred, 200);
     authorize_committee_via_block(&mut state, cold_cred, hot_cred, 0xE1);
-    state.enact_state_mut().committee_quorum = UnitInterval { numerator: 1, denominator: 1 };
+    state.enact_state_mut().committee_quorum = UnitInterval {
+        numerator: 1,
+        denominator: 1,
+    };
     state.enact_state_mut().has_committee = true;
 
     // --- DRep with 100% delegated stake ---
@@ -1956,52 +2734,97 @@ fn ratification_thresholds_evolve_after_parameter_change() {
         drep,
         RegisteredDrep::new_active(500_000, None, EpochNo(100)),
     );
-    state.stake_credentials_mut().register(
-        StakeCredential::AddrKeyHash([0xD1; 28]),
-    );
-    if let Some(sc) = state.stake_credentials_mut().get_mut(
-        &StakeCredential::AddrKeyHash([0xD1; 28]),
-    ) {
+    state
+        .stake_credentials_mut()
+        .register(StakeCredential::AddrKeyHash([0xD1; 28]));
+    if let Some(sc) = state
+        .stake_credentials_mut()
+        .get_mut(&StakeCredential::AddrKeyHash([0xD1; 28]))
+    {
         sc.set_delegated_drep(Some(drep));
     }
     // Seed reward balance so DRep-attributed stake appears in snapshots.
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xD1; 28]) },
+        RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xD1; 28]),
+        },
         RewardAccountState::new(1_000_000, None),
     );
 
     // Reward account for the withdrawal target.
-    let ra_target = RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xBB; 28]) };
-    state.reward_accounts_mut().insert(
-        ra_target.clone(),
-        RewardAccountState::new(0, None),
-    );
+    let ra_target = RewardAccount {
+        network: 1,
+        credential: StakeCredential::AddrKeyHash([0xBB; 28]),
+    };
+    state
+        .reward_accounts_mut()
+        .insert(ra_target.clone(), RewardAccountState::new(0, None));
 
     // Reward accounts for proposal return addresses.
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA1; 28]) },
+        RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xA1; 28]),
+        },
         RewardAccountState::new(0, None),
     );
     state.reward_accounts_mut().insert(
-        RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xA2; 28]) },
+        RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xA2; 28]),
+        },
         RewardAccountState::new(0, None),
     );
 
     // --- Proposal A: ParameterChange lowering treasury_withdrawal DRep
     //     threshold to 0 so all subsequent proposals pass without DRep votes ---
-    let gov_id_a = GovActionId { transaction_id: [0xA1; 32], gov_action_index: 0 };
+    let gov_id_a = GovActionId {
+        transaction_id: [0xA1; 32],
+        gov_action_index: 0,
+    };
     let new_thresholds = yggdrasil_ledger::DRepVotingThresholds {
         // Keep all at 67% except treasury_withdrawal → 0%.
-        motion_no_confidence: UnitInterval { numerator: 67, denominator: 100 },
-        committee_normal: UnitInterval { numerator: 67, denominator: 100 },
-        committee_no_confidence: UnitInterval { numerator: 60, denominator: 100 },
-        update_to_constitution: UnitInterval { numerator: 75, denominator: 100 },
-        hard_fork_initiation: UnitInterval { numerator: 60, denominator: 100 },
-        pp_network_group: UnitInterval { numerator: 67, denominator: 100 },
-        pp_economic_group: UnitInterval { numerator: 67, denominator: 100 },
-        pp_technical_group: UnitInterval { numerator: 67, denominator: 100 },
-        pp_gov_group: UnitInterval { numerator: 75, denominator: 100 },
-        treasury_withdrawal: UnitInterval { numerator: 0, denominator: 1 },
+        motion_no_confidence: UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        },
+        committee_normal: UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        },
+        committee_no_confidence: UnitInterval {
+            numerator: 60,
+            denominator: 100,
+        },
+        update_to_constitution: UnitInterval {
+            numerator: 75,
+            denominator: 100,
+        },
+        hard_fork_initiation: UnitInterval {
+            numerator: 60,
+            denominator: 100,
+        },
+        pp_network_group: UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        },
+        pp_economic_group: UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        },
+        pp_technical_group: UnitInterval {
+            numerator: 67,
+            denominator: 100,
+        },
+        pp_gov_group: UnitInterval {
+            numerator: 75,
+            denominator: 100,
+        },
+        treasury_withdrawal: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
     };
     let proposal_a = ProposalProcedure {
         deposit: 100_000,
@@ -2022,19 +2845,18 @@ fn ratification_thresholds_evolve_after_parameter_change() {
     let mut action_a = GovernanceActionState::new(proposal_a);
 
     // DRep votes Yes on proposal A.
-    action_a.record_vote(
-        Voter::DRepKeyHash([0xD1; 28]),
-        Vote::Yes,
-    );
+    action_a.record_vote(Voter::DRepKeyHash([0xD1; 28]), Vote::Yes);
     // Committee votes Yes on proposal A.
-    action_a.record_vote(
-        Voter::CommitteeKeyHash([0xC2; 28]),
-        Vote::Yes,
-    );
-    state.governance_actions_mut().insert(gov_id_a.clone(), action_a);
+    action_a.record_vote(Voter::CommitteeKeyHash([0xC2; 28]), Vote::Yes);
+    state
+        .governance_actions_mut()
+        .insert(gov_id_a.clone(), action_a);
 
     // --- Proposal B: TreasuryWithdrawals — no DRep votes ---
-    let gov_id_b = GovActionId { transaction_id: [0xA2; 32], gov_action_index: 0 };
+    let gov_id_b = GovActionId {
+        transaction_id: [0xA2; 32],
+        gov_action_index: 0,
+    };
     let mut withdrawals = BTreeMap::new();
     withdrawals.insert(ra_target.clone(), 100u64);
     let proposal_b = ProposalProcedure {
@@ -2052,21 +2874,18 @@ fn ratification_thresholds_evolve_after_parameter_change() {
     let mut action_b = GovernanceActionState::new(proposal_b);
 
     // Committee votes Yes on proposal B — but NO DRep votes.
-    action_b.record_vote(
-        Voter::CommitteeKeyHash([0xC2; 28]),
-        Vote::Yes,
-    );
-    state.governance_actions_mut().insert(gov_id_b.clone(), action_b);
+    action_b.record_vote(Voter::CommitteeKeyHash([0xC2; 28]), Vote::Yes);
+    state
+        .governance_actions_mut()
+        .insert(gov_id_b.clone(), action_b);
 
     assert_eq!(state.governance_actions().len(), 2);
 
     // Build a mark snapshot with DRep-attributed stake so thresholds
     // are not vacuously satisfied.
     let mut mark = StakeSnapshot::default();
-    mark.stake.add(
-        StakeCredential::AddrKeyHash([0xD1; 28]),
-        1_000_000,
-    );
+    mark.stake
+        .add(StakeCredential::AddrKeyHash([0xD1; 28]), 1_000_000);
     let mut snapshots = StakeSnapshots {
         mark,
         set: StakeSnapshot::default(),
@@ -2075,9 +2894,8 @@ fn ratification_thresholds_evolve_after_parameter_change() {
     };
 
     // Run epoch boundary — ratification happens inside.
-    let _event = apply_epoch_boundary(
-        &mut state, EpochNo(101), &mut snapshots, &BTreeMap::new(),
-    ).unwrap();
+    let _event =
+        apply_epoch_boundary(&mut state, EpochNo(101), &mut snapshots, &BTreeMap::new()).unwrap();
 
     // Both proposals should have been enacted:
     // - Proposal A passed (100% DRep Yes > 67% threshold).
@@ -2097,13 +2915,23 @@ fn ratification_thresholds_evolve_after_parameter_change() {
     // Verify the ParameterChange was actually applied (threshold is now 0).
     let pp = state.protocol_params().unwrap();
     assert_eq!(
-        pp.drep_voting_thresholds.as_ref().unwrap().treasury_withdrawal,
-        UnitInterval { numerator: 0, denominator: 1 },
+        pp.drep_voting_thresholds
+            .as_ref()
+            .unwrap()
+            .treasury_withdrawal,
+        UnitInterval {
+            numerator: 0,
+            denominator: 1
+        },
     );
 
     // Verify the TreasuryWithdrawal was applied (100 lovelace credited).
-    let ra = state.reward_accounts().get(
-        &RewardAccount { network: 1, credential: StakeCredential::AddrKeyHash([0xBB; 28]) },
-    ).unwrap();
+    let ra = state
+        .reward_accounts()
+        .get(&RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xBB; 28]),
+        })
+        .unwrap();
     assert_eq!(ra.balance(), 100);
 }

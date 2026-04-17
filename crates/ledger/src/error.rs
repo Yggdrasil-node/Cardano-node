@@ -9,7 +9,6 @@ pub enum LedgerError {
     UnsupportedEra(super::eras::Era),
 
     // -- CBOR errors --------------------------------------------------------
-
     #[error("CBOR: unexpected end of input")]
     CborUnexpectedEof,
 
@@ -29,7 +28,6 @@ pub enum LedgerError {
     CborDecodeError(String),
 
     // -- UTxO validation errors ---------------------------------------------
-
     #[error("block slot {block_slot} does not advance past current tip slot {tip_slot}")]
     SlotNotIncreasing { tip_slot: u64, block_slot: u64 },
 
@@ -45,9 +43,7 @@ pub enum LedgerError {
     #[error("spending input also appears in reference inputs (Babbage+ disjointness rule)")]
     ReferenceInputContention,
 
-    #[error(
-        "value not preserved: consumed {consumed} lovelace != produced {produced} + fee {fee}"
-    )]
+    #[error("value not preserved: consumed {consumed} lovelace != produced {produced} + fee {fee}")]
     ValueNotPreserved {
         consumed: u64,
         produced: u64,
@@ -101,7 +97,9 @@ pub enum LedgerError {
     #[error("duplicate pool owner: {owner:02x?}")]
     DuplicatePoolOwner { owner: AddrKeyHash },
 
-    #[error("pool retirement epoch {retirement_epoch} exceeds maximum {max_epoch} (current {current_epoch} + eMax {e_max})")]
+    #[error(
+        "pool retirement epoch {retirement_epoch} exceeds maximum {max_epoch} (current {current_epoch} + eMax {e_max})"
+    )]
     PoolRetirementTooFar {
         retirement_epoch: u64,
         current_epoch: u64,
@@ -110,7 +108,9 @@ pub enum LedgerError {
     },
 
     /// Upstream: `StakePoolRetirementWrongEpochPOOL` — `cEpoch < e` not satisfied.
-    #[error("pool retirement epoch {retirement_epoch} must be strictly after current epoch {current_epoch}")]
+    #[error(
+        "pool retirement epoch {retirement_epoch} must be strictly after current epoch {current_epoch}"
+    )]
     PoolRetirementTooEarly {
         retirement_epoch: u64,
         current_epoch: u64,
@@ -167,9 +167,7 @@ pub enum LedgerError {
     #[error("committee cold credential has previously resigned: {0:?}")]
     CommitteeHasPreviouslyResigned(StakeCredential),
 
-    #[error(
-        "stake credential has non-zero reward balance: {credential:?} has {balance} lovelace"
-    )]
+    #[error("stake credential has non-zero reward balance: {credential:?} has {balance} lovelace")]
     StakeCredentialHasRewards {
         credential: StakeCredential,
         balance: u64,
@@ -196,13 +194,17 @@ pub enum LedgerError {
     #[error("proposal deposit incorrect: supplied {supplied}, expected {expected}")]
     ProposalDepositIncorrect { supplied: u64, expected: u64 },
 
-    #[error("proposal return account has wrong network id: account {account:?}, expected network {expected_network}")]
+    #[error(
+        "proposal return account has wrong network id: account {account:?}, expected network {expected_network}"
+    )]
     ProposalProcedureNetworkIdMismatch {
         account: RewardAccount,
         expected_network: u8,
     },
 
-    #[error("treasury withdrawal return account has wrong network id: account {account:?}, expected network {expected_network}")]
+    #[error(
+        "treasury withdrawal return account has wrong network id: account {account:?}, expected network {expected_network}"
+    )]
     TreasuryWithdrawalsNetworkIdMismatch {
         account: RewardAccount,
         expected_network: u8,
@@ -236,7 +238,9 @@ pub enum LedgerError {
     DisallowedProposalDuringBootstrap(crate::eras::conway::ProposalProcedure),
 
     #[error("governance votes are not allowed during Conway bootstrap: {0:?}")]
-    DisallowedVotesDuringBootstrap(Vec<(crate::eras::conway::Voter, crate::eras::conway::GovActionId)>),
+    DisallowedVotesDuringBootstrap(
+        Vec<(crate::eras::conway::Voter, crate::eras::conway::GovActionId)>,
+    ),
 
     #[error("governance voters are not allowed to vote on these actions: {0:?}")]
     DisallowedVoters(Vec<(crate::eras::conway::Voter, crate::eras::conway::GovActionId)>),
@@ -244,13 +248,14 @@ pub enum LedgerError {
     #[error("committee update proposal adds and removes the same members: {0:?}")]
     ConflictingCommitteeUpdate(Vec<StakeCredential>),
 
-    #[error("committee update proposal quorum is not a well-formed unit interval (numerator={numerator}, denominator={denominator})")]
-    WellFormedUnitIntervalRatification {
-        numerator: u64,
-        denominator: u64,
-    },
+    #[error(
+        "committee update proposal quorum is not a well-formed unit interval (numerator={numerator}, denominator={denominator})"
+    )]
+    WellFormedUnitIntervalRatification { numerator: u64, denominator: u64 },
 
-    #[error("committee update proposal uses expiration epochs that are not after the current epoch: {0:?}")]
+    #[error(
+        "committee update proposal uses expiration epochs that are not after the current epoch: {0:?}"
+    )]
     ExpirationEpochTooSmall(Vec<(StakeCredential, EpochNo)>),
 
     #[error("proposal references an invalid previous governance action: {0:?}")]
@@ -268,7 +273,9 @@ pub enum LedgerError {
         expected: (u64, u64),
     },
 
-    #[error("hard-fork proposal cannot be validated without a current protocol-version baseline: {0:?}")]
+    #[error(
+        "hard-fork proposal cannot be validated without a current protocol-version baseline: {0:?}"
+    )]
     MissingProtocolVersionForHardFork(crate::eras::conway::ProposalProcedure),
 
     /// Upstream: `InvalidGuardrailsScriptHash` — the guardrails (policy)
@@ -322,9 +329,7 @@ pub enum LedgerError {
     /// mismatches during bootstrap phase (PV < 10).
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
-    #[error(
-        "incorrect key deposit in certificate: supplied {supplied}, expected {expected}"
-    )]
+    #[error("incorrect key deposit in certificate: supplied {supplied}, expected {expected}")]
     IncorrectDepositDELEG { supplied: u64, expected: u64 },
 
     /// Upstream: `DepositIncorrectDELEG` — used for Conway key-deposit
@@ -332,9 +337,7 @@ pub enum LedgerError {
     /// `hardforkConwayDELEGIncorrectDepositsAndRefunds`.
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.Deleg`.
-    #[error(
-        "incorrect key deposit (post-bootstrap): supplied {supplied}, expected {expected}"
-    )]
+    #[error("incorrect key deposit (post-bootstrap): supplied {supplied}, expected {expected}")]
     DepositIncorrectDELEG { supplied: u64, expected: u64 },
 
     /// Upstream: `IncorrectDepositDELEG` (refund variant) — the refund
@@ -362,18 +365,14 @@ pub enum LedgerError {
     /// `ConwayRegDRep` certificate does not match `ppDRepDeposit`.
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.GovCert`.
-    #[error(
-        "DRep deposit incorrect: supplied {supplied}, expected {expected}"
-    )]
+    #[error("DRep deposit incorrect: supplied {supplied}, expected {expected}")]
     DrepIncorrectDeposit { supplied: u64, expected: u64 },
 
     /// Upstream: `ConwayDRepIncorrectRefund` — the refund amount in a
     /// `ConwayUnRegDRep` certificate does not match the DRep's stored deposit.
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.GovCert`.
-    #[error(
-        "DRep refund incorrect: supplied {supplied}, expected {expected}"
-    )]
+    #[error("DRep refund incorrect: supplied {supplied}, expected {expected}")]
     DrepIncorrectRefund { supplied: u64, expected: u64 },
 
     #[error("unsupported certificate kind in this ledger slice: {0}")]
@@ -400,7 +399,6 @@ pub enum LedgerError {
     },
 
     // -- Fee validation errors ----------------------------------------------
-
     #[error("fee too small: minimum {minimum} lovelace, declared {declared}")]
     FeeTooSmall { minimum: u64, declared: u64 },
 
@@ -418,7 +416,6 @@ pub enum LedgerError {
     TxTooLarge { actual: usize, max: usize },
 
     // -- Output validation errors -------------------------------------------
-
     #[error("output too small: minimum {minimum} lovelace, actual {actual}")]
     OutputTooSmall { minimum: u64, actual: u64 },
 
@@ -446,41 +443,32 @@ pub enum LedgerError {
     },
 
     // -- Network validation errors ------------------------------------------
-
     /// One or more transaction outputs carry an address whose network ID
     /// does not match the expected network.
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetwork`.
-    #[error(
-        "output address has wrong network: expected {expected}, found {found}"
-    )]
+    #[error("output address has wrong network: expected {expected}, found {found}")]
     WrongNetwork { expected: u8, found: u8 },
 
     /// One or more withdrawal reward accounts carry a network ID that does
     /// not match the expected network.
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `WrongNetworkWithdrawal`.
-    #[error(
-        "withdrawal address has wrong network: expected {expected}, found {found}"
-    )]
+    #[error("withdrawal address has wrong network: expected {expected}, found {found}")]
     WrongNetworkWithdrawal { expected: u8, found: u8 },
 
     /// The `network_id` field declared in the transaction body (Alonzo+)
     /// does not match the expected network.
     ///
     /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` — `WrongNetworkInTxBody`.
-    #[error(
-        "network_id in tx body has wrong network: expected {expected}, found {found}"
-    )]
+    #[error("network_id in tx body has wrong network: expected {expected}, found {found}")]
     WrongNetworkInTxBody { expected: u8, found: u8 },
 
     // -- Script validation errors -------------------------------------------
-
     #[error("native script not satisfied: script hash {hash:02x?}")]
     NativeScriptFailed { hash: [u8; 28] },
 
     // -- Plutus script validation errors ------------------------------------
-
     #[error("Plutus script evaluation failed: script hash {hash:02x?}: {reason}")]
     PlutusScriptFailed { hash: [u8; 28], reason: String },
 
@@ -564,7 +552,9 @@ pub enum LedgerError {
     ///
     /// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.missingRequiredDatums`
     /// and `Cardano.Ledger.Alonzo.UTxO.getInputDataHashesTxBody`.
-    #[error("spending input (tx {tx_id:02x?} index {index}) is locked by a PlutusV1/V2 script but has no datum or datum hash")]
+    #[error(
+        "spending input (tx {tx_id:02x?} index {index}) is locked by a PlutusV1/V2 script but has no datum or datum hash"
+    )]
     UnspendableUTxONoDatumHash { tx_id: [u8; 32], index: u64 },
 
     /// An Alonzo-era transaction output is sent to a Plutus script address
@@ -584,9 +574,7 @@ pub enum LedgerError {
     #[error("Plutus script decode failed for script hash {hash:02x?}: {reason}")]
     PlutusScriptDecodeError { hash: [u8; 28], reason: String },
 
-    #[error(
-        "script integrity hash mismatch: declared {declared:02x?}, computed {computed:02x?}"
-    )]
+    #[error("script integrity hash mismatch: declared {declared:02x?}, computed {computed:02x?}")]
     PPViewHashesDontMatch {
         declared: [u8; 32],
         computed: [u8; 32],
@@ -621,7 +609,6 @@ pub enum LedgerError {
     UnexpectedScriptIntegrityHash { declared: [u8; 32] },
 
     // -- Collateral validation errors ---------------------------------------
-
     #[error("no collateral inputs in script transaction")]
     NoCollateralInputs,
 
@@ -664,7 +651,6 @@ pub enum LedgerError {
     MissingCollateralForScripts,
 
     // -- Block validation errors --------------------------------------------
-
     #[error("block body too large: {actual} bytes exceeds max {max}")]
     BlockTooLarge { actual: usize, max: usize },
 
@@ -708,7 +694,6 @@ pub enum LedgerError {
     },
 
     // -- Witness validation errors ------------------------------------------
-
     #[error("missing required VKey witness for hash {hash:02x?}")]
     MissingVKeyWitness { hash: [u8; 28] },
 
@@ -759,7 +744,11 @@ pub enum LedgerError {
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `InsufficientForInstantaneousRewardsDELEG`.
     #[error("MIR insufficient pot balance: {pot:?} has {available} but {required} needed")]
-    MIRInsufficientPotBalance { pot: crate::MirPot, available: u64, required: u64 },
+    MIRInsufficientPotBalance {
+        pot: crate::MirPot,
+        available: u64,
+        required: u64,
+    },
 
     /// Pre-Alonzo: `SendToOppositePot` MIR transfers are not allowed.
     ///
@@ -778,13 +767,14 @@ pub enum LedgerError {
     ///
     /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `InsufficientForTransferDELEG`.
     #[error("MIR insufficient for transfer: {pot:?} has {available} but {required} needed")]
-    MIRInsufficientForTransfer { pot: crate::MirPot, available: u64, required: u64 },
+    MIRInsufficientForTransfer {
+        pot: crate::MirPot,
+        available: u64,
+        required: u64,
+    },
 
     // -- Auxiliary data validation errors ------------------------------------
-
-    #[error(
-        "auxiliary data hash mismatch: declared {declared:02x?}, computed {computed:02x?}"
-    )]
+    #[error("auxiliary data hash mismatch: declared {declared:02x?}, computed {computed:02x?}")]
     AuxiliaryDataHashMismatch {
         declared: [u8; 32],
         computed: [u8; 32],
@@ -845,25 +835,15 @@ pub enum LedgerError {
     /// the maximum allowed per transaction (Conway+ rule).
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.Ledger` — `ConwayTxRefScriptsSizeTooBig`.
-    #[error(
-        "total reference script size {actual} exceeds maximum {max_allowed} bytes"
-    )]
-    TxRefScriptsSizeTooBig {
-        actual: usize,
-        max_allowed: usize,
-    },
+    #[error("total reference script size {actual} exceeds maximum {max_allowed} bytes")]
+    TxRefScriptsSizeTooBig { actual: usize, max_allowed: usize },
 
     /// Total reference script size across all transactions in a block exceeds
     /// the block-level maximum (Conway BBODY rule).
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.Bbody` — `BodyRefScriptsSizeTooBig`.
-    #[error(
-        "block total reference script size {actual} exceeds block maximum {max_allowed} bytes"
-    )]
-    BodyRefScriptsSizeTooBig {
-        actual: usize,
-        max_allowed: usize,
-    },
+    #[error("block total reference script size {actual} exceeds block maximum {max_allowed} bytes")]
+    BodyRefScriptsSizeTooBig { actual: usize, max_allowed: usize },
 
     /// A withdrawal from a key-hash reward account was attempted but the
     /// account does not have a DRep delegation (Conway post-bootstrap rule).
@@ -871,17 +851,13 @@ pub enum LedgerError {
     /// Reference: `Cardano.Ledger.Conway.Rules.Ledger` —
     /// `ConwayWdrlNotDelegatedToDRep`.
     #[error("withdrawal credential {credential:02x?} is not delegated to a DRep")]
-    WithdrawalNotDelegatedToDRep {
-        credential: [u8; 28],
-    },
+    WithdrawalNotDelegatedToDRep { credential: [u8; 28] },
 
     // -- Epoch boundary errors ----------------------------------------------
-
     #[error("protocol parameters are required but missing")]
     MissingProtocolParameters,
 
     // -- PPUP (protocol parameter update proposal) validation errors --------
-
     /// A protocol parameter update was proposed by a key hash that is not a
     /// recognized genesis delegate.
     ///
@@ -967,7 +943,10 @@ mod tests {
 
     #[test]
     fn cbor_type_mismatch_display() {
-        let e = LedgerError::CborTypeMismatch { expected: 0, actual: 2 };
+        let e = LedgerError::CborTypeMismatch {
+            expected: 0,
+            actual: 2,
+        };
         let s = e.to_string();
         assert!(s.contains("expected major 0"));
         assert!(s.contains("got 2"));
@@ -981,7 +960,10 @@ mod tests {
 
     #[test]
     fn cbor_invalid_length_display() {
-        let e = LedgerError::CborInvalidLength { expected: 3, actual: 5 };
+        let e = LedgerError::CborInvalidLength {
+            expected: 3,
+            actual: 5,
+        };
         let s = e.to_string();
         assert!(s.contains("expected 3"));
         assert!(s.contains("got 5"));
@@ -1001,7 +983,10 @@ mod tests {
 
     #[test]
     fn tx_expired_display() {
-        let e = LedgerError::TxExpired { ttl: 100, slot: 200 };
+        let e = LedgerError::TxExpired {
+            ttl: 100,
+            slot: 200,
+        };
         let s = e.to_string();
         assert!(s.contains("TTL 100"));
         assert!(s.contains("slot 200"));
@@ -1028,12 +1013,18 @@ mod tests {
 
     #[test]
     fn no_inputs_display() {
-        assert_eq!(LedgerError::NoInputs.to_string(), "no inputs in transaction");
+        assert_eq!(
+            LedgerError::NoInputs.to_string(),
+            "no inputs in transaction"
+        );
     }
 
     #[test]
     fn no_outputs_display() {
-        assert_eq!(LedgerError::NoOutputs.to_string(), "no outputs in transaction");
+        assert_eq!(
+            LedgerError::NoOutputs.to_string(),
+            "no outputs in transaction"
+        );
     }
 
     #[test]
@@ -1070,7 +1061,10 @@ mod tests {
 
     #[test]
     fn fee_too_small_display() {
-        let e = LedgerError::FeeTooSmall { minimum: 200_000, declared: 100_000 };
+        let e = LedgerError::FeeTooSmall {
+            minimum: 200_000,
+            declared: 100_000,
+        };
         let s = e.to_string();
         assert!(s.contains("200000"));
         assert!(s.contains("100000"));
@@ -1078,7 +1072,10 @@ mod tests {
 
     #[test]
     fn output_too_small_display() {
-        let e = LedgerError::OutputTooSmall { minimum: 1_000_000, actual: 500_000 };
+        let e = LedgerError::OutputTooSmall {
+            minimum: 1_000_000,
+            actual: 500_000,
+        };
         assert!(e.to_string().contains("1000000"));
     }
 
@@ -1100,7 +1097,10 @@ mod tests {
 
     #[test]
     fn proposal_deposit_incorrect_display() {
-        let e = LedgerError::ProposalDepositIncorrect { supplied: 500, expected: 1000 };
+        let e = LedgerError::ProposalDepositIncorrect {
+            supplied: 500,
+            expected: 1000,
+        };
         let s = e.to_string();
         assert!(s.contains("supplied 500"));
         assert!(s.contains("expected 1000"));
@@ -1108,7 +1108,10 @@ mod tests {
 
     #[test]
     fn block_too_large_display() {
-        let e = LedgerError::BlockTooLarge { actual: 100_000, max: 65_536 };
+        let e = LedgerError::BlockTooLarge {
+            actual: 100_000,
+            max: 65_536,
+        };
         assert!(e.to_string().contains("100000"));
     }
 
@@ -1141,7 +1144,10 @@ mod tests {
 
     #[test]
     fn pool_cost_too_low_display() {
-        let e = LedgerError::PoolCostTooLow { cost: 100, min_pool_cost: 340_000_000 };
+        let e = LedgerError::PoolCostTooLow {
+            cost: 100,
+            min_pool_cost: 340_000_000,
+        };
         let s = e.to_string();
         assert!(s.contains("100"));
         assert!(s.contains("340000000"));

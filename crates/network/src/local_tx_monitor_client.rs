@@ -8,9 +8,7 @@
 //! Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Client`.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
-use crate::protocols::{
-    LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,
-};
+use crate::protocols::{LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError};
 
 // ---------------------------------------------------------------------------
 // Client error
@@ -173,8 +171,7 @@ impl LocalTxMonitorClient {
     /// The client must be in `StAcquired`.  On success the driver is in
     /// `StAcquired`.
     pub async fn await_acquire(&mut self) -> Result<MempoolSnapshot, LocalTxMonitorClientError> {
-        self.send_msg(&LocalTxMonitorMessage::MsgAcquire)
-            .await?;
+        self.send_msg(&LocalTxMonitorMessage::MsgAcquire).await?;
         let msg = self.recv_msg().await?;
         match msg {
             LocalTxMonitorMessage::MsgAcquired { slot_no } => Ok(MempoolSnapshot { slot_no }),
@@ -229,7 +226,15 @@ impl LocalTxMonitorClient {
         self.send_msg(&LocalTxMonitorMessage::MsgGetSizes).await?;
         let msg = self.recv_msg().await?;
         match msg {
-            LocalTxMonitorMessage::MsgReplyGetSizes { capacity_in_bytes, size_in_bytes, num_txs } => Ok(MempoolSizeAndCapacity { capacity_in_bytes, size_in_bytes, num_txs }),
+            LocalTxMonitorMessage::MsgReplyGetSizes {
+                capacity_in_bytes,
+                size_in_bytes,
+                num_txs,
+            } => Ok(MempoolSizeAndCapacity {
+                capacity_in_bytes,
+                size_in_bytes,
+                num_txs,
+            }),
             other => Err(LocalTxMonitorClientError::UnexpectedMessage(format!(
                 "{other:?}"
             ))),

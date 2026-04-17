@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use yggdrasil_ledger::{
-    Era, LedgerError, MultiEraSubmittedTx, ProtocolParameters, ShelleyTxIn,
-    SlotNo, TxId, validate_fee, validate_tx_ex_units, validate_tx_size,
+    Era, LedgerError, MultiEraSubmittedTx, ProtocolParameters, ShelleyTxIn, SlotNo, TxId,
+    validate_fee, validate_tx_ex_units, validate_tx_size,
 };
 
 /// Monotonic transaction index used by TxSubmission mempool snapshots.
@@ -70,11 +70,7 @@ pub enum MempoolRelayError {
 
 impl MempoolEntry {
     /// Build a mempool entry from a typed multi-era submitted transaction.
-    pub fn from_multi_era_submitted_tx(
-        tx: MultiEraSubmittedTx,
-        fee: u64,
-        ttl: SlotNo,
-    ) -> Self {
+    pub fn from_multi_era_submitted_tx(tx: MultiEraSubmittedTx, fee: u64, ttl: SlotNo) -> Self {
         let era = tx.era();
         let tx_id = tx.tx_id();
         let body = tx.body_cbor();
@@ -141,7 +137,9 @@ pub enum MempoolError {
     },
 
     /// The transaction fee is lower than the configured minimum fee.
-    #[error("fee too small for configured protocol parameters: minimum {minimum}, declared {declared}")]
+    #[error(
+        "fee too small for configured protocol parameters: minimum {minimum}, declared {declared}"
+    )]
     FeeTooSmall {
         /// Minimum required fee for this transaction size.
         minimum: u64,
@@ -163,7 +161,9 @@ pub enum MempoolError {
     ProtocolParamValidation(String),
 
     /// The transaction's declared execution units exceed protocol limits.
-    #[error("transaction ExUnits exceed protocol max: tx(mem={tx_mem}, steps={tx_steps}) > max(mem={max_mem}, steps={max_steps})")]
+    #[error(
+        "transaction ExUnits exceed protocol max: tx(mem={tx_mem}, steps={tx_steps}) > max(mem={max_mem}, steps={max_steps})"
+    )]
     ExUnitsExceedTxLimit {
         /// Declared memory units for this transaction.
         tx_mem: u64,
@@ -529,12 +529,14 @@ impl Mempool {
                 })?;
             }
 
-            validate_fee(params, entry.body.len(), total_ex_units.as_ref(), entry.fee).map_err(|err| match err {
-                LedgerError::FeeTooSmall { minimum, declared } => {
-                    MempoolError::FeeTooSmall { minimum, declared }
-                }
-                other => MempoolError::ProtocolParamValidation(other.to_string()),
-            })?;
+            validate_fee(params, entry.body.len(), total_ex_units.as_ref(), entry.fee).map_err(
+                |err| match err {
+                    LedgerError::FeeTooSmall { minimum, declared } => {
+                        MempoolError::FeeTooSmall { minimum, declared }
+                    }
+                    other => MempoolError::ProtocolParamValidation(other.to_string()),
+                },
+            )?;
         }
         self.insert(entry)
     }
@@ -588,7 +590,10 @@ impl Mempool {
             // Check TTL expiry first.
             let expired = current_slot > entry.ttl;
             // Check if any required input has been consumed.
-            let inputs_spent = entry.inputs.iter().any(|inp| !available_inputs.contains(inp));
+            let inputs_spent = entry
+                .inputs
+                .iter()
+                .any(|inp| !available_inputs.contains(inp));
             if expired || inputs_spent {
                 let removed = self.entries.remove(i);
                 self.current_bytes -= removed.entry.size_bytes;
@@ -747,7 +752,11 @@ impl SharedMempool {
 
     /// Insert an entry if it does not already exist and fits within capacity.
     pub fn insert(&self, entry: MempoolEntry) -> Result<(), MempoolError> {
-        let result = self.inner.write().expect("shared mempool poisoned").insert(entry);
+        let result = self
+            .inner
+            .write()
+            .expect("shared mempool poisoned")
+            .insert(entry);
         if result.is_ok() {
             self.change_notify.notify_waiters();
         }
@@ -761,7 +770,8 @@ impl SharedMempool {
         current_slot: SlotNo,
         protocol_params: Option<&ProtocolParameters>,
     ) -> Result<(), MempoolError> {
-        let result = self.inner
+        let result = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .insert_checked(entry, current_slot, protocol_params);
@@ -773,7 +783,11 @@ impl SharedMempool {
 
     /// Remove and return the highest-fee entry, if any.
     pub fn pop_best(&self) -> Option<MempoolEntry> {
-        let result = self.inner.write().expect("shared mempool poisoned").pop_best();
+        let result = self
+            .inner
+            .write()
+            .expect("shared mempool poisoned")
+            .pop_best();
         if result.is_some() {
             self.change_notify.notify_waiters();
         }
@@ -782,7 +796,8 @@ impl SharedMempool {
 
     /// Remove a transaction by its identifier. Returns `true` if found.
     pub fn remove_by_id(&self, tx_id: &TxId) -> bool {
-        let removed = self.inner
+        let removed = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .remove_by_id(tx_id);
@@ -794,7 +809,8 @@ impl SharedMempool {
 
     /// Remove all confirmed transactions and return the number removed.
     pub fn remove_confirmed(&self, confirmed_tx_ids: &[TxId]) -> usize {
-        let count = self.inner
+        let count = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .remove_confirmed(confirmed_tx_ids);
@@ -806,7 +822,8 @@ impl SharedMempool {
 
     /// Remove mempool entries that conflict with consumed UTxO inputs.
     pub fn remove_conflicting_inputs(&self, consumed_inputs: &[ShelleyTxIn]) -> usize {
-        let count = self.inner
+        let count = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .remove_conflicting_inputs(consumed_inputs);
@@ -818,7 +835,8 @@ impl SharedMempool {
 
     /// Remove all expired transactions and return the number removed.
     pub fn purge_expired(&self, current_slot: SlotNo) -> usize {
-        let count = self.inner
+        let count = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .purge_expired(current_slot);
@@ -837,7 +855,8 @@ impl SharedMempool {
         current_slot: SlotNo,
         available_inputs: &std::collections::HashSet<ShelleyTxIn>,
     ) -> usize {
-        let count = self.inner
+        let count = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .revalidate(current_slot, available_inputs);
@@ -860,7 +879,8 @@ impl SharedMempool {
         current_slot: SlotNo,
         params: &ProtocolParameters,
     ) -> usize {
-        let count = self.inner
+        let count = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .purge_invalid_for_params(current_slot, params);
@@ -886,7 +906,8 @@ impl SharedMempool {
     where
         F: FnMut(&MempoolEntry) -> bool,
     {
-        let count = self.inner
+        let count = self
+            .inner
             .write()
             .expect("shared mempool poisoned")
             .revalidate_with_ledger(validate);
@@ -911,7 +932,10 @@ impl SharedMempool {
 
     /// Whether the mempool is empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.read().expect("shared mempool poisoned").is_empty()
+        self.inner
+            .read()
+            .expect("shared mempool poisoned")
+            .is_empty()
     }
 
     /// Current aggregate size of all entries in bytes.
@@ -924,12 +948,18 @@ impl SharedMempool {
 
     /// Maximum capacity of the mempool in bytes (0 = unlimited).
     pub fn capacity(&self) -> usize {
-        self.inner.read().expect("shared mempool poisoned").max_bytes
+        self.inner
+            .read()
+            .expect("shared mempool poisoned")
+            .max_bytes
     }
 
     /// Create a pure owned snapshot of the current mempool contents.
     pub fn snapshot(&self) -> MempoolSnapshot {
-        self.inner.read().expect("shared mempool poisoned").snapshot()
+        self.inner
+            .read()
+            .expect("shared mempool poisoned")
+            .snapshot()
     }
 
     /// Build a TxSubmission reader for snapshot-based outbound serving.
@@ -948,7 +978,7 @@ impl Default for SharedMempool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mempool, MempoolEntry, SharedMempool, SlotNo, TxId, MEMPOOL_ZERO_IDX};
+    use super::{MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, SharedMempool, SlotNo, TxId};
 
     fn sample_entry(seed: u8, fee: u64) -> MempoolEntry {
         MempoolEntry {
@@ -982,7 +1012,10 @@ mod tests {
         assert_eq!(snapshot.mempool_lookup_tx(txids[0].1), Some(&first));
         assert_eq!(snapshot.mempool_lookup_tx(txids[1].1), Some(&second));
         assert!(snapshot.mempool_has_tx(&first.tx_id));
-        assert_eq!(snapshot.mempool_lookup_tx_by_id(&second.tx_id), Some(&second));
+        assert_eq!(
+            snapshot.mempool_lookup_tx_by_id(&second.tx_id),
+            Some(&second)
+        );
     }
 
     #[test]

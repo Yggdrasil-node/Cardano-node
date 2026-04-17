@@ -3,39 +3,29 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use yggdrasil_network::{
-    AfterSlot,
-    BlockFetchMessage,
-    ChainSyncMessage,
-    HandshakeVersion,
-    TxSubmissionMessage,
-    MiniProtocolNum,
-    UseLedgerPeers,
-    peer_accept,
-};
+use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo,
-    ByronBlock, CborEncode, Era, HeaderHash, LedgerError, LedgerState, MultiEraSubmittedTx,
-    Point, Encoder, PoolParams, Relay, RewardAccount, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn,
-    ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, Tip, TxId,
-    UnitInterval, Value,
+    ByronBlock, CborEncode, Encoder, Era, HeaderHash, LedgerError, LedgerState,
+    MultiEraSubmittedTx, Point, PoolParams, Relay, RewardAccount, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, Tip, TxId, UnitInterval, Value,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
-use yggdrasil_node::{
-    LedgerCheckpointPolicy, MempoolAddTxResult, NodeConfig, TxSubmissionServiceOutcome,
-    ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
-    add_tx_to_mempool, add_tx_to_shared_mempool, add_txs_to_mempool,
-    add_txs_to_shared_mempool, bootstrap, bootstrap_with_fallbacks, run_txsubmission_service,
-    ReconnectingSyncServiceOutcome, ResumedSyncServiceOutcome, VerificationConfig,
-    VerifiedSyncServiceConfig,
-    resume_reconnecting_verified_sync_service_chaindb,
-    run_reconnecting_verified_sync_service_chaindb,
-    run_reconnecting_verified_sync_service,
-    run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
-    SyncError,
+use yggdrasil_network::{
+    AfterSlot, BlockFetchMessage, ChainSyncMessage, HandshakeVersion, MiniProtocolNum,
+    TxSubmissionMessage, UseLedgerPeers, peer_accept,
 };
-use yggdrasil_consensus::TentativeState;
+use yggdrasil_node::{
+    LedgerCheckpointPolicy, MempoolAddTxResult, NodeConfig, ReconnectingSyncServiceOutcome,
+    ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
+    ResumedSyncServiceOutcome, SyncError, TxSubmissionServiceOutcome, VerificationConfig,
+    VerifiedSyncServiceConfig, add_tx_to_mempool, add_tx_to_shared_mempool, add_txs_to_mempool,
+    add_txs_to_shared_mempool, bootstrap, bootstrap_with_fallbacks,
+    resume_reconnecting_verified_sync_service_chaindb, run_reconnecting_verified_sync_service,
+    run_reconnecting_verified_sync_service_chaindb, run_txsubmission_service,
+    run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
+};
 use yggdrasil_storage::{
     ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
     VolatileStore,
@@ -55,7 +45,10 @@ async fn spawn_responder(magic: u32) -> SocketAddr {
             .expect("accept handshake");
 
         // Act as server for ChainSync: receive MsgRequestNext, reply MsgRollForward.
-        if let Some(mut cs) = conn.protocols.remove(&yggdrasil_network::MiniProtocolNum::CHAIN_SYNC) {
+        if let Some(mut cs) = conn
+            .protocols
+            .remove(&yggdrasil_network::MiniProtocolNum::CHAIN_SYNC)
+        {
             let raw = cs.recv().await.expect("cs recv");
             let msg = ChainSyncMessage::from_cbor(&raw).expect("cs decode");
             assert_eq!(msg, ChainSyncMessage::MsgRequestNext);
@@ -144,14 +137,9 @@ async fn spawn_verified_batch_responder(
         bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
             .await
             .expect("start batch");
-        bf.send(
-            BlockFetchMessage::MsgBlock {
-                block: block_bytes,
-            }
-            .to_cbor(),
-        )
-        .await
-        .expect("send block");
+        bf.send(BlockFetchMessage::MsgBlock { block: block_bytes }.to_cbor())
+            .await
+            .expect("send block");
         bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
             .await
             .expect("batch done");
@@ -211,14 +199,9 @@ async fn spawn_verified_batch_responder_with_header(
         bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
             .await
             .expect("start batch");
-        bf.send(
-            BlockFetchMessage::MsgBlock {
-                block: block_bytes,
-            }
-            .to_cbor(),
-        )
-        .await
-        .expect("send block");
+        bf.send(BlockFetchMessage::MsgBlock { block: block_bytes }.to_cbor())
+            .await
+            .expect("send block");
         bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
             .await
             .expect("batch done");
@@ -336,14 +319,9 @@ async fn spawn_verified_batch_responder_from_point(
         bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
             .await
             .expect("start batch");
-        bf.send(
-            BlockFetchMessage::MsgBlock {
-                block: block_bytes,
-            }
-            .to_cbor(),
-        )
-        .await
-        .expect("send block");
+        bf.send(BlockFetchMessage::MsgBlock { block: block_bytes }.to_cbor())
+            .await
+            .expect("send block");
         bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
             .await
             .expect("batch done");
@@ -412,8 +390,12 @@ fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
 
 fn sample_pool_params_for_addr(addr: SocketAddr, operator: u8) -> PoolParams {
     let relay = match addr.ip() {
-        std::net::IpAddr::V4(ipv4) => Relay::SingleHostAddr(Some(addr.port()), Some(ipv4.octets()), None),
-        std::net::IpAddr::V6(ipv6) => Relay::SingleHostAddr(Some(addr.port()), None, Some(ipv6.octets())),
+        std::net::IpAddr::V4(ipv4) => {
+            Relay::SingleHostAddr(Some(addr.port()), Some(ipv4.octets()), None)
+        }
+        std::net::IpAddr::V6(ipv6) => {
+            Relay::SingleHostAddr(Some(addr.port()), None, Some(ipv6.octets()))
+        }
     };
 
     PoolParams {
@@ -547,7 +529,11 @@ fn seed_shelley_input(state: &mut LedgerState, seed: u8, amount: u64) {
     );
 }
 
-async fn spawn_txsubmission_responder(magic: u32, expected_txids: Vec<[u8; 32]>, expected_txs: Vec<Vec<u8>>) -> SocketAddr {
+async fn spawn_txsubmission_responder(
+    magic: u32,
+    expected_txids: Vec<[u8; 32]>,
+    expected_txs: Vec<Vec<u8>>,
+) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -764,7 +750,11 @@ async fn runtime_bootstrap_creates_all_drivers() {
     assert_eq!(session.version_data.network_magic, magic);
 
     // Use the ChainSync client to request_next.
-    let resp = session.chain_sync.request_next().await.expect("cs request_next");
+    let resp = session
+        .chain_sync
+        .request_next()
+        .await
+        .expect("cs request_next");
     assert!(matches!(
         resp,
         yggdrasil_network::NextResponse::RollForward { .. }
@@ -793,7 +783,11 @@ async fn runtime_bootstrap_uses_fallback_peer_when_primary_fails() {
     assert_eq!(session.connected_peer_addr, good_addr);
     assert_eq!(session.version, HandshakeVersion(15));
 
-    let resp = session.chain_sync.request_next().await.expect("cs request_next");
+    let resp = session
+        .chain_sync
+        .request_next()
+        .await
+        .expect("cs request_next");
     assert!(matches!(
         resp,
         yggdrasil_network::NextResponse::RollForward { .. }
@@ -812,11 +806,15 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
     let block_two = build_multi_era_envelope(0, &block_two_body);
     let tip_one = Point::BlockPoint(
         SlotNo(21_600),
-        ByronBlock::decode_ebb(&block_one_body).expect("decode block one").header_hash(),
+        ByronBlock::decode_ebb(&block_one_body)
+            .expect("decode block one")
+            .header_hash(),
     );
     let tip_two = Point::BlockPoint(
         SlotNo(43_200),
-        ByronBlock::decode_ebb(&block_two_body).expect("decode block two").header_hash(),
+        ByronBlock::decode_ebb(&block_two_body)
+            .expect("decode block two")
+            .header_hash(),
     );
 
     let first_addr = spawn_verified_batch_responder(
@@ -846,7 +844,9 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
             max_kes_evolutions: 62,
             verify_body_hash: true,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: None,
@@ -874,7 +874,9 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
             LedgerState::new(Era::Byron),
             &service_config,
         ),
-        async { let _ = shutdown_rx.await; },
+        async {
+            let _ = shutdown_rx.await;
+        },
     )
     .await
     .expect("reconnecting verified sync service");
@@ -891,7 +893,9 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     let magic = 77;
 
     let block_one = build_multi_era_envelope(0, &build_byron_ebb_body(0, 1, &[0; 32]));
-    let block_one_hash = ByronBlock::decode_ebb(&block_one[2..]).expect("decode ebb 1").header_hash();
+    let block_one_hash = ByronBlock::decode_ebb(&block_one[2..])
+        .expect("decode ebb 1")
+        .header_hash();
     let tip_one = Point::BlockPoint(SlotNo(0), block_one_hash);
     let first_addr = spawn_verified_batch_responder(
         magic,
@@ -904,7 +908,9 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
     let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &block_one_hash.0));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
-        ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
+        ByronBlock::decode_ebb(&block_two[2..])
+            .expect("decode ebb 2")
+            .header_hash(),
     );
     let second_addr = spawn_verified_batch_responder(
         magic,
@@ -926,7 +932,9 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
             max_kes_evolutions: 62,
             verify_body_hash: true,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -958,7 +966,9 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
             LedgerState::new(Era::Byron),
             &service_config,
         ),
-        async { let _ = shutdown_rx.await; },
+        async {
+            let _ = shutdown_rx.await;
+        },
     )
     .await
     .expect("reconnecting verified sync service via chaindb");
@@ -982,8 +992,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
 #[tokio::test]
 async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure() {
     let magic = 97;
-    let (header, block_bytes, tip) =
-        build_fake_shelley_envelope(10, 1, Some([0xAA; 32]));
+    let (header, block_bytes, tip) = build_fake_shelley_envelope(10, 1, Some([0xAA; 32]));
     let addr = spawn_verified_batch_responder_with_header(
         magic,
         tip,
@@ -1006,7 +1015,8 @@ async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure(
             verify_body_hash: false,
             max_major_protocol_version: None,
             future_check: None,
-            ocert_counters: None, pp_major_protocol_version: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: None,
@@ -1040,10 +1050,16 @@ async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure(
         )
         .await;
 
-    assert!(result.is_err(), "expected validation failure for fake Shelley header");
+    assert!(
+        result.is_err(),
+        "expected validation failure for fake Shelley header"
+    );
 
     let state = tentative_state.read().expect("tentative state lock");
-    assert!(state.tentative().is_none(), "tentative header should be cleared on trap");
+    assert!(
+        state.tentative().is_none(),
+        "tentative header should be cleared on trap"
+    );
     assert_eq!(
         state.criterion_state.last_trap_block_no(),
         Some(BlockNo(1)),
@@ -1061,13 +1077,8 @@ async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
             .expect("decode ebb")
             .header_hash(),
     );
-    let addr = spawn_verified_batch_responder(
-        magic,
-        tip,
-        block,
-        std::time::Duration::from_secs(2),
-    )
-    .await;
+    let addr =
+        spawn_verified_batch_responder(magic, tip, block, std::time::Duration::from_secs(2)).await;
 
     let node_config = NodeConfig {
         peer_addr: addr,
@@ -1082,7 +1093,8 @@ async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
             verify_body_hash: true,
             max_major_protocol_version: None,
             future_check: None,
-            ocert_counters: None, pp_major_protocol_version: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: None,
@@ -1148,7 +1160,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
     let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
-        ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
+        ByronBlock::decode_ebb(&block_two[2..])
+            .expect("decode ebb 2")
+            .header_hash(),
     );
     let addr = spawn_verified_batch_responder_from_point(
         magic,
@@ -1171,7 +1185,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
             max_kes_evolutions: 62,
             verify_body_hash: true,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -1220,7 +1236,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
             LedgerState::new(Era::Byron),
             &service_config,
         ),
-        async { let _ = shutdown_rx.await; },
+        async {
+            let _ = shutdown_rx.await;
+        },
     )
     .await
     .expect("resume reconnecting verified sync service via chaindb");
@@ -1238,7 +1256,8 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
 }
 
 #[tokio::test]
-async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_ledger_peers_on_reconnect() {
+async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_ledger_peers_on_reconnect()
+ {
     let magic = 79;
 
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x11; 32]));
@@ -1247,7 +1266,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
     let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
-        ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
+        ByronBlock::decode_ebb(&block_two[2..])
+            .expect("decode ebb 2")
+            .header_hash(),
     );
     let second_addr = spawn_verified_batch_responder_from_point(
         magic,
@@ -1270,7 +1291,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
             max_kes_evolutions: 62,
             verify_body_hash: true,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -1325,13 +1348,12 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         &service_config,
     )
     .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)));
-    let outcome: ResumedSyncServiceOutcome = resume_reconnecting_verified_sync_service_chaindb(
-        &mut chain_db,
-        request,
-        async { let _ = shutdown_rx.await; },
-    )
-    .await
-    .expect("resume reconnecting verified sync service via ledger peers");
+    let outcome: ResumedSyncServiceOutcome =
+        resume_reconnecting_verified_sync_service_chaindb(&mut chain_db, request, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+        .expect("resume reconnecting verified sync service via ledger peers");
 
     assert_eq!(outcome.recovery.point, recovered_point);
     assert_eq!(outcome.sync.final_point, tip_two);
@@ -1340,7 +1362,8 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
 }
 
 #[tokio::test]
-async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_snapshot_peers_on_reconnect() {
+async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_snapshot_peers_on_reconnect()
+ {
     let magic = 80;
 
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x22; 32]));
@@ -1349,7 +1372,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
     let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
-        ByronBlock::decode_ebb(&block_two[2..]).expect("decode ebb 2").header_hash(),
+        ByronBlock::decode_ebb(&block_two[2..])
+            .expect("decode ebb 2")
+            .header_hash(),
     );
     let second_addr = spawn_verified_batch_responder_from_point(
         magic,
@@ -1390,7 +1415,9 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
             max_kes_evolutions: 62,
             verify_body_hash: true,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: Some(yggdrasil_consensus::SecurityParam(1)),
@@ -1443,13 +1470,12 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
     )
     .with_use_ledger_peers(Some(UseLedgerPeers::UseLedgerPeers(AfterSlot::Always)))
     .with_peer_snapshot_path(Some(snapshot_path.clone()));
-    let outcome: ResumedSyncServiceOutcome = resume_reconnecting_verified_sync_service_chaindb(
-        &mut chain_db,
-        request,
-        async { let _ = shutdown_rx.await; },
-    )
-    .await
-    .expect("resume reconnecting verified sync service via snapshot peers");
+    let outcome: ResumedSyncServiceOutcome =
+        resume_reconnecting_verified_sync_service_chaindb(&mut chain_db, request, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+        .expect("resume reconnecting verified sync service via snapshot peers");
 
     assert_eq!(outcome.recovery.point, recovered_point);
     assert_eq!(outcome.sync.final_point, tip_two);
@@ -1478,7 +1504,11 @@ async fn runtime_serves_txsubmission_requests_from_mempool() {
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
-    session.tx_submission.init().await.expect("txsubmission init");
+    session
+        .tx_submission
+        .init()
+        .await
+        .expect("txsubmission init");
 
     let mut mempool = Mempool::with_capacity(1_000_000);
     mempool
@@ -1496,17 +1526,23 @@ async fn runtime_serves_txsubmission_requests_from_mempool() {
         ))
         .expect("insert alonzo entry");
 
-    assert!(serve_txsubmission_request_from_mempool(&mut session.tx_submission, &mempool)
-        .await
-        .expect("reply txids"));
-    assert!(serve_txsubmission_request_from_mempool(&mut session.tx_submission, &mempool)
-        .await
-        .expect("reply txs"));
+    assert!(
+        serve_txsubmission_request_from_mempool(&mut session.tx_submission, &mempool)
+            .await
+            .expect("reply txids")
+    );
+    assert!(
+        serve_txsubmission_request_from_mempool(&mut session.tx_submission, &mempool)
+            .await
+            .expect("reply txs")
+    );
 
     let empty = Mempool::with_capacity(1_000_000);
-    assert!(!serve_txsubmission_request_from_mempool(&mut session.tx_submission, &empty)
-        .await
-        .expect("send done"));
+    assert!(
+        !serve_txsubmission_request_from_mempool(&mut session.tx_submission, &empty)
+            .await
+            .expect("send done")
+    );
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     session.mux.abort();
@@ -1584,15 +1620,12 @@ async fn runtime_txsubmission_service_stops_on_shutdown() {
         let _ = shutdown_tx.send(());
     });
 
-    let outcome: TxSubmissionServiceOutcome = run_txsubmission_service(
-        &mut session.tx_submission,
-        &mempool,
-        async {
+    let outcome: TxSubmissionServiceOutcome =
+        run_txsubmission_service(&mut session.tx_submission, &mempool, async {
             let _ = shutdown_rx.await;
-        },
-    )
-    .await
-    .expect("run txsubmission service with shutdown");
+        })
+        .await
+        .expect("run txsubmission service with shutdown");
 
     assert_eq!(
         outcome,
@@ -1669,8 +1702,14 @@ fn runtime_add_txs_to_mempool_accepts_dependent_transactions_in_order() {
     let child_id = child.tx_id();
     let mut mempool = Mempool::with_capacity(1_000_000);
 
-    let results = add_txs_to_mempool(&mut ledger, &mut mempool, vec![parent, child], SlotNo(500), None)
-        .expect("add dependent tx batch");
+    let results = add_txs_to_mempool(
+        &mut ledger,
+        &mut mempool,
+        vec![parent, child],
+        SlotNo(500),
+        None,
+    )
+    .expect("add dependent tx batch");
 
     assert_eq!(
         results,
@@ -1727,10 +1766,22 @@ fn runtime_add_txs_to_shared_mempool_matches_repeated_single_adds() {
     .expect("batch add to shared mempool");
 
     let single_results = vec![
-        add_tx_to_shared_mempool(&mut single_ledger, &single_mempool, parent_single, SlotNo(500), None)
-            .expect("single parent add"),
-        add_tx_to_shared_mempool(&mut single_ledger, &single_mempool, child_single, SlotNo(500), None)
-            .expect("single child add"),
+        add_tx_to_shared_mempool(
+            &mut single_ledger,
+            &single_mempool,
+            parent_single,
+            SlotNo(500),
+            None,
+        )
+        .expect("single parent add"),
+        add_tx_to_shared_mempool(
+            &mut single_ledger,
+            &single_mempool,
+            child_single,
+            SlotNo(500),
+            None,
+        )
+        .expect("single child add"),
     ];
 
     assert_eq!(batch_results, single_results);

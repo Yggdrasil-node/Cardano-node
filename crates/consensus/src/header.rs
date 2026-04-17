@@ -124,11 +124,18 @@ pub fn verify_header(
     max_kes_evolutions: u64,
 ) -> Result<(), ConsensusError> {
     // 1. Verify the OpCert cold-key signature.
-    header.body.operational_cert.verify(&header.body.issuer_vkey)?;
+    header
+        .body
+        .operational_cert
+        .verify(&header.body.issuer_vkey)?;
 
     // 2. Check the KES period window.
     let current_kes_period = kes_period_of_slot(header.body.slot.0, slots_per_kes_period)?;
-    check_kes_period(&header.body.operational_cert, current_kes_period, max_kes_evolutions)?;
+    check_kes_period(
+        &header.body.operational_cert,
+        current_kes_period,
+        max_kes_evolutions,
+    )?;
 
     // 3. Verify the KES signature over the header body.
     let signable = header.body.to_signable_bytes();
@@ -315,7 +322,10 @@ mod tests {
         // Slot far in the future — KES period will be past max evolutions
         let far_slot = SlotNo(129_600 * 100);
         let result = verify_opcert_only(&oc, &cold_vk, far_slot, 129_600, 62);
-        assert!(matches!(result, Err(ConsensusError::KesPeriodExpired { .. })));
+        assert!(matches!(
+            result,
+            Err(ConsensusError::KesPeriodExpired { .. })
+        ));
     }
 
     #[test]
@@ -352,6 +362,9 @@ mod tests {
             kes_signature: SumKesSignature::from_bytes(6, &vec![0u8; 64 + 6 * 64]).unwrap(),
         };
         let result = verify_header(&header, 129_600, 62);
-        assert!(matches!(result, Err(ConsensusError::KesPeriodExpired { .. })));
+        assert!(matches!(
+            result,
+            Err(ConsensusError::KesPeriodExpired { .. })
+        ));
     }
 }

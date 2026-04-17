@@ -37,7 +37,12 @@ fn empty_witness_set() -> ShelleyWitnessSet {
     }
 }
 
-fn make_shelley_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_shelley_block(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Shelley,
         header: BlockHeader {
@@ -53,7 +58,12 @@ fn make_shelley_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasi
     }
 }
 
-fn make_alonzo_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_alonzo_block(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Alonzo,
         header: BlockHeader {
@@ -69,7 +79,12 @@ fn make_alonzo_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil
     }
 }
 
-fn make_babbage_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_babbage_block(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Babbage,
         header: BlockHeader {
@@ -107,13 +122,25 @@ fn shelley_block_rejects_output_to_wrong_network() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: mainnet_addr, amount: 5_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: mainnet_addr,
+            amount: 5_000_000,
+        },
     );
 
     let tx_body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: testnet_addr, amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: testnet_addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -124,19 +151,28 @@ fn shelley_block_rejects_output_to_wrong_network() {
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_shelley_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_shelley_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
-        matches!(result, Err(LedgerError::WrongNetwork { expected: 1, found: 0 })),
+        matches!(
+            result,
+            Err(LedgerError::WrongNetwork {
+                expected: 1,
+                found: 0
+            })
+        ),
         "expected WrongNetwork error, got: {:?}",
         result,
     );
@@ -151,13 +187,25 @@ fn shelley_block_accepts_output_to_correct_network() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: mainnet_addr.clone(), amount: 5_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: mainnet_addr.clone(),
+            amount: 5_000_000,
+        },
     );
 
     let tx_body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: mainnet_addr, amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: mainnet_addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -168,15 +216,18 @@ fn shelley_block_accepts_output_to_correct_network() {
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_shelley_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_shelley_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result);
@@ -191,13 +242,25 @@ fn network_validation_skipped_when_expected_network_not_set() {
     let mut state = LedgerState::new(Era::Shelley);
     // Don't set expected_network_id — validation should be skipped
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: testnet_addr.clone(), amount: 5_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: testnet_addr.clone(),
+            amount: 5_000_000,
+        },
     );
 
     let tx_body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: testnet_addr, amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: testnet_addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -208,18 +271,25 @@ fn network_validation_skipped_when_expected_network_not_set() {
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_shelley_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_shelley_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
-    assert!(result.is_ok(), "expected Ok when network not set, got: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "expected Ok when network not set, got: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -235,8 +305,14 @@ fn shelley_block_rejects_withdrawal_from_wrong_network() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: mainnet_addr.clone(), amount: 5_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: mainnet_addr.clone(),
+            amount: 5_000_000,
+        },
     );
 
     // Withdrawal from testnet reward account (network=0) on mainnet ledger
@@ -246,33 +322,46 @@ fn shelley_block_rejects_withdrawal_from_wrong_network() {
     };
 
     let tx_body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: mainnet_addr, amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: mainnet_addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
-        withdrawals: Some(std::collections::BTreeMap::from([
-            (wrong_network_acct, 0),
-        ])),
+        withdrawals: Some(std::collections::BTreeMap::from([(wrong_network_acct, 0)])),
         update: None,
         auxiliary_data_hash: None,
     };
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_shelley_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_shelley_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
-        matches!(result, Err(LedgerError::WrongNetworkWithdrawal { expected: 1, found: 0 })),
+        matches!(
+            result,
+            Err(LedgerError::WrongNetworkWithdrawal {
+                expected: 1,
+                found: 0
+            })
+        ),
         "expected WrongNetworkWithdrawal error, got: {:?}",
         result,
     );
@@ -291,7 +380,10 @@ fn alonzo_block_rejects_wrong_network_in_tx_body() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Alonzo(yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -300,7 +392,10 @@ fn alonzo_block_rejects_wrong_network_in_tx_body() {
     );
 
     let tx_body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr,
             amount: Value::Coin(5_000_000),
@@ -322,19 +417,28 @@ fn alonzo_block_rejects_wrong_network_in_tx_body() {
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_alonzo_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_alonzo_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
-        matches!(result, Err(LedgerError::WrongNetworkInTxBody { expected: 1, found: 0 })),
+        matches!(
+            result,
+            Err(LedgerError::WrongNetworkInTxBody {
+                expected: 1,
+                found: 0
+            })
+        ),
         "expected WrongNetworkInTxBody error, got: {:?}",
         result,
     );
@@ -349,7 +453,10 @@ fn alonzo_block_accepts_correct_network_in_tx_body() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Alonzo(yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -358,7 +465,10 @@ fn alonzo_block_accepts_correct_network_in_tx_body() {
     );
 
     let tx_body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr,
             amount: Value::Coin(5_000_000),
@@ -380,15 +490,18 @@ fn alonzo_block_accepts_correct_network_in_tx_body() {
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_alonzo_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_alonzo_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result);
@@ -403,7 +516,10 @@ fn alonzo_block_accepts_absent_network_in_tx_body() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Alonzo(yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -412,7 +528,10 @@ fn alonzo_block_accepts_absent_network_in_tx_body() {
     );
 
     let tx_body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr,
             amount: Value::Coin(5_000_000),
@@ -434,15 +553,18 @@ fn alonzo_block_accepts_absent_network_in_tx_body() {
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_alonzo_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_alonzo_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result);
@@ -462,7 +584,10 @@ fn babbage_block_rejects_output_to_wrong_network() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: mainnet_addr,
             amount: Value::Coin(5_000_000),
@@ -472,7 +597,10 @@ fn babbage_block_rejects_output_to_wrong_network() {
     );
 
     let tx_body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: testnet_addr,
             amount: Value::Coin(5_000_000),
@@ -498,19 +626,28 @@ fn babbage_block_rejects_output_to_wrong_network() {
     let body_bytes = tx_body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_babbage_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_babbage_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
-        matches!(result, Err(LedgerError::WrongNetwork { expected: 1, found: 0 })),
+        matches!(
+            result,
+            Err(LedgerError::WrongNetwork {
+                expected: 1,
+                found: 0
+            })
+        ),
         "expected WrongNetwork error in Babbage, got: {:?}",
         result,
     );
@@ -530,13 +667,25 @@ fn submitted_shelley_tx_rejects_wrong_network_output() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: mainnet_addr, amount: 5_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: mainnet_addr,
+            amount: 5_000_000,
+        },
     );
 
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: testnet_addr, amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: testnet_addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -553,7 +702,13 @@ fn submitted_shelley_tx_rejects_wrong_network_output() {
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::WrongNetwork { expected: 1, found: 0 })),
+        matches!(
+            result,
+            Err(LedgerError::WrongNetwork {
+                expected: 1,
+                found: 0
+            })
+        ),
         "expected WrongNetwork on submitted Shelley tx, got: {:?}",
         result,
     );
@@ -568,7 +723,10 @@ fn submitted_alonzo_tx_rejects_wrong_network_in_tx_body() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Alonzo(yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -577,7 +735,10 @@ fn submitted_alonzo_tx_rejects_wrong_network_in_tx_body() {
     );
 
     let body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![yggdrasil_ledger::AlonzoTxOut {
             address: mainnet_addr,
             amount: Value::Coin(5_000_000),
@@ -603,7 +764,13 @@ fn submitted_alonzo_tx_rejects_wrong_network_in_tx_body() {
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::WrongNetworkInTxBody { expected: 1, found: 0 })),
+        matches!(
+            result,
+            Err(LedgerError::WrongNetworkInTxBody {
+                expected: 1,
+                found: 0
+            })
+        ),
         "expected WrongNetworkInTxBody on submitted Alonzo tx, got: {:?}",
         result,
     );
@@ -620,7 +787,10 @@ fn submitted_conway_tx_rejects_wrong_withdrawal_network() {
     state.set_expected_network_id(1);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: mainnet_addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -635,7 +805,10 @@ fn submitted_conway_tx_rejects_wrong_withdrawal_network() {
     };
 
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: mainnet_addr,
             amount: Value::Coin(5_000_000),
@@ -645,9 +818,7 @@ fn submitted_conway_tx_rejects_wrong_withdrawal_network() {
         fee: 0,
         ttl: Some(1000),
         certificates: None,
-        withdrawals: Some(std::collections::BTreeMap::from([
-            (wrong_network_acct, 0),
-        ])),
+        withdrawals: Some(std::collections::BTreeMap::from([(wrong_network_acct, 0)])),
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
@@ -670,7 +841,13 @@ fn submitted_conway_tx_rejects_wrong_withdrawal_network() {
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::WrongNetworkWithdrawal { expected: 1, found: 0 })),
+        matches!(
+            result,
+            Err(LedgerError::WrongNetworkWithdrawal {
+                expected: 1,
+                found: 0
+            })
+        ),
         "expected WrongNetworkWithdrawal on submitted Conway tx, got: {:?}",
         result,
     );
@@ -684,7 +861,10 @@ fn submitted_babbage_tx_rejects_missing_reference_input() {
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(mainnet_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.clone(),
             amount: Value::Coin(5_000_000),
@@ -694,7 +874,10 @@ fn submitted_babbage_tx_rejects_missing_reference_input() {
     );
 
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: addr,
             amount: Value::Coin(5_000_000),
@@ -716,7 +899,10 @@ fn submitted_babbage_tx_rejects_missing_reference_input() {
         collateral_return: None,
         total_collateral: None,
         reference_inputs: Some(vec![
-            ShelleyTxIn { transaction_id: [0xFF; 32], index: 99 }, // not in UTxO
+            ShelleyTxIn {
+                transaction_id: [0xFF; 32],
+                index: 99,
+            }, // not in UTxO
         ]),
     };
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;

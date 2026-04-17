@@ -29,9 +29,9 @@ use crate::eras::byron::ByronTx;
 use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MaryTxBody, MaryTxOut, MintAsset, MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo};
+use crate::error::LedgerError;
 use crate::plutus::ScriptRef;
 use crate::{CborDecode, CborEncode, Decoder, Encoder};
-use crate::error::LedgerError;
 
 /// A transaction output that can represent any Cardano era.
 ///
@@ -220,24 +220,27 @@ impl CborDecode for MultiEraUtxo {
 }
 
 impl MultiEraUtxo {
-        /// Returns the consumed and produced UTxO entries for a transaction.
-        ///
-        /// - `inputs`: the set of inputs consumed by the transaction
-        /// - `outputs`: the set of outputs produced by the transaction (as (ShelleyTxIn, MultiEraTxOut) pairs)
-        ///
-        /// Returns a tuple: (consumed_utxos, produced_utxos)
-        pub fn utxo_delta_for_tx<'a>(
-            &'a self,
-            inputs: &[ShelleyTxIn],
-            outputs: &'a [(ShelleyTxIn, MultiEraTxOut)],
-        ) -> (Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>, Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>) {
-            let consumed: Vec<_> = inputs
-                .iter()
-                .filter_map(|txin| self.entries.get_key_value(txin))
-                .collect();
-            let produced: Vec<_> = outputs.iter().map(|(k, v)| (k, v)).collect();
-            (consumed, produced)
-        }
+    /// Returns the consumed and produced UTxO entries for a transaction.
+    ///
+    /// - `inputs`: the set of inputs consumed by the transaction
+    /// - `outputs`: the set of outputs produced by the transaction (as (ShelleyTxIn, MultiEraTxOut) pairs)
+    ///
+    /// Returns a tuple: (consumed_utxos, produced_utxos)
+    pub fn utxo_delta_for_tx<'a>(
+        &'a self,
+        inputs: &[ShelleyTxIn],
+        outputs: &'a [(ShelleyTxIn, MultiEraTxOut)],
+    ) -> (
+        Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>,
+        Vec<(&'a ShelleyTxIn, &'a MultiEraTxOut)>,
+    ) {
+        let consumed: Vec<_> = inputs
+            .iter()
+            .filter_map(|txin| self.entries.get_key_value(txin))
+            .collect();
+        let produced: Vec<_> = outputs.iter().map(|(k, v)| (k, v)).collect();
+        (consumed, produced)
+    }
     /// Creates an empty UTxO set.
     pub fn new() -> Self {
         Self::default()
@@ -296,10 +299,7 @@ impl MultiEraUtxo {
     /// `MultiEraTxOut::Shelley` since their shape is identical.
     ///
     /// Reference: `Cardano.Chain.UTxO.TxValidation` from `cardano-ledger-byron`.
-    pub fn apply_byron_tx(
-        &mut self,
-        tx: &ByronTx,
-    ) -> Result<(), LedgerError> {
+    pub fn apply_byron_tx(&mut self, tx: &ByronTx) -> Result<(), LedgerError> {
         if tx.inputs.is_empty() {
             return Err(LedgerError::NoInputs);
         }
@@ -308,13 +308,18 @@ impl MultiEraUtxo {
         }
 
         // Convert Byron inputs to Shelley-compatible keys and validate existence.
-        let shelley_inputs: Vec<ShelleyTxIn> = tx.inputs.iter().map(|i| ShelleyTxIn {
-            transaction_id: i.txid,
-            index: i.index as u16,
-        }).collect();
+        let shelley_inputs: Vec<ShelleyTxIn> = tx
+            .inputs
+            .iter()
+            .map(|i| ShelleyTxIn {
+                transaction_id: i.txid,
+                index: i.index as u16,
+            })
+            .collect();
 
         let consumed = self.sum_consumed_coin(&shelley_inputs)?;
-        let produced: u64 = tx.outputs
+        let produced: u64 = tx
+            .outputs
             .iter()
             .map(|o| o.amount)
             .fold(0u64, u64::saturating_add);
@@ -336,10 +341,13 @@ impl MultiEraUtxo {
                 transaction_id: tx_id,
                 index: idx as u16,
             };
-            self.entries.insert(txin, MultiEraTxOut::Shelley(ShelleyTxOut {
-                address: output.address.clone(),
-                amount: output.amount,
-            }));
+            self.entries.insert(
+                txin,
+                MultiEraTxOut::Shelley(ShelleyTxOut {
+                    address: output.address.clone(),
+                    amount: output.amount,
+                }),
+            );
         }
 
         Ok(())
@@ -390,7 +398,9 @@ impl MultiEraUtxo {
             .map(|o| o.amount)
             .fold(0u64, u64::saturating_add);
         check_coin_preservation(
-            consumed.saturating_add(withdrawal_total).saturating_add(refunds),
+            consumed
+                .saturating_add(withdrawal_total)
+                .saturating_add(refunds),
             produced,
             body.fee.saturating_add(deposits),
         )?;
@@ -462,7 +472,9 @@ impl MultiEraUtxo {
             .map(|o| o.amount)
             .fold(0u64, u64::saturating_add);
         check_coin_preservation(
-            consumed.saturating_add(withdrawal_total).saturating_add(refunds),
+            consumed
+                .saturating_add(withdrawal_total)
+                .saturating_add(refunds),
             produced,
             body.fee.saturating_add(deposits),
         )?;
@@ -531,7 +543,9 @@ impl MultiEraUtxo {
             .map(|o| o.amount.coin())
             .fold(0u64, u64::saturating_add);
         check_coin_preservation(
-            consumed.saturating_add(withdrawal_total).saturating_add(refunds),
+            consumed
+                .saturating_add(withdrawal_total)
+                .saturating_add(refunds),
             produced,
             body.fee.saturating_add(deposits),
         )?;
@@ -602,7 +616,9 @@ impl MultiEraUtxo {
             .map(|o| o.amount.coin())
             .fold(0u64, u64::saturating_add);
         check_coin_preservation(
-            consumed.saturating_add(withdrawal_total).saturating_add(refunds),
+            consumed
+                .saturating_add(withdrawal_total)
+                .saturating_add(refunds),
             produced,
             body.fee.saturating_add(deposits),
         )?;
@@ -672,7 +688,9 @@ impl MultiEraUtxo {
             .map(|o| o.amount.coin())
             .fold(0u64, u64::saturating_add);
         check_coin_preservation(
-            consumed.saturating_add(withdrawal_total).saturating_add(refunds),
+            consumed
+                .saturating_add(withdrawal_total)
+                .saturating_add(refunds),
             produced,
             body.fee.saturating_add(deposits),
         )?;
@@ -753,7 +771,9 @@ impl MultiEraUtxo {
             .saturating_add(deposits)
             .saturating_add(body.treasury_donation.unwrap_or(0));
         check_coin_preservation(
-            consumed.saturating_add(withdrawal_total).saturating_add(refunds),
+            consumed
+                .saturating_add(withdrawal_total)
+                .saturating_add(refunds),
             produced,
             fee_plus_deposits_donation,
         )?;
@@ -814,10 +834,7 @@ impl MultiEraUtxo {
     /// Reference inputs (CIP-31, Babbage+) are read but never consumed.
     /// This check mirrors the upstream UTXO rule: all referenced inputs must
     /// be present in the UTxO.
-    pub fn validate_reference_inputs(
-        &self,
-        ref_inputs: &[ShelleyTxIn],
-    ) -> Result<(), LedgerError> {
+    pub fn validate_reference_inputs(&self, ref_inputs: &[ShelleyTxIn]) -> Result<(), LedgerError> {
         for input in ref_inputs {
             if !self.entries.contains_key(input) {
                 return Err(LedgerError::ReferenceInputNotInUtxo);
@@ -862,7 +879,10 @@ impl MultiEraUtxo {
         ref_inputs: Option<&[ShelleyTxIn]>,
     ) -> usize {
         let mut total = 0usize;
-        for input in spending_inputs.iter().chain(ref_inputs.unwrap_or(&[]).iter()) {
+        for input in spending_inputs
+            .iter()
+            .chain(ref_inputs.unwrap_or(&[]).iter())
+        {
             if let Some(txout) = self.entries.get(input) {
                 if let Some(sr) = txout.script_ref() {
                     total = total.saturating_add(sr.0.binary_size());
@@ -1100,8 +1120,7 @@ fn check_multi_asset_preservation(
 
     // Compare expected vs produced for every policy+asset that appears
     // in either map.
-    let mut all_policies: std::collections::BTreeSet<&[u8; 28]> =
-        std::collections::BTreeSet::new();
+    let mut all_policies: std::collections::BTreeSet<&[u8; 28]> = std::collections::BTreeSet::new();
     for k in expected.keys() {
         all_policies.insert(k);
     }
@@ -1113,8 +1132,7 @@ fn check_multi_asset_preservation(
         let expected_assets = expected.get(policy);
         let produced_assets = produced.get(policy);
 
-        let mut all_names: std::collections::BTreeSet<&Vec<u8>> =
-            std::collections::BTreeSet::new();
+        let mut all_names: std::collections::BTreeSet<&Vec<u8>> = std::collections::BTreeSet::new();
         if let Some(ea) = expected_assets {
             for k in ea.keys() {
                 all_names.insert(k);
@@ -1127,8 +1145,14 @@ fn check_multi_asset_preservation(
         }
 
         for name in all_names {
-            let exp = expected_assets.and_then(|a| a.get(name)).copied().unwrap_or(0);
-            let prod = produced_assets.and_then(|a| a.get(name)).copied().unwrap_or(0);
+            let exp = expected_assets
+                .and_then(|a| a.get(name))
+                .copied()
+                .unwrap_or(0);
+            let prod = produced_assets
+                .and_then(|a| a.get(name))
+                .copied()
+                .unwrap_or(0);
             if exp != prod {
                 return Err(LedgerError::MultiAssetNotPreserved {
                     policy: *policy,
@@ -1297,7 +1321,10 @@ mod tests {
         let result = utxo.apply_shelley_tx([0xaa; 32], &body, 50);
         assert!(result.is_ok());
         assert_eq!(utxo.len(), 1);
-        let new_txin = ShelleyTxIn { transaction_id: [0xaa; 32], index: 0 };
+        let new_txin = ShelleyTxIn {
+            transaction_id: [0xaa; 32],
+            index: 0,
+        };
         assert_eq!(utxo.get(&new_txin).unwrap().coin(), 2_800_000);
     }
 
@@ -1315,7 +1342,10 @@ mod tests {
             auxiliary_data_hash: None,
         };
         let err = utxo.apply_shelley_tx([0xaa; 32], &body, 50);
-        assert!(matches!(err, Err(LedgerError::TxExpired { ttl: 10, slot: 50 })));
+        assert!(matches!(
+            err,
+            Err(LedgerError::TxExpired { ttl: 10, slot: 50 })
+        ));
     }
 
     #[test]
@@ -1424,7 +1454,13 @@ mod tests {
             auxiliary_data_hash: None,
         };
         let err = utxo.apply_allegra_tx([0xbb; 32], &body, 50);
-        assert!(matches!(err, Err(LedgerError::TxNotYetValid { start: 100, slot: 50 })));
+        assert!(matches!(
+            err,
+            Err(LedgerError::TxNotYetValid {
+                start: 100,
+                slot: 50
+            })
+        ));
     }
 
     // ── apply_byron_tx ─────────────────────────────────────────────────
@@ -1433,12 +1469,21 @@ mod tests {
     fn apply_byron_tx_valid() {
         let mut utxo = MultiEraUtxo::new();
         let seed_txid = [0x01; 32];
-        let txin = ShelleyTxIn { transaction_id: seed_txid, index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: seed_txid,
+            index: 0,
+        };
         utxo.insert_shelley(txin, sample_shelley_out(5_000_000));
 
         let byron_tx = ByronTx {
-            inputs: vec![ByronTxIn { txid: seed_txid, index: 0 }],
-            outputs: vec![ByronTxOut { address: vec![0x82; 10], amount: 4_500_000 }],
+            inputs: vec![ByronTxIn {
+                txid: seed_txid,
+                index: 0,
+            }],
+            outputs: vec![ByronTxOut {
+                address: vec![0x82; 10],
+                amount: 4_500_000,
+            }],
             attributes: vec![0xa0], // empty map
         };
         assert!(utxo.apply_byron_tx(&byron_tx).is_ok());
@@ -1450,36 +1495,63 @@ mod tests {
         let mut utxo = MultiEraUtxo::new();
         let byron_tx = ByronTx {
             inputs: vec![],
-            outputs: vec![ByronTxOut { address: vec![0x82; 10], amount: 100 }],
+            outputs: vec![ByronTxOut {
+                address: vec![0x82; 10],
+                amount: 100,
+            }],
             attributes: vec![0xa0],
         };
-        assert!(matches!(utxo.apply_byron_tx(&byron_tx), Err(LedgerError::NoInputs)));
+        assert!(matches!(
+            utxo.apply_byron_tx(&byron_tx),
+            Err(LedgerError::NoInputs)
+        ));
     }
 
     #[test]
     fn apply_byron_tx_empty_outputs() {
         let mut utxo = MultiEraUtxo::new();
-        let txin = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        };
         utxo.insert_shelley(txin, sample_shelley_out(1_000));
         let byron_tx = ByronTx {
-            inputs: vec![ByronTxIn { txid: [0x01; 32], index: 0 }],
+            inputs: vec![ByronTxIn {
+                txid: [0x01; 32],
+                index: 0,
+            }],
             outputs: vec![],
             attributes: vec![0xa0],
         };
-        assert!(matches!(utxo.apply_byron_tx(&byron_tx), Err(LedgerError::NoOutputs)));
+        assert!(matches!(
+            utxo.apply_byron_tx(&byron_tx),
+            Err(LedgerError::NoOutputs)
+        ));
     }
 
     #[test]
     fn apply_byron_tx_negative_fee_rejected() {
         let mut utxo = MultiEraUtxo::new();
-        let txin = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        };
         utxo.insert_shelley(txin, sample_shelley_out(1_000));
         let byron_tx = ByronTx {
-            inputs: vec![ByronTxIn { txid: [0x01; 32], index: 0 }],
-            outputs: vec![ByronTxOut { address: vec![0x82; 10], amount: 2_000 }],
+            inputs: vec![ByronTxIn {
+                txid: [0x01; 32],
+                index: 0,
+            }],
+            outputs: vec![ByronTxOut {
+                address: vec![0x82; 10],
+                amount: 2_000,
+            }],
             attributes: vec![0xa0],
         };
-        assert!(matches!(utxo.apply_byron_tx(&byron_tx), Err(LedgerError::ValueNotPreserved { .. })));
+        assert!(matches!(
+            utxo.apply_byron_tx(&byron_tx),
+            Err(LedgerError::ValueNotPreserved { .. })
+        ));
     }
 
     // ── validate_reference_inputs ──────────────────────────────────────
@@ -1543,7 +1615,10 @@ mod tests {
     fn validate_nonempty_both_empty() {
         let empty_inputs: Vec<ShelleyTxIn> = vec![];
         let outputs = vec![sample_shelley_out(100)];
-        assert!(matches!(validate_nonempty(&empty_inputs, &outputs), Err(LedgerError::NoInputs)));
+        assert!(matches!(
+            validate_nonempty(&empty_inputs, &outputs),
+            Err(LedgerError::NoInputs)
+        ));
     }
 
     #[test]
@@ -1557,9 +1632,15 @@ mod tests {
     #[test]
     fn check_multi_asset_preservation_balanced() {
         let mut consumed = MultiAsset::new();
-        consumed.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 100);
+        consumed
+            .entry([0xaa; 28])
+            .or_default()
+            .insert(b"token".to_vec(), 100);
         let mut produced = MultiAsset::new();
-        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 100);
+        produced
+            .entry([0xaa; 28])
+            .or_default()
+            .insert(b"token".to_vec(), 100);
         assert!(check_multi_asset_preservation(&consumed, &produced, &None).is_ok());
     }
 
@@ -1567,7 +1648,10 @@ mod tests {
     fn check_multi_asset_preservation_with_mint() {
         let consumed = MultiAsset::new();
         let mut produced = MultiAsset::new();
-        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 50);
+        produced
+            .entry([0xaa; 28])
+            .or_default()
+            .insert(b"token".to_vec(), 50);
         let mut mint = std::collections::BTreeMap::new();
         let mut policy_assets = std::collections::BTreeMap::new();
         policy_assets.insert(b"token".to_vec(), 50i64);
@@ -1579,16 +1663,25 @@ mod tests {
     fn check_multi_asset_preservation_imbalanced() {
         let consumed = MultiAsset::new();
         let mut produced = MultiAsset::new();
-        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 50);
+        produced
+            .entry([0xaa; 28])
+            .or_default()
+            .insert(b"token".to_vec(), 50);
         assert!(check_multi_asset_preservation(&consumed, &produced, &None).is_err());
     }
 
     #[test]
     fn check_multi_asset_preservation_burn() {
         let mut consumed = MultiAsset::new();
-        consumed.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 100);
+        consumed
+            .entry([0xaa; 28])
+            .or_default()
+            .insert(b"token".to_vec(), 100);
         let mut produced = MultiAsset::new();
-        produced.entry([0xaa; 28]).or_default().insert(b"token".to_vec(), 70);
+        produced
+            .entry([0xaa; 28])
+            .or_default()
+            .insert(b"token".to_vec(), 70);
         let mut mint = std::collections::BTreeMap::new();
         let mut policy_assets = std::collections::BTreeMap::new();
         policy_assets.insert(b"token".to_vec(), -30i64);
@@ -1688,7 +1781,10 @@ mod tests {
         let result = validate_outside_forecast(100, 50, Some(151), true);
         assert!(matches!(
             result,
-            Err(LedgerError::OutsideForecast { slot: 151, limit: 150 })
+            Err(LedgerError::OutsideForecast {
+                slot: 151,
+                limit: 150
+            })
         ));
     }
 

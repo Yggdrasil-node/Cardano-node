@@ -1,40 +1,38 @@
 #![allow(clippy::unwrap_used)]
 use std::net::SocketAddr;
 
+use yggdrasil_consensus::{ChainState, SecurityParam};
+use yggdrasil_ledger::{
+    AlonzoBlock, BabbageBlock, BabbageTxBody, BabbageTxOut, Block, BlockHeader, BlockNo,
+    ByronBlock, CborEncode, ConwayBlock, ConwayTxBody, Encoder, Era, HeaderHash, LedgerState,
+    Nonce, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
+    ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert, ShelleyWitnessSet, SlotNo,
+    StakeCredential, Tip, Tx, TxId, compute_block_body_hash,
+};
+use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_network::{
     BlockFetchMessage, ChainSyncMessage, HandshakeVersion, KeepAliveMessage, MiniProtocolNum,
     peer_accept,
 };
-use yggdrasil_ledger::{
-    AlonzoBlock, BabbageBlock, BabbageTxBody, BabbageTxOut, Block, BlockHeader, BlockNo, ByronBlock,
-    CborEncode, ConwayBlock, ConwayTxBody, Encoder, HeaderHash, LedgerState, Nonce, Point,
-    PraosHeader, PraosHeaderBody, ShelleyBlock,
-    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert,
-    ShelleyWitnessSet, SlotNo, StakeCredential, Tip, Tx, TxId,
-    Era,
-    compute_block_body_hash,
-};
-use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_node::{
     DecodedSyncStep, LedgerCheckpointPolicy, MultiEraBlock, MultiEraSyncStep, NodeConfig,
-    SyncServiceConfig, SyncStep, TypedIntersectResult, TypedSyncStep, VerificationConfig,
-    VerifiedSyncServiceConfig,
-    apply_multi_era_step_to_volatile,
-    apply_nonce_evolution,
-    apply_typed_progress_to_volatile, bootstrap, decode_multi_era_block, decode_multi_era_blocks,
-    evict_confirmed_from_mempool, extract_tx_ids, collect_rolled_back_tx_ids,
-    keepalive_heartbeat, multi_era_block_to_block,
-    multi_era_block_to_chain_entry, promote_stable_blocks, recover_ledger_state_chaindb,
-    run_verified_sync_service_chaindb, track_chain_state, track_chain_state_entries,
-    run_sync_service, shelley_header_body_to_consensus, shelley_header_to_consensus,
-    shelley_opcert_to_consensus, sync_batch_apply, sync_step, sync_step_decoded,
-    sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed, sync_until_typed,
-    typed_find_intersect, validate_block_body_size, validate_block_protocol_version,
-    verify_block_body_hash, verify_multi_era_block, verify_shelley_header,
-    SHELLEY_KES_DEPTH,
+    SHELLEY_KES_DEPTH, SyncServiceConfig, SyncStep, TypedIntersectResult, TypedSyncStep,
+    VerificationConfig, VerifiedSyncServiceConfig, apply_multi_era_step_to_volatile,
+    apply_nonce_evolution, apply_typed_progress_to_volatile, bootstrap, collect_rolled_back_tx_ids,
+    decode_multi_era_block, decode_multi_era_blocks, evict_confirmed_from_mempool, extract_tx_ids,
+    keepalive_heartbeat, multi_era_block_to_block, multi_era_block_to_chain_entry,
+    promote_stable_blocks, recover_ledger_state_chaindb, run_sync_service,
+    run_verified_sync_service_chaindb, shelley_header_body_to_consensus,
+    shelley_header_to_consensus, shelley_opcert_to_consensus, sync_batch_apply, sync_step,
+    sync_step_decoded, sync_step_multi_era, sync_step_typed, sync_steps, sync_steps_typed,
+    sync_until_typed, track_chain_state, track_chain_state_entries, typed_find_intersect,
+    validate_block_body_size, validate_block_protocol_version, verify_block_body_hash,
+    verify_multi_era_block, verify_shelley_header,
 };
-use yggdrasil_consensus::{ChainState, SecurityParam};
-use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile, ImmutableStore, VolatileStore};
+use yggdrasil_storage::{
+    ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
+    VolatileStore,
+};
 
 fn test_shelley_initial_funds_address(seed: u8) -> Vec<u8> {
     let mut address = vec![0x60];
@@ -283,7 +281,9 @@ async fn spawn_verified_batch_responder(
 
         let tip_cbor = match tip {
             Point::Origin => Tip::TipGenesis.to_cbor_bytes(),
-            Point::BlockPoint(s, h) => Tip::Tip(Point::BlockPoint(s, h), BlockNo(0)).to_cbor_bytes(),
+            Point::BlockPoint(s, h) => {
+                Tip::Tip(Point::BlockPoint(s, h), BlockNo(0)).to_cbor_bytes()
+            }
         };
         cs.send(
             ChainSyncMessage::MsgRollForward {
@@ -301,14 +301,9 @@ async fn spawn_verified_batch_responder(
         bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
             .await
             .expect("start batch");
-        bf.send(
-            BlockFetchMessage::MsgBlock {
-                block: block_bytes,
-            }
-            .to_cbor(),
-        )
-        .await
-        .expect("send block");
+        bf.send(BlockFetchMessage::MsgBlock { block: block_bytes }.to_cbor())
+            .await
+            .expect("send block");
         bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
             .await
             .expect("batch done");
@@ -360,7 +355,9 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
     let block_bytes = build_multi_era_envelope(0, &block_body);
     let tip = Point::BlockPoint(
         SlotNo(0),
-        ByronBlock::decode_ebb(&block_bytes[2..]).expect("decode ebb").header_hash(),
+        ByronBlock::decode_ebb(&block_bytes[2..])
+            .expect("decode ebb")
+            .header_hash(),
     );
     let addr = spawn_verified_batch_responder(magic, tip, block_bytes).await;
 
@@ -376,7 +373,9 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
             max_kes_evolutions: 62,
             verify_body_hash: true,
             max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
         },
         nonce_config: None,
         security_param: Some(SecurityParam(1)),
@@ -408,7 +407,9 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         Point::Origin,
         &service_config,
         None,
-        async { let _ = shutdown_rx.await; },
+        async {
+            let _ = shutdown_rx.await;
+        },
     )
     .await
     .expect("verified sync service via chaindb");
@@ -949,8 +950,12 @@ async fn sync_step_typed_rollback_decodes_points() {
     let point = Point::BlockPoint(SlotNo(111), HeaderHash([0x11; 32]));
     let tip = Point::BlockPoint(SlotNo(222), HeaderHash([0x22; 32]));
 
-    let addr =
-        spawn_typed_rollback_responder(magic, point.to_cbor_bytes(), Tip::Tip(tip, BlockNo(0)).to_cbor_bytes()).await;
+    let addr = spawn_typed_rollback_responder(
+        magic,
+        point.to_cbor_bytes(),
+        Tip::Tip(tip, BlockNo(0)).to_cbor_bytes(),
+    )
+    .await;
 
     let config = NodeConfig {
         peer_addr: addr,
@@ -968,13 +973,7 @@ async fn sync_step_typed_rollback_decodes_points() {
     .await
     .expect("typed rollback step");
 
-    assert_eq!(
-        step,
-        TypedSyncStep::RollBackward {
-            point,
-            tip,
-        }
-    );
+    assert_eq!(step, TypedSyncStep::RollBackward { point, tip });
 
     session.mux.abort();
 }
@@ -1021,8 +1020,14 @@ async fn sync_steps_typed_tracks_progress_and_rollbacks() {
     assert_eq!(progress.rollback_count, 1);
     assert_eq!(progress.current_point, rollback_point);
     assert_eq!(progress.steps.len(), 2);
-    assert!(matches!(progress.steps[0], TypedSyncStep::RollForward { .. }));
-    assert!(matches!(progress.steps[1], TypedSyncStep::RollBackward { .. }));
+    assert!(matches!(
+        progress.steps[0],
+        TypedSyncStep::RollForward { .. }
+    ));
+    assert!(matches!(
+        progress.steps[1],
+        TypedSyncStep::RollBackward { .. }
+    ));
 
     session.mux.abort();
 }
@@ -1268,12 +1273,9 @@ async fn typed_find_intersect_found() {
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
 
-    let result = typed_find_intersect(
-        &mut session.chain_sync,
-        &[intersect, Point::Origin],
-    )
-    .await
-    .expect("find intersect");
+    let result = typed_find_intersect(&mut session.chain_sync, &[intersect, Point::Origin])
+        .await
+        .expect("find intersect");
 
     assert_eq!(
         result,
@@ -1291,7 +1293,8 @@ async fn typed_find_intersect_not_found() {
     let magic = 201;
     let tip = Point::BlockPoint(SlotNo(999), HeaderHash([0xFF; 32]));
 
-    let addr = spawn_intersect_not_found_responder(magic, Tip::Tip(tip, BlockNo(0)).to_cbor_bytes()).await;
+    let addr =
+        spawn_intersect_not_found_responder(magic, Tip::Tip(tip, BlockNo(0)).to_cbor_bytes()).await;
 
     let config = NodeConfig {
         peer_addr: addr,
@@ -1308,10 +1311,7 @@ async fn typed_find_intersect_not_found() {
     .await
     .expect("find intersect");
 
-    assert_eq!(
-        result,
-        TypedIntersectResult::NotFound { tip }
-    );
+    assert_eq!(result, TypedIntersectResult::NotFound { tip });
 
     session.mux.abort();
 }
@@ -1521,13 +1521,19 @@ async fn run_sync_service_shutdown_after_batches() {
         &mut store,
         Point::Origin,
         &svc_config,
-        async { shutdown_rx.await.ok(); },
+        async {
+            shutdown_rx.await.ok();
+        },
     )
     .await
     .expect("sync service");
 
     // The service should have completed at least one batch before shutdown.
-    assert!(outcome.batches_completed >= 1, "expected at least 1 batch, got {}", outcome.batches_completed);
+    assert!(
+        outcome.batches_completed >= 1,
+        "expected at least 1 batch, got {}",
+        outcome.batches_completed
+    );
     assert!(outcome.total_blocks >= 1);
 
     session.mux.abort();
@@ -1793,8 +1799,10 @@ fn verify_multi_era_block_byron_is_noop() {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
         verify_body_hash: false,
-            max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+        max_major_protocol_version: None,
+        future_check: None,
+        ocert_counters: None,
+        pp_major_protocol_version: None,
     };
     assert!(verify_multi_era_block(&me, &config).is_ok());
 }
@@ -1937,8 +1945,26 @@ fn extract_tx_ids_from_shelley_block() {
         },
         transaction_bodies: vec![body1, body2],
         transaction_witness_sets: vec![
-            ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
-            ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
+            ShelleyWitnessSet {
+                vkey_witnesses: vec![],
+                native_scripts: vec![],
+                bootstrap_witnesses: vec![],
+                plutus_v1_scripts: vec![],
+                plutus_data: vec![],
+                redeemers: vec![],
+                plutus_v2_scripts: vec![],
+                plutus_v3_scripts: vec![],
+            },
+            ShelleyWitnessSet {
+                vkey_witnesses: vec![],
+                native_scripts: vec![],
+                bootstrap_witnesses: vec![],
+                plutus_v1_scripts: vec![],
+                plutus_data: vec![],
+                redeemers: vec![],
+                plutus_v2_scripts: vec![],
+                plutus_v3_scripts: vec![],
+            },
         ],
         transaction_metadata_set: std::collections::HashMap::new(),
     }));
@@ -1966,7 +1992,10 @@ fn extract_tx_ids_from_byron_main_block() {
     use yggdrasil_ledger::{ByronTx, ByronTxAux, ByronTxIn, ByronTxOut};
 
     let tx1 = ByronTx {
-        inputs: vec![ByronTxIn { txid: [0xAA; 32], index: 0 }],
+        inputs: vec![ByronTxIn {
+            txid: [0xAA; 32],
+            index: 0,
+        }],
         outputs: vec![ByronTxOut {
             address: vec![0x01; 20],
             amount: 1_000_000,
@@ -1974,7 +2003,10 @@ fn extract_tx_ids_from_byron_main_block() {
         attributes: vec![0xa0], // empty CBOR map
     };
     let tx2 = ByronTx {
-        inputs: vec![ByronTxIn { txid: [0xBB; 32], index: 1 }],
+        inputs: vec![ByronTxIn {
+            txid: [0xBB; 32],
+            index: 1,
+        }],
         outputs: vec![ByronTxOut {
             address: vec![0x02; 20],
             amount: 2_000_000,
@@ -1994,8 +2026,14 @@ fn extract_tx_ids_from_byron_main_block() {
             issuer_vkey: [0x11; 32],
             raw_header: vec![],
             transactions: vec![
-                ByronTxAux { tx: tx1, witnesses: vec![] },
-                ByronTxAux { tx: tx2, witnesses: vec![] },
+                ByronTxAux {
+                    tx: tx1,
+                    witnesses: vec![],
+                },
+                ByronTxAux {
+                    tx: tx2,
+                    witnesses: vec![],
+                },
             ],
         },
         era_tag: 1,
@@ -2035,9 +2073,16 @@ fn evict_confirmed_removes_matching_mempool_entries() {
                 signature: vec![0xDD; 448],
             },
             transaction_bodies: vec![body],
-            transaction_witness_sets: vec![
-                ShelleyWitnessSet { vkey_witnesses: vec![], native_scripts: vec![], bootstrap_witnesses: vec![], plutus_v1_scripts: vec![], plutus_data: vec![], redeemers: vec![], plutus_v2_scripts: vec![], plutus_v3_scripts: vec![] },
-            ],
+            transaction_witness_sets: vec![ShelleyWitnessSet {
+                vkey_witnesses: vec![],
+                native_scripts: vec![],
+                bootstrap_witnesses: vec![],
+                plutus_v1_scripts: vec![],
+                plutus_data: vec![],
+                redeemers: vec![],
+                plutus_v2_scripts: vec![],
+                plutus_v3_scripts: vec![],
+            }],
             transaction_metadata_set: std::collections::HashMap::new(),
         }))],
         raw_blocks: None,
@@ -2056,26 +2101,30 @@ fn evict_confirmed_also_purges_expired() {
     let id2 = tx_id_for(&body2);
 
     let mut mempool = Mempool::with_capacity(1_000_000);
-    mempool.insert(MempoolEntry {
-        era: Era::Shelley,
-        tx_id: id1,
-        fee: 100,
-        body: body1.to_cbor_bytes(),
-        raw_tx: body1.to_cbor_bytes(),
-        size_bytes: 50,
-        ttl: SlotNo(5),
-        inputs: vec![],
-    }).expect("insert body1");
-    mempool.insert(MempoolEntry {
-        era: Era::Shelley,
-        tx_id: id2,
-        fee: 200,
-        body: body2.to_cbor_bytes(),
-        raw_tx: body2.to_cbor_bytes(),
-        size_bytes: 50,
-        ttl: SlotNo(10_000),
-        inputs: vec![],
-    }).expect("insert body2");
+    mempool
+        .insert(MempoolEntry {
+            era: Era::Shelley,
+            tx_id: id1,
+            fee: 100,
+            body: body1.to_cbor_bytes(),
+            raw_tx: body1.to_cbor_bytes(),
+            size_bytes: 50,
+            ttl: SlotNo(5),
+            inputs: vec![],
+        })
+        .expect("insert body1");
+    mempool
+        .insert(MempoolEntry {
+            era: Era::Shelley,
+            tx_id: id2,
+            fee: 200,
+            body: body2.to_cbor_bytes(),
+            raw_tx: body2.to_cbor_bytes(),
+            size_bytes: 50,
+            ttl: SlotNo(10_000),
+            inputs: vec![],
+        })
+        .expect("insert body2");
     assert_eq!(mempool.len(), 2);
 
     // Roll forward to slot 500 — body1 is expired (ttl 5 < 500),
@@ -2107,16 +2156,18 @@ fn evict_confirmed_rollback_does_nothing() {
     let id = tx_id_for(&body);
 
     let mut mempool = Mempool::with_capacity(1_000_000);
-    mempool.insert(MempoolEntry {
-        era: Era::Shelley,
-        tx_id: id,
-        fee: 100,
-        body: body.to_cbor_bytes(),
-        raw_tx: body.to_cbor_bytes(),
-        size_bytes: 50,
-        ttl: SlotNo(10_000),
-        inputs: vec![],
-    }).expect("insert");
+    mempool
+        .insert(MempoolEntry {
+            era: Era::Shelley,
+            tx_id: id,
+            fee: 100,
+            body: body.to_cbor_bytes(),
+            raw_tx: body.to_cbor_bytes(),
+            size_bytes: 50,
+            ttl: SlotNo(10_000),
+            inputs: vec![],
+        })
+        .expect("insert");
     assert_eq!(mempool.len(), 1);
 
     let step = MultiEraSyncStep::RollBackward {
@@ -2197,8 +2248,8 @@ fn decode_multi_era_blocks_all_eras() {
     let byron = build_multi_era_envelope(0, &build_byron_ebb_body(0, 0, &[0; 32]));
     let babbage = build_multi_era_envelope(6, &sample_babbage_block_bytes());
     let conway = build_multi_era_envelope(7, &sample_conway_block_bytes());
-    let blocks = decode_multi_era_blocks(&[shelley, byron, babbage, conway])
-        .expect("decode all eras");
+    let blocks =
+        decode_multi_era_blocks(&[shelley, byron, babbage, conway]).expect("decode all eras");
     assert_eq!(blocks.len(), 4);
     assert!(matches!(blocks[0], MultiEraBlock::Shelley(_)));
     assert!(matches!(blocks[1], MultiEraBlock::Byron { .. }));
@@ -2513,8 +2564,10 @@ fn verify_multi_era_block_babbage_passes() {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
         verify_body_hash: false,
-            max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+        max_major_protocol_version: None,
+        future_check: None,
+        ocert_counters: None,
+        pp_major_protocol_version: None,
     };
     let result = verify_multi_era_block(&me, &config);
     // Expect error since the signature is dummy bytes, confirming the
@@ -2539,8 +2592,10 @@ fn verify_multi_era_block_conway_passes() {
         slots_per_kes_period: 129600,
         max_kes_evolutions: 62,
         verify_body_hash: false,
-            max_major_protocol_version: None,
-            future_check: None, ocert_counters: None, pp_major_protocol_version: None,
+        max_major_protocol_version: None,
+        future_check: None,
+        ocert_counters: None,
+        pp_major_protocol_version: None,
     };
     let result = verify_multi_era_block(&me, &config);
     assert!(result.is_err());
@@ -2725,7 +2780,10 @@ fn verify_block_body_hash_babbage_mismatch_rejected() {
     let block_bytes = block.to_cbor_bytes();
     let envelope = build_multi_era_envelope(6, &block_bytes);
     let result = verify_block_body_hash(&envelope);
-    assert!(result.is_err(), "should reject mismatched babbage body hash");
+    assert!(
+        result.is_err(),
+        "should reject mismatched babbage body hash"
+    );
 }
 
 #[test]
@@ -2806,10 +2864,10 @@ fn cross_subsystem_block_to_chain_state_to_storage() {
     // Drain stable entries and promote to immutable.
     let stable = chain_state.drain_stable();
     for entry in &stable {
-        let block = volatile
-            .get_block(&entry.hash)
-            .expect("block in volatile");
-        immutable.append_block(block.clone()).expect("immutable append");
+        let block = volatile.get_block(&entry.hash).expect("block in volatile");
+        immutable
+            .append_block(block.clone())
+            .expect("immutable append");
     }
 
     assert_eq!(immutable.len(), 2);
@@ -2870,7 +2928,9 @@ fn cross_subsystem_rollback_flow() {
         h[0] = 1;
         HeaderHash(h)
     });
-    chain_state.roll_backward(&rollback_point).expect("rollback");
+    chain_state
+        .roll_backward(&rollback_point)
+        .expect("rollback");
     volatile.rollback_to(&rollback_point);
 
     assert_eq!(chain_state.tip(), rollback_point);
@@ -2889,7 +2949,10 @@ fn cross_subsystem_rollback_flow() {
 // Nonce evolution integration with MultiEraBlock
 // ---------------------------------------------------------------------------
 
-use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState, praos_vrf_output_to_nonce, vrf_output_to_nonce};
+use yggdrasil_consensus::{
+    EpochSize, NonceEvolutionConfig, NonceEvolutionState, praos_vrf_output_to_nonce,
+    vrf_output_to_nonce,
+};
 
 fn nonce_test_config() -> NonceEvolutionConfig {
     NonceEvolutionConfig {
@@ -3041,7 +3104,11 @@ fn apply_nonce_evolution_epoch_transition_via_shelley_blocks() {
     // Feed blocks in epoch 0 (slots 0..99).
     for i in 0u8..10 {
         let block = make_shelley_block(i as u64 * 5, i + 1, Some([i; 32]));
-        apply_nonce_evolution(&mut state, &MultiEraBlock::Shelley(Box::new(block)), &config);
+        apply_nonce_evolution(
+            &mut state,
+            &MultiEraBlock::Shelley(Box::new(block)),
+            &config,
+        );
     }
     assert_eq!(state.current_epoch, yggdrasil_ledger::EpochNo(0));
 
@@ -3049,7 +3116,11 @@ fn apply_nonce_evolution_epoch_transition_via_shelley_blocks() {
 
     // Feed a block in epoch 1 (slot 100) to trigger TICKN.
     let block = make_shelley_block(100, 200, Some([0xFF; 32]));
-    apply_nonce_evolution(&mut state, &MultiEraBlock::Shelley(Box::new(block)), &config);
+    apply_nonce_evolution(
+        &mut state,
+        &MultiEraBlock::Shelley(Box::new(block)),
+        &config,
+    );
 
     assert_eq!(state.current_epoch, yggdrasil_ledger::EpochNo(1));
     // Epoch nonce should have changed.
@@ -3066,12 +3137,20 @@ fn apply_nonce_evolution_mixed_eras() {
 
     // Shelley block at slot 0.
     let s_block = make_shelley_block(0, 1, Some([0xAA; 32]));
-    apply_nonce_evolution(&mut state, &MultiEraBlock::Shelley(Box::new(s_block)), &config);
+    apply_nonce_evolution(
+        &mut state,
+        &MultiEraBlock::Shelley(Box::new(s_block)),
+        &config,
+    );
     let nonce_after_shelley = state.evolving_nonce;
 
     // Babbage block at slot 1.
     let b_block = make_babbage_block(1, 2, Some([0xBB; 32]));
-    apply_nonce_evolution(&mut state, &MultiEraBlock::Babbage(Box::new(b_block.clone())), &config);
+    apply_nonce_evolution(
+        &mut state,
+        &MultiEraBlock::Babbage(Box::new(b_block.clone())),
+        &config,
+    );
 
     // Evolving nonce should accumulate over both blocks.
     // Babbage uses Praos derivation: Blake2b-256(Blake2b-256("N" || output))
@@ -3244,7 +3323,8 @@ fn promote_stable_blocks_moves_to_immutable() {
         .collect();
 
     let mut immutable = InMemoryImmutable::default();
-    let promoted = promote_stable_blocks(&stable_entries, &volatile, &mut immutable).expect("promote");
+    let promoted =
+        promote_stable_blocks(&stable_entries, &volatile, &mut immutable).expect("promote");
     assert_eq!(promoted, 2);
     assert_eq!(immutable.len(), 2);
     // The promoted blocks are accessible in the immutable store.
@@ -3288,11 +3368,36 @@ fn chaindb_promote_volatile_prefix_moves_to_immutable_and_prunes_volatile() {
         .expect("promote via chaindb");
     assert_eq!(promoted, 2);
     assert_eq!(chain_db.immutable().len(), 2);
-    assert!(chain_db.immutable().get_block(&blocks[0].header.hash).is_some());
-    assert!(chain_db.immutable().get_block(&blocks[1].header.hash).is_some());
-    assert!(chain_db.volatile().get_block(&blocks[0].header.hash).is_none());
-    assert!(chain_db.volatile().get_block(&blocks[1].header.hash).is_none());
-    assert!(chain_db.volatile().get_block(&blocks[2].header.hash).is_some());
+    assert!(
+        chain_db
+            .immutable()
+            .get_block(&blocks[0].header.hash)
+            .is_some()
+    );
+    assert!(
+        chain_db
+            .immutable()
+            .get_block(&blocks[1].header.hash)
+            .is_some()
+    );
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&blocks[0].header.hash)
+            .is_none()
+    );
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&blocks[1].header.hash)
+            .is_none()
+    );
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&blocks[2].header.hash)
+            .is_some()
+    );
 }
 
 #[test]
@@ -3545,17 +3650,33 @@ fn collect_rolled_back_tx_ids_returns_txs_after_target() {
     let tx_b = TxId([0xB0; 32]);
     let mut blk2 = test_store_block(0x02, 11);
     blk2.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
+        Tx {
+            id: tx_a,
+            body: vec![],
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        },
+        Tx {
+            id: tx_b,
+            body: vec![],
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        },
     ];
     store.add_block(blk2).unwrap();
 
     // Block 3: 1 transaction
     let tx_c = TxId([0xC0; 32]);
     let mut blk3 = test_store_block(0x03, 12);
-    blk3.transactions = vec![
-        Tx { id: tx_c, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk3.transactions = vec![Tx {
+        id: tx_c,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     store.add_block(blk3).unwrap();
 
     // Rolling back to block 1 should yield tx_a, tx_b, tx_c.
@@ -3580,9 +3701,13 @@ fn collect_rolled_back_tx_ids_origin_returns_all() {
 
     let tx_a = TxId([0xAA; 32]);
     let mut blk1 = test_store_block(0x01, 10);
-    blk1.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk1.transactions = vec![Tx {
+        id: tx_a,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     store.add_block(blk1).unwrap();
 
     let ids = collect_rolled_back_tx_ids(&store, &Point::Origin);
@@ -3607,15 +3732,23 @@ fn rollback_collected_tx_ids_not_evicted_from_mempool() {
     let tx_a = TxId([0xA0; 32]);
     let tx_b = TxId([0xB0; 32]);
     let mut blk1 = test_store_block(0x01, 10);
-    blk1.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk1.transactions = vec![Tx {
+        id: tx_a,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     store.add_block(blk1).unwrap();
 
     let mut blk2 = test_store_block(0x02, 20);
-    blk2.transactions = vec![
-        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk2.transactions = vec![Tx {
+        id: tx_b,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     store.add_block(blk2).unwrap();
 
     // Simulate: tx_a was in our mempool before being confirmed.
@@ -3631,11 +3764,11 @@ fn rollback_collected_tx_ids_not_evicted_from_mempool() {
     };
     mempool.insert(entry_a).unwrap();
 
-    // Before rollback: evict_confirmed_from_mempool removes tx_a 
+    // Before rollback: evict_confirmed_from_mempool removes tx_a
     // (it is confirmed in block 1).
-    let blocks: Vec<_> = store.prefix_up_to(
-        &Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
-    ).unwrap();
+    let blocks: Vec<_> = store
+        .prefix_up_to(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
+        .unwrap();
     let confirmed_ids: Vec<TxId> = blocks
         .iter()
         .flat_map(|b| b.transactions.iter().map(|tx| tx.id))
@@ -3672,16 +3805,24 @@ fn apply_rollback_step_discards_volatile_suffix() {
 
     let tx_a = TxId([0xAA; 32]);
     let mut blk1 = test_store_block(0x01, 10);
-    blk1.transactions = vec![
-        Tx { id: tx_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk1.transactions = vec![Tx {
+        id: tx_a,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     store.add_block(blk1).unwrap();
 
     let tx_b = TxId([0xBB; 32]);
     let mut blk2 = test_store_block(0x02, 20);
-    blk2.transactions = vec![
-        Tx { id: tx_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk2.transactions = vec![Tx {
+        id: tx_b,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     store.add_block(blk2).unwrap();
 
     let target = Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]));
@@ -3698,7 +3839,10 @@ fn apply_rollback_step_discards_volatile_suffix() {
     apply_multi_era_step_to_volatile(&mut store, &step).unwrap();
 
     // Store is now truncated.
-    assert_eq!(store.tip(), Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32])));
+    assert_eq!(
+        store.tip(),
+        Point::BlockPoint(SlotNo(10), HeaderHash([0x01; 32]))
+    );
     assert!(store.get_block(&HeaderHash([0x02; 32])).is_none());
 }
 
@@ -3715,23 +3859,35 @@ fn promote_then_rollback_collects_only_volatile_tx_ids() {
 
     let tx_imm = TxId([0x11; 32]);
     let mut blk1 = test_store_block(0x01, 10);
-    blk1.transactions = vec![
-        Tx { id: tx_imm, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk1.transactions = vec![Tx {
+        id: tx_imm,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     chain_db.add_volatile_block(blk1).unwrap();
 
     let tx_vol_a = TxId([0x22; 32]);
     let mut blk2 = test_store_block(0x02, 20);
-    blk2.transactions = vec![
-        Tx { id: tx_vol_a, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk2.transactions = vec![Tx {
+        id: tx_vol_a,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     chain_db.add_volatile_block(blk2).unwrap();
 
     let tx_vol_b = TxId([0x33; 32]);
     let mut blk3 = test_store_block(0x03, 30);
-    blk3.transactions = vec![
-        Tx { id: tx_vol_b, body: vec![], witnesses: None, auxiliary_data: None, is_valid: None },
-    ];
+    blk3.transactions = vec![Tx {
+        id: tx_vol_b,
+        body: vec![],
+        witnesses: None,
+        auxiliary_data: None,
+        is_valid: None,
+    }];
     chain_db.add_volatile_block(blk3).unwrap();
 
     // Promote block 1 to immutable.
@@ -3753,7 +3909,12 @@ fn promote_then_rollback_collects_only_volatile_tx_ids() {
         Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]))
     );
     // Immutable block is preserved.
-    assert!(chain_db.immutable().get_block(&HeaderHash([0x01; 32])).is_some());
+    assert!(
+        chain_db
+            .immutable()
+            .get_block(&HeaderHash([0x01; 32]))
+            .is_some()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3836,7 +3997,7 @@ fn validate_block_opcert_counter_accepts_new_pool_in_dist() {
     use std::collections::BTreeMap;
     use yggdrasil_consensus::OcertCounters;
     use yggdrasil_ledger::PoolStakeDistribution;
-    use yggdrasil_node::{validate_block_opcert_counter, block_issuer_vkey};
+    use yggdrasil_node::{block_issuer_vkey, validate_block_opcert_counter};
 
     let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
         header: ShelleyHeader {
@@ -4323,7 +4484,10 @@ fn multi_era_block_era_byron() {
 #[test]
 fn sync_error_wrong_body_size_is_peer_attributable() {
     use yggdrasil_node::SyncError;
-    let err = SyncError::WrongBlockBodySize { declared: 100, actual: 200 };
+    let err = SyncError::WrongBlockBodySize {
+        declared: 100,
+        actual: 200,
+    };
     assert!(err.is_peer_attributable());
 }
 
@@ -4365,7 +4529,8 @@ fn verify_multi_era_block_rejects_bad_protocol_version() {
         verify_body_hash: false,
         max_major_protocol_version: None,
         future_check: None,
-        ocert_counters: None, pp_major_protocol_version: None,
+        ocert_counters: None,
+        pp_major_protocol_version: None,
     };
     let err = verify_multi_era_block(&block, &config).unwrap_err();
     assert!(

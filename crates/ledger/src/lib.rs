@@ -12,6 +12,8 @@
 pub mod cbor;
 /// Collateral validation for Alonzo+ script transactions.
 pub mod collateral;
+/// Epoch boundary processing (NEWEPOCH / SNAP / RUPD).
+pub mod epoch_boundary;
 /// Era modeling and era-local modules.
 pub mod eras;
 mod error;
@@ -31,8 +33,6 @@ pub mod protocol_params;
 pub mod rewards;
 /// Stake distribution snapshots and epoch-boundary snapshot rotation.
 pub mod stake;
-/// Epoch boundary processing (NEWEPOCH / SNAP / RUPD).
-pub mod epoch_boundary;
 /// Ledger state containers and transition entry points.
 pub mod state;
 /// Transaction and block wrappers.
@@ -52,14 +52,15 @@ pub use cbor::{CborDecode, CborEncode, Decoder, Encoder};
 /// Supported Cardano eras represented in the workspace.
 pub use eras::Era;
 pub use eras::{
-    AllegraTxBody, AlonzoBlock, AlonzoTxBody, AlonzoTxOut, AssetName, BabbageBlock, BabbageTxBody, BabbageTxOut,
-    BootstrapWitness, ByronBlock, ByronTx, ByronTxAux, ByronTxIn, ByronTxOut, ByronTxWitness,
-    Constitution, ConwayBlock, ConwayTxBody, DatumOption, ExUnits,
-    GovAction, GovActionId, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript, PolicyId,
-    PraosHeader, PraosHeaderBody, ProposalProcedure, Redeemer, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert, ShelleyWitnessSet, Value, Vote,
-    Voter, VotingProcedure, VotingProcedures, BYRON_SLOTS_PER_EPOCH, compute_block_body_hash,
+    AllegraTxBody, AlonzoBlock, AlonzoTxBody, AlonzoTxOut, AssetName, BYRON_SLOTS_PER_EPOCH,
+    BabbageBlock, BabbageTxBody, BabbageTxOut, BootstrapWitness, ByronBlock, ByronTx, ByronTxAux,
+    ByronTxIn, ByronTxOut, ByronTxWitness, Constitution, ConwayBlock, ConwayTxBody, DatumOption,
+    ExUnits, GovAction, GovActionId, MaryTxBody, MaryTxOut, MintAsset, MultiAsset, NativeScript,
+    PolicyId, PraosHeader, PraosHeaderBody, ProposalProcedure, Redeemer, ShelleyBlock,
+    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn,
+    ShelleyTxOut, ShelleyUpdate, ShelleyUtxo, ShelleyVkeyWitness, ShelleyVrfCert,
+    ShelleyWitnessSet, Value, Vote, Voter, VotingProcedure, VotingProcedures,
+    compute_block_body_hash,
 };
 
 // -- Error re-exports ---------------------------------------------------------
@@ -69,13 +70,11 @@ pub use error::LedgerError;
 // -- State re-exports ---------------------------------------------------------
 /// Top-level ledger state wrapper.
 pub use state::{
-    AccountingState, CommitteeAuthorization, CommitteeMemberState, CommitteeState,
-    DepositPot, DrepState, EnactOutcome, EnactState, GenesisDelegationState,
-    GovernanceActionState, InstantaneousRewards, LedgerState,
-    LedgerStateCheckpoint, LedgerStateSnapshot, PoolRelayAccessPoint, PoolState,
-    PpupSlotContext,
-    RegisteredDrep, RegisteredPool, RewardAccountState,
-    RewardAccounts, StakeCredentialState, StakeCredentials,
+    AccountingState, CommitteeAuthorization, CommitteeMemberState, CommitteeState, DepositPot,
+    DrepState, EnactOutcome, EnactState, GenesisDelegationState, GovernanceActionState,
+    InstantaneousRewards, LedgerState, LedgerStateCheckpoint, LedgerStateSnapshot,
+    PoolRelayAccessPoint, PoolState, PpupSlotContext, RegisteredDrep, RegisteredPool,
+    RewardAccountState, RewardAccounts, StakeCredentialState, StakeCredentials,
     accumulate_mir_from_certs, pv_can_follow,
 };
 
@@ -89,16 +88,16 @@ pub use tx::{
 // -- Type re-exports ----------------------------------------------------------
 pub use types::{
     AddrKeyHash, Address, Anchor, BaseAddress, BlockNo, DCert, DRep, EnterpriseAddress, EpochNo,
-    GenesisDelegateHash, GenesisHash, HeaderHash, MirPot, MirTarget, Nonce, Point,
-    PointerAddress, PoolKeyHash, PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash,
-    SlotNo, StakeCredential, Tip, TxId, UnitInterval, VrfKeyHash,
+    GenesisDelegateHash, GenesisHash, HeaderHash, MirPot, MirTarget, Nonce, Point, PointerAddress,
+    PoolKeyHash, PoolMetadata, PoolParams, Relay, RewardAccount, ScriptHash, SlotNo,
+    StakeCredential, Tip, TxId, UnitInterval, VrfKeyHash,
 };
 
 // -- Plutus re-exports --------------------------------------------------------
 pub use plutus::{PlutusData, Script, ScriptRef};
 
 // -- UTxO re-exports ----------------------------------------------------------
-pub use utxo::{MultiEraTxOut, MultiEraUtxo, MAX_REF_SCRIPT_SIZE_PER_TX};
+pub use utxo::{MAX_REF_SCRIPT_SIZE_PER_TX, MultiEraTxOut, MultiEraUtxo};
 
 // -- Stake distribution re-exports --------------------------------------------
 pub use stake::{
@@ -114,10 +113,7 @@ pub use rewards::{
 };
 
 // -- Epoch boundary re-exports ------------------------------------------------
-pub use epoch_boundary::{
-    EpochBoundaryEvent, apply_epoch_boundary,
-    retire_pools_with_refunds,
-};
+pub use epoch_boundary::{EpochBoundaryEvent, apply_epoch_boundary, retire_pools_with_refunds};
 
 // -- Protocol params re-exports -----------------------------------------------
 pub use protocol_params::{
@@ -125,10 +121,15 @@ pub use protocol_params::{
 };
 
 // -- Fee re-exports -----------------------------------------------------------
-pub use fees::{min_fee_linear, script_fee, total_min_fee, validate_fee, validate_tx_ex_units, validate_tx_size};
+pub use fees::{
+    min_fee_linear, script_fee, total_min_fee, validate_fee, validate_tx_ex_units, validate_tx_size,
+};
 
 // -- Min-UTxO re-exports ------------------------------------------------------
-pub use min_utxo::{validate_all_outputs_min_utxo, validate_min_utxo, validate_output_not_too_big, validate_output_boot_addr_attrs};
+pub use min_utxo::{
+    validate_all_outputs_min_utxo, validate_min_utxo, validate_output_boot_addr_attrs,
+    validate_output_not_too_big,
+};
 
 // -- Native script re-exports -------------------------------------------------
 pub use native_script::{NativeScriptContext, evaluate_native_script, native_script_hash};

@@ -106,9 +106,7 @@ pub enum ConsensusError {
     ///
     /// Reference: `CounterTooSmallOCERT` in
     /// `Ouroboros.Consensus.Protocol.Praos`.
-    #[error(
-        "OpCert counter too old: stored {stored}, received {received}"
-    )]
+    #[error("OpCert counter too old: stored {stored}, received {received}")]
     OcertCounterTooOld {
         /// The highest previously-seen sequence number.
         stored: u64,
@@ -121,9 +119,7 @@ pub enum ConsensusError {
     ///
     /// Reference: `CounterOverIncrementedOCERT` in
     /// `Ouroboros.Consensus.Protocol.Praos`.
-    #[error(
-        "OpCert counter too far ahead: stored {stored}, received {received}"
-    )]
+    #[error("OpCert counter too far ahead: stored {stored}, received {received}")]
     OcertCounterTooFar {
         /// The highest previously-seen sequence number.
         stored: u64,

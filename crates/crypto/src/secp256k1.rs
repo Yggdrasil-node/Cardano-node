@@ -34,7 +34,7 @@ use crate::CryptoError;
 /// Returns `Ok(true)` if valid, `Ok(false)` if the signature does not
 /// match, or `Err` if the inputs have invalid lengths or encoding.
 pub fn verify_ecdsa(vk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, CryptoError> {
-    use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
+    use k256::ecdsa::{Signature, VerifyingKey, signature::hazmat::PrehashVerifier};
 
     if vk.len() != 33 {
         return Err(CryptoError::InvalidKey(format!(
@@ -85,7 +85,7 @@ pub fn verify_ecdsa(vk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, CryptoErr
 /// Returns `Ok(true)` if valid, `Ok(false)` if the signature does not
 /// match, or `Err` if the inputs have invalid lengths or encoding.
 pub fn verify_schnorr(vk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, CryptoError> {
-    use k256::schnorr::{signature::Verifier, Signature, VerifyingKey};
+    use k256::schnorr::{Signature, VerifyingKey, signature::Verifier};
 
     if vk.len() != 32 {
         return Err(CryptoError::InvalidKey(format!(
@@ -166,7 +166,7 @@ mod tests {
     /// Round-trip: generate a key pair, sign, and verify.
     #[test]
     fn ecdsa_sign_and_verify_round_trip() {
-        use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
+        use k256::ecdsa::{Signature, SigningKey, signature::hazmat::PrehashSigner};
         use sha2::{Digest, Sha256};
 
         let signing_key = SigningKey::from_slice(&[1u8; 32]).expect("valid key");
@@ -194,7 +194,7 @@ mod tests {
     /// Round-trip: generate a key pair, sign, and verify (Schnorr).
     #[test]
     fn schnorr_sign_and_verify_round_trip() {
-        use k256::schnorr::{signature::Signer, SigningKey};
+        use k256::schnorr::{SigningKey, signature::Signer};
 
         let signing_key = SigningKey::from_bytes(&[1u8; 32]).expect("valid key");
         let verifying_key = signing_key.verifying_key();

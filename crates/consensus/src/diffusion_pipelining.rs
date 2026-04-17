@@ -91,10 +91,7 @@ impl TentativeHeaderView {
     pub fn from_header_body(hb: &HeaderBody) -> Self {
         Self {
             block_no: hb.block_number,
-            identity: HotIdentity::new(
-                &hb.issuer_vkey,
-                hb.operational_cert.sequence_number,
-            ),
+            identity: HotIdentity::new(&hb.issuer_vkey, hb.operational_cert.sequence_number),
         }
     }
 }
@@ -217,10 +214,7 @@ impl TentativeHeaderState {
     /// [`HeaderBody`] and apply the criterion in one step.
     ///
     /// Upstream: `updateTentativeHeaderState`.
-    pub fn update_with_header_body(
-        &self,
-        hb: &HeaderBody,
-    ) -> Option<TentativeHeaderState> {
+    pub fn update_with_header_body(&self, hb: &HeaderBody) -> Option<TentativeHeaderState> {
         let view = TentativeHeaderView::from_header_body(hb);
         self.apply_tentative_header_view(&view)
     }
@@ -363,9 +357,7 @@ impl TentativeState {
         let view = TentativeHeaderView::from_header_body(header_body);
         // Check criterion — but don't update state yet.
         // State is only updated if this becomes a trap (body invalid).
-        let _trap_state = self
-            .criterion_state
-            .apply_tentative_header_view(&view)?;
+        let _trap_state = self.criterion_state.apply_tentative_header_view(&view)?;
 
         let block_no = header_body.block_number;
         self.tentative_header = Some(TentativeHeader {
@@ -408,10 +400,7 @@ impl TentativeState {
         let th = self.tentative_header.take()?;
 
         // Apply the view to record the trap in criterion state.
-        if let Some(new_state) = self
-            .criterion_state
-            .apply_tentative_header_view(&th.view)
-        {
+        if let Some(new_state) = self.criterion_state.apply_tentative_header_view(&th.view) {
             self.criterion_state = new_state;
         }
 
@@ -669,10 +658,7 @@ mod tests {
         });
 
         let event = ts.clear_trap().unwrap();
-        assert!(matches!(
-            event,
-            PipeliningEvent::TrapTentativeHeader { .. }
-        ));
+        assert!(matches!(event, PipeliningEvent::TrapTentativeHeader { .. }));
         assert!(!ts.has_tentative());
         // Criterion state updated: issuer 1 at block 5 is now "bad".
         assert!(ts.criterion_state.bad_identities.contains(&id));

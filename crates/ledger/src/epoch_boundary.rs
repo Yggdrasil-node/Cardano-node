@@ -24,15 +24,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::eras::conway::GovActionId;
 use crate::error::LedgerError;
-use crate::rewards::{compute_epoch_rewards, EpochRewardDistribution, RewardParams};
+use crate::rewards::{EpochRewardDistribution, RewardParams, compute_epoch_rewards};
 use crate::stake::{
-    augment_pool_dist_with_proposal_deposits, compute_drep_stake_distribution,
-    compute_proposal_deposits_per_credential, compute_stake_snapshot, StakeSnapshots,
+    StakeSnapshots, augment_pool_dist_with_proposal_deposits, compute_drep_stake_distribution,
+    compute_proposal_deposits_per_credential, compute_stake_snapshot,
 };
 use crate::state::{EnactOutcome, LedgerState};
 use crate::types::{EpochNo, PoolKeyHash, RewardAccount, UnitInterval};
-use crate::eras::conway::GovActionId;
 
 // ---------------------------------------------------------------------------
 // Epoch boundary event
@@ -133,7 +133,10 @@ fn compute_eta(
     slots_per_epoch: u64,
     blocks_made: &std::collections::BTreeMap<PoolKeyHash, u64>,
 ) -> UnitInterval {
-    let one = UnitInterval { numerator: 1, denominator: 1 };
+    let one = UnitInterval {
+        numerator: 1,
+        denominator: 1,
+    };
 
     // d >= 0.8 → η = 1
     if d_param.denominator > 0 && d_param.numerator * 10 >= d_param.denominator * 8 {
@@ -149,9 +152,7 @@ fn compute_eta(
     let one_minus_d_den = d_param.denominator as u128;
 
     // expectedBlocks = floor((1 - d) × asc × slots_per_epoch)
-    let expected = one_minus_d_num
-        * (asc.numerator as u128)
-        * (slots_per_epoch as u128)
+    let expected = one_minus_d_num * (asc.numerator as u128) * (slots_per_epoch as u128)
         / (one_minus_d_den * asc.denominator as u128);
 
     if expected == 0 {
@@ -199,7 +200,15 @@ fn derive_pool_performance(
     if d.numerator * 10 >= d.denominator * 8 && d.denominator > 0 {
         return blocks_made
             .keys()
-            .map(|pool_hash| (*pool_hash, UnitInterval { numerator: 1, denominator: 1 }))
+            .map(|pool_hash| {
+                (
+                    *pool_hash,
+                    UnitInterval {
+                        numerator: 1,
+                        denominator: 1,
+                    },
+                )
+            })
             .collect();
     }
 
@@ -225,7 +234,13 @@ fn derive_pool_performance(
         let numerator = blocks_produced.saturating_mul(total_stake);
         let denominator = pool_stake.saturating_mul(total_blocks);
         if denominator > 0 {
-            performance.insert(*pool_hash, UnitInterval { numerator, denominator });
+            performance.insert(
+                *pool_hash,
+                UnitInterval {
+                    numerator,
+                    denominator,
+                },
+            );
         }
     }
     performance
@@ -322,7 +337,10 @@ pub fn apply_epoch_boundary(
     //
     // Reference: `startStep` in
     // `Cardano.Ledger.Shelley.LedgerState.PulsingReward`.
-    let d_param = params.d.unwrap_or(UnitInterval { numerator: 0, denominator: 1 });
+    let d_param = params.d.unwrap_or(UnitInterval {
+        numerator: 0,
+        denominator: 1,
+    });
     let eta = compute_eta(
         d_param,
         ledger.active_slot_coeff(),
@@ -350,7 +368,8 @@ pub fn apply_epoch_boundary(
     // `ssStakeGo` at the time `startStep` would read it.
     let effective_performance: BTreeMap<PoolKeyHash, UnitInterval>;
     if pool_performance.is_empty() && !ledger.blocks_made().is_empty() {
-        effective_performance = derive_pool_performance(ledger.blocks_made(), &snapshots.go, d_param);
+        effective_performance =
+            derive_pool_performance(ledger.blocks_made(), &snapshots.go, d_param);
     } else {
         effective_performance = pool_performance.clone();
     }
@@ -507,8 +526,7 @@ pub fn apply_epoch_boundary(
     } else {
         (0, 0)
     };
-    let governance_actions_expired =
-        expired_gov_action_ids.len();
+    let governance_actions_expired = expired_gov_action_ids.len();
 
     // Credit unclaimed governance deposits to treasury — from
     // expired proposals with unregistered return accounts, from
@@ -559,7 +577,9 @@ pub fn apply_epoch_boundary(
             .saturating_add(ratify_result.enacted_deposit_refunds)
             .saturating_add(ratify_result.removed_due_to_enactment_deposit_refunds)
             .saturating_add(ratify_result.unclaimed_deposits);
-        ledger.deposit_pot_mut().return_proposal_deposit(total_proposal_deposit_reduction);
+        ledger
+            .deposit_pot_mut()
+            .return_proposal_deposit(total_proposal_deposit_reduction);
     }
 
     // -----------------------------------------------------------------------
@@ -602,7 +622,10 @@ pub fn apply_epoch_boundary(
     //    Upstream: `Cardano.Ledger.Conway.Rules.Epoch` — drepExpiry.
     // -----------------------------------------------------------------------
     let dreps_expired = {
-        ledger.drep_state().inactive_dreps(new_epoch, drep_activity).len()
+        ledger
+            .drep_state()
+            .inactive_dreps(new_epoch, drep_activity)
+            .len()
     };
 
     Ok(EpochBoundaryEvent {
@@ -613,13 +636,14 @@ pub fn apply_epoch_boundary(
         pool_deposit_refunds,
         unclaimed_pool_deposits,
         rewards_distributed: reward_dist.distributed,
-        treasury_delta: reward_dist.treasury_cut.saturating_add(unregistered_rewards),
+        treasury_delta: reward_dist
+            .treasury_cut
+            .saturating_add(unregistered_rewards),
         unclaimed_rewards: reward_dist.unclaimed,
         delta_reserves: reward_dist.delta_reserves,
         accounts_rewarded,
         governance_actions_expired,
-        governance_deposit_refunds: governance_deposit_refunds
-            .saturating_add(descendant_refunds),
+        governance_deposit_refunds: governance_deposit_refunds.saturating_add(descendant_refunds),
         expired_gov_action_ids,
         dreps_expired,
         governance_actions_enacted,
@@ -627,8 +651,10 @@ pub fn apply_epoch_boundary(
         enact_outcomes: ratify_result.outcomes,
         enacted_deposit_refunds: ratify_result.enacted_deposit_refunds,
         removed_due_to_enactment: ratify_result.removed_due_to_enactment,
-        removed_due_to_enactment_deposit_refunds: ratify_result.removed_due_to_enactment_deposit_refunds,
-        unclaimed_governance_deposits: ratify_result.unclaimed_deposits
+        removed_due_to_enactment_deposit_refunds: ratify_result
+            .removed_due_to_enactment_deposit_refunds,
+        unclaimed_governance_deposits: ratify_result
+            .unclaimed_deposits
             .saturating_add(expired_unclaimed_deposits),
         donations_transferred,
         mir_accounts_credited: mir_result.accounts_credited,
@@ -657,10 +683,7 @@ pub fn apply_epoch_boundary(
 /// Reference: `applyRUpdFiltered` in
 /// `Cardano.Ledger.Shelley.LedgerState.IncrementalStake` — adds
 /// `frTotalUnregistered` to the treasury after filtering.
-fn distribute_rewards(
-    ledger: &mut LedgerState,
-    dist: &EpochRewardDistribution,
-) -> (usize, u64) {
+fn distribute_rewards(ledger: &mut LedgerState, dist: &EpochRewardDistribution) -> (usize, u64) {
     let mut count = 0usize;
     let mut unregistered_total = 0u64;
 
@@ -873,11 +896,7 @@ fn remove_expired_governance_actions(
     let expired_ids: Vec<GovActionId> = ledger
         .governance_actions()
         .iter()
-        .filter(|(_, state)| {
-            state
-                .expires_after()
-                .is_some_and(|exp| exp.0 < epoch.0)
-        })
+        .filter(|(_, state)| state.expires_after().is_some_and(|exp| exp.0 < epoch.0))
         .map(|(id, _)| id.clone())
         .collect();
 
@@ -931,10 +950,7 @@ fn remove_expired_governance_actions(
 ///
 /// Returns `(total_refunded, unclaimed)` matching the same semantics as
 /// `remove_expired_governance_actions`.
-fn remove_descendants_of(
-    ledger: &mut LedgerState,
-    removed_ids: &[GovActionId],
-) -> (u64, u64) {
+fn remove_descendants_of(ledger: &mut LedgerState, removed_ids: &[GovActionId]) -> (u64, u64) {
     let mut all_removed: BTreeSet<GovActionId> = removed_ids.iter().cloned().collect();
 
     // Iteratively discover descendants until no new ones are found.
@@ -975,7 +991,9 @@ fn remove_descendants_of(
     for id in &descendant_ids {
         if let Some(state) = ledger.governance_actions_mut().remove(id) {
             let deposit = state.proposal().deposit;
-            if let Some(reward_account) = RewardAccount::from_bytes(&state.proposal().reward_account) {
+            if let Some(reward_account) =
+                RewardAccount::from_bytes(&state.proposal().reward_account)
+            {
                 if let Some(ra_state) = ledger.reward_accounts_mut().get_mut(&reward_account) {
                     ra_state.set_balance(ra_state.balance().saturating_add(deposit));
                     total_refunded = total_refunded.saturating_add(deposit);
@@ -1061,10 +1079,7 @@ fn prev_action_as_expected(
 /// pass.
 ///
 /// Upstream reference: `Cardano.Ledger.Conway.Rules.Ratify.withdrawalCanWithdraw`.
-fn withdrawal_can_withdraw(
-    action: &crate::eras::conway::GovAction,
-    treasury: u64,
-) -> bool {
+fn withdrawal_can_withdraw(action: &crate::eras::conway::GovAction, treasury: u64) -> bool {
     if let crate::eras::conway::GovAction::TreasuryWithdrawals { withdrawals, .. } = action {
         let total: u64 = withdrawals.values().sum();
         total <= treasury
@@ -1141,8 +1156,7 @@ fn ratify_and_enact(
     // `computeDRepDistr` adds these to both DRep and pool distributions.
     //
     // Reference: Cardano.Ledger.Conway.Governance.DRepPulser.computeDRepDistr.
-    let proposal_deposits =
-        compute_proposal_deposits_per_credential(ledger.governance_actions());
+    let proposal_deposits = compute_proposal_deposits_per_credential(ledger.governance_actions());
 
     // Compute DRep delegated stake distribution from the mark snapshot,
     // including proposal deposits in each credential's voting weight.
@@ -1170,11 +1184,7 @@ fn ratify_and_enact(
     //
     // Reference: Cardano.Ledger.Conway.Governance.Internal.reorderActions,
     //            Cardano.Ledger.Conway.Governance.Procedures.actionPriority.
-    let mut sorted_ids: Vec<GovActionId> = ledger
-        .governance_actions()
-        .keys()
-        .cloned()
-        .collect();
+    let mut sorted_ids: Vec<GovActionId> = ledger.governance_actions().keys().cloned().collect();
     sorted_ids.sort_by(|a, b| {
         let pa = ledger
             .governance_actions()
@@ -1330,9 +1340,9 @@ fn ratify_and_enact(
         // --- All checks passed: enact ---
         let removed = ledger.governance_actions_mut().remove(id);
         if let Some(state) = removed {
-            enacted_purposes.insert(
-                crate::state::conway_gov_action_purpose(&state.proposal().gov_action),
-            );
+            enacted_purposes.insert(crate::state::conway_gov_action_purpose(
+                &state.proposal().gov_action,
+            ));
             deposit_targets.push((
                 state.proposal().reward_account.clone(),
                 state.proposal().deposit,
@@ -1367,9 +1377,8 @@ fn ratify_and_enact(
             // subsequent `withdrawalCanWithdraw` checks see the reduced
             // budget regardless of how much was actually credited to
             // registered accounts.
-            if let crate::eras::conway::GovAction::TreasuryWithdrawals {
-                withdrawals, ..
-            } = &state.proposal().gov_action
+            if let crate::eras::conway::GovAction::TreasuryWithdrawals { withdrawals, .. } =
+                &state.proposal().gov_action
             {
                 let full_proposed: u64 = withdrawals.values().sum();
                 withdrawal_budget = withdrawal_budget.saturating_sub(full_proposed);
@@ -1392,10 +1401,7 @@ fn ratify_and_enact(
     //
     // Upstream reference: `proposalsApplyEnactment`.
     // -----------------------------------------------------------------------
-    let removed_due_to_enactment = remove_lineage_conflicting_proposals(
-        ledger,
-        &enacted_purposes,
-    );
+    let removed_due_to_enactment = remove_lineage_conflicting_proposals(ledger, &enacted_purposes);
 
     // Collect deposit targets from subtree-removed actions.
     for id in &removed_due_to_enactment {
@@ -1513,12 +1519,10 @@ fn remove_lineage_conflicting_proposals(
         let purpose_proposals: Vec<(GovActionId, Option<GovActionId>)> = ledger
             .governance_actions()
             .iter()
-            .filter(|(_, state)| {
-                conway_gov_action_purpose(&state.proposal().gov_action) == purpose
-            })
+            .filter(|(_, state)| conway_gov_action_purpose(&state.proposal().gov_action) == purpose)
             .map(|(id, state)| {
-                let prev = gov_action_prev_id(&state.proposal().gov_action)
-                    .and_then(|opt| opt.clone());
+                let prev =
+                    gov_action_prev_id(&state.proposal().gov_action).and_then(|opt| opt.clone());
                 (id.clone(), prev)
             })
             .collect();
@@ -1582,9 +1586,7 @@ pub fn retire_pools_with_refunds(
     let retiring: Vec<(PoolKeyHash, RewardAccount, u64)> = ledger
         .pool_state()
         .iter()
-        .filter(|(_, pool)| {
-            pool.retiring_epoch().is_some_and(|e| e <= epoch)
-        })
+        .filter(|(_, pool)| pool.retiring_epoch().is_some_and(|e| e <= epoch))
         .map(|(k, pool)| (*k, pool.params().reward_account, pool.deposit()))
         .collect();
 
@@ -1598,7 +1600,9 @@ pub fn retire_pools_with_refunds(
     // 2b. Clear pool delegations pointing at retired pools.
     //     Upstream: `removeStakePoolDelegations (delegsToClear cs retired)`
     //     in `Cardano.Ledger.Shelley.Rules.PoolReap`.
-    ledger.stake_credentials_mut().clear_pool_delegations(&retired_keys);
+    ledger
+        .stake_credentials_mut()
+        .clear_pool_delegations(&retired_keys);
 
     // 3. Credit refunds to reward accounts; track unclaimed deposits.
     let mut total_refunded: u64 = 0;
@@ -1628,16 +1632,16 @@ pub fn retire_pools_with_refunds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eras::shelley::ShelleyUpdate;
+    use crate::eras::{Era, ShelleyTxIn, ShelleyTxOut};
+    use crate::protocol_params::{ProtocolParameterUpdate, ProtocolParameters};
     use crate::stake::StakeSnapshot;
     use crate::state::GenesisDelegationState;
     use crate::state::RewardAccountState;
     use crate::types::{
-        Address, BaseAddress, EpochNo, PoolKeyHash, PoolParams, RewardAccount,
-        StakeCredential, UnitInterval,
+        Address, BaseAddress, EpochNo, PoolKeyHash, PoolParams, RewardAccount, StakeCredential,
+        UnitInterval,
     };
-    use crate::eras::{Era, ShelleyTxIn, ShelleyTxOut};
-    use crate::eras::shelley::ShelleyUpdate;
-    use crate::protocol_params::{ProtocolParameterUpdate, ProtocolParameters};
 
     fn test_cred(b: u8) -> StakeCredential {
         StakeCredential::AddrKeyHash([b; 28])
@@ -1699,7 +1703,9 @@ mod tests {
         // Register a pool with the current pool_deposit recorded.
         let params = test_pool_params(pool_id);
         let pp_pool_deposit = test_protocol_params().pool_deposit;
-        ledger.pool_state_mut().register_with_deposit(params, pp_pool_deposit);
+        ledger
+            .pool_state_mut()
+            .register_with_deposit(params, pp_pool_deposit);
 
         // Register the pool operator as a stake credential + delegation.
         let cred = test_cred(pool_id);
@@ -1721,10 +1727,16 @@ mod tests {
         ledger
     }
 
-    fn require_committee_vote_for_ratification(ledger: &mut LedgerState, cold_byte: u8, hot_byte: u8) {
+    fn require_committee_vote_for_ratification(
+        ledger: &mut LedgerState,
+        cold_byte: u8,
+        hot_byte: u8,
+    ) {
         let cc_cred = test_cred(cold_byte);
         let hot_cred = test_cred(hot_byte);
-        ledger.committee_state_mut().register_with_term(cc_cred, 999);
+        ledger
+            .committee_state_mut()
+            .register_with_term(cc_cred, 999);
         ledger
             .committee_state_mut()
             .get_mut(&cc_cred)
@@ -1746,13 +1758,8 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let event = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(1),
-            &mut snapshots,
-            &perf,
-        )
-        .expect("epoch boundary should succeed");
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch boundary should succeed");
 
         assert_eq!(event.new_epoch, EpochNo(1));
         assert_eq!(ledger.current_epoch(), EpochNo(1));
@@ -1776,7 +1783,10 @@ mod tests {
             staking: cred,
         });
         let addr_bytes = base_addr.to_bytes();
-        let txin = ShelleyTxIn { transaction_id: [0u8; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [0u8; 32],
+            index: 0,
+        };
         ledger.multi_era_utxo_mut().insert_shelley(
             txin,
             ShelleyTxOut {
@@ -1791,25 +1801,15 @@ mod tests {
 
         // First rotation to populate `mark`.
         let perf = BTreeMap::new();
-        let _event = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(1),
-            &mut snapshots,
-            &perf,
-        )
-        .expect("epoch 1 boundary should succeed");
+        let _event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1 boundary should succeed");
 
         // Second rotation moves the snapshot into `go`, enabling rewards.
         // Add more fees for epoch 2.
         snapshots.accumulate_fees(500_000_000); // 500 ADA
 
-        let event = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(2),
-            &mut snapshots,
-            &perf,
-        )
-        .expect("epoch 2 boundary should succeed");
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2 boundary should succeed");
 
         // Some rewards should have been distributed (unless pool cost
         // exceeds the apparent reward — depends on reserve size).
@@ -1833,16 +1833,13 @@ mod tests {
         ledger.deposit_pot_mut().add_pool_deposit(pool_deposit);
 
         // Schedule pool 3 for retirement at epoch 5.
-        ledger
-            .pool_state_mut()
-            .retire(test_pool(3), EpochNo(5));
+        ledger.pool_state_mut().retire(test_pool(3), EpochNo(5));
 
         // Before retirement.
         let ra = test_reward_account(3);
         let balance_before = ledger.reward_accounts().balance(&ra);
 
-        let (retired, refunded, unclaimed) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(5));
+        let (retired, refunded, unclaimed) = retire_pools_with_refunds(&mut ledger, EpochNo(5));
 
         assert_eq!(retired.len(), 1);
         assert_eq!(retired[0], test_pool(3));
@@ -1865,13 +1862,10 @@ mod tests {
         ledger.deposit_pot_mut().add_pool_deposit(500_000_000);
 
         // Schedule for epoch 10.
-        ledger
-            .pool_state_mut()
-            .retire(test_pool(4), EpochNo(10));
+        ledger.pool_state_mut().retire(test_pool(4), EpochNo(10));
 
         // Try retiring at epoch 5 — pool should NOT be retired.
-        let (retired, refunded, _unclaimed) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(5));
+        let (retired, refunded, _unclaimed) = retire_pools_with_refunds(&mut ledger, EpochNo(5));
 
         assert!(retired.is_empty());
         assert_eq!(refunded, 0);
@@ -1892,16 +1886,17 @@ mod tests {
         // Register a pool with the OLD deposit (200_000_000).
         let params = test_pool_params(7);
         let old_deposit = 200_000_000u64;
-        ledger.pool_state_mut().register_with_deposit(params, old_deposit);
+        ledger
+            .pool_state_mut()
+            .register_with_deposit(params, old_deposit);
         ledger.deposit_pot_mut().add_pool_deposit(old_deposit);
 
         let pool_cred = test_cred(7);
         ledger.stake_credentials_mut().register(pool_cred);
         let ra = test_reward_account(7);
-        ledger.reward_accounts_mut().insert(
-            ra,
-            RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(ra, RewardAccountState::new(0, None));
 
         // Now the current pp_poolDeposit changes to 500_000_000.
         // (This simulates a protocol parameter update.)
@@ -1912,8 +1907,7 @@ mod tests {
         // Schedule retirement.
         ledger.pool_state_mut().retire(test_pool(7), EpochNo(5));
 
-        let (retired, refunded, unclaimed) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(5));
+        let (retired, refunded, unclaimed) = retire_pools_with_refunds(&mut ledger, EpochNo(5));
 
         assert_eq!(retired.len(), 1);
         // Must refund the ORIGINAL deposit (200M), not current param (500M).
@@ -1934,7 +1928,9 @@ mod tests {
 
         let params = test_pool_params(8);
         let deposit = 500_000_000u64;
-        ledger.pool_state_mut().register_with_deposit(params, deposit);
+        ledger
+            .pool_state_mut()
+            .register_with_deposit(params, deposit);
         ledger.deposit_pot_mut().add_pool_deposit(deposit);
 
         // Register stake credential but do NOT create a reward account.
@@ -1945,8 +1941,7 @@ mod tests {
         // Schedule retirement.
         ledger.pool_state_mut().retire(test_pool(8), EpochNo(5));
 
-        let (_retired, refunded, unclaimed) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(5));
+        let (_retired, refunded, unclaimed) = retire_pools_with_refunds(&mut ledger, EpochNo(5));
 
         // Refunded = 0 (no registered account to credit).
         assert_eq!(refunded, 0);
@@ -1980,7 +1975,10 @@ mod tests {
 
         // Old tau = 0.2.  Submit proposal to change tau to 0.4 at epoch 1.
         let mut update = ProtocolParameterUpdate::default();
-        update.tau = Some(UnitInterval { numerator: 4, denominator: 10 });
+        update.tau = Some(UnitInterval {
+            numerator: 4,
+            denominator: 10,
+        });
         let mut proposals = BTreeMap::new();
         proposals.insert(genesis_hash, update);
         let shelley_update = ShelleyUpdate {
@@ -1992,20 +1990,18 @@ mod tests {
         // Verify the old tau is still 0.2.
         assert_eq!(
             ledger.protocol_params().unwrap().tau,
-            UnitInterval { numerator: 2, denominator: 10 },
+            UnitInterval {
+                numerator: 2,
+                denominator: 10
+            },
         );
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
         // Apply epoch boundary for epoch 1.
-        let event = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(1),
-            &mut snapshots,
-            &perf,
-        )
-        .expect("epoch 1 boundary should succeed");
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1 boundary should succeed");
 
         // PPUP should have been applied (tau changed).
         assert!(event.pparam_updates_applied > 0);
@@ -2013,7 +2009,10 @@ mod tests {
         // NEW tau should now be 0.4.
         assert_eq!(
             ledger.protocol_params().unwrap().tau,
-            UnitInterval { numerator: 4, denominator: 10 },
+            UnitInterval {
+                numerator: 4,
+                denominator: 10
+            },
         );
 
         // The treasury_delta should correspond to OLD tau (0.2), not new (0.4).
@@ -2040,13 +2039,8 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _event = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(1),
-            &mut snapshots,
-            &perf,
-        )
-        .expect("epoch 1 boundary should succeed");
+        let _event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1 boundary should succeed");
 
         // With empty go snapshot, no rewards are distributed, but the
         // reward pot formation still draws from reserves and credits treasury.
@@ -2068,12 +2062,7 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let result = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(1),
-            &mut snapshots,
-            &perf,
-        );
+        let result = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf);
 
         assert!(result.is_err());
     }
@@ -2088,13 +2077,8 @@ mod tests {
 
         for epoch in 1..=5 {
             snapshots.accumulate_fees(100_000_000); // 100 ADA per epoch
-            let event = apply_epoch_boundary(
-                &mut ledger,
-                EpochNo(epoch),
-                &mut snapshots,
-                &perf,
-            )
-            .expect("epoch boundary should succeed");
+            let event = apply_epoch_boundary(&mut ledger, EpochNo(epoch), &mut snapshots, &perf)
+                .expect("epoch boundary should succeed");
 
             assert_eq!(event.new_epoch, EpochNo(epoch));
         }
@@ -2123,8 +2107,7 @@ mod tests {
     #[test]
     fn test_retire_no_pools() {
         let mut ledger = LedgerState::new(Era::Shelley);
-        let (retired, refunded, _unclaimed) =
-            retire_pools_with_refunds(&mut ledger, EpochNo(1));
+        let (retired, refunded, _unclaimed) = retire_pools_with_refunds(&mut ledger, EpochNo(1));
         assert!(retired.is_empty());
         assert_eq!(refunded, 0);
     }
@@ -2164,18 +2147,30 @@ mod tests {
         // The operator credential (cred 5) and extra delegator must have
         // their delegation cleared.
         assert_eq!(
-            ledger.stake_credentials().get(&test_cred(5)).unwrap().delegated_pool(),
+            ledger
+                .stake_credentials()
+                .get(&test_cred(5))
+                .unwrap()
+                .delegated_pool(),
             None,
             "operator delegation should be cleared",
         );
         assert_eq!(
-            ledger.stake_credentials().get(&cred2).unwrap().delegated_pool(),
+            ledger
+                .stake_credentials()
+                .get(&cred2)
+                .unwrap()
+                .delegated_pool(),
             None,
             "extra delegator should be cleared",
         );
         // Credential delegated to a different pool must be untouched.
         assert_eq!(
-            ledger.stake_credentials().get(&cred3).unwrap().delegated_pool(),
+            ledger
+                .stake_credentials()
+                .get(&cred3)
+                .unwrap()
+                .delegated_pool(),
             Some(test_pool(99)),
             "unrelated delegation must be preserved",
         );
@@ -2187,7 +2182,10 @@ mod tests {
     use crate::state::GovernanceActionState;
     use crate::types::Anchor;
 
-    fn test_proposal(deposit: u64, reward_account_byte: u8) -> crate::eras::conway::ProposalProcedure {
+    fn test_proposal(
+        deposit: u64,
+        reward_account_byte: u8,
+    ) -> crate::eras::conway::ProposalProcedure {
         let ra = test_reward_account(reward_account_byte);
         crate::eras::conway::ProposalProcedure {
             deposit,
@@ -2280,14 +2278,12 @@ mod tests {
         require_committee_vote_for_ratification(&mut ledger, 0x91, 0x92);
 
         // Register two more reward accounts for proposals.
-        ledger.reward_accounts_mut().insert(
-            test_reward_account(10),
-            RewardAccountState::new(0, None),
-        );
-        ledger.reward_accounts_mut().insert(
-            test_reward_account(11),
-            RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(test_reward_account(10), RewardAccountState::new(0, None));
+        ledger
+            .reward_accounts_mut()
+            .insert(test_reward_account(11), RewardAccountState::new(0, None));
 
         let deposit = 250_000_000u64;
 
@@ -2370,11 +2366,7 @@ mod tests {
                 data_hash: [0u8; 32],
             },
         };
-        let gas = GovernanceActionState::new_with_lifetime(
-            proposal,
-            EpochNo(1),
-            Some(1),
-        );
+        let gas = GovernanceActionState::new_with_lifetime(proposal, EpochNo(1), Some(1));
         let gai = test_gov_action_id(0xAB, 0);
         ledger.governance_actions_mut().insert(gai.clone(), gas);
 
@@ -2573,10 +2565,9 @@ mod tests {
         ledger.set_protocol_params(test_protocol_params_with_drep_activity(5));
 
         let drep = DRep::KeyHash([0x04; 28]);
-        ledger.drep_state_mut().register(
-            drep,
-            RegisteredDrep::new(500_000_000, None),
-        );
+        ledger
+            .drep_state_mut()
+            .register(drep, RegisteredDrep::new(500_000_000, None));
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
@@ -2605,10 +2596,9 @@ mod tests {
         );
         // DRep C: legacy, no activity epoch → not expired.
         let drep_c = DRep::KeyHash([0x07; 28]);
-        ledger.drep_state_mut().register(
-            drep_c,
-            RegisteredDrep::new(500_000_000, None),
-        );
+        ledger
+            .drep_state_mut()
+            .register(drep_c, RegisteredDrep::new(500_000_000, None));
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
@@ -2634,7 +2624,11 @@ mod tests {
             RegisteredDrep::new_active(500_000_000, None, EpochNo(80)),
         );
         // Simulate a vote in epoch 95 → touch_activity.
-        ledger.drep_state_mut().get_mut(&drep).unwrap().touch_activity(EpochNo(95));
+        ledger
+            .drep_state_mut()
+            .get_mut(&drep)
+            .unwrap()
+            .touch_activity(EpochNo(95));
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
@@ -2665,13 +2659,17 @@ mod tests {
 
         // Register a CC member and authorize hot key.
         let cc_cred = test_cred(0xC0);
-        ledger.committee_state_mut().register_with_term(cc_cred, 999);
+        ledger
+            .committee_state_mut()
+            .register_with_term(cc_cred, 999);
         let hot_cred = test_cred(0xC1);
         ledger
             .committee_state_mut()
             .get_mut(&cc_cred)
             .unwrap()
-            .set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(hot_cred)));
+            .set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(
+                hot_cred,
+            )));
         // Set committee quorum to 1/1 (all must vote yes).
         ledger.enact_state_mut().committee_quorum = UnitInterval {
             numerator: 1,
@@ -2680,10 +2678,9 @@ mod tests {
 
         // Register a DRep and delegate stake to it.
         let drep = DRep::KeyHash([0xD0; 28]);
-        ledger.drep_state_mut().register(
-            drep,
-            RegisteredDrep::new_active(0, None, EpochNo(0)),
-        );
+        ledger
+            .drep_state_mut()
+            .register(drep, RegisteredDrep::new_active(0, None, EpochNo(0)));
         let cred = test_cred(20);
         if let Some(cs) = ledger.stake_credentials_mut().get_mut(&cred) {
             cs.set_delegated_drep(Some(drep));
@@ -2695,7 +2692,10 @@ mod tests {
             payment: StakeCredential::AddrKeyHash([0xBB; 28]),
             staking: cred,
         });
-        let txin = ShelleyTxIn { transaction_id: [0x20; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [0x20; 32],
+            index: 0,
+        };
         ledger.multi_era_utxo_mut().insert_shelley(
             txin,
             ShelleyTxOut {
@@ -2848,10 +2848,7 @@ mod tests {
         let mut gas = GovernanceActionState::new(test_hf_proposal());
 
         // Record CC vote (yes) — keyed by HOT credential (CDDL tags 0/1).
-        gas.record_vote(
-            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
-            Vote::Yes,
-        );
+        gas.record_vote(Voter::CommitteeKeyHash(*cc_hot_cred.hash()), Vote::Yes);
         // Record DRep vote (yes).
         gas.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
         // Record SPO vote (yes).
@@ -2914,10 +2911,7 @@ mod tests {
         let mut gas = GovernanceActionState::new(test_new_constitution_proposal());
 
         // NewConstitution requires CC + DRep, but NOT SPO.
-        gas.record_vote(
-            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
-            Vote::Yes,
-        );
+        gas.record_vote(Voter::CommitteeKeyHash(*cc_hot_cred.hash()), Vote::Yes);
         gas.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
 
         ledger.governance_actions_mut().insert(gai.clone(), gas);
@@ -2926,8 +2920,8 @@ mod tests {
         let perf = BTreeMap::new();
 
         // First rotation to populate mark.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Check if enacted at epoch 1 or 2.
         if ledger.governance_actions().is_empty() {
@@ -2939,8 +2933,8 @@ mod tests {
             return;
         }
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert!(event.governance_actions_enacted >= 1);
         assert_eq!(
@@ -2957,10 +2951,16 @@ mod tests {
         // auto-passes (committee always returns true for NoConfidence).
         if let Some(pp) = ledger.protocol_params_mut() {
             let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
-            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            dt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.drep_voting_thresholds = Some(dt);
             let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
-            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.pool_voting_thresholds = Some(pt);
         }
 
@@ -2971,26 +2971,23 @@ mod tests {
 
         // Action 2: HF with no votes (not ratified) + expires after epoch 2.
         let gai2 = test_gov_action_id(0xF2, 0);
-        let gas2 = GovernanceActionState::new_with_lifetime(
-            test_hf_proposal(),
-            EpochNo(1),
-            Some(1),
-        );
+        let gas2 =
+            GovernanceActionState::new_with_lifetime(test_hf_proposal(), EpochNo(1), Some(1));
         ledger.governance_actions_mut().insert(gai2.clone(), gas2);
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark + process.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // NoConfidence should have been enacted, HF should still be pending.
         assert!(!ledger.governance_actions().contains_key(&gai1));
 
         // Epoch 3: HF should expire (expires_after = 2 < 3).
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf)
-            .expect("epoch 3");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf).expect("epoch 3");
 
         assert_eq!(event.governance_actions_expired, 1);
         assert!(ledger.governance_actions().is_empty());
@@ -3209,13 +3206,8 @@ mod tests {
         };
         let gai = test_gov_action_id(0xFD, 0);
         let mut gas = GovernanceActionState::new(proposal);
-        gas.record_vote(
-            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
-            Vote::Yes,
-        );
-        ledger
-            .governance_actions_mut()
-            .insert(gai.clone(), gas);
+        gas.record_vote(Voter::CommitteeKeyHash(*cc_hot_cred.hash()), Vote::Yes);
+        ledger.governance_actions_mut().insert(gai.clone(), gas);
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
@@ -3242,8 +3234,8 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(event.enacted_gov_action_ids.is_empty());
@@ -3273,7 +3265,14 @@ mod tests {
             .set_authorization(Some(
                 crate::state::CommitteeAuthorization::CommitteeHotCredential(cc_hot),
             ));
-        assert!(ledger.committee_state().get(&cc_cred).unwrap().hot_credential().is_some());
+        assert!(
+            ledger
+                .committee_state()
+                .get(&cc_cred)
+                .unwrap()
+                .hot_credential()
+                .is_some()
+        );
 
         // Set DRep/SPO thresholds to 0 so NoConfidence auto-passes.
         let mut drep_thresholds = DRepVotingThresholds::default();
@@ -3338,9 +3337,7 @@ mod tests {
             .committee_state_mut()
             .get_mut(&cc_cred)
             .unwrap()
-            .set_authorization(Some(
-                CommitteeAuthorization::CommitteeHotCredential(cc_hot),
-            ));
+            .set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(cc_hot)));
 
         // Add a second committee member and authorize them too.
         let cc2_cred = test_cred(0xC2);
@@ -3352,9 +3349,9 @@ mod tests {
             .committee_state_mut()
             .get_mut(&cc2_cred)
             .unwrap()
-            .set_authorization(Some(
-                CommitteeAuthorization::CommitteeHotCredential(cc2_hot),
-            ));
+            .set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(
+                cc2_hot,
+            )));
 
         // Set DRep thresholds to 0 so UpdateCommittee auto-passes.
         let mut drep_thresholds = DRepVotingThresholds::default();
@@ -3463,10 +3460,16 @@ mod tests {
         // Set motion-no-confidence thresholds to 0 so NoConfidence auto-passes.
         if let Some(pp) = ledger.protocol_params_mut() {
             let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
-            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            dt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.drep_voting_thresholds = Some(dt);
             let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
-            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.pool_voting_thresholds = Some(pt);
         }
 
@@ -3474,7 +3477,9 @@ mod tests {
         let proposal1 = crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: ra.to_bytes().to_vec(),
-            gov_action: GovAction::NoConfidence { prev_action_id: None },
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: None,
+            },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -3490,14 +3495,16 @@ mod tests {
         let perf = BTreeMap::new();
 
         // First epoch populates mark snapshot + enacts first NoConfidence.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Re-insert — must chain from enacted root.
         let proposal2 = crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: ra.to_bytes().to_vec(),
-            gov_action: GovAction::NoConfidence { prev_action_id: Some(gai1.clone()) },
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: Some(gai1.clone()),
+            },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -3508,8 +3515,8 @@ mod tests {
             .governance_actions_mut()
             .insert(gai2.clone(), GovernanceActionState::new(proposal2));
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Verify enacted with deposit refund.
         assert_eq!(event.governance_actions_enacted, 1);
@@ -3530,10 +3537,16 @@ mod tests {
         // Set motion-no-confidence thresholds to 0 so NoConfidence auto-passes.
         if let Some(pp) = ledger.protocol_params_mut() {
             let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
-            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            dt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.drep_voting_thresholds = Some(dt);
             let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
-            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.pool_voting_thresholds = Some(pt);
         }
 
@@ -3542,7 +3555,9 @@ mod tests {
         let proposal = crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: unregistered_ra.to_bytes().to_vec(),
-            gov_action: GovAction::NoConfidence { prev_action_id: None },
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: None,
+            },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -3559,14 +3574,16 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Populate mark.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Re-insert — must chain from enacted root.
         let proposal2 = crate::eras::conway::ProposalProcedure {
             deposit,
             reward_account: unregistered_ra.to_bytes().to_vec(),
-            gov_action: GovAction::NoConfidence { prev_action_id: Some(gai.clone()) },
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: Some(gai.clone()),
+            },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -3578,8 +3595,8 @@ mod tests {
         );
 
         let treasury_before_e2 = ledger.accounting().treasury;
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Enacted but deposit is unclaimed.
         assert_eq!(event.governance_actions_enacted, 1);
@@ -3633,15 +3650,10 @@ mod tests {
         };
         let gai_a = test_gov_action_id(0xF0, 0);
         let mut gas_a = GovernanceActionState::new(proposal_a);
-        gas_a.record_vote(
-            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
-            Vote::Yes,
-        );
+        gas_a.record_vote(Voter::CommitteeKeyHash(*cc_hot_cred.hash()), Vote::Yes);
         gas_a.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
         gas_a.record_vote(Voter::StakePool(pool_key), Vote::Yes);
-        ledger
-            .governance_actions_mut()
-            .insert(gai_a.clone(), gas_a);
+        ledger.governance_actions_mut().insert(gai_a.clone(), gas_a);
 
         // Action B — same prev_action_id (None), no votes.
         let proposal_b = crate::eras::conway::ProposalProcedure {
@@ -3658,16 +3670,14 @@ mod tests {
         };
         let gai_b = test_gov_action_id(0xF1, 0);
         let gas_b = GovernanceActionState::new(proposal_b);
-        ledger
-            .governance_actions_mut()
-            .insert(gai_b.clone(), gas_b);
+        ledger.governance_actions_mut().insert(gai_b.clone(), gas_b);
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // After epoch 1: A may have been enacted already. If both are gone,
         // the subtree pruning worked at epoch 1. Otherwise continue.
@@ -3687,10 +3697,7 @@ mod tests {
             };
             let gai_a2 = test_gov_action_id(0xF2, 0);
             let mut gas_a2 = GovernanceActionState::new(proposal_a2);
-            gas_a2.record_vote(
-                Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
-                Vote::Yes,
-            );
+            gas_a2.record_vote(Voter::CommitteeKeyHash(*cc_hot_cred.hash()), Vote::Yes);
             gas_a2.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
             gas_a2.record_vote(Voter::StakePool(pool_key), Vote::Yes);
 
@@ -3766,8 +3773,8 @@ mod tests {
         // Populate mark snapshot first.
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Action A: HardFork, prev=None, all votes yes (will be enacted).
         let proposal_a = crate::eras::conway::ProposalProcedure {
@@ -3783,15 +3790,10 @@ mod tests {
             },
         };
         let mut gas_a = GovernanceActionState::new(proposal_a);
-        gas_a.record_vote(
-            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
-            Vote::Yes,
-        );
+        gas_a.record_vote(Voter::CommitteeKeyHash(*cc_hot_cred.hash()), Vote::Yes);
         gas_a.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
         gas_a.record_vote(Voter::StakePool(pool_key), Vote::Yes);
-        ledger
-            .governance_actions_mut()
-            .insert(gai_a.clone(), gas_a);
+        ledger.governance_actions_mut().insert(gai_a.clone(), gas_a);
 
         // Action B: HardFork, prev=None (stale after A is enacted), no votes.
         let proposal_b = crate::eras::conway::ProposalProcedure {
@@ -3807,9 +3809,7 @@ mod tests {
             },
         };
         let gas_b = GovernanceActionState::new(proposal_b);
-        ledger
-            .governance_actions_mut()
-            .insert(gai_b.clone(), gas_b);
+        ledger.governance_actions_mut().insert(gai_b.clone(), gas_b);
 
         // Action C: HardFork, prev=B (transitively stale), no votes.
         let proposal_c = crate::eras::conway::ProposalProcedure {
@@ -3825,14 +3825,12 @@ mod tests {
             },
         };
         let gas_c = GovernanceActionState::new(proposal_c);
-        ledger
-            .governance_actions_mut()
-            .insert(gai_c.clone(), gas_c);
+        ledger.governance_actions_mut().insert(gai_c.clone(), gas_c);
 
         assert_eq!(ledger.governance_actions().len(), 3);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // A enacted, B + C pruned transitively.
         assert_eq!(event.governance_actions_enacted, 1);
@@ -3867,10 +3865,16 @@ mod tests {
         // Set motion-no-confidence thresholds to 0 so NoConfidence auto-passes.
         if let Some(pp) = ledger.protocol_params_mut() {
             let mut dt = pp.drep_voting_thresholds.clone().unwrap_or_default();
-            dt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            dt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.drep_voting_thresholds = Some(dt);
             let mut pt = pp.pool_voting_thresholds.clone().unwrap_or_default();
-            pt.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+            pt.motion_no_confidence = UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            };
             pp.pool_voting_thresholds = Some(pt);
         }
 
@@ -3880,8 +3884,8 @@ mod tests {
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         let gai_a = test_gov_action_id(0xD0, 0);
 
@@ -3890,7 +3894,9 @@ mod tests {
         let proposal_a = crate::eras::conway::ProposalProcedure {
             deposit: deposit_a,
             reward_account: unregistered_ra_a.to_bytes().to_vec(),
-            gov_action: GovAction::NoConfidence { prev_action_id: None },
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: None,
+            },
             anchor: Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -3902,8 +3908,8 @@ mod tests {
 
         let treasury_before = ledger.accounting().treasury;
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Enacted, deposit is unclaimed → treasury.
         assert_eq!(event.governance_actions_enacted, 1);
@@ -3935,8 +3941,8 @@ mod tests {
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         let gai_hf = test_gov_action_id(0xE0, 0);
         let gai_pc = test_gov_action_id(0xE1, 0);
@@ -3955,10 +3961,7 @@ mod tests {
             },
         };
         let mut gas_hf = GovernanceActionState::new(proposal_hf);
-        gas_hf.record_vote(
-            Voter::CommitteeKeyHash(*cc_hot_cred.hash()),
-            Vote::Yes,
-        );
+        gas_hf.record_vote(Voter::CommitteeKeyHash(*cc_hot_cred.hash()), Vote::Yes);
         gas_hf.record_vote(Voter::DRepKeyHash(drep_cred), Vote::Yes);
         gas_hf.record_vote(Voter::StakePool(pool_key), Vote::Yes);
         ledger
@@ -3987,8 +3990,8 @@ mod tests {
             .governance_actions_mut()
             .insert(gai_pc.clone(), gas_pc);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // HardFork enacted, but ParameterChange should survive.
         assert_eq!(event.governance_actions_enacted, 1);
@@ -4045,8 +4048,8 @@ mod tests {
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf)
-            .expect("epoch 3");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf).expect("epoch 3");
 
         assert!(event.pparam_updates_applied > 0);
         assert_eq!(ledger.protocol_params().expect("params").min_fee_a, 77);
@@ -4065,8 +4068,8 @@ mod tests {
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert_eq!(event.pparam_updates_applied, 0);
         assert_eq!(ledger.protocol_params().expect("params").min_fee_a, 44);
@@ -4084,8 +4087,8 @@ mod tests {
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(4), &mut snapshots, &perf)
-            .expect("epoch 4");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(4), &mut snapshots, &perf).expect("epoch 4");
 
         assert_eq!(event.pparam_updates_applied, 0);
         assert_eq!(ledger.protocol_params().expect("params").min_fee_a, 44);
@@ -4111,7 +4114,9 @@ mod tests {
         crate::eras::conway::ProposalProcedure {
             deposit: 0,
             reward_account: vec![],
-            gov_action: GovAction::NoConfidence { prev_action_id: None },
+            gov_action: GovAction::NoConfidence {
+                prev_action_id: None,
+            },
             anchor: crate::types::Anchor {
                 url: String::new(),
                 data_hash: [0; 32],
@@ -4165,9 +4170,15 @@ mod tests {
 
         // Set 0% thresholds so DRep/SPO auto-pass.
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         let mut pool_thresholds = PoolVotingThresholds::default();
-        pool_thresholds.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
+        pool_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
             pp.pool_voting_thresholds = Some(pool_thresholds);
@@ -4188,24 +4199,37 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
         if ledger.governance_actions().is_empty() {
             // Enacted at epoch 1.
-            assert!(ledger.committee_state().iter().all(|(_, m)| !m.is_enacted_member()),
-                "all committee members should have cleared membership after NoConfidence");
+            assert!(
+                ledger
+                    .committee_state()
+                    .iter()
+                    .all(|(_, m)| !m.is_enacted_member()),
+                "all committee members should have cleared membership after NoConfidence"
+            );
             return;
         }
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert_eq!(event.governance_actions_enacted, 1);
-        assert!(ledger.committee_state().iter().all(|(_, m)| !m.is_enacted_member()),
-            "all committee members should have cleared membership after NoConfidence");
+        assert!(
+            ledger
+                .committee_state()
+                .iter()
+                .all(|(_, m)| !m.is_enacted_member()),
+            "all committee members should have cleared membership after NoConfidence"
+        );
         assert_eq!(
             ledger.enact_state().committee_quorum,
-            UnitInterval { numerator: 0, denominator: 1 },
+            UnitInterval {
+                numerator: 0,
+                denominator: 1
+            },
         );
     }
 
@@ -4215,9 +4239,15 @@ mod tests {
 
         // 100% thresholds → requires all votes.
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.motion_no_confidence = UnitInterval { numerator: 1, denominator: 1 };
+        drep_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         let mut pool_thresholds = PoolVotingThresholds::default();
-        pool_thresholds.motion_no_confidence = UnitInterval { numerator: 1, denominator: 1 };
+        pool_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
             pp.pool_voting_thresholds = Some(pool_thresholds);
@@ -4230,10 +4260,10 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(ledger.governance_actions().contains_key(&gai));
@@ -4250,12 +4280,18 @@ mod tests {
 
         // Set 0% thresholds so auto-pass on CC + DRep.
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.treasury_withdrawal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
         }
         // Set CC quorum to 0% so committee auto-passes.
-        ledger.enact_state_mut().committee_quorum = UnitInterval { numerator: 0, denominator: 1 };
+        ledger.enact_state_mut().committee_quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
 
         // Register the withdrawal target credential and create reward account entry.
         let target_cred = StakeCredential::AddrKeyHash([0xE0; 28]);
@@ -4264,10 +4300,9 @@ mod tests {
             network: 1,
             credential: target_cred,
         };
-        ledger.reward_accounts_mut().insert(
-            target_ra,
-            crate::RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(target_ra, crate::RewardAccountState::new(0, None));
         ledger.accounting_mut().reserves = 0;
         ledger.accounting_mut().treasury = 100_000_000;
 
@@ -4278,8 +4313,8 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
         if ledger.governance_actions().is_empty() {
             // Enacted at epoch 1.
             let ra = crate::RewardAccount {
@@ -4290,8 +4325,8 @@ mod tests {
             return;
         }
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert_eq!(event.governance_actions_enacted, 1);
         let ra = crate::RewardAccount {
@@ -4307,7 +4342,10 @@ mod tests {
 
         // 100% DRep threshold → needs explicit DRep Yes.
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 1, denominator: 1 };
+        drep_thresholds.treasury_withdrawal = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
         }
@@ -4319,10 +4357,10 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(ledger.governance_actions().contains_key(&gai));
@@ -4343,11 +4381,17 @@ mod tests {
 
         // Auto-pass all votes (0% thresholds).
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.treasury_withdrawal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
         }
-        ledger.enact_state_mut().committee_quorum = UnitInterval { numerator: 0, denominator: 1 };
+        ledger.enact_state_mut().committee_quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
 
         // Treasury = 1000.
         ledger.accounting_mut().reserves = 0;
@@ -4417,8 +4461,8 @@ mod tests {
 
         // Run a SINGLE epoch boundary.  Both proposals are evaluated in the
         // same ratification pass.
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Proposal A: 900 <= 1000  →  passes.
         // After A: budget = 1000 - 900 = 100 (even though actual treasury
@@ -4462,11 +4506,17 @@ mod tests {
 
         // Auto-pass all votes.
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.treasury_withdrawal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
         }
-        ledger.enact_state_mut().committee_quorum = UnitInterval { numerator: 0, denominator: 1 };
+        ledger.enact_state_mut().committee_quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
 
         // Treasury = 500.  Donations = 600.  Combined = 1100.
         ledger.accounting_mut().reserves = 0;
@@ -4483,10 +4533,9 @@ mod tests {
             network: 1,
             credential: cred,
         };
-        ledger.reward_accounts_mut().insert(
-            ra.clone(),
-            crate::RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(ra.clone(), crate::RewardAccountState::new(0, None));
         let mut wdrls = BTreeMap::new();
         wdrls.insert(ra.clone(), 800);
         let proposal = crate::eras::conway::ProposalProcedure {
@@ -4508,8 +4557,8 @@ mod tests {
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // The withdrawal should be rejected: 800 > 500 (treasury without
         // donations).  The donations (600) should NOT inflate the budget.
@@ -4545,15 +4594,30 @@ mod tests {
 
         // Set 0% thresholds so auto-pass on CC + DRep.
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.pp_economic_group = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.pp_network_group = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.pp_technical_group = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.pp_gov_group = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.pp_economic_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.pp_network_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.pp_technical_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.pp_gov_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
         }
         // Set CC quorum to 0% so committee auto-passes.
-        ledger.enact_state_mut().committee_quorum = UnitInterval { numerator: 0, denominator: 1 };
+        ledger.enact_state_mut().committee_quorum = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
 
         let gai = test_gov_action_id(0xE5, 0);
         let gas = GovernanceActionState::new(test_parameter_change_proposal());
@@ -4562,25 +4626,19 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
         if ledger.governance_actions().is_empty() {
             // Enacted at epoch 1.
-            assert_eq!(
-                ledger.protocol_params().unwrap().key_deposit,
-                3_000_000,
-            );
+            assert_eq!(ledger.protocol_params().unwrap().key_deposit, 3_000_000,);
             return;
         }
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert_eq!(event.governance_actions_enacted, 1);
-        assert_eq!(
-            ledger.protocol_params().unwrap().key_deposit,
-            3_000_000,
-        );
+        assert_eq!(ledger.protocol_params().unwrap().key_deposit, 3_000_000,);
     }
 
     #[test]
@@ -4589,10 +4647,22 @@ mod tests {
 
         // 100% DRep threshold.
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.pp_economic_group = UnitInterval { numerator: 1, denominator: 1 };
-        drep_thresholds.pp_network_group = UnitInterval { numerator: 1, denominator: 1 };
-        drep_thresholds.pp_technical_group = UnitInterval { numerator: 1, denominator: 1 };
-        drep_thresholds.pp_gov_group = UnitInterval { numerator: 1, denominator: 1 };
+        drep_thresholds.pp_economic_group = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        drep_thresholds.pp_network_group = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        drep_thresholds.pp_technical_group = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        drep_thresholds.pp_gov_group = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
         }
@@ -4604,10 +4674,10 @@ mod tests {
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(ledger.governance_actions().contains_key(&gai));
@@ -4629,7 +4699,10 @@ mod tests {
             staking: cred,
         });
         let addr_bytes = base_addr.to_bytes();
-        let txin = ShelleyTxIn { transaction_id: [21u8; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [21u8; 32],
+            index: 0,
+        };
         ledger.multi_era_utxo_mut().insert_shelley(
             txin,
             ShelleyTxOut {
@@ -4642,12 +4715,12 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark from current state.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
         // Epoch 2: go snapshot now has the pool → rewards are computed.
         snapshots.accumulate_fees(1_000_000_000);
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // After epoch 2, the reward account should have positive balance
         // (rewards were distributed).
@@ -4656,8 +4729,8 @@ mod tests {
 
         // Epoch 3: the mark snapshot should now include the reward balance.
         snapshots.accumulate_fees(500_000_000);
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf)
-            .expect("epoch 3");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(3), &mut snapshots, &perf).expect("epoch 3");
 
         // The mark snapshot's stake should include the operator's reward
         // balance (reward accounts feed into compute_stake_snapshot).
@@ -4698,7 +4771,10 @@ mod tests {
             payment: StakeCredential::AddrKeyHash([0xDD; 28]),
             staking: op_cred,
         });
-        let op_txin = ShelleyTxIn { transaction_id: [30u8; 32], index: 99 };
+        let op_txin = ShelleyTxIn {
+            transaction_id: [30u8; 32],
+            index: 99,
+        };
         ledger.multi_era_utxo_mut().insert_shelley(
             op_txin,
             ShelleyTxOut {
@@ -4730,7 +4806,10 @@ mod tests {
             staking: member_cred,
         });
         let addr_bytes = base_addr.to_bytes();
-        let txin = ShelleyTxIn { transaction_id: [31u8; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [31u8; 32],
+            index: 0,
+        };
         ledger.multi_era_utxo_mut().insert_shelley(
             txin,
             ShelleyTxOut {
@@ -4754,10 +4833,13 @@ mod tests {
 
         let perf = BTreeMap::from([(
             test_pool(30),
-            UnitInterval { numerator: 1, denominator: 1 },
+            UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
         )]);
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Operator reward account.
         let operator_ra = test_reward_account(30);
@@ -4770,7 +4852,8 @@ mod tests {
         assert!(
             event.rewards_distributed > 0,
             "expected rewards to be distributed, treasury_delta={}, delta_reserves={}",
-            event.treasury_delta, event.delta_reserves,
+            event.treasury_delta,
+            event.delta_reserves,
         );
         assert!(
             member_balance > 0,
@@ -4803,7 +4886,10 @@ mod tests {
             staking: cred,
         });
         let addr_bytes = base_addr.to_bytes();
-        let txin = ShelleyTxIn { transaction_id: [22u8; 32], index: 0 };
+        let txin = ShelleyTxIn {
+            transaction_id: [22u8; 32],
+            index: 0,
+        };
         ledger.multi_era_utxo_mut().insert_shelley(
             txin,
             ShelleyTxOut {
@@ -4816,15 +4902,15 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Epoch 2: go snapshot has pool → rewards computed.
         // Add a large fee pot to make the difference visible.
         snapshots.accumulate_fees(10_000_000_000); // 10k ADA in fees
         let reserves_before_epoch2 = ledger.accounting().reserves;
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         let reserves_after = ledger.accounting().reserves;
         let actual_deduction = reserves_before_epoch2.saturating_sub(reserves_after);
@@ -4842,7 +4928,10 @@ mod tests {
 
         // Verify that reserves were NOT over-decremented by the fee pot.
         // reserves_after = reserves_before - delta_reserves + unclaimed
-        assert_eq!(reserves_after, reserves_before_epoch2 - expected_delta + event.unclaimed_rewards);
+        assert_eq!(
+            reserves_after,
+            reserves_before_epoch2 - expected_delta + event.unclaimed_rewards
+        );
     }
 
     // -- Fee pot does not affect reserves --
@@ -4861,8 +4950,8 @@ mod tests {
         // Add fees — these come from transactions, not reserves.
         snapshots.accumulate_fees(5_000_000_000); // 5k ADA
 
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // -- Fee pot does not affect reserves via monetary expansion --
         // With zero reserves, delta_reserves = 0.  The fee pot feeds the
@@ -4893,18 +4982,51 @@ mod tests {
             denominator: 1,
         };
         let mut drep_thresholds = DRepVotingThresholds::default();
-        drep_thresholds.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.hard_fork_initiation = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.update_to_constitution = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.pp_economic_group = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.pp_network_group = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.pp_technical_group = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.pp_gov_group = UnitInterval { numerator: 0, denominator: 1 };
-        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 0, denominator: 1 };
+        drep_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.hard_fork_initiation = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.update_to_constitution = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.pp_economic_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.pp_network_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.pp_technical_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.pp_gov_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        drep_thresholds.treasury_withdrawal = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         let mut pool_thresholds = PoolVotingThresholds::default();
-        pool_thresholds.motion_no_confidence = UnitInterval { numerator: 0, denominator: 1 };
-        pool_thresholds.hard_fork_initiation = UnitInterval { numerator: 0, denominator: 1 };
-        pool_thresholds.pp_security_group = UnitInterval { numerator: 0, denominator: 1 };
+        pool_thresholds.motion_no_confidence = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        pool_thresholds.hard_fork_initiation = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        pool_thresholds.pp_security_group = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         if let Some(pp) = ledger.protocol_params_mut() {
             pp.drep_voting_thresholds = Some(drep_thresholds);
             pp.pool_voting_thresholds = Some(pool_thresholds);
@@ -4929,8 +5051,8 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot (no proposals yet).
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Insert two proposals AFTER epoch 1.  NoConfidence (0x01) will
         // be processed first (lower GovActionId).  InfoAction (0x02)
@@ -4938,14 +5060,18 @@ mod tests {
         // is delaying.
         let gai_nc = test_gov_action_id(0x01, 0);
         let gas_nc = GovernanceActionState::new(test_no_confidence_proposal());
-        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_nc.clone(), gas_nc);
 
         let gai_info = test_gov_action_id(0x02, 0);
         let gas_info = GovernanceActionState::new(test_info_proposal());
-        ledger.governance_actions_mut().insert(gai_info.clone(), gas_info);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_info.clone(), gas_info);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Only NoConfidence should be enacted (it's a delaying action).
         assert_eq!(event.governance_actions_enacted, 1);
@@ -4970,13 +5096,15 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot (no proposals yet).
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Insert both proposals after epoch 1.
         let gai_pc = test_gov_action_id(0x01, 0);
         let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
-        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_pc.clone(), gas_pc);
 
         let mut wd = BTreeMap::new();
         wd.insert(target_ra, 1_000u64);
@@ -4988,12 +5116,17 @@ mod tests {
                 withdrawals: wd,
                 guardrails_script_hash: None,
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         });
-        ledger.governance_actions_mut().insert(gai_tw.clone(), gas_tw);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_tw.clone(), gas_tw);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Both should be enacted (neither is delaying).
         assert_eq!(event.governance_actions_enacted, 2);
@@ -5018,23 +5151,27 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot (no proposals yet).
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // ParameterChange has LOWER GovActionId (0x01) — in BTreeMap
         // key order it would come first.  But priority 4 > 0.
         let gai_pc = test_gov_action_id(0x01, 0);
         let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
-        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_pc.clone(), gas_pc);
 
         // NoConfidence has HIGHER GovActionId (0x02) but priority 0,
         // so it goes first under priority ordering and delays everything.
         let gai_nc = test_gov_action_id(0x02, 0);
         let gas_nc = GovernanceActionState::new(test_no_confidence_proposal());
-        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_nc.clone(), gas_nc);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Only NoConfidence should be enacted (delaying blocks ParameterChange).
         assert_eq!(event.governance_actions_enacted, 1);
@@ -5047,33 +5184,59 @@ mod tests {
     fn test_action_priority_values() {
         // Verify the priority mapping matches upstream actionPriority.
         use crate::eras::conway::GovAction;
-        assert_eq!(action_priority(&GovAction::NoConfidence { prev_action_id: None }), 0);
-        assert_eq!(action_priority(&GovAction::UpdateCommittee {
-            prev_action_id: None,
-            members_to_remove: vec![],
-            members_to_add: BTreeMap::new(),
-            quorum: UnitInterval { numerator: 0, denominator: 1 },
-        }), 1);
-        assert_eq!(action_priority(&GovAction::NewConstitution {
-            prev_action_id: None,
-            constitution: crate::eras::conway::Constitution {
-                anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+        assert_eq!(
+            action_priority(&GovAction::NoConfidence {
+                prev_action_id: None
+            }),
+            0
+        );
+        assert_eq!(
+            action_priority(&GovAction::UpdateCommittee {
+                prev_action_id: None,
+                members_to_remove: vec![],
+                members_to_add: BTreeMap::new(),
+                quorum: UnitInterval {
+                    numerator: 0,
+                    denominator: 1
+                },
+            }),
+            1
+        );
+        assert_eq!(
+            action_priority(&GovAction::NewConstitution {
+                prev_action_id: None,
+                constitution: crate::eras::conway::Constitution {
+                    anchor: crate::types::Anchor {
+                        url: String::new(),
+                        data_hash: [0; 32]
+                    },
+                    guardrails_script_hash: None,
+                },
+            }),
+            2
+        );
+        assert_eq!(
+            action_priority(&GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            }),
+            3
+        );
+        assert_eq!(
+            action_priority(&GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: Default::default(),
                 guardrails_script_hash: None,
-            },
-        }), 2);
-        assert_eq!(action_priority(&GovAction::HardForkInitiation {
-            prev_action_id: None,
-            protocol_version: (10, 0),
-        }), 3);
-        assert_eq!(action_priority(&GovAction::ParameterChange {
-            prev_action_id: None,
-            protocol_param_update: Default::default(),
-            guardrails_script_hash: None,
-        }), 4);
-        assert_eq!(action_priority(&GovAction::TreasuryWithdrawals {
-            withdrawals: BTreeMap::new(),
-            guardrails_script_hash: None,
-        }), 5);
+            }),
+            4
+        );
+        assert_eq!(
+            action_priority(&GovAction::TreasuryWithdrawals {
+                withdrawals: BTreeMap::new(),
+                guardrails_script_hash: None,
+            }),
+            5
+        );
         assert_eq!(action_priority(&GovAction::InfoAction), 6);
     }
 
@@ -5095,7 +5258,10 @@ mod tests {
         // Override: set motion_no_confidence DRep threshold to 100%.
         if let Some(pp) = ledger.protocol_params_mut() {
             if let Some(ref mut drep_t) = pp.drep_voting_thresholds {
-                drep_t.motion_no_confidence = UnitInterval { numerator: 1, denominator: 1 };
+                drep_t.motion_no_confidence = UnitInterval {
+                    numerator: 1,
+                    denominator: 1,
+                };
             }
         }
 
@@ -5103,21 +5269,25 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Insert a NoConfidence (delaying, will fail acceptance) and a
         // ParameterChange (non-delaying, would otherwise pass).
         let gai_nc = test_gov_action_id(0x01, 0);
         let gas_nc = GovernanceActionState::new(test_no_confidence_proposal());
-        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_nc.clone(), gas_nc);
 
         let gai_pc = test_gov_action_id(0x02, 0);
         let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
-        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_pc.clone(), gas_pc);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Neither should be enacted: NoConfidence failed acceptance,
         // ParameterChange blocked by the delay flag.
@@ -5139,7 +5309,10 @@ mod tests {
         // Set motion_no_confidence threshold to 100% so NoConfidence fails.
         if let Some(pp) = ledger.protocol_params_mut() {
             if let Some(ref mut drep_t) = pp.drep_voting_thresholds {
-                drep_t.motion_no_confidence = UnitInterval { numerator: 1, denominator: 1 };
+                drep_t.motion_no_confidence = UnitInterval {
+                    numerator: 1,
+                    denominator: 1,
+                };
             }
         }
 
@@ -5147,8 +5320,8 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot.
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Insert a NoConfidence that is expired AND fails acceptance.
         let gai_nc = test_gov_action_id(0x01, 0);
@@ -5157,15 +5330,19 @@ mod tests {
             EpochNo(0), // proposed in epoch 0
             Some(1),    // lifetime 1 → expires_after = epoch 1
         );
-        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_nc.clone(), gas_nc);
 
         // Insert a ParameterChange that should pass.
         let gai_pc = test_gov_action_id(0x02, 0);
         let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
-        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_pc.clone(), gas_pc);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // ParameterChange should be enacted (expired NoConfidence did NOT
         // set delay flag).
@@ -5187,13 +5364,17 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot (no proposals yet).
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Insert both proposals after epoch 1.
         let gai_a = test_gov_action_id(0x01, 0);
         let mut proposal_a = test_parameter_change_proposal();
-        if let GovAction::ParameterChange { ref mut protocol_param_update, .. } = proposal_a.gov_action {
+        if let GovAction::ParameterChange {
+            ref mut protocol_param_update,
+            ..
+        } = proposal_a.gov_action
+        {
             protocol_param_update.key_deposit = Some(3_000_000);
         }
         let gas_a = GovernanceActionState::new(proposal_a);
@@ -5219,8 +5400,8 @@ mod tests {
         let gas_b = GovernanceActionState::new(proposal_b);
         ledger.governance_actions_mut().insert(gai_b.clone(), gas_b);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // A is enacted first (lower ID), lineage advances, B chains from A.
         assert_eq!(event.governance_actions_enacted, 2);
@@ -5242,8 +5423,8 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot (no proposals yet).
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Set treasury to a small amount AFTER epoch 1 ran (so
         // monetary expansion doesn't inflate it before our check).
@@ -5257,18 +5438,17 @@ mod tests {
             network: 1,
             credential: StakeCredential::AddrKeyHash([0xE0; 28]),
         };
-        ledger.reward_accounts_mut().insert(
-            ra,
-            RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(ra, RewardAccountState::new(0, None));
 
         // Propose a withdrawal of 5M (far exceeds 1000 treasury).
         let gai = test_gov_action_id(0x01, 0);
         let gas = GovernanceActionState::new(test_treasury_withdrawal_proposal());
         ledger.governance_actions_mut().insert(gai.clone(), gas);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Should NOT be enacted due to treasury insufficiency.
         assert_eq!(event.governance_actions_enacted, 0);
@@ -5285,8 +5465,8 @@ mod tests {
         let perf = BTreeMap::new();
 
         // Epoch 1: populate mark snapshot (no proposals yet).
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // No ParameterChange enacted yet → root is None.
         // Proposal claims prev_action_id = Some(bogus).
@@ -5311,8 +5491,8 @@ mod tests {
         let gas = GovernanceActionState::new(proposal);
         ledger.governance_actions_mut().insert(gai.clone(), gas);
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Should NOT be enacted (lineage mismatch).
         assert_eq!(event.governance_actions_enacted, 0);
@@ -5326,7 +5506,10 @@ mod tests {
     #[test]
     fn derive_pool_performance_empty_counts_returns_empty() {
         let snapshot = StakeSnapshot::empty();
-        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let d = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         let perf = super::derive_pool_performance(&BTreeMap::new(), &snapshot, d);
         assert!(perf.is_empty());
     }
@@ -5336,7 +5519,10 @@ mod tests {
         let snapshot = StakeSnapshot::empty();
         let mut counts = BTreeMap::new();
         counts.insert(test_pool(1), 10);
-        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let d = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         let perf = super::derive_pool_performance(&counts, &snapshot, d);
         assert!(perf.is_empty());
     }
@@ -5344,12 +5530,17 @@ mod tests {
     #[test]
     fn derive_pool_performance_single_pool_perfect() {
         let mut snapshot = StakeSnapshot::empty();
-        snapshot.pool_params.insert(test_pool(1), test_pool_params(1));
+        snapshot
+            .pool_params
+            .insert(test_pool(1), test_pool_params(1));
         snapshot.delegations.insert(test_cred(1), test_pool(1));
         snapshot.stake.add(test_cred(1), 1000);
         let mut counts = BTreeMap::new();
         counts.insert(test_pool(1), 10);
-        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let d = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         let perf = super::derive_pool_performance(&counts, &snapshot, d);
         let p = perf.get(&test_pool(1)).unwrap();
         // Single pool with all stake and all blocks → ratio = 1/1 = 1.0.
@@ -5359,8 +5550,12 @@ mod tests {
     #[test]
     fn derive_pool_performance_two_pools_proportional() {
         let mut snapshot = StakeSnapshot::empty();
-        snapshot.pool_params.insert(test_pool(1), test_pool_params(1));
-        snapshot.pool_params.insert(test_pool(2), test_pool_params(2));
+        snapshot
+            .pool_params
+            .insert(test_pool(1), test_pool_params(1));
+        snapshot
+            .pool_params
+            .insert(test_pool(2), test_pool_params(2));
         snapshot.delegations.insert(test_cred(1), test_pool(1));
         snapshot.delegations.insert(test_cred(2), test_pool(2));
         // Pool 1 has 75% of stake, pool 2 has 25%.
@@ -5370,7 +5565,10 @@ mod tests {
         let mut counts = BTreeMap::new();
         counts.insert(test_pool(1), 5);
         counts.insert(test_pool(2), 5);
-        let d = UnitInterval { numerator: 0, denominator: 1 };
+        let d = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
         let perf = super::derive_pool_performance(&counts, &snapshot, d);
         // Pool 1: expected 75% of 10 = 7.5, actual 5.
         // performance = 5 * 1000 / (750 * 10) = 5000 / 7500 ≈ 0.667
@@ -5388,8 +5586,12 @@ mod tests {
         // apparent performance = 1 regardless of their actual share of blocks.
         // Reference: upstream `mkApparentPerformance`.
         let mut snapshot = StakeSnapshot::empty();
-        snapshot.pool_params.insert(test_pool(1), test_pool_params(1));
-        snapshot.pool_params.insert(test_pool(2), test_pool_params(2));
+        snapshot
+            .pool_params
+            .insert(test_pool(1), test_pool_params(1));
+        snapshot
+            .pool_params
+            .insert(test_pool(2), test_pool_params(2));
         snapshot.delegations.insert(test_cred(1), test_pool(1));
         snapshot.delegations.insert(test_cred(2), test_pool(2));
         snapshot.stake.add(test_cred(1), 750);
@@ -5398,7 +5600,10 @@ mod tests {
         counts.insert(test_pool(1), 5);
         counts.insert(test_pool(2), 5);
         // d = 0.9 (>= 0.8)
-        let d = UnitInterval { numerator: 9, denominator: 10 };
+        let d = UnitInterval {
+            numerator: 9,
+            denominator: 10,
+        };
         let perf = super::derive_pool_performance(&counts, &snapshot, d);
         // Both pools should have perf = 1.
         let p1 = perf.get(&test_pool(1)).unwrap();
@@ -5433,20 +5638,20 @@ mod tests {
         snapshots.set = snapshot;
 
         // Call epoch boundary with an EMPTY performance map → should use internal blocks_made.
-        let event = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(1),
-            &mut snapshots,
-            &BTreeMap::new(),
-        )
-        .expect("epoch boundary");
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &BTreeMap::new())
+            .expect("epoch boundary");
 
         // blocks_made should be cleared after epoch boundary.
-        assert!(ledger.blocks_made().is_empty(), "blocks_made should be cleared after epoch boundary");
+        assert!(
+            ledger.blocks_made().is_empty(),
+            "blocks_made should be cleared after epoch boundary"
+        );
 
         // Rewards should have been computed (non-zero distribution).
-        assert!(event.rewards_distributed > 0 || event.treasury_delta > 0,
-            "rewards or treasury should be non-zero");
+        assert!(
+            event.rewards_distributed > 0 || event.treasury_delta > 0,
+            "rewards or treasury should be non-zero"
+        );
     }
 
     #[test]
@@ -5459,7 +5664,13 @@ mod tests {
 
         // But caller provides explicit perfect performance.
         let mut explicit_perf = BTreeMap::new();
-        explicit_perf.insert(pool_hash, UnitInterval { numerator: 1, denominator: 1 });
+        explicit_perf.insert(
+            pool_hash,
+            UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
+        );
 
         let mut snapshot = StakeSnapshot::empty();
         snapshot.pool_params.insert(pool_hash, test_pool_params(1));
@@ -5469,13 +5680,8 @@ mod tests {
         snapshots.go = snapshot.clone();
         snapshots.set = snapshot;
 
-        let event = apply_epoch_boundary(
-            &mut ledger,
-            EpochNo(1),
-            &mut snapshots,
-            &explicit_perf,
-        )
-        .expect("epoch boundary");
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &explicit_perf)
+            .expect("epoch boundary");
 
         // blocks_made still cleared even when caller provides explicit perf.
         assert!(ledger.blocks_made().is_empty());
@@ -5498,8 +5704,8 @@ mod tests {
 
         let mut snapshots = StakeSnapshots::new();
         let perf = BTreeMap::new();
-        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
-            .expect("epoch 1");
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
 
         // Proposal A: withdraw 60M.
         let mut wd_a = BTreeMap::new();
@@ -5511,7 +5717,10 @@ mod tests {
                 withdrawals: wd_a,
                 guardrails_script_hash: None,
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         };
         // Proposal B: withdraw 60M (same target).
         let mut wd_b = BTreeMap::new();
@@ -5523,16 +5732,23 @@ mod tests {
                 withdrawals: wd_b,
                 guardrails_script_hash: None,
             },
-            anchor: crate::types::Anchor { url: String::new(), data_hash: [0; 32] },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
         };
 
         let gai_a = test_gov_action_id(0xA0, 0);
         let gai_b = test_gov_action_id(0xB0, 0);
-        ledger.governance_actions_mut().insert(gai_a.clone(), GovernanceActionState::new(prop_a));
-        ledger.governance_actions_mut().insert(gai_b.clone(), GovernanceActionState::new(prop_b));
+        ledger
+            .governance_actions_mut()
+            .insert(gai_a.clone(), GovernanceActionState::new(prop_a));
+        ledger
+            .governance_actions_mut()
+            .insert(gai_b.clone(), GovernanceActionState::new(prop_b));
 
-        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
-            .expect("epoch 2");
+        let event =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // Only one should be enacted: after the first 60M withdrawal,
         // treasury drops below 60M so the second fails the guard.
@@ -5561,21 +5777,25 @@ mod tests {
 
         // Pool operator credential + reward account (network=1).
         let pool_cred = test_cred(0x01);
-        let pool_ra = RewardAccount { network: 1, credential: pool_cred };
+        let pool_ra = RewardAccount {
+            network: 1,
+            credential: pool_cred,
+        };
         ledger.stake_credentials_mut().register(pool_cred);
-        ledger.reward_accounts_mut().insert(
-            pool_ra,
-            RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(pool_ra, RewardAccountState::new(0, None));
 
         // Member credential + reward account (network=0, different!).
         let member_cred = test_cred(0x02);
-        let member_ra = RewardAccount { network: 0, credential: member_cred };
+        let member_ra = RewardAccount {
+            network: 0,
+            credential: member_cred,
+        };
         ledger.stake_credentials_mut().register(member_cred);
-        ledger.reward_accounts_mut().insert(
-            member_ra,
-            RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(member_ra, RewardAccountState::new(0, None));
 
         // Build a distribution: leader on pool_ra, member keyed by
         // member_cred.
@@ -5622,12 +5842,14 @@ mod tests {
         let mut ledger = LedgerState::new(Era::Shelley);
 
         let pool_cred = test_cred(0x10);
-        let pool_ra = RewardAccount { network: 1, credential: pool_cred };
+        let pool_ra = RewardAccount {
+            network: 1,
+            credential: pool_cred,
+        };
         ledger.stake_credentials_mut().register(pool_cred);
-        ledger.reward_accounts_mut().insert(
-            pool_ra,
-            RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(pool_ra, RewardAccountState::new(0, None));
 
         // Member credential is NOT registered.
         let ghost_cred = test_cred(0x20);
@@ -5725,11 +5947,18 @@ mod tests {
         let mut new_params = test_pool_params(pool_id);
         new_params.cost = 999_000_000; // different from original 340M
         let pp_pool_deposit = test_protocol_params().pool_deposit;
-        ledger.pool_state_mut().register_with_deposit(new_params.clone(), pp_pool_deposit);
+        ledger
+            .pool_state_mut()
+            .register_with_deposit(new_params.clone(), pp_pool_deposit);
 
         // Current params still have the original cost (future params are staged).
         assert_eq!(
-            ledger.pool_state().get(&test_pool(pool_id)).unwrap().params().cost,
+            ledger
+                .pool_state()
+                .get(&test_pool(pool_id))
+                .unwrap()
+                .params()
+                .cost,
             original_cost,
         );
 
@@ -5755,7 +5984,12 @@ mod tests {
         // BUT after the epoch boundary, the live pool state should now
         // have the new (adopted) params.
         assert_eq!(
-            ledger.pool_state().get(&test_pool(pool_id)).unwrap().params().cost,
+            ledger
+                .pool_state()
+                .get(&test_pool(pool_id))
+                .unwrap()
+                .params()
+                .cost,
             999_000_000,
             "live pool params must be updated after epoch boundary"
         );

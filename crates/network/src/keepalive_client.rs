@@ -145,9 +145,7 @@ impl KeepAliveClient {
                     })
                 }
             }
-            _ => Err(KeepAliveClientError::UnexpectedMessage(format!(
-                "{msg:?}"
-            ))),
+            _ => Err(KeepAliveClientError::UnexpectedMessage(format!("{msg:?}"))),
         }
     }
 

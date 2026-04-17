@@ -104,8 +104,8 @@ impl KeepAliveState {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
 use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 impl KeepAliveMessage {
     /// Encode this message to CBOR bytes.

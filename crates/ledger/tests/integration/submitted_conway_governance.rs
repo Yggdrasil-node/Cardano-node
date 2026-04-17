@@ -44,7 +44,11 @@ fn permissive_params() -> ProtocolParameters {
     params
 }
 
-fn minimal_conway_body(inputs: Vec<ShelleyTxIn>, outputs: Vec<BabbageTxOut>, fee: u64) -> ConwayTxBody {
+fn minimal_conway_body(
+    inputs: Vec<ShelleyTxIn>,
+    outputs: Vec<BabbageTxOut>,
+    fee: u64,
+) -> ConwayTxBody {
     ConwayTxBody {
         inputs,
         outputs,
@@ -74,7 +78,10 @@ fn conway_state_with_input(signer: &TestSigner, tx_id_bytes: [u8; 32], amount: u
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(permissive_params());
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: tx_id_bytes, index: 0 },
+        ShelleyTxIn {
+            transaction_id: tx_id_bytes,
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr,
             amount: Value::Coin(amount),
@@ -109,7 +116,9 @@ fn conway_submitted_tx_rejects_unknown_voter() {
             reward_account: RewardAccount {
                 network: 1,
                 credential: StakeCredential::AddrKeyHash([0x42; 28]),
-            }.to_bytes().to_vec(),
+            }
+            .to_bytes()
+            .to_vec(),
             gov_action: GovAction::InfoAction,
             anchor: Anchor {
                 url: "https://example.invalid/test".to_string(),
@@ -121,11 +130,17 @@ fn conway_submitted_tx_rejects_unknown_voter() {
     let mut vote_map = std::collections::BTreeMap::new();
     vote_map.insert(
         fake_action_id,
-        VotingProcedure { vote: Vote::Yes, anchor: None },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
     );
 
     let mut body = minimal_conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
@@ -139,9 +154,8 @@ fn conway_submitted_tx_rejects_unknown_voter() {
     });
 
     let ws = witness_set_for(&[&signer, &voter_signer], &body);
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -162,7 +176,9 @@ fn conway_submitted_tx_rejects_vote_on_nonexistent_proposal() {
     let drep_key = voter_signer.vkey_hash;
     let mut state = conway_state_with_input(&signer, [0x01; 32], 5_000_000);
     // Register DRep so voter exists, but target action does NOT exist.
-    state.drep_state_mut().register(DRep::KeyHash(drep_key), RegisteredDrep::new(0, None));
+    state
+        .drep_state_mut()
+        .register(DRep::KeyHash(drep_key), RegisteredDrep::new(0, None));
 
     let nonexistent_action = GovActionId {
         transaction_id: [0xFF; 32],
@@ -172,11 +188,17 @@ fn conway_submitted_tx_rejects_vote_on_nonexistent_proposal() {
     let mut vote_map = std::collections::BTreeMap::new();
     vote_map.insert(
         nonexistent_action,
-        VotingProcedure { vote: Vote::No, anchor: None },
+        VotingProcedure {
+            vote: Vote::No,
+            anchor: None,
+        },
     );
 
     let mut body = minimal_conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
@@ -186,13 +208,14 @@ fn conway_submitted_tx_rejects_vote_on_nonexistent_proposal() {
         0,
     );
     body.voting_procedures = Some(VotingProcedures {
-        procedures: [(Voter::DRepKeyHash(drep_key), vote_map)].into_iter().collect(),
+        procedures: [(Voter::DRepKeyHash(drep_key), vote_map)]
+            .into_iter()
+            .collect(),
     });
 
     let ws = witness_set_for(&[&signer, &voter_signer], &body);
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -214,7 +237,10 @@ fn conway_submitted_tx_rejects_wrong_treasury_value() {
     state.accounting_mut().treasury = 1_000_000;
 
     let mut body = minimal_conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
@@ -227,13 +253,15 @@ fn conway_submitted_tx_rejects_wrong_treasury_value() {
     body.current_treasury_value = Some(999_999);
 
     let ws = witness_set_for(&[&signer], &body);
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::CurrentTreasuryValueIncorrect { .. })),
+        matches!(
+            result,
+            Err(LedgerError::CurrentTreasuryValueIncorrect { .. })
+        ),
         "expected CurrentTreasuryValueIncorrect, got: {:?}",
         result,
     );
@@ -246,7 +274,10 @@ fn conway_submitted_tx_accepts_correct_treasury_value() {
     state.accounting_mut().treasury = 1_000_000;
 
     let mut body = minimal_conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
@@ -258,9 +289,8 @@ fn conway_submitted_tx_accepts_correct_treasury_value() {
     body.current_treasury_value = Some(1_000_000);
 
     let ws = witness_set_for(&[&signer], &body);
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected Ok, got: {:?}", result);
@@ -283,7 +313,10 @@ fn conway_submitted_tx_accumulates_votes_into_governance_state() {
     let mut state = conway_state_with_input(&signer, [0x01; 32], 10_000_000);
     // Also add a second input for the vote transaction.
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(10_000_000),
@@ -291,12 +324,19 @@ fn conway_submitted_tx_accumulates_votes_into_governance_state() {
             script_ref: None,
         }),
     );
-    state.stake_credentials_mut().register(reward_account.credential);
-    state.drep_state_mut().register(DRep::KeyHash(drep_key), RegisteredDrep::new(0, None));
+    state
+        .stake_credentials_mut()
+        .register(reward_account.credential);
+    state
+        .drep_state_mut()
+        .register(DRep::KeyHash(drep_key), RegisteredDrep::new(0, None));
 
     // Step 1: Submit a proposal via apply_submitted_tx.
     let mut proposal_body = minimal_conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(10_000_000),
@@ -317,10 +357,14 @@ fn conway_submitted_tx_accumulates_votes_into_governance_state() {
 
     let ws = witness_set_for(&[&signer], &proposal_body);
     let proposal_submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        proposal_body, ws, true, None,
+        proposal_body,
+        ws,
+        true,
+        None,
     ));
     let proposal_tx_id = proposal_submitted.tx_id();
-    state.apply_submitted_tx(&proposal_submitted, SlotNo(100), None)
+    state
+        .apply_submitted_tx(&proposal_submitted, SlotNo(100), None)
         .expect("proposal should be accepted");
 
     let gov_action_id = GovActionId {
@@ -336,11 +380,17 @@ fn conway_submitted_tx_accumulates_votes_into_governance_state() {
     let mut vote_map = std::collections::BTreeMap::new();
     vote_map.insert(
         gov_action_id.clone(),
-        VotingProcedure { vote: Vote::Yes, anchor: None },
+        VotingProcedure {
+            vote: Vote::Yes,
+            anchor: None,
+        },
     );
 
     let mut vote_body = minimal_conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }],
         vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(10_000_000),
@@ -350,18 +400,21 @@ fn conway_submitted_tx_accumulates_votes_into_governance_state() {
         0,
     );
     vote_body.voting_procedures = Some(VotingProcedures {
-        procedures: [(Voter::DRepKeyHash(drep_key), vote_map)].into_iter().collect(),
+        procedures: [(Voter::DRepKeyHash(drep_key), vote_map)]
+            .into_iter()
+            .collect(),
     });
 
     let ws = witness_set_for(&[&signer, &voter_signer], &vote_body);
-    let vote_submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        vote_body, ws, true, None,
-    ));
-    state.apply_submitted_tx(&vote_submitted, SlotNo(101), None)
+    let vote_submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(vote_body, ws, true, None));
+    state
+        .apply_submitted_tx(&vote_submitted, SlotNo(101), None)
         .expect("vote should be accepted");
 
     // Verify the vote was recorded.
-    let stored = state.governance_action(&gov_action_id)
+    let stored = state
+        .governance_action(&gov_action_id)
         .expect("governance action should still exist");
     assert_eq!(
         stored.votes().get(&Voter::DRepKeyHash(drep_key)),
@@ -384,7 +437,10 @@ fn conway_submitted_tx_tracks_drep_activity_for_registration() {
     state.set_current_epoch(EpochNo(42));
 
     let mut body = minimal_conway_body(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         vec![BabbageTxOut {
             address: signer.enterprise_addr(),
             amount: Value::Coin(5_000_000),
@@ -393,15 +449,17 @@ fn conway_submitted_tx_tracks_drep_activity_for_registration() {
         }],
         0,
     );
-    body.certificates = Some(vec![
-        DCert::DrepRegistration(StakeCredential::AddrKeyHash(drep_key), 0, None),
-    ]);
+    body.certificates = Some(vec![DCert::DrepRegistration(
+        StakeCredential::AddrKeyHash(drep_key),
+        0,
+        None,
+    )]);
 
     let ws = witness_set_for(&[&signer, &drep_signer], &body);
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
-    state.apply_submitted_tx(&submitted, SlotNo(10), None)
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    state
+        .apply_submitted_tx(&submitted, SlotNo(10), None)
         .expect("DRep registration should be accepted");
 
     // Verify the DRep is registered and activity was touched.

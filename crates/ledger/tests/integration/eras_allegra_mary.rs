@@ -226,7 +226,12 @@ fn value_coin_and_assets_cbor_round_trip() {
     let inner = val.multi_asset().expect("multi_asset present");
     assert_eq!(inner.len(), 1);
     let policy_assets = inner.get(&[0xAA; 28]).expect("policy exists");
-    assert_eq!(*policy_assets.get(&vec![0x41, 0x42, 0x43]).expect("asset exists"), 100);
+    assert_eq!(
+        *policy_assets
+            .get(&vec![0x41, 0x42, 0x43])
+            .expect("asset exists"),
+        100
+    );
 }
 
 #[test]
@@ -424,7 +429,14 @@ fn mary_tx_body_mint_signed_quantities_round_trip() {
     };
     let encoded = body.to_cbor_bytes();
     let decoded = MaryTxBody::from_cbor_bytes(&encoded).expect("decode burn mint");
-    assert_eq!(decoded.mint.expect("mint present").get(&[0xEE; 28]).expect("policy")
-        .get(&b"TKN".to_vec()).copied(), Some(-999));
+    assert_eq!(
+        decoded
+            .mint
+            .expect("mint present")
+            .get(&[0xEE; 28])
+            .expect("policy")
+            .get(&b"TKN".to_vec())
+            .copied(),
+        Some(-999)
+    );
 }
-

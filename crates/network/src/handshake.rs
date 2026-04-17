@@ -139,10 +139,7 @@ pub enum HandshakeTransitionError {
 
 impl HandshakeState {
     /// Computes the next state given an incoming message.
-    pub fn transition(
-        self,
-        msg: &HandshakeMessage,
-    ) -> Result<Self, HandshakeTransitionError> {
+    pub fn transition(self, msg: &HandshakeMessage) -> Result<Self, HandshakeTransitionError> {
         match (self, msg) {
             (Self::StPropose, HandshakeMessage::ProposeVersions(_)) => Ok(Self::StConfirm),
             (Self::StConfirm, HandshakeMessage::AcceptVersion(..)) => Ok(Self::StDone),
@@ -182,8 +179,8 @@ impl HandshakeMessage {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
 use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 /// Encode a version data value as a CBOR array:
 /// `[networkMagic, initiatorOnlyDiffusionMode, peerSharing, query]`.
@@ -213,11 +210,7 @@ fn decode_version_data(dec: &mut Decoder<'_>) -> Result<NodeToNodeVersionData, L
     }
     let network_magic = dec.unsigned()? as u32;
     let initiator_only_diffusion_mode = dec.bool()?;
-    let peer_sharing = if len >= 3 {
-        dec.unsigned()? as u8
-    } else {
-        0
-    };
+    let peer_sharing = if len >= 3 { dec.unsigned()? as u8 } else { 0 };
     let query = if len >= 4 { dec.bool()? } else { false };
     Ok(NodeToNodeVersionData {
         network_magic,
@@ -228,10 +221,7 @@ fn decode_version_data(dec: &mut Decoder<'_>) -> Result<NodeToNodeVersionData, L
 }
 
 /// Encode a version table as a CBOR map: `{version: versionData, ...}`.
-fn encode_version_table(
-    enc: &mut Encoder,
-    versions: &[(HandshakeVersion, NodeToNodeVersionData)],
-) {
+fn encode_version_table(enc: &mut Encoder, versions: &[(HandshakeVersion, NodeToNodeVersionData)]) {
     enc.map(versions.len() as u64);
     for (ver, vd) in versions {
         enc.unsigned(u64::from(ver.0));
@@ -283,10 +273,16 @@ impl HandshakeMessage {
                         }
                     }
                     RefuseReason::HandshakeDecodeError(ver, msg) => {
-                        enc.array(3).unsigned(1).unsigned(u64::from(ver.0)).text(msg);
+                        enc.array(3)
+                            .unsigned(1)
+                            .unsigned(u64::from(ver.0))
+                            .text(msg);
                     }
                     RefuseReason::Refused(ver, msg) => {
-                        enc.array(3).unsigned(2).unsigned(u64::from(ver.0)).text(msg);
+                        enc.array(3)
+                            .unsigned(2)
+                            .unsigned(u64::from(ver.0))
+                            .text(msg);
                     }
                 }
             }

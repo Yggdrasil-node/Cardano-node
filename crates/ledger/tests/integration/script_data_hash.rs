@@ -2,7 +2,9 @@
 
 use super::*;
 
-fn required_scripts(hashes: impl IntoIterator<Item = [u8; 28]>) -> std::collections::HashSet<[u8; 28]> {
+fn required_scripts(
+    hashes: impl IntoIterator<Item = [u8; 28]>,
+) -> std::collections::HashSet<[u8; 28]> {
     hashes.into_iter().collect()
 }
 
@@ -66,7 +68,10 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
     let ws_bytes = ws.to_cbor_bytes();
     let computed_hash = yggdrasil_ledger::plutus_validation::compute_script_data_hash(
@@ -92,7 +97,11 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
         None,
         None, // protocol_version
     );
-    assert!(result.is_ok(), "expected success with matching hash: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "expected success with matching hash: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -138,12 +147,8 @@ fn alonzo_submitted_tx_rejects_mismatched_script_data_hash() {
         network_id: None,
     };
 
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws,
-        true,
-        None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -196,7 +201,10 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_reference_script(
         tag: 1,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
     let ws_bytes = ws.to_cbor_bytes();
     let computed_hash = yggdrasil_ledger::plutus_validation::compute_script_data_hash(
@@ -244,15 +252,15 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_reference_script(
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws,
-        true,
-        None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "expected success with matching Babbage reference-script hash: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "expected success with matching Babbage reference-script hash: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -299,7 +307,10 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_unused_reference_
         tag: 1,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
     let ws_bytes = ws.to_cbor_bytes();
     let required = required_scripts([policy_hash]);
@@ -348,12 +359,8 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_unused_reference_
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws,
-        true,
-        None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -400,7 +407,10 @@ fn conway_submitted_tx_rejects_mismatched_script_data_hash_with_reference_script
         tag: 1,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
     let mut output_assets = std::collections::BTreeMap::new();
     let mut minted_assets = std::collections::BTreeMap::new();
@@ -443,12 +453,8 @@ fn conway_submitted_tx_rejects_mismatched_script_data_hash_with_reference_script
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
 
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws,
-        true,
-        None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -472,7 +478,10 @@ fn alonzo_no_redeemers_no_hash_accepted() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xD0; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xD0; 32],
+        index: 0,
+    };
     seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
 
     let body = AlonzoTxBody {
@@ -498,9 +507,14 @@ fn alonzo_no_redeemers_no_hash_accepted() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "no redeemers + no hash should be accepted: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "no redeemers + no hash should be accepted: {:?}",
+        result
+    );
 }
 
 /// Redeemers present, hash absent → MissingRequiredScriptIntegrityHash.
@@ -512,7 +526,10 @@ fn alonzo_redeemers_without_hash_rejected() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xD3; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xD3; 32],
+        index: 0,
+    };
     seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
 
     let body = AlonzoTxBody {
@@ -541,10 +558,14 @@ fn alonzo_redeemers_without_hash_rejected() {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(42),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
 
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::MissingRequiredScriptIntegrityHash)),
@@ -562,7 +583,10 @@ fn alonzo_hash_without_redeemers_rejected() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xD5; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xD5; 32],
+        index: 0,
+    };
     seed_utxo(&mut state, input.clone(), &addr, 5_000_000);
 
     let body = AlonzoTxBody {
@@ -587,10 +611,14 @@ fn alonzo_hash_without_redeemers_rejected() {
     };
 
     let ws = empty_witness_set();
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::UnexpectedScriptIntegrityHash { .. })),
+        matches!(
+            result,
+            Err(LedgerError::UnexpectedScriptIntegrityHash { .. })
+        ),
         "expected UnexpectedScriptIntegrityHash, got: {:?}",
         result,
     );
@@ -605,7 +633,10 @@ fn babbage_redeemers_without_hash_rejected() {
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xD7; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xD7; 32],
+        index: 0,
+    };
     seed_babbage_utxo(&mut state, input.clone(), &addr, 5_000_000);
 
     let body = BabbageTxBody {
@@ -641,7 +672,8 @@ fn babbage_redeemers_without_hash_rejected() {
         ex_units: ExUnits { mem: 50, steps: 50 },
     });
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
         matches!(result, Err(LedgerError::MissingRequiredScriptIntegrityHash)),
@@ -659,7 +691,10 @@ fn conway_hash_without_redeemers_rejected() {
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0xD9; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xD9; 32],
+        index: 0,
+    };
     seed_babbage_utxo(&mut state, input.clone(), &addr, 5_000_000);
 
     let body = ConwayTxBody {
@@ -691,10 +726,14 @@ fn conway_hash_without_redeemers_rejected() {
     };
 
     let ws = empty_witness_set();
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
-        matches!(result, Err(LedgerError::UnexpectedScriptIntegrityHash { .. })),
+        matches!(
+            result,
+            Err(LedgerError::UnexpectedScriptIntegrityHash { .. })
+        ),
         "expected UnexpectedScriptIntegrityHash for Conway, got: {:?}",
         result,
     );
@@ -706,7 +745,7 @@ fn conway_hash_without_redeemers_rejected() {
 #[test]
 fn script_data_hash_mismatch_returns_ppview_at_pv10() {
     let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
-        Some([0xAA; 32]),        // declared (wrong)
+        Some([0xAA; 32]), // declared (wrong)
         Some(&minimal_ws_with_redeemer()),
         None,
         false,
@@ -714,7 +753,7 @@ fn script_data_hash_mismatch_returns_ppview_at_pv10() {
         None,
         None,
         None,
-        Some((10, 0)),           // PV 10 < 11
+        Some((10, 0)), // PV 10 < 11
     );
     assert!(
         matches!(result, Err(LedgerError::PPViewHashesDontMatch { .. })),
@@ -726,7 +765,7 @@ fn script_data_hash_mismatch_returns_ppview_at_pv10() {
 #[test]
 fn script_data_hash_mismatch_returns_integrity_at_pv11() {
     let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
-        Some([0xAA; 32]),        // declared (wrong)
+        Some([0xAA; 32]), // declared (wrong)
         Some(&minimal_ws_with_redeemer()),
         None,
         false,
@@ -734,7 +773,7 @@ fn script_data_hash_mismatch_returns_integrity_at_pv11() {
         None,
         None,
         None,
-        Some((11, 0)),           // PV 11 >= 11
+        Some((11, 0)), // PV 11 >= 11
     );
     assert!(
         matches!(result, Err(LedgerError::ScriptIntegrityHashMismatch { .. })),
@@ -749,7 +788,10 @@ fn minimal_ws_with_redeemer() -> Vec<u8> {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 1_000_000, steps: 1_000_000 },
+        ex_units: ExUnits {
+            mem: 1_000_000,
+            steps: 1_000_000,
+        },
     });
     ws.to_cbor_bytes()
 }
@@ -814,7 +856,10 @@ fn datums_without_redeemers_accepts_matching_hash() {
         None,
         None,
     );
-    assert!(result.is_ok(), "expected Ok with matching datums-only hash, got: {result:?}");
+    assert!(
+        result.is_ok(),
+        "expected Ok with matching datums-only hash, got: {result:?}"
+    );
 }
 
 /// When datums are present but the declared hash is wrong, validation fails.
@@ -858,7 +903,10 @@ fn empty_witness_with_declared_hash_is_unexpected() {
         None,
     );
     assert!(
-        matches!(result, Err(LedgerError::UnexpectedScriptIntegrityHash { .. })),
+        matches!(
+            result,
+            Err(LedgerError::UnexpectedScriptIntegrityHash { .. })
+        ),
         "expected UnexpectedScriptIntegrityHash for empty witness, got: {result:?}",
     );
 }

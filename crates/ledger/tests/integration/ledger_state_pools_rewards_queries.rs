@@ -1,7 +1,7 @@
-use super::*;
 use super::ledger_state_basic::make_shelley_block_with_txs;
 use super::txbody_keys::sample_reward_account;
 use super::types_and_certs::sample_pool_params;
+use super::*;
 
 #[test]
 fn ledger_state_pool_state_tracks_registration_and_retirement() {
@@ -125,7 +125,9 @@ fn ledger_state_pool_retirement_requires_registered_pool() {
         }],
     );
 
-    let err = state.apply_block(&block).expect_err("missing pool should fail");
+    let err = state
+        .apply_block(&block)
+        .expect_err("missing pool should fail");
     assert_eq!(err, LedgerError::PoolNotRegistered([0xA4; 28]));
     assert_eq!(state.tip, Point::Origin);
 }
@@ -136,10 +138,9 @@ fn ledger_state_applies_withdrawal_and_debits_reward_balance() {
 
     let mut state = LedgerState::new(Era::Shelley);
     let reward_account = sample_reward_account();
-    state.reward_accounts_mut().insert(
-        reward_account,
-        RewardAccountState::new(500_000, None),
-    );
+    state
+        .reward_accounts_mut()
+        .insert(reward_account, RewardAccountState::new(500_000, None));
     state.utxo_mut().insert(
         ShelleyTxIn {
             transaction_id: [0x94; 32],
@@ -186,10 +187,9 @@ fn ledger_state_rejects_withdrawal_above_balance() {
 
     let mut state = LedgerState::new(Era::Shelley);
     let reward_account = sample_reward_account();
-    state.reward_accounts_mut().insert(
-        reward_account,
-        RewardAccountState::new(400_000, None),
-    );
+    state
+        .reward_accounts_mut()
+        .insert(reward_account, RewardAccountState::new(400_000, None));
     state.utxo_mut().insert(
         ShelleyTxIn {
             transaction_id: [0x96; 32],
@@ -225,7 +225,9 @@ fn ledger_state_rejects_withdrawal_above_balance() {
         }],
     );
 
-    let err = state.apply_block(&block).expect_err("over-withdrawal should fail");
+    let err = state
+        .apply_block(&block)
+        .expect_err("over-withdrawal should fail");
     assert_eq!(
         err,
         LedgerError::WithdrawalExceedsBalance {

@@ -784,16 +784,10 @@ mod tests {
     fn rate_limit_soft_delay() {
         let limits = AcceptedConnectionsLimit::default();
         let result = rate_limit_decision(384, &limits);
-        assert_eq!(
-            result,
-            RateLimitDecision::SoftDelay(Duration::from_secs(5))
-        );
+        assert_eq!(result, RateLimitDecision::SoftDelay(Duration::from_secs(5)));
 
         let result = rate_limit_decision(511, &limits);
-        assert_eq!(
-            result,
-            RateLimitDecision::SoftDelay(Duration::from_secs(5))
-        );
+        assert_eq!(result, RateLimitDecision::SoftDelay(Duration::from_secs(5)));
     }
 
     #[test]
@@ -844,7 +838,10 @@ mod tests {
 
     #[test]
     fn rethrow_policy_variants() {
-        assert_ne!(RethrowPolicy::RethrowException, RethrowPolicy::AbsorbException);
+        assert_ne!(
+            RethrowPolicy::RethrowException,
+            RethrowPolicy::AbsorbException
+        );
     }
 
     // -- PeerConnectionHandle --
@@ -925,8 +922,14 @@ mod tests {
 
     #[test]
     fn repromote_delay_durations() {
-        assert_eq!(RepromoteDelay::ShortDelay.as_duration(), Duration::from_secs(10));
-        assert_eq!(RepromoteDelay::LongDelay.as_duration(), Duration::from_secs(200));
+        assert_eq!(
+            RepromoteDelay::ShortDelay.as_duration(),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            RepromoteDelay::LongDelay.as_duration(),
+            Duration::from_secs(200)
+        );
     }
 
     // -- Integration: governor action → peer state action mapping --

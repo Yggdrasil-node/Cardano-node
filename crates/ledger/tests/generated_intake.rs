@@ -27,7 +27,9 @@ fn ledger_can_intake_foundation_schema_fixture() {
         generated.source
     );
     assert!(
-        generated.source.contains("pub field_7: Option<AuxiliaryDataHash>"),
+        generated
+            .source
+            .contains("pub field_7: Option<AuxiliaryDataHash>"),
         "generated source should map optional fields\n{}",
         generated.source
     );

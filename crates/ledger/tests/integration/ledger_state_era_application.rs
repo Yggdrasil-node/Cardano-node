@@ -11,7 +11,7 @@ fn make_allegra_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<AllegraT
                 body: raw,
                 witnesses: None,
                 auxiliary_data: None,
-            is_valid: None,
+                is_valid: None,
             }
         })
         .collect();
@@ -42,7 +42,7 @@ fn make_mary_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<MaryTxBody>
                 body: raw,
                 witnesses: None,
                 auxiliary_data: None,
-            is_valid: None,
+                is_valid: None,
             }
         })
         .collect();
@@ -97,7 +97,10 @@ fn ledger_state_applies_allegra_block() {
     let block = make_allegra_block(500, 1, 0xAB, vec![tx_body]);
     state.apply_block(&block).expect("allegra block");
     assert_eq!(state.multi_era_utxo().len(), 1);
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(500), HeaderHash([0xAB; 32])));
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(500), HeaderHash([0xAB; 32]))
+    );
 }
 
 #[test]
@@ -151,7 +154,10 @@ fn ledger_state_applies_mary_block_with_mint() {
     let block = make_mary_block(500, 1, 0xCD, vec![tx_body]);
     state.apply_block(&block).expect("mary block with mint");
     assert_eq!(state.multi_era_utxo().len(), 1);
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(500), HeaderHash([0xCD; 32])));
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(500), HeaderHash([0xCD; 32]))
+    );
 }
 
 #[test]
@@ -173,7 +179,10 @@ fn ledger_state_empty_allegra_block_advances_tip() {
     };
 
     state.apply_block(&block).expect("empty allegra block");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(42), HeaderHash([0xFF; 32])));
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(42), HeaderHash([0xFF; 32]))
+    );
 }
 
 #[test]
@@ -183,7 +192,10 @@ fn ledger_state_snapshot_exposes_tip_and_era() {
 
     let snapshot = state.snapshot();
     assert_eq!(snapshot.current_era(), Era::Babbage);
-    assert_eq!(snapshot.tip(), &Point::BlockPoint(SlotNo(77), HeaderHash([0xAB; 32])));
+    assert_eq!(
+        snapshot.tip(),
+        &Point::BlockPoint(SlotNo(77), HeaderHash([0xAB; 32]))
+    );
 }
 
 #[test]
@@ -208,8 +220,14 @@ fn ledger_state_accepts_byron_block_as_tip_only_transition() {
     state
         .apply_block(&block)
         .expect("byron should advance the tip without failing");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(1), HeaderHash([0xFF; 32])));
-    assert_eq!(state.snapshot().query_balance(&Address::Byron(vec![0x01])), original_snapshot.query_balance(&Address::Byron(vec![0x01])));
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(1), HeaderHash([0xFF; 32]))
+    );
+    assert_eq!(
+        state.snapshot().query_balance(&Address::Byron(vec![0x01])),
+        original_snapshot.query_balance(&Address::Byron(vec![0x01]))
+    );
 }
 
 #[test]
@@ -271,7 +289,7 @@ fn make_byron_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<ByronTx>) 
                 body: raw,
                 witnesses: None,
                 auxiliary_data: None,
-            is_valid: None,
+                is_valid: None,
             }
         })
         .collect();
@@ -297,22 +315,36 @@ fn byron_block_applies_utxo_transitions() {
 
     // Seed the UTxO set with a genesis output that a Byron tx can spend.
     let genesis_txid = [0xAA; 32];
-    let genesis_txin = ShelleyTxIn { transaction_id: genesis_txid, index: 0 };
+    let genesis_txin = ShelleyTxIn {
+        transaction_id: genesis_txid,
+        index: 0,
+    };
     let genesis_txout = MultiEraTxOut::Shelley(ShelleyTxOut {
-        address: vec![0x82, 0x00, 0x01],  // opaque Byron address bytes
+        address: vec![0x82, 0x00, 0x01], // opaque Byron address bytes
         amount: 1_000_000,
     });
-    state.multi_era_utxo_mut().insert(genesis_txin.clone(), genesis_txout);
+    state
+        .multi_era_utxo_mut()
+        .insert(genesis_txin.clone(), genesis_txout);
     assert_eq!(state.multi_era_utxo().len(), 1);
 
     // Build a Byron transaction that spends the genesis output and produces two new outputs.
     let byron_tx = ByronTx {
-        inputs: vec![ByronTxIn { txid: genesis_txid, index: 0 }],
+        inputs: vec![ByronTxIn {
+            txid: genesis_txid,
+            index: 0,
+        }],
         outputs: vec![
-            ByronTxOut { address: vec![0x82, 0x00, 0x02], amount: 600_000 },
-            ByronTxOut { address: vec![0x82, 0x00, 0x03], amount: 300_000 },
+            ByronTxOut {
+                address: vec![0x82, 0x00, 0x02],
+                amount: 600_000,
+            },
+            ByronTxOut {
+                address: vec![0x82, 0x00, 0x03],
+                amount: 300_000,
+            },
         ],
-        attributes: vec![0xA0],  // empty CBOR map
+        attributes: vec![0xA0], // empty CBOR map
     };
 
     let block = make_byron_block(1, 1, 0x01, vec![byron_tx.clone()]);
@@ -324,16 +356,25 @@ fn byron_block_applies_utxo_transitions() {
 
     // Check produced outputs are keyed by the Byron tx id.
     let tx_id = byron_tx.tx_id();
-    let out0 = state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: tx_id, index: 0 });
+    let out0 = state.multi_era_utxo().get(&ShelleyTxIn {
+        transaction_id: tx_id,
+        index: 0,
+    });
     assert!(out0.is_some());
     assert_eq!(out0.unwrap().coin(), 600_000);
 
-    let out1 = state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: tx_id, index: 1 });
+    let out1 = state.multi_era_utxo().get(&ShelleyTxIn {
+        transaction_id: tx_id,
+        index: 1,
+    });
     assert!(out1.is_some());
     assert_eq!(out1.unwrap().coin(), 300_000);
 
     // Tip should be updated.
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(1), HeaderHash([0x01; 32])));
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(1), HeaderHash([0x01; 32]))
+    );
 }
 
 #[test]
@@ -342,10 +383,14 @@ fn byron_block_rejects_missing_input() {
 
     // Build a Byron tx that references a non-existent input.
     let byron_tx = ByronTx {
-        inputs: vec![ByronTxIn { txid: [0xBB; 32], index: 0 }],
-        outputs: vec![
-            ByronTxOut { address: vec![0x82, 0x00, 0x01], amount: 100 },
-        ],
+        inputs: vec![ByronTxIn {
+            txid: [0xBB; 32],
+            index: 0,
+        }],
+        outputs: vec![ByronTxOut {
+            address: vec![0x82, 0x00, 0x01],
+            amount: 100,
+        }],
         attributes: vec![0xA0],
     };
 
@@ -365,7 +410,10 @@ fn byron_block_rejects_negative_fee() {
     // Seed with 100 lovelace.
     let txid = [0xCC; 32];
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: txid, index: 0 },
+        ShelleyTxIn {
+            transaction_id: txid,
+            index: 0,
+        },
         MultiEraTxOut::Shelley(ShelleyTxOut {
             address: vec![0x82, 0x00, 0x01],
             amount: 100,
@@ -375,9 +423,10 @@ fn byron_block_rejects_negative_fee() {
     // Try to produce more than consumed (fee would be negative).
     let byron_tx = ByronTx {
         inputs: vec![ByronTxIn { txid, index: 0 }],
-        outputs: vec![
-            ByronTxOut { address: vec![0x82, 0x00, 0x02], amount: 200 },
-        ],
+        outputs: vec![ByronTxOut {
+            address: vec![0x82, 0x00, 0x02],
+            amount: 200,
+        }],
         attributes: vec![0xA0],
     };
 
@@ -385,7 +434,9 @@ fn byron_block_rejects_negative_fee() {
     let result = state.apply_block(&block);
     assert!(result.is_err());
     match result.unwrap_err() {
-        LedgerError::ValueNotPreserved { consumed, produced, .. } => {
+        LedgerError::ValueNotPreserved {
+            consumed, produced, ..
+        } => {
             assert_eq!(consumed, 100);
             assert_eq!(produced, 200);
         }
@@ -401,23 +452,47 @@ fn byron_block_multiple_txs_applied_atomically() {
     let txid_a = [0xDD; 32];
     let txid_b = [0xEE; 32];
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: txid_a, index: 0 },
-        MultiEraTxOut::Shelley(ShelleyTxOut { address: vec![0x01], amount: 500 }),
+        ShelleyTxIn {
+            transaction_id: txid_a,
+            index: 0,
+        },
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: vec![0x01],
+            amount: 500,
+        }),
     );
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: txid_b, index: 0 },
-        MultiEraTxOut::Shelley(ShelleyTxOut { address: vec![0x02], amount: 500 }),
+        ShelleyTxIn {
+            transaction_id: txid_b,
+            index: 0,
+        },
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: vec![0x02],
+            amount: 500,
+        }),
     );
 
     // First tx spends txid_a, second tx references non-existent input.
     let tx1 = ByronTx {
-        inputs: vec![ByronTxIn { txid: txid_a, index: 0 }],
-        outputs: vec![ByronTxOut { address: vec![0x03], amount: 400 }],
+        inputs: vec![ByronTxIn {
+            txid: txid_a,
+            index: 0,
+        }],
+        outputs: vec![ByronTxOut {
+            address: vec![0x03],
+            amount: 400,
+        }],
         attributes: vec![0xA0],
     };
     let tx2 = ByronTx {
-        inputs: vec![ByronTxIn { txid: [0xFF; 32], index: 0 }],
-        outputs: vec![ByronTxOut { address: vec![0x04], amount: 100 }],
+        inputs: vec![ByronTxIn {
+            txid: [0xFF; 32],
+            index: 0,
+        }],
+        outputs: vec![ByronTxOut {
+            address: vec![0x04],
+            amount: 100,
+        }],
         attributes: vec![0xA0],
     };
 
@@ -427,8 +502,24 @@ fn byron_block_multiple_txs_applied_atomically() {
 
     // Atomicity: both original outputs should still be present.
     assert_eq!(state.multi_era_utxo().len(), 2);
-    assert!(state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: txid_a, index: 0 }).is_some());
-    assert!(state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: txid_b, index: 0 }).is_some());
+    assert!(
+        state
+            .multi_era_utxo()
+            .get(&ShelleyTxIn {
+                transaction_id: txid_a,
+                index: 0
+            })
+            .is_some()
+    );
+    assert!(
+        state
+            .multi_era_utxo()
+            .get(&ShelleyTxIn {
+                transaction_id: txid_b,
+                index: 0
+            })
+            .is_some()
+    );
 }
 
 #[test]
@@ -438,16 +529,31 @@ fn byron_block_chain_spending() {
     // Seed with a genesis output.
     let genesis_txid = [0x11; 32];
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: genesis_txid, index: 0 },
-        MultiEraTxOut::Shelley(ShelleyTxOut { address: vec![0x01], amount: 10_000 }),
+        ShelleyTxIn {
+            transaction_id: genesis_txid,
+            index: 0,
+        },
+        MultiEraTxOut::Shelley(ShelleyTxOut {
+            address: vec![0x01],
+            amount: 10_000,
+        }),
     );
 
     // Block 1: spend genesis.
     let tx1 = ByronTx {
-        inputs: vec![ByronTxIn { txid: genesis_txid, index: 0 }],
+        inputs: vec![ByronTxIn {
+            txid: genesis_txid,
+            index: 0,
+        }],
         outputs: vec![
-            ByronTxOut { address: vec![0x02], amount: 8_000 },
-            ByronTxOut { address: vec![0x03], amount: 1_000 },
+            ByronTxOut {
+                address: vec![0x02],
+                amount: 8_000,
+            },
+            ByronTxOut {
+                address: vec![0x03],
+                amount: 1_000,
+            },
         ],
         attributes: vec![0xA0],
     };
@@ -457,10 +563,14 @@ fn byron_block_chain_spending() {
     // Block 2: spend output from block 1.
     let tx1_id = tx1.tx_id();
     let tx2 = ByronTx {
-        inputs: vec![ByronTxIn { txid: tx1_id, index: 0 }],
-        outputs: vec![
-            ByronTxOut { address: vec![0x04], amount: 7_000 },
-        ],
+        inputs: vec![ByronTxIn {
+            txid: tx1_id,
+            index: 0,
+        }],
+        outputs: vec![ByronTxOut {
+            address: vec![0x04],
+            amount: 7_000,
+        }],
         attributes: vec![0xA0],
     };
     let block2 = make_byron_block(2, 2, 0x20, vec![tx2.clone()]);
@@ -469,8 +579,28 @@ fn byron_block_chain_spending() {
     // Should have 2 outputs: tx1 output[1] + tx2 output[0].
     assert_eq!(state.multi_era_utxo().len(), 2);
     let tx2_id = tx2.tx_id();
-    assert_eq!(state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: tx2_id, index: 0 }).unwrap().coin(), 7_000);
-    assert_eq!(state.multi_era_utxo().get(&ShelleyTxIn { transaction_id: tx1_id, index: 1 }).unwrap().coin(), 1_000);
+    assert_eq!(
+        state
+            .multi_era_utxo()
+            .get(&ShelleyTxIn {
+                transaction_id: tx2_id,
+                index: 0
+            })
+            .unwrap()
+            .coin(),
+        7_000
+    );
+    assert_eq!(
+        state
+            .multi_era_utxo()
+            .get(&ShelleyTxIn {
+                transaction_id: tx1_id,
+                index: 1
+            })
+            .unwrap()
+            .coin(),
+        1_000
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -497,13 +627,13 @@ fn make_empty_block(era: Era, slot: u64, block_no: u64, hash_seed: u8) -> Block 
 /// `Era::era_ordinal` returns the correct sequential index for every era.
 #[test]
 fn era_ordinal_is_sequential() {
-    assert_eq!(Era::Byron.era_ordinal(),   0);
+    assert_eq!(Era::Byron.era_ordinal(), 0);
     assert_eq!(Era::Shelley.era_ordinal(), 1);
     assert_eq!(Era::Allegra.era_ordinal(), 2);
-    assert_eq!(Era::Mary.era_ordinal(),    3);
-    assert_eq!(Era::Alonzo.era_ordinal(),  4);
+    assert_eq!(Era::Mary.era_ordinal(), 3);
+    assert_eq!(Era::Alonzo.era_ordinal(), 4);
     assert_eq!(Era::Babbage.era_ordinal(), 5);
-    assert_eq!(Era::Conway.era_ordinal(),  6);
+    assert_eq!(Era::Conway.era_ordinal(), 6);
 }
 
 /// `is_hard_fork_to` is true iff the argument is strictly later.
@@ -513,7 +643,7 @@ fn is_hard_fork_to_correctness() {
     assert!(Era::Byron.is_hard_fork_to(Era::Conway));
     assert!(Era::Shelley.is_hard_fork_to(Era::Allegra));
     assert!(!Era::Shelley.is_hard_fork_to(Era::Shelley)); // same era — not a fork
-    assert!(!Era::Conway.is_hard_fork_to(Era::Babbage));  // regression — not a fork
+    assert!(!Era::Conway.is_hard_fork_to(Era::Babbage)); // regression — not a fork
 }
 
 /// `is_era_regression` is true iff the argument is strictly earlier.
@@ -522,7 +652,7 @@ fn is_era_regression_correctness() {
     assert!(Era::Conway.is_era_regression(Era::Shelley));
     assert!(Era::Alonzo.is_era_regression(Era::Byron));
     assert!(!Era::Shelley.is_era_regression(Era::Shelley)); // same era — not a regression
-    assert!(!Era::Shelley.is_era_regression(Era::Conway));  // advance — not a regression
+    assert!(!Era::Shelley.is_era_regression(Era::Conway)); // advance — not a regression
 }
 
 /// Once the ledger has seen a Shelley block, a Byron block must be rejected.
@@ -531,7 +661,9 @@ fn era_regression_shelley_then_byron_rejected() {
     let mut state = LedgerState::new(Era::Byron);
 
     let shelley_block = make_empty_block(Era::Shelley, 1, 1, 0x01);
-    state.apply_block(&shelley_block).expect("shelley block should apply");
+    state
+        .apply_block(&shelley_block)
+        .expect("shelley block should apply");
 
     let byron_block = make_empty_block(Era::Byron, 2, 2, 0x02);
     let err = state
@@ -556,7 +688,9 @@ fn era_regression_conway_then_shelley_rejected() {
     let mut state = LedgerState::new(Era::Conway);
 
     let conway_block = make_empty_block(Era::Conway, 100, 1, 0x10);
-    state.apply_block(&conway_block).expect("conway block should apply");
+    state
+        .apply_block(&conway_block)
+        .expect("conway block should apply");
 
     let shelley_block = make_empty_block(Era::Shelley, 101, 2, 0x11);
     let err = state
@@ -579,9 +713,16 @@ fn era_regression_conway_then_shelley_rejected() {
 #[test]
 fn same_era_consecutive_blocks_allowed() {
     let mut state = LedgerState::new(Era::Babbage);
-    state.apply_block(&make_empty_block(Era::Babbage, 1, 1, 0xAA)).expect("babbage block 1");
-    state.apply_block(&make_empty_block(Era::Babbage, 2, 2, 0xBB)).expect("babbage block 2");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(2), HeaderHash([0xBBu8; 32])));
+    state
+        .apply_block(&make_empty_block(Era::Babbage, 1, 1, 0xAA))
+        .expect("babbage block 1");
+    state
+        .apply_block(&make_empty_block(Era::Babbage, 2, 2, 0xBB))
+        .expect("babbage block 2");
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(2), HeaderHash([0xBBu8; 32]))
+    );
 }
 
 /// An era-advance from Shelley to Conway (skipping Allegra/Mary/Alonzo/Babbage) is allowed.
@@ -590,9 +731,16 @@ fn era_advance_across_multiple_eras_allowed() {
     // A ledger configured for Shelley may receive a Conway block if the local
     // genesis configuration skips intermediate eras — this is allowed by the HFC.
     let mut state = LedgerState::new(Era::Shelley);
-    state.apply_block(&make_empty_block(Era::Shelley, 10, 1, 0x01)).expect("shelley block");
-    state.apply_block(&make_empty_block(Era::Conway, 20, 2, 0x02)).expect("conway block after shelley should be allowed");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(20), HeaderHash([0x02u8; 32])));
+    state
+        .apply_block(&make_empty_block(Era::Shelley, 10, 1, 0x01))
+        .expect("shelley block");
+    state
+        .apply_block(&make_empty_block(Era::Conway, 20, 2, 0x02))
+        .expect("conway block after shelley should be allowed");
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(20), HeaderHash([0x02u8; 32]))
+    );
 }
 
 /// A fresh ledger (tip = Origin) accepts a block from any era, enabling
@@ -602,6 +750,11 @@ fn fresh_ledger_accepts_any_era_first_block() {
     let mut state = LedgerState::new(Era::Byron);
     // tip is Origin at creation; deliver a Conway block directly
     let conway_block = make_empty_block(Era::Conway, 50, 1, 0x99);
-    state.apply_block(&conway_block).expect("fresh ledger should accept any era as first block");
-    assert_eq!(state.tip, Point::BlockPoint(SlotNo(50), HeaderHash([0x99u8; 32])));
+    state
+        .apply_block(&conway_block)
+        .expect("fresh ledger should accept any era as first block");
+    assert_eq!(
+        state.tip,
+        Point::BlockPoint(SlotNo(50), HeaderHash([0x99u8; 32]))
+    );
 }

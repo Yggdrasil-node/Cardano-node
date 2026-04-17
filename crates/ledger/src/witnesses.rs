@@ -8,8 +8,8 @@
 
 use std::collections::HashSet;
 
-use crate::error::LedgerError;
 use crate::CborDecode;
+use crate::error::LedgerError;
 
 /// Validates that every required VKey hash is covered by a witness.
 ///
@@ -65,9 +65,10 @@ pub fn verify_vkey_signatures(
     for w in witnesses {
         let vk = yggdrasil_crypto::ed25519::VerificationKey::from_bytes(w.vkey);
         let sig = yggdrasil_crypto::ed25519::Signature::from_bytes(w.signature);
-        vk.verify(tx_body_hash, &sig).map_err(|_| {
-            LedgerError::InvalidVKeyWitnessSignature { hash: vkey_hash(&w.vkey) }
-        })?;
+        vk.verify(tx_body_hash, &sig)
+            .map_err(|_| LedgerError::InvalidVKeyWitnessSignature {
+                hash: vkey_hash(&w.vkey),
+            })?;
     }
     Ok(())
 }
@@ -118,11 +119,10 @@ pub fn verify_bootstrap_witnesses(
 ///   - `0x58, 0x40` → CBOR byte string of length 64 (XPub = vkey ++ chain_code)
 ///
 /// Reference: `Cardano.Ledger.Keys.Bootstrap` — `bootstrapWitKeyHash`.
-pub fn bootstrap_witness_key_hash(
-    witness: &crate::eras::shelley::BootstrapWitness,
-) -> [u8; 28] {
+pub fn bootstrap_witness_key_hash(witness: &crate::eras::shelley::BootstrapWitness) -> [u8; 28] {
     const PREFIX: &[u8] = &[0x83, 0x00, 0x82, 0x00, 0x58, 0x40];
-    let mut bytes = Vec::with_capacity(PREFIX.len() + 32 + witness.chain_code.len() + witness.attributes.len());
+    let mut bytes =
+        Vec::with_capacity(PREFIX.len() + 32 + witness.chain_code.len() + witness.attributes.len());
     bytes.extend_from_slice(PREFIX);
     bytes.extend_from_slice(&witness.public_key);
     bytes.extend_from_slice(&witness.chain_code);
@@ -163,15 +163,11 @@ pub fn required_vkey_hashes_from_ppup(
 /// Collects the VKey hashes required to authorize a certificate.
 ///
 /// Reference: `Cardano.Ledger.Shelley.Rules.Deleg` — `witsVKeyNeeded`.
-pub fn required_vkey_hashes_from_cert(
-    cert: &crate::types::DCert,
-    out: &mut HashSet<[u8; 28]>,
-) {
+pub fn required_vkey_hashes_from_cert(cert: &crate::types::DCert, out: &mut HashSet<[u8; 28]>) {
     use crate::types::DCert;
     match cert {
         // Shelley: unregistration requires the credential key
-        DCert::AccountUnregistration(cred)
-        | DCert::AccountUnregistrationDeposit(cred, _) => {
+        DCert::AccountUnregistration(cred) | DCert::AccountUnregistrationDeposit(cred, _) => {
             if let crate::types::StakeCredential::AddrKeyHash(h) = cred {
                 out.insert(*h);
             }
@@ -225,8 +221,7 @@ pub fn required_vkey_hashes_from_cert(
             }
         }
         // Simple registration does not require a witness in Shelley
-        DCert::AccountRegistration(_)
-        | DCert::AccountRegistrationDeposit(_, _) => {}
+        DCert::AccountRegistration(_) | DCert::AccountRegistrationDeposit(_, _) => {}
         // MIR certs are signed by genesis delegates (not validated here)
         DCert::MoveInstantaneousReward(_, _) => {}
     }
@@ -261,7 +256,9 @@ pub fn required_vkey_hashes_from_inputs_shelley(
     for txin in inputs {
         if let Some(txout) = utxo.get(txin) {
             if let Some(addr) = crate::types::Address::from_bytes(&txout.address) {
-                if let Some(crate::types::StakeCredential::AddrKeyHash(h)) = addr.payment_credential() {
+                if let Some(crate::types::StakeCredential::AddrKeyHash(h)) =
+                    addr.payment_credential()
+                {
                     out.insert(*h);
                 }
                 // Byron addresses: extract the address root
@@ -287,7 +284,9 @@ pub fn required_vkey_hashes_from_inputs_multi_era(
     for txin in inputs {
         if let Some(txout) = utxo.get(txin) {
             if let Some(addr) = crate::types::Address::from_bytes(txout.address()) {
-                if let Some(crate::types::StakeCredential::AddrKeyHash(h)) = addr.payment_credential() {
+                if let Some(crate::types::StakeCredential::AddrKeyHash(h)) =
+                    addr.payment_credential()
+                {
                     out.insert(*h);
                 }
                 // Byron addresses: extract the address root
@@ -310,7 +309,9 @@ pub fn required_script_hashes_from_inputs_shelley(
     for txin in inputs {
         if let Some(txout) = utxo.get(txin) {
             if let Some(addr) = crate::types::Address::from_bytes(&txout.address) {
-                if let Some(crate::types::StakeCredential::ScriptHash(h)) = addr.payment_credential() {
+                if let Some(crate::types::StakeCredential::ScriptHash(h)) =
+                    addr.payment_credential()
+                {
                     out.insert(*h);
                 }
             }
@@ -327,7 +328,9 @@ pub fn required_script_hashes_from_inputs_multi_era(
     for txin in inputs {
         if let Some(txout) = utxo.get(txin) {
             if let Some(addr) = crate::types::Address::from_bytes(txout.address()) {
-                if let Some(crate::types::StakeCredential::ScriptHash(h)) = addr.payment_credential() {
+                if let Some(crate::types::StakeCredential::ScriptHash(h)) =
+                    addr.payment_credential()
+                {
                     out.insert(*h);
                 }
             }
@@ -336,10 +339,7 @@ pub fn required_script_hashes_from_inputs_multi_era(
 }
 
 /// Collects required script hashes from certificate credentials.
-pub fn required_script_hashes_from_cert(
-    cert: &crate::types::DCert,
-    out: &mut HashSet<[u8; 28]>,
-) {
+pub fn required_script_hashes_from_cert(cert: &crate::types::DCert, out: &mut HashSet<[u8; 28]>) {
     use crate::types::DCert;
     match cert {
         DCert::AccountUnregistration(cred)
@@ -357,8 +357,7 @@ pub fn required_script_hashes_from_cert(
                 out.insert(*h);
             }
         }
-        DCert::CommitteeAuthorization(cold_cred, _)
-        | DCert::CommitteeResignation(cold_cred, _) => {
+        DCert::CommitteeAuthorization(cold_cred, _) | DCert::CommitteeResignation(cold_cred, _) => {
             if let crate::types::StakeCredential::ScriptHash(h) = cold_cred {
                 out.insert(*h);
             }
@@ -464,7 +463,8 @@ pub fn required_script_hashes_from_proposal_procedures(
 /// Returns `true` if the certificate list contains at least one MIR certificate.
 fn has_mir_cert(certs: Option<&[crate::types::DCert]>) -> bool {
     certs.is_some_and(|cs| {
-        cs.iter().any(|c| matches!(c, crate::types::DCert::MoveInstantaneousReward(_, _)))
+        cs.iter()
+            .any(|c| matches!(c, crate::types::DCert::MoveInstantaneousReward(_, _)))
     })
 }
 
@@ -608,17 +608,26 @@ pub fn validate_script_witnesses_well_formed(
 
     for bytes in &witness_set.plutus_v1_scripts {
         if !evaluator.is_script_well_formed(PlutusVersion::V1, bytes) {
-            malformed.push(crate::plutus_validation::plutus_script_hash(PlutusVersion::V1, bytes));
+            malformed.push(crate::plutus_validation::plutus_script_hash(
+                PlutusVersion::V1,
+                bytes,
+            ));
         }
     }
     for bytes in &witness_set.plutus_v2_scripts {
         if !evaluator.is_script_well_formed(PlutusVersion::V2, bytes) {
-            malformed.push(crate::plutus_validation::plutus_script_hash(PlutusVersion::V2, bytes));
+            malformed.push(crate::plutus_validation::plutus_script_hash(
+                PlutusVersion::V2,
+                bytes,
+            ));
         }
     }
     for bytes in &witness_set.plutus_v3_scripts {
         if !evaluator.is_script_well_formed(PlutusVersion::V3, bytes) {
-            malformed.push(crate::plutus_validation::plutus_script_hash(PlutusVersion::V3, bytes));
+            malformed.push(crate::plutus_validation::plutus_script_hash(
+                PlutusVersion::V3,
+                bytes,
+            ));
         }
     }
     if !malformed.is_empty() {
@@ -735,10 +744,22 @@ mod tests {
         );
         let voting_procedures = crate::eras::conway::VotingProcedures {
             procedures: [
-                (crate::eras::conway::Voter::CommitteeKeyHash([0xBB; 28]), inner.clone()),
-                (crate::eras::conway::Voter::DRepKeyHash([0xCC; 28]), inner.clone()),
-                (crate::eras::conway::Voter::StakePool([0xDD; 28]), inner.clone()),
-                (crate::eras::conway::Voter::CommitteeScript([0xEE; 28]), inner.clone()),
+                (
+                    crate::eras::conway::Voter::CommitteeKeyHash([0xBB; 28]),
+                    inner.clone(),
+                ),
+                (
+                    crate::eras::conway::Voter::DRepKeyHash([0xCC; 28]),
+                    inner.clone(),
+                ),
+                (
+                    crate::eras::conway::Voter::StakePool([0xDD; 28]),
+                    inner.clone(),
+                ),
+                (
+                    crate::eras::conway::Voter::CommitteeScript([0xEE; 28]),
+                    inner.clone(),
+                ),
                 (crate::eras::conway::Voter::DRepScript([0xFF; 28]), inner),
             ]
             .into_iter()
@@ -813,7 +834,10 @@ mod tests {
 
         let mut required = HashSet::new();
         required_script_hashes_from_proposal_procedures(&[proposal], &mut required);
-        assert!(required.is_empty(), "NewConstitution script hash must NOT be required");
+        assert!(
+            required.is_empty(),
+            "NewConstitution script hash must NOT be required"
+        );
     }
 
     #[test]
@@ -849,485 +873,532 @@ mod tests {
         assert!(set.contains(&vkey_hash(&w2.vkey)));
     }
 
-        // Helper: build a ShelleyWitnessSet with the given VKey hashes in the vkey witness slots.
-        // Signatures are zeroed (unused in quorum checks which only look at the hash of the vkey).
-        fn witness_set_with_vkeys(vkeys: &[[u8; 32]]) -> crate::eras::shelley::ShelleyWitnessSet {
-            crate::eras::shelley::ShelleyWitnessSet {
-                vkey_witnesses: vkeys
-                    .iter()
-                    .map(|vk| crate::eras::shelley::ShelleyVkeyWitness {
-                        vkey: *vk,
-                        signature: [0u8; 64],
-                    })
-                    .collect(),
-                native_scripts: vec![],
-                bootstrap_witnesses: vec![],
-                plutus_v1_scripts: vec![],
-                plutus_data: vec![],
-                redeemers: vec![],
-                plutus_v2_scripts: vec![],
-                plutus_v3_scripts: vec![],
-            }
-        }
-
-        // Helper: build a realistic 32-byte raw Ed25519 public key whose Blake2b-224
-        // hash equals `expected_hash`.  We use the inverse: store the hash as the
-        // first 28 bytes and pad, then compute what hash the vkey_hash() function
-        // would produce.  Instead, we take the direct route: create a vkey whose
-        // hash we know by computing it ourselves.
-        fn vkey_with_known_hash(prefix: u8) -> ([u8; 32], [u8; 28]) {
-            let vk = [prefix; 32];
-            let hash = vkey_hash(&vk);
-            (vk, hash)
-        }
-
-        fn mir_cert() -> crate::types::DCert {
-            crate::types::DCert::MoveInstantaneousReward(
-                crate::types::MirPot::Reserves,
-                crate::types::MirTarget::SendToOppositePot(0),
-            )
-        }
-
-        #[test]
-        fn mir_quorum_passes_when_no_mir_certs() {
-            // No certs at all → quorum check trivially passes.
-            let gen_delg_hashes: HashSet<[u8; 28]> = [[1u8; 28]].into_iter().collect();
-            let ws = witness_set_with_vkeys(&[]);
-            assert!(validate_mir_genesis_quorum_typed(None, &gen_delg_hashes, 5, &ws).is_ok());
-        }
-
-        #[test]
-        fn mir_quorum_passes_when_non_mir_certs_only() {
-            // A cert that is NOT MIR → quorum check trivially passes.
-            let certs = vec![crate::types::DCert::AccountRegistration(
-                crate::types::StakeCredential::AddrKeyHash([0u8; 28]),
-            )];
-            let gen_delg_hashes: HashSet<[u8; 28]> = [[1u8; 28]].into_iter().collect();
-            let ws = witness_set_with_vkeys(&[]);
-            assert!(validate_mir_genesis_quorum_typed(Some(&certs), &gen_delg_hashes, 5, &ws).is_ok());
-        }
-
-        #[test]
-        fn mir_quorum_passes_when_gen_delegs_empty() {
-            // MIR cert present but no genesis delegations on record → quorum check passes
-            // (nothing to intersect against).
-            let certs = vec![mir_cert()];
-            let gen_delg_hashes: HashSet<[u8; 28]> = HashSet::new();
-            let ws = witness_set_with_vkeys(&[]);
-            assert!(validate_mir_genesis_quorum_typed(Some(&certs), &gen_delg_hashes, 5, &ws).is_ok());
-        }
-
-        #[test]
-        fn mir_quorum_fails_when_no_sigs_for_mir_cert() {
-            // MIR cert present, quorum=1, but no genesis delegate key in witness set.
-            let (_, hash1) = vkey_with_known_hash(0xAA);
-            let gen_delg_hashes: HashSet<[u8; 28]> = [hash1].into_iter().collect();
-            let ws = witness_set_with_vkeys(&[]);
-            let result = validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 1, &ws);
-            assert!(matches!(
-                result,
-                Err(LedgerError::MIRInsufficientGenesisSigs { required: 1, present: 0 })
-            ));
-        }
-
-        #[test]
-        fn mir_quorum_fails_when_insufficient_sigs() {
-            // MIR cert present, quorum=3, only 2 delegates sign.
-            let (vk1, hash1) = vkey_with_known_hash(0x01);
-            let (vk2, hash2) = vkey_with_known_hash(0x02);
-            let (_vk3, hash3) = vkey_with_known_hash(0x03);
-            let gen_delg_hashes: HashSet<[u8; 28]> = [hash1, hash2, hash3].into_iter().collect();
-            // Only 2 of the 3 delegates sign.
-            let ws = witness_set_with_vkeys(&[vk1, vk2]);
-            let result = validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 3, &ws);
-            assert!(matches!(
-                result,
-                Err(LedgerError::MIRInsufficientGenesisSigs { required: 3, present: 2 })
-            ));
-        }
-
-        #[test]
-        fn mir_quorum_passes_exact_threshold() {
-            // MIR cert present, quorum=2, exactly 2 delegates sign → pass.
-            let (vk1, hash1) = vkey_with_known_hash(0x01);
-            let (vk2, hash2) = vkey_with_known_hash(0x02);
-            let gen_delg_hashes: HashSet<[u8; 28]> = [hash1, hash2].into_iter().collect();
-            let ws = witness_set_with_vkeys(&[vk1, vk2]);
-            assert!(validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 2, &ws).is_ok());
-        }
-
-        #[test]
-        fn mir_quorum_passes_with_extra_non_delegate_sigs() {
-            // MIR cert present, quorum=1.  Witness set contains both a genesis delegate key
-            // and an unrelated key.  Should pass because ≥ quorum delegates signed.
-            let (vk_delegate, hash_delegate) = vkey_with_known_hash(0xDD);
-            let vk_other = [0x99u8; 32]; // not a genesis delegate
-            let gen_delg_hashes: HashSet<[u8; 28]> = [hash_delegate].into_iter().collect();
-            let ws = witness_set_with_vkeys(&[vk_delegate, vk_other]);
-            assert!(validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 1, &ws).is_ok());
-        }
-
-        #[test]
-        fn gen_delg_hash_set_extracts_delegate_hashes() {
-            // gen_delg_hash_set should return the delegate hashes (not genesis owner hashes).
-            let mut gen_delegs = std::collections::BTreeMap::new();
-            gen_delegs.insert(
-                [0xAAu8; 28],
-                crate::state::GenesisDelegationState { delegate: [0x11u8; 28], vrf: [0x22u8; 32] },
-            );
-            gen_delegs.insert(
-                [0xBBu8; 28],
-                crate::state::GenesisDelegationState { delegate: [0x33u8; 28], vrf: [0x44u8; 32] },
-            );
-            let set = gen_delg_hash_set(&gen_delegs);
-            assert_eq!(set.len(), 2);
-            assert!(set.contains(&[0x11u8; 28]));
-            assert!(set.contains(&[0x33u8; 28]));
-            // The genesis owner keys are NOT in the set.
-            assert!(!set.contains(&[0xAAu8; 28]));
-            assert!(!set.contains(&[0xBBu8; 28]));
-        }
-
-        // ── Bootstrap witness key hash (upstream bootstrapWitKeyHash) ────
-
-        /// Builds a minimal Byron address with the given 28-byte address root.
-        ///
-        /// Byron CBOR: `[tag 24 CBOR([root, attributes={}, type=0]), CRC32]`
-        fn make_byron_address(address_root: &[u8; 28]) -> Vec<u8> {
-            // Inner payload: CBOR array(3) [bstr(28), map(0), uint(0)]
-            let mut inner = crate::cbor::Encoder::new();
-            inner.array(3);
-            inner.bytes(address_root);
-            inner.map(0);
-            inner.unsigned(0);
-            let inner_bytes = inner.into_bytes();
-
-            // Outer: array(2) [tag 24 bstr(inner), CRC32]
-            let mut outer = crate::cbor::Encoder::new();
-            outer.array(2);
-            outer.tag(24);
-            outer.bytes(&inner_bytes);
-            let crc = test_crc32_ieee(&inner_bytes);
-            outer.unsigned(u64::from(crc));
-            outer.into_bytes()
-        }
-
-        fn test_crc32_ieee(bytes: &[u8]) -> u32 {
-            let mut crc = 0xffff_ffffu32;
-            for &byte in bytes {
-                crc ^= u32::from(byte);
-                for _ in 0..8 {
-                    let mask = (crc & 1).wrapping_neg() & 0xedb8_8320;
-                    crc = (crc >> 1) ^ mask;
-                }
-            }
-            !crc
-        }
-
-        /// Computes the Byron address root from (vkey, chain_code, attributes)
-        /// using the same formula as upstream `bootstrapWitKeyHash`.
-        fn compute_address_root(vkey: &[u8; 32], chain_code: &[u8], attributes: &[u8]) -> [u8; 28] {
-            const PREFIX: &[u8] = &[0x83, 0x00, 0x82, 0x00, 0x58, 0x40];
-            let mut bytes = Vec::with_capacity(PREFIX.len() + 32 + chain_code.len() + attributes.len());
-            bytes.extend_from_slice(PREFIX);
-            bytes.extend_from_slice(vkey);
-            bytes.extend_from_slice(chain_code);
-            bytes.extend_from_slice(attributes);
-            let sha3 = yggdrasil_crypto::sha3_256(&bytes);
-            yggdrasil_crypto::hash_bytes_224(&sha3.0).0
-        }
-
-        #[test]
-        fn bootstrap_witness_key_hash_matches_address_root() {
-            // Build a bootstrap witness with known vkey + chain_code + attributes.
-            let vkey = [0x42u8; 32];
-            let chain_code = [0xAAu8; 32];
-            let attributes_enc = {
-                let mut enc = crate::cbor::Encoder::new();
-                enc.map(0);
-                enc.into_bytes()
-            };
-
-            let witness = crate::eras::shelley::BootstrapWitness {
-                public_key: vkey,
-                signature: [0u8; 64],
-                chain_code,
-                attributes: attributes_enc.clone(),
-            };
-
-            let computed_hash = bootstrap_witness_key_hash(&witness);
-            let expected = compute_address_root(&vkey, &chain_code, &attributes_enc);
-            assert_eq!(computed_hash, expected);
-        }
-
-        #[test]
-        fn bootstrap_witness_key_hash_set_collects_all() {
-            let bw1 = crate::eras::shelley::BootstrapWitness {
-                public_key: [0x01u8; 32],
-                signature: [0u8; 64],
-                chain_code: [0u8; 32],
-                attributes: vec![0xA0], // CBOR map(0)
-            };
-            let bw2 = crate::eras::shelley::BootstrapWitness {
-                public_key: [0x02u8; 32],
-                signature: [0u8; 64],
-                chain_code: [0u8; 32],
-                attributes: vec![0xA0],
-            };
-            let set = bootstrap_witness_key_hash_set(&[bw1.clone(), bw2.clone()]);
-            assert_eq!(set.len(), 2);
-            assert!(set.contains(&bootstrap_witness_key_hash(&bw1)));
-            assert!(set.contains(&bootstrap_witness_key_hash(&bw2)));
-        }
-
-        #[test]
-        fn byron_address_root_extraction_matches_witness_key_hash() {
-            // This is the critical parity test: the address root extracted
-            // from a Byron address must equal the key hash reconstructed
-            // from the corresponding bootstrap witness.
-            let vkey = [0x55u8; 32];
-            let chain_code = [0xBBu8; 32];
-            let attributes = {
-                let mut enc = crate::cbor::Encoder::new();
-                enc.map(0);
-                enc.into_bytes()
-            };
-
-            // Compute the expected address root
-            let expected_root = compute_address_root(&vkey, &chain_code, &attributes);
-
-            // Build a Byron address with that root
-            let byron_addr_bytes = make_byron_address(&expected_root);
-            let extracted_root = crate::types::byron_address_root(&byron_addr_bytes);
-            assert_eq!(extracted_root, Some(expected_root));
-
-            // Build the matching bootstrap witness
-            let witness = crate::eras::shelley::BootstrapWitness {
-                public_key: vkey,
-                signature: [0u8; 64],
-                chain_code,
-                attributes: attributes.clone(),
-            };
-            let witness_root = bootstrap_witness_key_hash(&witness);
-            assert_eq!(witness_root, expected_root);
-
-            // Key parity assertion: address root == witness key hash
-            assert_eq!(extracted_root.expect("extraction succeeded"), witness_root);
-        }
-
-        #[test]
-        fn byron_input_generates_witness_obligation() {
-            // Create a Byron address and wire it through the witness
-            // requirement flow to verify it generates a needed hash.
-            let vkey = [0x77u8; 32];
-            let chain_code = [0xCCu8; 32];
-            let attributes = vec![0xA0]; // CBOR map(0)
-            let root = compute_address_root(&vkey, &chain_code, &attributes);
-            let byron_addr_bytes = make_byron_address(&root);
-
-            // Create a Shelley UTxO with a Byron address
-            let txin = crate::eras::shelley::ShelleyTxIn {
-                transaction_id: [0xAA; 32],
-                index: 0,
-            };
-            let txout = crate::eras::shelley::ShelleyTxOut {
-                address: byron_addr_bytes,
-                amount: 1_000_000,
-            };
-            let mut utxo = crate::eras::shelley::ShelleyUtxo::new();
-            utxo.insert(txin.clone(), txout);
-
-            let mut required = HashSet::new();
-            required_vkey_hashes_from_inputs_shelley(&[txin], &utxo, &mut required);
-
-            // The required set must include the Byron address root
-            assert!(required.contains(&root),
-                "Byron input must generate witness obligation (address root)");
-            assert_eq!(required.len(), 1);
-        }
-
-        // ------------------------------------------------------------------
-        // PPUP proposer witness requirement tests
-        // Reference: `Cardano.Ledger.Shelley.UTxO` — `propWits`
-        // ------------------------------------------------------------------
-
-        #[test]
-        fn ppup_proposer_in_gen_delegs_is_required() {
-            use crate::eras::shelley::ShelleyUpdate;
-            use crate::protocol_params::ProtocolParameterUpdate;
-            use crate::state::GenesisDelegationState;
-            use std::collections::BTreeMap;
-
-            let proposer: [u8; 28] = [0x01; 28];
-            let non_proposer: [u8; 28] = [0x02; 28];
-
-            let delegate_of_proposer: [u8; 28] = [0xAA; 28];
-
-            let mut gen_delegs = BTreeMap::new();
-            gen_delegs.insert(proposer, GenesisDelegationState {
-                delegate: delegate_of_proposer,
-                vrf: [0xBB; 32],
-            });
-            gen_delegs.insert(non_proposer, GenesisDelegationState {
-                delegate: [0xCC; 28],
-                vrf: [0xDD; 32],
-            });
-
-            let mut updates = BTreeMap::new();
-            updates.insert(proposer, ProtocolParameterUpdate::default());
-
-            let update = ShelleyUpdate {
-                proposed_protocol_parameter_updates: updates,
-                epoch: 100,
-            };
-
-            let mut required = HashSet::new();
-            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
-
-            // Upstream `proposedUpdatesWitnesses` maps `genDelegKeyHash` over the
-            // intersection — the *delegate* key hash is required, not the genesis
-            // owner key hash.
-            assert!(required.contains(&delegate_of_proposer),
-                "delegate key hash must be required, not genesis owner key hash");
-            assert!(!required.contains(&proposer),
-                "genesis owner hash must NOT be in the required set");
-            // non_proposer not in the update — must NOT appear
-            assert!(!required.contains(&non_proposer));
-            assert_eq!(required.len(), 1);
-        }
-
-        #[test]
-        fn ppup_proposer_not_in_gen_delegs_excluded() {
-            use crate::eras::shelley::ShelleyUpdate;
-            use crate::protocol_params::ProtocolParameterUpdate;
-            use crate::state::GenesisDelegationState;
-            use std::collections::BTreeMap;
-
-            let outsider: [u8; 28] = [0xFF; 28];
-
-            // gen_delegs does NOT contain the outsider
-            let gen_delegs = BTreeMap::new();
-
-            let mut updates = BTreeMap::new();
-            updates.insert(outsider, ProtocolParameterUpdate::default());
-
-            let update = ShelleyUpdate {
-                proposed_protocol_parameter_updates: updates,
-                epoch: 100,
-            };
-
-            let mut required = HashSet::new();
-            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
-
-            // proposer NOT in gen_delegs → excluded
-            assert!(required.is_empty());
-        }
-
-        #[test]
-        fn ppup_empty_update_produces_no_required() {
-            use crate::eras::shelley::ShelleyUpdate;
-            use crate::state::GenesisDelegationState;
-            use std::collections::BTreeMap;
-
-            let gen_key: [u8; 28] = [0x01; 28];
-            let mut gen_delegs = BTreeMap::new();
-            gen_delegs.insert(gen_key, GenesisDelegationState {
-                delegate: [0xAA; 28],
-                vrf: [0xBB; 32],
-            });
-
-            let update = ShelleyUpdate {
-                proposed_protocol_parameter_updates: BTreeMap::new(),
-                epoch: 100,
-            };
-
-            let mut required = HashSet::new();
-            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
-            assert!(required.is_empty());
-        }
-
-        /// Upstream `proposedUpdatesWitnesses` uses `Map.intersection genDelegs pup`
-        /// then `map genDelegKeyHash` — the result contains *delegate* key hashes
-        /// from each genesis delegation entry, not the genesis owner key hashes.
-        /// This test verifies multiple proposers each contribute their delegate hash.
-        #[test]
-        fn ppup_multiple_proposers_yield_delegate_hashes() {
-            use crate::eras::shelley::ShelleyUpdate;
-            use crate::protocol_params::ProtocolParameterUpdate;
-            use crate::state::GenesisDelegationState;
-            use std::collections::BTreeMap;
-
-            let owner_a: [u8; 28] = [0x01; 28];
-            let owner_b: [u8; 28] = [0x02; 28];
-            let delegate_a: [u8; 28] = [0xAA; 28];
-            let delegate_b: [u8; 28] = [0xBB; 28];
-
-            let mut gen_delegs = BTreeMap::new();
-            gen_delegs.insert(owner_a, GenesisDelegationState {
-                delegate: delegate_a,
-                vrf: [0x10; 32],
-            });
-            gen_delegs.insert(owner_b, GenesisDelegationState {
-                delegate: delegate_b,
-                vrf: [0x20; 32],
-            });
-
-            let mut updates = BTreeMap::new();
-            updates.insert(owner_a, ProtocolParameterUpdate::default());
-            updates.insert(owner_b, ProtocolParameterUpdate::default());
-
-            let update = ShelleyUpdate {
-                proposed_protocol_parameter_updates: updates,
-                epoch: 100,
-            };
-
-            let mut required = HashSet::new();
-            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
-
-            assert_eq!(required.len(), 2);
-            assert!(required.contains(&delegate_a));
-            assert!(required.contains(&delegate_b));
-            // Owner hashes must NOT be in the required set
-            assert!(!required.contains(&owner_a));
-            assert!(!required.contains(&owner_b));
-        }
-
-        /// When a genesis delegate hash collides (two owners delegate to the
-        /// same delegate), the required set should contain a single entry.
-        #[test]
-        fn ppup_duplicate_delegate_hash_deduplicates() {
-            use crate::eras::shelley::ShelleyUpdate;
-            use crate::protocol_params::ProtocolParameterUpdate;
-            use crate::state::GenesisDelegationState;
-            use std::collections::BTreeMap;
-
-            let owner_a: [u8; 28] = [0x01; 28];
-            let owner_b: [u8; 28] = [0x02; 28];
-            let shared_delegate: [u8; 28] = [0xDD; 28];
-
-            let mut gen_delegs = BTreeMap::new();
-            gen_delegs.insert(owner_a, GenesisDelegationState {
-                delegate: shared_delegate,
-                vrf: [0x10; 32],
-            });
-            gen_delegs.insert(owner_b, GenesisDelegationState {
-                delegate: shared_delegate,
-                vrf: [0x20; 32],
-            });
-
-            let mut updates = BTreeMap::new();
-            updates.insert(owner_a, ProtocolParameterUpdate::default());
-            updates.insert(owner_b, ProtocolParameterUpdate::default());
-
-            let update = ShelleyUpdate {
-                proposed_protocol_parameter_updates: updates,
-                epoch: 100,
-            };
-
-            let mut required = HashSet::new();
-            required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
-
-            assert_eq!(required.len(), 1);
-            assert!(required.contains(&shared_delegate));
+    // Helper: build a ShelleyWitnessSet with the given VKey hashes in the vkey witness slots.
+    // Signatures are zeroed (unused in quorum checks which only look at the hash of the vkey).
+    fn witness_set_with_vkeys(vkeys: &[[u8; 32]]) -> crate::eras::shelley::ShelleyWitnessSet {
+        crate::eras::shelley::ShelleyWitnessSet {
+            vkey_witnesses: vkeys
+                .iter()
+                .map(|vk| crate::eras::shelley::ShelleyVkeyWitness {
+                    vkey: *vk,
+                    signature: [0u8; 64],
+                })
+                .collect(),
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
         }
     }
+
+    // Helper: build a realistic 32-byte raw Ed25519 public key whose Blake2b-224
+    // hash equals `expected_hash`.  We use the inverse: store the hash as the
+    // first 28 bytes and pad, then compute what hash the vkey_hash() function
+    // would produce.  Instead, we take the direct route: create a vkey whose
+    // hash we know by computing it ourselves.
+    fn vkey_with_known_hash(prefix: u8) -> ([u8; 32], [u8; 28]) {
+        let vk = [prefix; 32];
+        let hash = vkey_hash(&vk);
+        (vk, hash)
+    }
+
+    fn mir_cert() -> crate::types::DCert {
+        crate::types::DCert::MoveInstantaneousReward(
+            crate::types::MirPot::Reserves,
+            crate::types::MirTarget::SendToOppositePot(0),
+        )
+    }
+
+    #[test]
+    fn mir_quorum_passes_when_no_mir_certs() {
+        // No certs at all → quorum check trivially passes.
+        let gen_delg_hashes: HashSet<[u8; 28]> = [[1u8; 28]].into_iter().collect();
+        let ws = witness_set_with_vkeys(&[]);
+        assert!(validate_mir_genesis_quorum_typed(None, &gen_delg_hashes, 5, &ws).is_ok());
+    }
+
+    #[test]
+    fn mir_quorum_passes_when_non_mir_certs_only() {
+        // A cert that is NOT MIR → quorum check trivially passes.
+        let certs = vec![crate::types::DCert::AccountRegistration(
+            crate::types::StakeCredential::AddrKeyHash([0u8; 28]),
+        )];
+        let gen_delg_hashes: HashSet<[u8; 28]> = [[1u8; 28]].into_iter().collect();
+        let ws = witness_set_with_vkeys(&[]);
+        assert!(validate_mir_genesis_quorum_typed(Some(&certs), &gen_delg_hashes, 5, &ws).is_ok());
+    }
+
+    #[test]
+    fn mir_quorum_passes_when_gen_delegs_empty() {
+        // MIR cert present but no genesis delegations on record → quorum check passes
+        // (nothing to intersect against).
+        let certs = vec![mir_cert()];
+        let gen_delg_hashes: HashSet<[u8; 28]> = HashSet::new();
+        let ws = witness_set_with_vkeys(&[]);
+        assert!(validate_mir_genesis_quorum_typed(Some(&certs), &gen_delg_hashes, 5, &ws).is_ok());
+    }
+
+    #[test]
+    fn mir_quorum_fails_when_no_sigs_for_mir_cert() {
+        // MIR cert present, quorum=1, but no genesis delegate key in witness set.
+        let (_, hash1) = vkey_with_known_hash(0xAA);
+        let gen_delg_hashes: HashSet<[u8; 28]> = [hash1].into_iter().collect();
+        let ws = witness_set_with_vkeys(&[]);
+        let result =
+            validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 1, &ws);
+        assert!(matches!(
+            result,
+            Err(LedgerError::MIRInsufficientGenesisSigs {
+                required: 1,
+                present: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn mir_quorum_fails_when_insufficient_sigs() {
+        // MIR cert present, quorum=3, only 2 delegates sign.
+        let (vk1, hash1) = vkey_with_known_hash(0x01);
+        let (vk2, hash2) = vkey_with_known_hash(0x02);
+        let (_vk3, hash3) = vkey_with_known_hash(0x03);
+        let gen_delg_hashes: HashSet<[u8; 28]> = [hash1, hash2, hash3].into_iter().collect();
+        // Only 2 of the 3 delegates sign.
+        let ws = witness_set_with_vkeys(&[vk1, vk2]);
+        let result =
+            validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 3, &ws);
+        assert!(matches!(
+            result,
+            Err(LedgerError::MIRInsufficientGenesisSigs {
+                required: 3,
+                present: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn mir_quorum_passes_exact_threshold() {
+        // MIR cert present, quorum=2, exactly 2 delegates sign → pass.
+        let (vk1, hash1) = vkey_with_known_hash(0x01);
+        let (vk2, hash2) = vkey_with_known_hash(0x02);
+        let gen_delg_hashes: HashSet<[u8; 28]> = [hash1, hash2].into_iter().collect();
+        let ws = witness_set_with_vkeys(&[vk1, vk2]);
+        assert!(
+            validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 2, &ws)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn mir_quorum_passes_with_extra_non_delegate_sigs() {
+        // MIR cert present, quorum=1.  Witness set contains both a genesis delegate key
+        // and an unrelated key.  Should pass because ≥ quorum delegates signed.
+        let (vk_delegate, hash_delegate) = vkey_with_known_hash(0xDD);
+        let vk_other = [0x99u8; 32]; // not a genesis delegate
+        let gen_delg_hashes: HashSet<[u8; 28]> = [hash_delegate].into_iter().collect();
+        let ws = witness_set_with_vkeys(&[vk_delegate, vk_other]);
+        assert!(
+            validate_mir_genesis_quorum_typed(Some(&[mir_cert()]), &gen_delg_hashes, 1, &ws)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn gen_delg_hash_set_extracts_delegate_hashes() {
+        // gen_delg_hash_set should return the delegate hashes (not genesis owner hashes).
+        let mut gen_delegs = std::collections::BTreeMap::new();
+        gen_delegs.insert(
+            [0xAAu8; 28],
+            crate::state::GenesisDelegationState {
+                delegate: [0x11u8; 28],
+                vrf: [0x22u8; 32],
+            },
+        );
+        gen_delegs.insert(
+            [0xBBu8; 28],
+            crate::state::GenesisDelegationState {
+                delegate: [0x33u8; 28],
+                vrf: [0x44u8; 32],
+            },
+        );
+        let set = gen_delg_hash_set(&gen_delegs);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&[0x11u8; 28]));
+        assert!(set.contains(&[0x33u8; 28]));
+        // The genesis owner keys are NOT in the set.
+        assert!(!set.contains(&[0xAAu8; 28]));
+        assert!(!set.contains(&[0xBBu8; 28]));
+    }
+
+    // ── Bootstrap witness key hash (upstream bootstrapWitKeyHash) ────
+
+    /// Builds a minimal Byron address with the given 28-byte address root.
+    ///
+    /// Byron CBOR: `[tag 24 CBOR([root, attributes={}, type=0]), CRC32]`
+    fn make_byron_address(address_root: &[u8; 28]) -> Vec<u8> {
+        // Inner payload: CBOR array(3) [bstr(28), map(0), uint(0)]
+        let mut inner = crate::cbor::Encoder::new();
+        inner.array(3);
+        inner.bytes(address_root);
+        inner.map(0);
+        inner.unsigned(0);
+        let inner_bytes = inner.into_bytes();
+
+        // Outer: array(2) [tag 24 bstr(inner), CRC32]
+        let mut outer = crate::cbor::Encoder::new();
+        outer.array(2);
+        outer.tag(24);
+        outer.bytes(&inner_bytes);
+        let crc = test_crc32_ieee(&inner_bytes);
+        outer.unsigned(u64::from(crc));
+        outer.into_bytes()
+    }
+
+    fn test_crc32_ieee(bytes: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg() & 0xedb8_8320;
+                crc = (crc >> 1) ^ mask;
+            }
+        }
+        !crc
+    }
+
+    /// Computes the Byron address root from (vkey, chain_code, attributes)
+    /// using the same formula as upstream `bootstrapWitKeyHash`.
+    fn compute_address_root(vkey: &[u8; 32], chain_code: &[u8], attributes: &[u8]) -> [u8; 28] {
+        const PREFIX: &[u8] = &[0x83, 0x00, 0x82, 0x00, 0x58, 0x40];
+        let mut bytes = Vec::with_capacity(PREFIX.len() + 32 + chain_code.len() + attributes.len());
+        bytes.extend_from_slice(PREFIX);
+        bytes.extend_from_slice(vkey);
+        bytes.extend_from_slice(chain_code);
+        bytes.extend_from_slice(attributes);
+        let sha3 = yggdrasil_crypto::sha3_256(&bytes);
+        yggdrasil_crypto::hash_bytes_224(&sha3.0).0
+    }
+
+    #[test]
+    fn bootstrap_witness_key_hash_matches_address_root() {
+        // Build a bootstrap witness with known vkey + chain_code + attributes.
+        let vkey = [0x42u8; 32];
+        let chain_code = [0xAAu8; 32];
+        let attributes_enc = {
+            let mut enc = crate::cbor::Encoder::new();
+            enc.map(0);
+            enc.into_bytes()
+        };
+
+        let witness = crate::eras::shelley::BootstrapWitness {
+            public_key: vkey,
+            signature: [0u8; 64],
+            chain_code,
+            attributes: attributes_enc.clone(),
+        };
+
+        let computed_hash = bootstrap_witness_key_hash(&witness);
+        let expected = compute_address_root(&vkey, &chain_code, &attributes_enc);
+        assert_eq!(computed_hash, expected);
+    }
+
+    #[test]
+    fn bootstrap_witness_key_hash_set_collects_all() {
+        let bw1 = crate::eras::shelley::BootstrapWitness {
+            public_key: [0x01u8; 32],
+            signature: [0u8; 64],
+            chain_code: [0u8; 32],
+            attributes: vec![0xA0], // CBOR map(0)
+        };
+        let bw2 = crate::eras::shelley::BootstrapWitness {
+            public_key: [0x02u8; 32],
+            signature: [0u8; 64],
+            chain_code: [0u8; 32],
+            attributes: vec![0xA0],
+        };
+        let set = bootstrap_witness_key_hash_set(&[bw1.clone(), bw2.clone()]);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&bootstrap_witness_key_hash(&bw1)));
+        assert!(set.contains(&bootstrap_witness_key_hash(&bw2)));
+    }
+
+    #[test]
+    fn byron_address_root_extraction_matches_witness_key_hash() {
+        // This is the critical parity test: the address root extracted
+        // from a Byron address must equal the key hash reconstructed
+        // from the corresponding bootstrap witness.
+        let vkey = [0x55u8; 32];
+        let chain_code = [0xBBu8; 32];
+        let attributes = {
+            let mut enc = crate::cbor::Encoder::new();
+            enc.map(0);
+            enc.into_bytes()
+        };
+
+        // Compute the expected address root
+        let expected_root = compute_address_root(&vkey, &chain_code, &attributes);
+
+        // Build a Byron address with that root
+        let byron_addr_bytes = make_byron_address(&expected_root);
+        let extracted_root = crate::types::byron_address_root(&byron_addr_bytes);
+        assert_eq!(extracted_root, Some(expected_root));
+
+        // Build the matching bootstrap witness
+        let witness = crate::eras::shelley::BootstrapWitness {
+            public_key: vkey,
+            signature: [0u8; 64],
+            chain_code,
+            attributes: attributes.clone(),
+        };
+        let witness_root = bootstrap_witness_key_hash(&witness);
+        assert_eq!(witness_root, expected_root);
+
+        // Key parity assertion: address root == witness key hash
+        assert_eq!(extracted_root.expect("extraction succeeded"), witness_root);
+    }
+
+    #[test]
+    fn byron_input_generates_witness_obligation() {
+        // Create a Byron address and wire it through the witness
+        // requirement flow to verify it generates a needed hash.
+        let vkey = [0x77u8; 32];
+        let chain_code = [0xCCu8; 32];
+        let attributes = vec![0xA0]; // CBOR map(0)
+        let root = compute_address_root(&vkey, &chain_code, &attributes);
+        let byron_addr_bytes = make_byron_address(&root);
+
+        // Create a Shelley UTxO with a Byron address
+        let txin = crate::eras::shelley::ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        };
+        let txout = crate::eras::shelley::ShelleyTxOut {
+            address: byron_addr_bytes,
+            amount: 1_000_000,
+        };
+        let mut utxo = crate::eras::shelley::ShelleyUtxo::new();
+        utxo.insert(txin.clone(), txout);
+
+        let mut required = HashSet::new();
+        required_vkey_hashes_from_inputs_shelley(&[txin], &utxo, &mut required);
+
+        // The required set must include the Byron address root
+        assert!(
+            required.contains(&root),
+            "Byron input must generate witness obligation (address root)"
+        );
+        assert_eq!(required.len(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // PPUP proposer witness requirement tests
+    // Reference: `Cardano.Ledger.Shelley.UTxO` — `propWits`
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn ppup_proposer_in_gen_delegs_is_required() {
+        use crate::eras::shelley::ShelleyUpdate;
+        use crate::protocol_params::ProtocolParameterUpdate;
+        use crate::state::GenesisDelegationState;
+        use std::collections::BTreeMap;
+
+        let proposer: [u8; 28] = [0x01; 28];
+        let non_proposer: [u8; 28] = [0x02; 28];
+
+        let delegate_of_proposer: [u8; 28] = [0xAA; 28];
+
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert(
+            proposer,
+            GenesisDelegationState {
+                delegate: delegate_of_proposer,
+                vrf: [0xBB; 32],
+            },
+        );
+        gen_delegs.insert(
+            non_proposer,
+            GenesisDelegationState {
+                delegate: [0xCC; 28],
+                vrf: [0xDD; 32],
+            },
+        );
+
+        let mut updates = BTreeMap::new();
+        updates.insert(proposer, ProtocolParameterUpdate::default());
+
+        let update = ShelleyUpdate {
+            proposed_protocol_parameter_updates: updates,
+            epoch: 100,
+        };
+
+        let mut required = HashSet::new();
+        required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+        // Upstream `proposedUpdatesWitnesses` maps `genDelegKeyHash` over the
+        // intersection — the *delegate* key hash is required, not the genesis
+        // owner key hash.
+        assert!(
+            required.contains(&delegate_of_proposer),
+            "delegate key hash must be required, not genesis owner key hash"
+        );
+        assert!(
+            !required.contains(&proposer),
+            "genesis owner hash must NOT be in the required set"
+        );
+        // non_proposer not in the update — must NOT appear
+        assert!(!required.contains(&non_proposer));
+        assert_eq!(required.len(), 1);
+    }
+
+    #[test]
+    fn ppup_proposer_not_in_gen_delegs_excluded() {
+        use crate::eras::shelley::ShelleyUpdate;
+        use crate::protocol_params::ProtocolParameterUpdate;
+        use crate::state::GenesisDelegationState;
+        use std::collections::BTreeMap;
+
+        let outsider: [u8; 28] = [0xFF; 28];
+
+        // gen_delegs does NOT contain the outsider
+        let gen_delegs = BTreeMap::new();
+
+        let mut updates = BTreeMap::new();
+        updates.insert(outsider, ProtocolParameterUpdate::default());
+
+        let update = ShelleyUpdate {
+            proposed_protocol_parameter_updates: updates,
+            epoch: 100,
+        };
+
+        let mut required = HashSet::new();
+        required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+        // proposer NOT in gen_delegs → excluded
+        assert!(required.is_empty());
+    }
+
+    #[test]
+    fn ppup_empty_update_produces_no_required() {
+        use crate::eras::shelley::ShelleyUpdate;
+        use crate::state::GenesisDelegationState;
+        use std::collections::BTreeMap;
+
+        let gen_key: [u8; 28] = [0x01; 28];
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert(
+            gen_key,
+            GenesisDelegationState {
+                delegate: [0xAA; 28],
+                vrf: [0xBB; 32],
+            },
+        );
+
+        let update = ShelleyUpdate {
+            proposed_protocol_parameter_updates: BTreeMap::new(),
+            epoch: 100,
+        };
+
+        let mut required = HashSet::new();
+        required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+        assert!(required.is_empty());
+    }
+
+    /// Upstream `proposedUpdatesWitnesses` uses `Map.intersection genDelegs pup`
+    /// then `map genDelegKeyHash` — the result contains *delegate* key hashes
+    /// from each genesis delegation entry, not the genesis owner key hashes.
+    /// This test verifies multiple proposers each contribute their delegate hash.
+    #[test]
+    fn ppup_multiple_proposers_yield_delegate_hashes() {
+        use crate::eras::shelley::ShelleyUpdate;
+        use crate::protocol_params::ProtocolParameterUpdate;
+        use crate::state::GenesisDelegationState;
+        use std::collections::BTreeMap;
+
+        let owner_a: [u8; 28] = [0x01; 28];
+        let owner_b: [u8; 28] = [0x02; 28];
+        let delegate_a: [u8; 28] = [0xAA; 28];
+        let delegate_b: [u8; 28] = [0xBB; 28];
+
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert(
+            owner_a,
+            GenesisDelegationState {
+                delegate: delegate_a,
+                vrf: [0x10; 32],
+            },
+        );
+        gen_delegs.insert(
+            owner_b,
+            GenesisDelegationState {
+                delegate: delegate_b,
+                vrf: [0x20; 32],
+            },
+        );
+
+        let mut updates = BTreeMap::new();
+        updates.insert(owner_a, ProtocolParameterUpdate::default());
+        updates.insert(owner_b, ProtocolParameterUpdate::default());
+
+        let update = ShelleyUpdate {
+            proposed_protocol_parameter_updates: updates,
+            epoch: 100,
+        };
+
+        let mut required = HashSet::new();
+        required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+        assert_eq!(required.len(), 2);
+        assert!(required.contains(&delegate_a));
+        assert!(required.contains(&delegate_b));
+        // Owner hashes must NOT be in the required set
+        assert!(!required.contains(&owner_a));
+        assert!(!required.contains(&owner_b));
+    }
+
+    /// When a genesis delegate hash collides (two owners delegate to the
+    /// same delegate), the required set should contain a single entry.
+    #[test]
+    fn ppup_duplicate_delegate_hash_deduplicates() {
+        use crate::eras::shelley::ShelleyUpdate;
+        use crate::protocol_params::ProtocolParameterUpdate;
+        use crate::state::GenesisDelegationState;
+        use std::collections::BTreeMap;
+
+        let owner_a: [u8; 28] = [0x01; 28];
+        let owner_b: [u8; 28] = [0x02; 28];
+        let shared_delegate: [u8; 28] = [0xDD; 28];
+
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert(
+            owner_a,
+            GenesisDelegationState {
+                delegate: shared_delegate,
+                vrf: [0x10; 32],
+            },
+        );
+        gen_delegs.insert(
+            owner_b,
+            GenesisDelegationState {
+                delegate: shared_delegate,
+                vrf: [0x20; 32],
+            },
+        );
+
+        let mut updates = BTreeMap::new();
+        updates.insert(owner_a, ProtocolParameterUpdate::default());
+        updates.insert(owner_b, ProtocolParameterUpdate::default());
+
+        let update = ShelleyUpdate {
+            proposed_protocol_parameter_updates: updates,
+            epoch: 100,
+        };
+
+        let mut required = HashSet::new();
+        required_vkey_hashes_from_ppup(&update, &gen_delegs, &mut required);
+
+        assert_eq!(required.len(), 1);
+        assert!(required.contains(&shared_delegate));
+    }
+}

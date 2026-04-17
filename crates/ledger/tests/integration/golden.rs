@@ -34,7 +34,10 @@ fn cbor_golden_shelley_tx_body() {
 
     // Re-encode must produce identical bytes (round-trip parity).
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(encoded, re_encoded, "CBOR round-trip must be byte-identical");
+    assert_eq!(
+        encoded, re_encoded,
+        "CBOR round-trip must be byte-identical"
+    );
 }
 
 /// A Shelley block with header and transactions round-trips cleanly.
@@ -100,9 +103,10 @@ fn cbor_golden_plutus_data_all_variants() {
     assert_eq!(dec, general);
 
     // Map
-    let map = PlutusData::Map(vec![
-        (PlutusData::Integer(1), PlutusData::Bytes(vec![0xCA, 0xFE])),
-    ]);
+    let map = PlutusData::Map(vec![(
+        PlutusData::Integer(1),
+        PlutusData::Bytes(vec![0xCA, 0xFE]),
+    )]);
     let enc = map.to_cbor_bytes();
     let dec = PlutusData::from_cbor_bytes(&enc).expect("map");
     assert_eq!(dec, map);
@@ -181,8 +185,14 @@ fn multi_era_tx_out_coin_consistency() {
 fn cbor_golden_byron_tx_round_trip() {
     let tx = ByronTx {
         inputs: vec![
-            ByronTxIn { txid: [0x11; 32], index: 0 },
-            ByronTxIn { txid: [0x22; 32], index: 3 },
+            ByronTxIn {
+                txid: [0x11; 32],
+                index: 0,
+            },
+            ByronTxIn {
+                txid: [0x22; 32],
+                index: 3,
+            },
         ],
         outputs: vec![
             ByronTxOut {
@@ -205,7 +215,10 @@ fn cbor_golden_byron_tx_round_trip() {
     let decoded = ByronTx::from_cbor_bytes(&encoded).expect("decode ByronTx");
     assert_eq!(decoded, tx);
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(encoded, re_encoded, "ByronTx CBOR round-trip must be byte-identical");
+    assert_eq!(
+        encoded, re_encoded,
+        "ByronTx CBOR round-trip must be byte-identical"
+    );
 }
 
 /// ByronTxAux round-trip produces byte-identical output.
@@ -213,7 +226,10 @@ fn cbor_golden_byron_tx_round_trip() {
 fn cbor_golden_byron_tx_aux_round_trip() {
     let tx_aux = ByronTxAux {
         tx: ByronTx {
-            inputs: vec![ByronTxIn { txid: [0xFF; 32], index: 1 }],
+            inputs: vec![ByronTxIn {
+                txid: [0xFF; 32],
+                index: 1,
+            }],
             outputs: vec![ByronTxOut {
                 address: vec![0xD8, 0x18, 0x43, 0x07, 0x08, 0x09],
                 amount: 42,
@@ -224,26 +240,30 @@ fn cbor_golden_byron_tx_aux_round_trip() {
                 enc.into_bytes()
             },
         },
-        witnesses: vec![
-            ByronTxWitness {
-                witness_type: 0,
-                payload: vec![0x82, 0x40, 0x40],
-            },
-        ],
+        witnesses: vec![ByronTxWitness {
+            witness_type: 0,
+            payload: vec![0x82, 0x40, 0x40],
+        }],
     };
 
     let encoded = tx_aux.to_cbor_bytes();
     let decoded = ByronTxAux::from_cbor_bytes(&encoded).expect("decode ByronTxAux");
     assert_eq!(decoded, tx_aux);
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(encoded, re_encoded, "ByronTxAux CBOR round-trip must be byte-identical");
+    assert_eq!(
+        encoded, re_encoded,
+        "ByronTxAux CBOR round-trip must be byte-identical"
+    );
 }
 
 /// Byron tx_id is Blake2b-256 of the CBOR-encoded Tx body.
 #[test]
 fn cbor_golden_byron_tx_id() {
     let tx = ByronTx {
-        inputs: vec![ByronTxIn { txid: [0xAA; 32], index: 0 }],
+        inputs: vec![ByronTxIn {
+            txid: [0xAA; 32],
+            index: 0,
+        }],
         outputs: vec![ByronTxOut {
             address: vec![0xD8, 0x18, 0x43, 0x01, 0x02, 0x03],
             amount: 100,
@@ -285,8 +305,14 @@ fn minimal_witness_set() -> ShelleyWitnessSet {
 #[test]
 fn cbor_golden_shelley_submitted_tx_round_trip() {
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x11; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x61; 29], amount: 2_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x11; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount: 2_000_000,
+        }],
         fee: 170_000,
         ttl: 500_000,
         certificates: None,
@@ -316,8 +342,14 @@ fn cbor_golden_shelley_submitted_tx_round_trip() {
 #[test]
 fn cbor_golden_allegra_submitted_tx_round_trip() {
     let body = AllegraTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x22; 32], index: 1 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x61; 29], amount: 3_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x22; 32],
+            index: 1,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount: 3_000_000,
+        }],
         fee: 180_000,
         ttl: Some(600_000),
         certificates: None,
@@ -333,7 +365,10 @@ fn cbor_golden_allegra_submitted_tx_round_trip() {
         .expect("decode Allegra");
     assert_eq!(decoded.body, tx.body);
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(cbor, re_encoded, "Allegra submitted tx CBOR round-trip must be byte-identical");
+    assert_eq!(
+        cbor, re_encoded,
+        "Allegra submitted tx CBOR round-trip must be byte-identical"
+    );
 
     let mst = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Allegra, &cbor)
         .expect("decode Allegra via multi-era");
@@ -351,7 +386,10 @@ fn cbor_golden_mary_submitted_tx_round_trip() {
     multi_asset.insert([0xCC; 28], assets);
 
     let body = MaryTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x33; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x33; 32],
+            index: 0,
+        }],
         outputs: vec![MaryTxOut {
             address: vec![0x61; 29],
             amount: Value::CoinAndAssets(2_000_000, multi_asset),
@@ -368,11 +406,14 @@ fn cbor_golden_mary_submitted_tx_round_trip() {
 
     let tx = ShelleyCompatibleSubmittedTx::new(body, minimal_witness_set(), None);
     let cbor = tx.to_cbor_bytes();
-    let decoded = ShelleyCompatibleSubmittedTx::<MaryTxBody>::from_cbor_bytes(&cbor)
-        .expect("decode Mary");
+    let decoded =
+        ShelleyCompatibleSubmittedTx::<MaryTxBody>::from_cbor_bytes(&cbor).expect("decode Mary");
     assert_eq!(decoded.body, tx.body);
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(cbor, re_encoded, "Mary submitted tx CBOR round-trip must be byte-identical");
+    assert_eq!(
+        cbor, re_encoded,
+        "Mary submitted tx CBOR round-trip must be byte-identical"
+    );
 
     let mst = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Mary, &cbor)
         .expect("decode Mary via multi-era");
@@ -384,7 +425,10 @@ fn cbor_golden_mary_submitted_tx_round_trip() {
 #[test]
 fn cbor_golden_alonzo_submitted_tx_round_trip() {
     let body = AlonzoTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x44; 32], index: 2 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x44; 32],
+            index: 2,
+        }],
         outputs: vec![AlonzoTxOut {
             address: vec![0x61; 29],
             amount: Value::Coin(5_000_000),
@@ -406,12 +450,15 @@ fn cbor_golden_alonzo_submitted_tx_round_trip() {
 
     let tx = AlonzoCompatibleSubmittedTx::new(body, minimal_witness_set(), true, None);
     let cbor = tx.to_cbor_bytes();
-    let decoded = AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(&cbor)
-        .expect("decode Alonzo");
+    let decoded =
+        AlonzoCompatibleSubmittedTx::<AlonzoTxBody>::from_cbor_bytes(&cbor).expect("decode Alonzo");
     assert_eq!(decoded.body, tx.body);
     assert!(decoded.is_valid);
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(cbor, re_encoded, "Alonzo submitted tx CBOR round-trip must be byte-identical");
+    assert_eq!(
+        cbor, re_encoded,
+        "Alonzo submitted tx CBOR round-trip must be byte-identical"
+    );
 
     let mst = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Alonzo, &cbor)
         .expect("decode Alonzo via multi-era");
@@ -423,7 +470,10 @@ fn cbor_golden_alonzo_submitted_tx_round_trip() {
 #[test]
 fn cbor_golden_babbage_submitted_tx_round_trip() {
     let body = BabbageTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x55; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x55; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x61; 29],
             amount: Value::Coin(3_000_000),
@@ -453,7 +503,10 @@ fn cbor_golden_babbage_submitted_tx_round_trip() {
         .expect("decode Babbage");
     assert_eq!(decoded.body, tx.body);
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(cbor, re_encoded, "Babbage submitted tx CBOR round-trip must be byte-identical");
+    assert_eq!(
+        cbor, re_encoded,
+        "Babbage submitted tx CBOR round-trip must be byte-identical"
+    );
 
     let mst = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Babbage, &cbor)
         .expect("decode Babbage via multi-era");
@@ -465,7 +518,10 @@ fn cbor_golden_babbage_submitted_tx_round_trip() {
 #[test]
 fn cbor_golden_conway_submitted_tx_round_trip() {
     let body = ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x66; 32], index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x66; 32],
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x61; 29],
             amount: Value::Coin(4_000_000),
@@ -494,11 +550,14 @@ fn cbor_golden_conway_submitted_tx_round_trip() {
 
     let tx = AlonzoCompatibleSubmittedTx::new(body, minimal_witness_set(), true, None);
     let cbor = tx.to_cbor_bytes();
-    let decoded = AlonzoCompatibleSubmittedTx::<ConwayTxBody>::from_cbor_bytes(&cbor)
-        .expect("decode Conway");
+    let decoded =
+        AlonzoCompatibleSubmittedTx::<ConwayTxBody>::from_cbor_bytes(&cbor).expect("decode Conway");
     assert_eq!(decoded.body, tx.body);
     let re_encoded = decoded.to_cbor_bytes();
-    assert_eq!(cbor, re_encoded, "Conway submitted tx CBOR round-trip must be byte-identical");
+    assert_eq!(
+        cbor, re_encoded,
+        "Conway submitted tx CBOR round-trip must be byte-identical"
+    );
 
     let mst = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Conway, &cbor)
         .expect("decode Conway via multi-era");
@@ -509,7 +568,8 @@ fn cbor_golden_conway_submitted_tx_round_trip() {
 /// MultiEraSubmittedTx rejects Byron era.
 #[test]
 fn multi_era_submitted_tx_byron_unsupported() {
-    let result = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Byron, &[0x83, 0x80, 0x80, 0xF6]);
+    let result =
+        MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Byron, &[0x83, 0x80, 0x80, 0xF6]);
     assert!(result.is_err());
 }
 
@@ -517,8 +577,14 @@ fn multi_era_submitted_tx_byron_unsupported() {
 #[test]
 fn submitted_tx_ids_are_deterministic() {
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x61; 29], amount: 1_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount: 1_000_000,
+        }],
         fee: 100_000,
         ttl: 500_000,
         certificates: None,

@@ -18,8 +18,8 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crate::connection::{
-    inbound_constants, ConnectionId, DataFlow, DemotedToColdRemoteTr, InboundGovernorCounters,
-    InboundGovernorEvent, RemoteSt, ResponderCounters,
+    ConnectionId, DataFlow, DemotedToColdRemoteTr, InboundGovernorCounters, InboundGovernorEvent,
+    RemoteSt, ResponderCounters, inbound_constants,
 };
 
 // ---------------------------------------------------------------------------
@@ -220,42 +220,26 @@ impl InboundGovernorState {
     ///
     /// Upstream: `inboundGovernorStep` processes a batch of events via
     /// `foldM` — here we process one at a time for simplicity.
-    pub fn step(
-        &mut self,
-        event: InboundGovernorEvent,
-        now_ms: u64,
-    ) -> Vec<InboundGovernorAction> {
+    pub fn step(&mut self, event: InboundGovernorEvent, now_ms: u64) -> Vec<InboundGovernorAction> {
         let actions = match event {
             InboundGovernorEvent::NewConnection(conn_id) => {
                 self.handle_new_connection(conn_id, now_ms)
             }
-            InboundGovernorEvent::MuxFinished(conn_id) => {
-                self.handle_mux_finished(conn_id)
-            }
+            InboundGovernorEvent::MuxFinished(conn_id) => self.handle_mux_finished(conn_id),
             InboundGovernorEvent::MiniProtocolTerminated(conn_id) => {
                 self.handle_mini_protocol_terminated(conn_id)
             }
-            InboundGovernorEvent::WaitIdleRemote(conn_id) => {
-                self.handle_wait_idle_remote(conn_id)
-            }
-            InboundGovernorEvent::AwakeRemote(conn_id) => {
-                self.handle_awake_remote(conn_id)
-            }
+            InboundGovernorEvent::WaitIdleRemote(conn_id) => self.handle_wait_idle_remote(conn_id),
+            InboundGovernorEvent::AwakeRemote(conn_id) => self.handle_awake_remote(conn_id),
             InboundGovernorEvent::RemotePromotedToHot(conn_id) => {
                 self.handle_remote_promoted_to_hot(conn_id)
             }
             InboundGovernorEvent::RemoteDemotedToWarm(conn_id) => {
                 self.handle_remote_demoted_to_warm(conn_id)
             }
-            InboundGovernorEvent::CommitRemote(conn_id) => {
-                self.handle_commit_remote(conn_id)
-            }
-            InboundGovernorEvent::MaturedDuplexPeers => {
-                self.handle_matured_duplex_peers(now_ms)
-            }
-            InboundGovernorEvent::InactivityTimeout => {
-                self.handle_inactivity_timeout(now_ms)
-            }
+            InboundGovernorEvent::CommitRemote(conn_id) => self.handle_commit_remote(conn_id),
+            InboundGovernorEvent::MaturedDuplexPeers => self.handle_matured_duplex_peers(now_ms),
+            InboundGovernorEvent::InactivityTimeout => self.handle_inactivity_timeout(now_ms),
         };
 
         self.recompute_counters();
@@ -343,10 +327,7 @@ impl InboundGovernorState {
     ///
     /// Upstream: `unregisterConnection` removes from `connections`,
     /// `matureDuplexPeers`, and `freshDuplexPeers`.
-    fn handle_mux_finished(
-        &mut self,
-        conn_id: ConnectionId,
-    ) -> Vec<InboundGovernorAction> {
+    fn handle_mux_finished(&mut self, conn_id: ConnectionId) -> Vec<InboundGovernorAction> {
         let peer = conn_id.remote;
         self.connections.remove(&peer);
         self.fresh_duplex_peers.remove(&peer);
@@ -374,10 +355,7 @@ impl InboundGovernorState {
     /// Transition: `RemoteWarmSt` | `RemoteHotSt` → `RemoteIdleSt`.
     /// Emit `DemotedToColdRemote` to notify the CM.
     /// Start the idle timeout.
-    fn handle_wait_idle_remote(
-        &mut self,
-        conn_id: ConnectionId,
-    ) -> Vec<InboundGovernorAction> {
+    fn handle_wait_idle_remote(&mut self, conn_id: ConnectionId) -> Vec<InboundGovernorAction> {
         let peer = conn_id.remote;
         if let Some(entry) = self.connections.get_mut(&peer) {
             // Only transition from established (warm or hot) to idle.
@@ -395,10 +373,7 @@ impl InboundGovernorState {
     ///
     /// Transition: `RemoteIdleSt` | `RemoteColdSt` → `RemoteWarmSt`.
     /// Emit `PromotedToWarmRemote` to notify the CM.
-    fn handle_awake_remote(
-        &mut self,
-        conn_id: ConnectionId,
-    ) -> Vec<InboundGovernorAction> {
+    fn handle_awake_remote(&mut self, conn_id: ConnectionId) -> Vec<InboundGovernorAction> {
         let peer = conn_id.remote;
         if let Some(entry) = self.connections.get_mut(&peer) {
             match entry.remote_st {
@@ -454,10 +429,7 @@ impl InboundGovernorState {
     /// side still active).
     ///
     /// This only fires for connections in `RemoteIdleSt`.
-    fn handle_commit_remote(
-        &mut self,
-        conn_id: ConnectionId,
-    ) -> Vec<InboundGovernorAction> {
+    fn handle_commit_remote(&mut self, conn_id: ConnectionId) -> Vec<InboundGovernorAction> {
         let peer = conn_id.remote;
         if let Some(entry) = self.connections.get(&peer) {
             if entry.remote_st == RemoteSt::RemoteIdleSt {
@@ -500,10 +472,7 @@ impl InboundGovernorState {
     /// Handle the matured-duplex-peers event.
     ///
     /// Matures any fresh duplex peers that have exceeded the threshold.
-    fn handle_matured_duplex_peers(
-        &mut self,
-        now_ms: u64,
-    ) -> Vec<InboundGovernorAction> {
+    fn handle_matured_duplex_peers(&mut self, now_ms: u64) -> Vec<InboundGovernorAction> {
         self.mature_peers(now_ms);
         Vec::new()
     }
@@ -515,10 +484,7 @@ impl InboundGovernorState {
     ///
     /// Returns `CommitRemote`-equivalent actions for connections that
     /// have been idle longer than `protocol_idle_timeout_ms`.
-    fn handle_inactivity_timeout(
-        &mut self,
-        now_ms: u64,
-    ) -> Vec<InboundGovernorAction> {
+    fn handle_inactivity_timeout(&mut self, now_ms: u64) -> Vec<InboundGovernorAction> {
         // Mature any fresh duplex peers.
         self.mature_peers(now_ms);
 
@@ -627,11 +593,7 @@ impl InboundGovernorState {
     /// Actually apply new responder counters to the stored entry.
     ///
     /// Call this after processing the events from [`update_responder_counters`].
-    pub fn set_responder_counters(
-        &mut self,
-        peer: &SocketAddr,
-        new_counters: ResponderCounters,
-    ) {
+    pub fn set_responder_counters(&mut self, peer: &SocketAddr, new_counters: ResponderCounters) {
         if let Some(entry) = self.connections.get_mut(peer) {
             entry.responder_counters = new_counters;
         }
@@ -798,10 +760,7 @@ mod tests {
         let actions = st.step(InboundGovernorEvent::AwakeRemote(cid), 200);
 
         assert_eq!(actions.len(), 1);
-        assert_eq!(
-            actions[0],
-            InboundGovernorAction::PromotedToWarmRemote(cid)
-        );
+        assert_eq!(actions[0], InboundGovernorAction::PromotedToWarmRemote(cid));
         assert_eq!(st.remote_state(&cid.remote), Some(RemoteSt::RemoteWarmSt));
         assert_eq!(st.counters.warm_peers_remote, 1);
         assert_eq!(st.counters.idle_peers_remote, 0);
@@ -823,10 +782,7 @@ mod tests {
         // Now awake from cold.
         let actions = st.step(InboundGovernorEvent::AwakeRemote(cid), 500);
         assert_eq!(actions.len(), 1);
-        assert_eq!(
-            actions[0],
-            InboundGovernorAction::PromotedToWarmRemote(cid)
-        );
+        assert_eq!(actions[0], InboundGovernorAction::PromotedToWarmRemote(cid));
         assert_eq!(st.remote_state(&cid.remote), Some(RemoteSt::RemoteWarmSt));
     }
 
@@ -898,10 +854,7 @@ mod tests {
 
         let actions = st.step(InboundGovernorEvent::WaitIdleRemote(cid), 300);
         assert_eq!(actions.len(), 1);
-        assert_eq!(
-            actions[0],
-            InboundGovernorAction::DemotedToColdRemote(cid)
-        );
+        assert_eq!(actions[0], InboundGovernorAction::DemotedToColdRemote(cid));
         assert_eq!(st.remote_state(&cid.remote), Some(RemoteSt::RemoteIdleSt));
     }
 
@@ -916,10 +869,7 @@ mod tests {
 
         let actions = st.step(InboundGovernorEvent::WaitIdleRemote(cid), 400);
         assert_eq!(actions.len(), 1);
-        assert_eq!(
-            actions[0],
-            InboundGovernorAction::DemotedToColdRemote(cid)
-        );
+        assert_eq!(actions[0], InboundGovernorAction::DemotedToColdRemote(cid));
         assert_eq!(st.remote_state(&cid.remote), Some(RemoteSt::RemoteIdleSt));
     }
 
@@ -976,10 +926,7 @@ mod tests {
 
         let actions = st.apply_commit_result(cid, DemotedToColdRemoteTr::CommitTr);
         assert_eq!(actions.len(), 1);
-        assert_eq!(
-            actions[0],
-            InboundGovernorAction::UnregisterConnection(cid)
-        );
+        assert_eq!(actions[0], InboundGovernorAction::UnregisterConnection(cid));
         assert_eq!(st.connection_count(), 0);
         assert!(!st.fresh_duplex_peers.contains_key(&cid.remote));
     }
@@ -1010,10 +957,7 @@ mod tests {
 
         let actions = st.step(InboundGovernorEvent::MuxFinished(cid), 300);
         assert_eq!(actions.len(), 1);
-        assert_eq!(
-            actions[0],
-            InboundGovernorAction::UnregisterConnection(cid)
-        );
+        assert_eq!(actions[0], InboundGovernorAction::UnregisterConnection(cid));
         assert_eq!(st.connection_count(), 0);
         assert!(!st.fresh_duplex_peers.contains_key(&cid.remote));
     }
@@ -1460,18 +1404,22 @@ mod tests {
         let mut st = InboundGovernorState::new();
         let cid = conn_id(1000, 9999); // never registered
 
-        assert!(st
-            .step(InboundGovernorEvent::AwakeRemote(cid), 100)
-            .is_empty());
-        assert!(st
-            .step(InboundGovernorEvent::WaitIdleRemote(cid), 200)
-            .is_empty());
-        assert!(st
-            .step(InboundGovernorEvent::RemotePromotedToHot(cid), 300)
-            .is_empty());
-        assert!(st
-            .step(InboundGovernorEvent::CommitRemote(cid), 400)
-            .is_empty());
+        assert!(
+            st.step(InboundGovernorEvent::AwakeRemote(cid), 100)
+                .is_empty()
+        );
+        assert!(
+            st.step(InboundGovernorEvent::WaitIdleRemote(cid), 200)
+                .is_empty()
+        );
+        assert!(
+            st.step(InboundGovernorEvent::RemotePromotedToHot(cid), 300)
+                .is_empty()
+        );
+        assert!(
+            st.step(InboundGovernorEvent::CommitRemote(cid), 400)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1492,16 +1440,11 @@ mod tests {
     fn counters_accurate_after_complex_sequence() {
         let mut st = InboundGovernorState::new();
 
-        let peers: Vec<_> = (2001..=2005)
-            .map(|p| conn_id(1000, p))
-            .collect();
+        let peers: Vec<_> = (2001..=2005).map(|p| conn_id(1000, p)).collect();
 
         // Register 5 peers.
         for (i, &cid) in peers.iter().enumerate() {
-            st.step(
-                InboundGovernorEvent::NewConnection(cid),
-                (i as u64) * 100,
-            );
+            st.step(InboundGovernorEvent::NewConnection(cid), (i as u64) * 100);
         }
         assert_eq!(st.counters.idle_peers_remote, 5);
 

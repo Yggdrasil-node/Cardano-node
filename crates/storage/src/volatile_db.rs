@@ -72,7 +72,11 @@ pub struct InMemoryVolatile {
 
 impl VolatileStore for InMemoryVolatile {
     fn add_block(&mut self, block: Block) -> Result<(), StorageError> {
-        if self.blocks.iter().any(|b| b.header.hash == block.header.hash) {
+        if self
+            .blocks
+            .iter()
+            .any(|b| b.header.hash == block.header.hash)
+        {
             return Err(StorageError::DuplicateBlock(block.header.hash));
         }
         self.blocks.push(block);
@@ -135,9 +139,7 @@ impl VolatileStore for InMemoryVolatile {
             Point::Origin => self.blocks.clone(),
             Point::BlockPoint(_, hash) => {
                 match self.blocks.iter().position(|b| b.header.hash == *hash) {
-                    Some(pos) if pos + 1 < self.blocks.len() => {
-                        self.blocks[(pos + 1)..].to_vec()
-                    }
+                    Some(pos) if pos + 1 < self.blocks.len() => self.blocks[(pos + 1)..].to_vec(),
                     _ => Vec::new(),
                 }
             }

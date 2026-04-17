@@ -172,10 +172,7 @@ impl TxSubmissionClient {
 
     // -- helpers ----------------------------------------------------------
 
-    async fn send_msg(
-        &mut self,
-        msg: &TxSubmissionMessage,
-    ) -> Result<(), TxSubmissionClientError> {
+    async fn send_msg(&mut self, msg: &TxSubmissionMessage) -> Result<(), TxSubmissionClientError> {
         self.state = self.state.transition(msg)?;
         self.channel
             .send(msg.to_cbor())
@@ -227,14 +224,14 @@ impl TxSubmissionClient {
                 self.apply_acknowledgements(ack)?;
                 if blocking {
                     if !self.outstanding_txids.is_empty() {
-                        return Err(TxSubmissionClientError::BlockingRequestHasOutstandingTxIds {
-                            remaining: self.outstanding_txids.len() as u16,
-                        });
+                        return Err(
+                            TxSubmissionClientError::BlockingRequestHasOutstandingTxIds {
+                                remaining: self.outstanding_txids.len() as u16,
+                            },
+                        );
                     }
                 } else if self.outstanding_txids.is_empty() {
-                    return Err(
-                        TxSubmissionClientError::NonBlockingRequestWithoutOutstandingTxIds,
-                    );
+                    return Err(TxSubmissionClientError::NonBlockingRequestWithoutOutstandingTxIds);
                 }
                 Ok(TxServerRequest::RequestTxIds { blocking, ack, req })
             }
@@ -270,9 +267,7 @@ impl TxSubmissionClient {
             if self.requestable_txids.contains(&item.txid)
                 || self.outstanding_txids.iter().any(|txid| *txid == item.txid)
             {
-                return Err(TxSubmissionClientError::DuplicateAdvertisedTxId {
-                    txid: item.txid,
-                });
+                return Err(TxSubmissionClientError::DuplicateAdvertisedTxId { txid: item.txid });
             }
         }
         let advertised_txids: Vec<_> = txids.iter().map(|item| item.txid).collect();
@@ -288,10 +283,7 @@ impl TxSubmissionClient {
     /// Reply with transaction bodies.
     ///
     /// The client must be in `StTxs`.
-    pub async fn reply_txs(
-        &mut self,
-        txs: Vec<Vec<u8>>,
-    ) -> Result<(), TxSubmissionClientError> {
+    pub async fn reply_txs(&mut self, txs: Vec<Vec<u8>>) -> Result<(), TxSubmissionClientError> {
         self.reply_txs_internal(None, txs).await
     }
 
@@ -299,10 +291,7 @@ impl TxSubmissionClient {
     ///
     /// The wire protocol carries only serialized transaction bodies, so this
     /// helper strips the canonical `Tx` wrapper to preserve a typed client API.
-    pub async fn reply_txs_typed(
-        &mut self,
-        txs: Vec<Tx>,
-    ) -> Result<(), TxSubmissionClientError> {
+    pub async fn reply_txs_typed(&mut self, txs: Vec<Tx>) -> Result<(), TxSubmissionClientError> {
         let txids = txs.iter().map(|tx| tx.id).collect();
         let txs = txs.into_iter().map(|tx| tx.body).collect();
         self.reply_txs_internal(Some(txids), txs).await
@@ -375,7 +364,8 @@ impl TxSubmissionClient {
             }
         }
 
-        self.send_msg(&TxSubmissionMessage::MsgReplyTxs { txs }).await?;
+        self.send_msg(&TxSubmissionMessage::MsgReplyTxs { txs })
+            .await?;
         self.requested_txids.clear();
         Ok(())
     }

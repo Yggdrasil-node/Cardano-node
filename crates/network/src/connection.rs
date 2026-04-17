@@ -204,9 +204,7 @@ pub enum ConnectionState {
         conn_id: ConnectionId,
     },
     /// Outbound unidirectional: handshake completed, running initiator protocols.
-    OutboundUniState {
-        conn_id: ConnectionId,
-    },
+    OutboundUniState { conn_id: ConnectionId },
     /// Outbound duplex-capable: running initiator protocols, waiting for
     /// remote responder. Timeout tracks whether the remote peer has started
     /// within the allowed window.
@@ -230,18 +228,14 @@ pub enum ConnectionState {
         data_flow: DataFlow,
     },
     /// Full-duplex: both local and remote protocols running.
-    DuplexState {
-        conn_id: ConnectionId,
-    },
+    DuplexState { conn_id: ConnectionId },
     /// Connection is being torn down. Optional error records the reason.
     TerminatingState {
         conn_id: ConnectionId,
         error: Option<String>,
     },
     /// Connection fully closed. Optional error records the reason.
-    TerminatedState {
-        error: Option<String>,
-    },
+    TerminatedState { error: Option<String> },
 }
 
 impl ConnectionState {
@@ -258,12 +252,8 @@ impl ConnectionState {
             Self::OutboundDupState {
                 timeout_expired, ..
             } => AbstractState::OutboundDupSt(*timeout_expired),
-            Self::OutboundIdleState { data_flow, .. } => {
-                AbstractState::OutboundIdleSt(*data_flow)
-            }
-            Self::InboundIdleState { data_flow, .. } => {
-                AbstractState::InboundIdleSt(*data_flow)
-            }
+            Self::OutboundIdleState { data_flow, .. } => AbstractState::OutboundIdleSt(*data_flow),
+            Self::InboundIdleState { data_flow, .. } => AbstractState::InboundIdleSt(*data_flow),
             Self::InboundState { data_flow, .. } => AbstractState::InboundSt(*data_flow),
             Self::DuplexState { .. } => AbstractState::DuplexSt,
             Self::TerminatingState { .. } => AbstractState::TerminatingSt,
@@ -299,7 +289,9 @@ impl ConnectionState {
 /// unit-counter struct that is then summed across all connections.
 ///
 /// Upstream: `connectionStateToCounters` from `ConnectionManager.Core`.
-pub fn connection_state_to_counters(state: &ConnectionState) -> super::governor::ConnectionManagerCounters {
+pub fn connection_state_to_counters(
+    state: &ConnectionState,
+) -> super::governor::ConnectionManagerCounters {
     use super::governor::ConnectionManagerCounters;
 
     match state {
@@ -563,7 +555,11 @@ impl std::fmt::Display for ConnectionManagerError {
                 write!(f, "inbound connection not found for {addr}")
             }
             Self::ImpossibleConnection(cid) => {
-                write!(f, "impossible connection state {}→{}", cid.local, cid.remote)
+                write!(
+                    f,
+                    "impossible connection state {}→{}",
+                    cid.local, cid.remote
+                )
             }
             Self::ConnectionTerminating(cid) => {
                 write!(f, "connection terminating {}→{}", cid.local, cid.remote)
@@ -897,7 +893,10 @@ mod tests {
         );
         assert_eq!(
             AbstractState::OutboundDupSt(TimeoutExpired::Ticking).connection_type(),
-            Some(ConnectionType::NegotiatedConn(Provenance::Outbound, DataFlow::Duplex))
+            Some(ConnectionType::NegotiatedConn(
+                Provenance::Outbound,
+                DataFlow::Duplex
+            ))
         );
         assert_eq!(AbstractState::ReservedOutboundSt.connection_type(), None);
         assert_eq!(AbstractState::TerminatedSt.connection_type(), None);
@@ -994,7 +993,10 @@ mod tests {
     #[test]
     fn counters_reserved_is_zero() {
         let c = connection_state_to_counters(&ConnectionState::ReservedOutboundState);
-        assert_eq!(c, super::super::governor::ConnectionManagerCounters::default());
+        assert_eq!(
+            c,
+            super::super::governor::ConnectionManagerCounters::default()
+        );
     }
 
     #[test]
@@ -1045,7 +1047,10 @@ mod tests {
     #[test]
     fn counters_terminated_is_zero() {
         let c = connection_state_to_counters(&ConnectionState::TerminatedState { error: None });
-        assert_eq!(c, super::super::governor::ConnectionManagerCounters::default());
+        assert_eq!(
+            c,
+            super::super::governor::ConnectionManagerCounters::default()
+        );
     }
 
     #[test]
@@ -1167,7 +1172,10 @@ mod tests {
 
     #[test]
     fn demoted_to_cold_remote_tr() {
-        assert_ne!(DemotedToColdRemoteTr::CommitTr, DemotedToColdRemoteTr::KeepTr);
+        assert_ne!(
+            DemotedToColdRemoteTr::CommitTr,
+            DemotedToColdRemoteTr::KeepTr
+        );
     }
 
     // -- Transition --
@@ -1195,11 +1203,20 @@ mod tests {
         use TimeoutExpired::*;
 
         // Unknown → Reserved
-        assert!(verify_abstract_transition(UnknownConnectionSt, ReservedOutboundSt));
+        assert!(verify_abstract_transition(
+            UnknownConnectionSt,
+            ReservedOutboundSt
+        ));
         // Reserved → Unnegotiated(Outbound)
-        assert!(verify_abstract_transition(ReservedOutboundSt, UnnegotiatedSt(Outbound)));
+        assert!(verify_abstract_transition(
+            ReservedOutboundSt,
+            UnnegotiatedSt(Outbound)
+        ));
         // Unnegotiated(Outbound) → OutboundUni
-        assert!(verify_abstract_transition(UnnegotiatedSt(Outbound), OutboundUniSt));
+        assert!(verify_abstract_transition(
+            UnnegotiatedSt(Outbound),
+            OutboundUniSt
+        ));
         // Unnegotiated(Outbound) → OutboundDup(Ticking)
         assert!(verify_abstract_transition(
             UnnegotiatedSt(Outbound),
@@ -1211,12 +1228,24 @@ mod tests {
             OutboundDupSt(Expired)
         ));
         // OutboundDup(Expired) → OutboundIdle(Duplex)
-        assert!(verify_abstract_transition(OutboundDupSt(Expired), OutboundIdleSt(Duplex)));
+        assert!(verify_abstract_transition(
+            OutboundDupSt(Expired),
+            OutboundIdleSt(Duplex)
+        ));
         // OutboundUni → OutboundIdle(Uni)
-        assert!(verify_abstract_transition(OutboundUniSt, OutboundIdleSt(Unidirectional)));
+        assert!(verify_abstract_transition(
+            OutboundUniSt,
+            OutboundIdleSt(Unidirectional)
+        ));
         // OutboundIdle → Terminating
-        assert!(verify_abstract_transition(OutboundIdleSt(Unidirectional), TerminatingSt));
-        assert!(verify_abstract_transition(OutboundIdleSt(Duplex), TerminatingSt));
+        assert!(verify_abstract_transition(
+            OutboundIdleSt(Unidirectional),
+            TerminatingSt
+        ));
+        assert!(verify_abstract_transition(
+            OutboundIdleSt(Duplex),
+            TerminatingSt
+        ));
         // Terminating → Terminated
         assert!(verify_abstract_transition(TerminatingSt, TerminatedSt));
     }
@@ -1248,7 +1277,10 @@ mod tests {
             InboundIdleSt(Duplex)
         ));
         // InboundIdle → Terminating (Commit)
-        assert!(verify_abstract_transition(InboundIdleSt(Unidirectional), TerminatingSt));
+        assert!(verify_abstract_transition(
+            InboundIdleSt(Unidirectional),
+            TerminatingSt
+        ));
     }
 
     #[test]
@@ -1275,7 +1307,10 @@ mod tests {
         use TimeoutExpired::*;
 
         // Cannot go from Reserved directly to OutboundUni (must negotiate first)
-        assert!(!verify_abstract_transition(ReservedOutboundSt, OutboundUniSt));
+        assert!(!verify_abstract_transition(
+            ReservedOutboundSt,
+            OutboundUniSt
+        ));
         // Cannot go from OutboundUni to Duplex directly
         assert!(!verify_abstract_transition(OutboundUniSt, DuplexSt));
         // Cannot go from Terminated back to Duplex
@@ -1419,7 +1454,10 @@ mod tests {
 
     #[test]
     fn inbound_constants_values() {
-        assert_eq!(inbound_constants::MATURE_PEER_DELAY, Duration::from_secs(900));
+        assert_eq!(
+            inbound_constants::MATURE_PEER_DELAY,
+            Duration::from_secs(900)
+        );
         assert_eq!(
             inbound_constants::INACTION_TIMEOUT,
             Duration::from_millis(31_416)
@@ -1435,7 +1473,10 @@ mod tests {
         assert_eq!(timeouts::RESET_TIMEOUT, Duration::from_secs(5));
         assert_eq!(timeouts::SDU_TIMEOUT, Duration::from_secs(30));
         assert_eq!(timeouts::SDU_HANDSHAKE_TIMEOUT, Duration::from_secs(10));
-        assert_eq!(timeouts::LOCAL_PROTOCOL_IDLE_TIMEOUT, Duration::from_secs(2));
+        assert_eq!(
+            timeouts::LOCAL_PROTOCOL_IDLE_TIMEOUT,
+            Duration::from_secs(2)
+        );
         assert_eq!(timeouts::LOCAL_TIME_WAIT_TIMEOUT, Duration::ZERO);
     }
 

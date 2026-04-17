@@ -52,7 +52,11 @@ pub struct LocalRootConfig {
     #[serde(default, rename = "hotValency", alias = "valency")]
     pub hot_valency: u16,
     /// Desired number of warm peers for the group.
-    #[serde(default, rename = "warmValency", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "warmValency",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub warm_valency: Option<u16>,
     /// Diffusion mode for the group.
     #[serde(default, rename = "diffusionMode")]
@@ -473,6 +477,9 @@ mod tests {
 
         assert_eq!(group.hot_valency, 2);
         assert_eq!(group.effective_warm_valency(), 4);
-        assert_eq!(group.diffusion_mode, PeerDiffusionMode::InitiatorOnlyDiffusionMode);
+        assert_eq!(
+            group.diffusion_mode,
+            PeerDiffusionMode::InitiatorOnlyDiffusionMode
+        );
     }
 }

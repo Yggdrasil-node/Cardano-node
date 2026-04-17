@@ -11,7 +11,7 @@ use std::io;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SduHeader, SDU_HEADER_SIZE};
+use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SDU_HEADER_SIZE, SduHeader};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -101,9 +101,7 @@ impl TcpBearer {
     }
 
     /// Connect to a remote peer and return a bearer.
-    pub async fn connect(
-        addr: impl tokio::net::ToSocketAddrs,
-    ) -> Result<Self, BearerError> {
+    pub async fn connect(addr: impl tokio::net::ToSocketAddrs) -> Result<Self, BearerError> {
         let stream = tokio::net::TcpStream::connect(addr).await?;
         Ok(Self::new(stream))
     }

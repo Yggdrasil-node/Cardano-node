@@ -39,7 +39,10 @@ fn mainnet_params() -> ProtocolParameters {
 
 fn seed_utxo(state: &mut LedgerState, addr: &[u8]) {
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.to_vec(),
             amount: Value::Coin(5_000_000),
@@ -51,8 +54,14 @@ fn seed_utxo(state: &mut LedgerState, addr: &[u8]) {
 
 fn seed_shelley_utxo(state: &mut LedgerState, addr: &[u8]) {
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: addr.to_vec(), amount: 5_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: addr.to_vec(),
+            amount: 5_000_000,
+        },
     );
 }
 
@@ -68,10 +77,16 @@ fn shelley_submitted_tx_rejects_duplicate_inputs() {
     state.set_protocol_params(mainnet_params());
     seed_shelley_utxo(&mut state, &addr);
 
-    let dup_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+    let dup_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
     let body = ShelleyTxBody {
         inputs: vec![dup_input.clone(), dup_input],
-        outputs: vec![ShelleyTxOut { address: addr, amount: 5_000_000 }],
+        outputs: vec![ShelleyTxOut {
+            address: addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -82,9 +97,11 @@ fn shelley_submitted_tx_rejects_duplicate_inputs() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Shelley(
-        ShelleyTx { body, witness_set: ws, auxiliary_data: None },
-    );
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: None,
+    });
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -103,8 +120,14 @@ fn shelley_submitted_tx_accepts_unique_inputs() {
     seed_shelley_utxo(&mut state, &addr);
 
     let body = ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: addr, amount: 5_000_000 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        outputs: vec![ShelleyTxOut {
+            address: addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -115,9 +138,11 @@ fn shelley_submitted_tx_accepts_unique_inputs() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Shelley(
-        ShelleyTx { body, witness_set: ws, auxiliary_data: None },
-    );
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: None,
+    });
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "unique inputs should succeed: {:?}", result);
@@ -135,7 +160,10 @@ fn babbage_submitted_tx_rejects_duplicate_inputs() {
     state.set_protocol_params(mainnet_params());
     seed_utxo(&mut state, &addr);
 
-    let dup_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+    let dup_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
     let body = BabbageTxBody {
         inputs: vec![dup_input.clone(), dup_input],
         outputs: vec![BabbageTxOut {
@@ -163,9 +191,8 @@ fn babbage_submitted_tx_rejects_duplicate_inputs() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Babbage(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -187,7 +214,10 @@ fn conway_submitted_tx_rejects_duplicate_inputs() {
     state.set_protocol_params(mainnet_params());
     seed_utxo(&mut state, &addr);
 
-    let dup_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+    let dup_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
     let body = ConwayTxBody {
         inputs: vec![dup_input.clone(), dup_input],
         outputs: vec![BabbageTxOut {
@@ -218,9 +248,8 @@ fn conway_submitted_tx_rejects_duplicate_inputs() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -238,7 +267,10 @@ fn conway_block_rejects_duplicate_inputs() {
     state.set_protocol_params(mainnet_params());
     seed_utxo(&mut state, &addr);
 
-    let dup_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
+    let dup_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
     let body = ConwayTxBody {
         inputs: vec![dup_input.clone(), dup_input],
         outputs: vec![BabbageTxOut {
@@ -303,7 +335,10 @@ fn conway_block_rejects_duplicate_inputs() {
 
 #[test]
 fn duplicate_inputs_unit_rejects_identical_pair() {
-    let input = ShelleyTxIn { transaction_id: [0xAA; 32], index: 3 };
+    let input = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 3,
+    };
     let result = yggdrasil_ledger::MultiEraUtxo::new(); // just need the function
     // Access via the crate-level function indirectly through the UTxO apply paths
     // — the unit check is already exercised via the above integration tests.
@@ -322,20 +357,41 @@ fn duplicate_inputs_same_txid_different_index_is_ok() {
     state.set_protocol_params(mainnet_params());
     // Two separate outputs from the same transaction
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-        ShelleyTxOut { address: addr.clone(), amount: 3_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: addr.clone(),
+            amount: 3_000_000,
+        },
     );
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 1 },
-        ShelleyTxOut { address: addr.clone(), amount: 2_000_000 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 1,
+        },
+        ShelleyTxOut {
+            address: addr.clone(),
+            amount: 2_000_000,
+        },
     );
 
     let body = ShelleyTxBody {
         inputs: vec![
-            ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
-            ShelleyTxIn { transaction_id: [0x01; 32], index: 1 },
+            ShelleyTxIn {
+                transaction_id: [0x01; 32],
+                index: 0,
+            },
+            ShelleyTxIn {
+                transaction_id: [0x01; 32],
+                index: 1,
+            },
         ],
-        outputs: vec![ShelleyTxOut { address: addr, amount: 5_000_000 }],
+        outputs: vec![ShelleyTxOut {
+            address: addr,
+            amount: 5_000_000,
+        }],
         fee: 0,
         ttl: 1000,
         certificates: None,
@@ -346,10 +402,16 @@ fn duplicate_inputs_same_txid_different_index_is_ok() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Shelley(
-        ShelleyTx { body, witness_set: ws, auxiliary_data: None },
-    );
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
+        body,
+        witness_set: ws,
+        auxiliary_data: None,
+    });
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "same txid different index should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "same txid different index should succeed: {:?}",
+        result
+    );
 }

@@ -9,7 +9,7 @@
 use yggdrasil_crypto::blake2b;
 use yggdrasil_crypto::bls12_381;
 use yggdrasil_crypto::secp256k1;
-use yggdrasil_ledger::cbor::{Encoder, CborEncode};
+use yggdrasil_ledger::cbor::{CborEncode, Encoder};
 use yggdrasil_ledger::plutus::PlutusData;
 
 use crate::cost_model::CostModel;
@@ -32,11 +32,19 @@ pub fn evaluate_builtin(
         // ---------------------------------------------------------------
         // Integer arithmetic
         // ---------------------------------------------------------------
-        AddInteger => int_binop(args, |a, b| a.checked_add(b).ok_or(MachineError::IntegerOverflow)),
-        SubtractInteger => int_binop(args, |a, b| a.checked_sub(b).ok_or(MachineError::IntegerOverflow)),
-        MultiplyInteger => int_binop(args, |a, b| a.checked_mul(b).ok_or(MachineError::IntegerOverflow)),
+        AddInteger => int_binop(args, |a, b| {
+            a.checked_add(b).ok_or(MachineError::IntegerOverflow)
+        }),
+        SubtractInteger => int_binop(args, |a, b| {
+            a.checked_sub(b).ok_or(MachineError::IntegerOverflow)
+        }),
+        MultiplyInteger => int_binop(args, |a, b| {
+            a.checked_mul(b).ok_or(MachineError::IntegerOverflow)
+        }),
         DivideInteger => int_binop(args, |a, b| {
-            if b == 0 { return Err(MachineError::DivisionByZero); }
+            if b == 0 {
+                return Err(MachineError::DivisionByZero);
+            }
             // Haskell `div`: rounds towards negative infinity (floor division).
             // Rust `div_euclid` rounds towards positive infinity for negative
             // divisors, so we implement floor division manually.
@@ -45,17 +53,23 @@ pub fn evaluate_builtin(
             Ok(if r != 0 && ((r ^ b) < 0) { q - 1 } else { q })
         }),
         QuotientInteger => int_binop(args, |a, b| {
-            if b == 0 { return Err(MachineError::DivisionByZero); }
+            if b == 0 {
+                return Err(MachineError::DivisionByZero);
+            }
             // Haskell `quot`: rounds towards zero.
             Ok(a / b)
         }),
         RemainderInteger => int_binop(args, |a, b| {
-            if b == 0 { return Err(MachineError::DivisionByZero); }
+            if b == 0 {
+                return Err(MachineError::DivisionByZero);
+            }
             // Haskell `rem`: sign follows dividend.
             Ok(a % b)
         }),
         ModInteger => int_binop(args, |a, b| {
-            if b == 0 { return Err(MachineError::DivisionByZero); }
+            if b == 0 {
+                return Err(MachineError::DivisionByZero);
+            }
             // Haskell `mod`: sign follows divisor (floor-division remainder).
             let r = a % b;
             Ok(if r != 0 && ((r ^ b) < 0) { r + b } else { r })
@@ -122,7 +136,9 @@ pub fn evaluate_builtin(
                     length: bs.len(),
                 });
             }
-            Ok(Value::Constant(Constant::Integer(i128::from(bs[idx as usize]))))
+            Ok(Value::Constant(Constant::Integer(i128::from(
+                bs[idx as usize],
+            ))))
         }
         EqualsByteString => {
             let (a, b) = get_two_bytestrings(args)?;
@@ -245,7 +261,10 @@ pub fn evaluate_builtin(
             let list = get_list_with_type(&args[1])?;
             let mut new_list = vec![elem];
             new_list.extend(list.1.iter().cloned());
-            Ok(Value::Constant(Constant::ProtoList(list.0.clone(), new_list)))
+            Ok(Value::Constant(Constant::ProtoList(
+                list.0.clone(),
+                new_list,
+            )))
         }
         HeadList => {
             let list = get_list(&args[0])?;
@@ -288,8 +307,7 @@ pub fn evaluate_builtin(
             let tag = get_int(&args[0])?;
             let list = get_data_list(&args[1])?;
             Ok(Value::Constant(Constant::Data(PlutusData::Constr(
-                tag as u64,
-                list,
+                tag as u64, list,
             ))))
         }
         MapData => {
@@ -385,9 +403,7 @@ pub fn evaluate_builtin(
         UnBData => {
             let data = get_data(&args[0])?;
             match data {
-                PlutusData::Bytes(bs) => {
-                    Ok(Value::Constant(Constant::ByteString(bs.clone())))
-                }
+                PlutusData::Bytes(bs) => Ok(Value::Constant(Constant::ByteString(bs.clone()))),
                 _ => Err(MachineError::TypeMismatch {
                     expected: "Bytes data",
                     actual: data_variant_name(data),
@@ -452,11 +468,15 @@ pub fn evaluate_builtin(
         Bls12_381_G1_Add => {
             let a = get_g1(&args[0])?;
             let b = get_g1(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_G1_Element(bls12_381::g1_add(a, b))))
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
+                bls12_381::g1_add(a, b),
+            )))
         }
         Bls12_381_G1_Neg => {
             let a = get_g1(&args[0])?;
-            Ok(Value::Constant(Constant::Bls12_381_G1_Element(bls12_381::g1_neg(a))))
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
+                bls12_381::g1_neg(a),
+            )))
         }
         Bls12_381_G1_ScalarMul => {
             let scalar = get_int(&args[0])?;
@@ -480,7 +500,9 @@ pub fn evaluate_builtin(
         }
         Bls12_381_G1_Compress => {
             let point = get_g1(&args[0])?;
-            Ok(Value::Constant(Constant::ByteString(bls12_381::g1_compress(point).to_vec())))
+            Ok(Value::Constant(Constant::ByteString(
+                bls12_381::g1_compress(point).to_vec(),
+            )))
         }
         Bls12_381_G1_Uncompress => {
             let bs = get_bytestring(&args[0])?;
@@ -491,11 +513,15 @@ pub fn evaluate_builtin(
         Bls12_381_G2_Add => {
             let a = get_g2(&args[0])?;
             let b = get_g2(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_G2_Element(bls12_381::g2_add(a, b))))
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
+                bls12_381::g2_add(a, b),
+            )))
         }
         Bls12_381_G2_Neg => {
             let a = get_g2(&args[0])?;
-            Ok(Value::Constant(Constant::Bls12_381_G2_Element(bls12_381::g2_neg(a))))
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
+                bls12_381::g2_neg(a),
+            )))
         }
         Bls12_381_G2_ScalarMul => {
             let scalar = get_int(&args[0])?;
@@ -519,7 +545,9 @@ pub fn evaluate_builtin(
         }
         Bls12_381_G2_Compress => {
             let point = get_g2(&args[0])?;
-            Ok(Value::Constant(Constant::ByteString(bls12_381::g2_compress(point).to_vec())))
+            Ok(Value::Constant(Constant::ByteString(
+                bls12_381::g2_compress(point).to_vec(),
+            )))
         }
         Bls12_381_G2_Uncompress => {
             let bs = get_bytestring(&args[0])?;
@@ -530,17 +558,23 @@ pub fn evaluate_builtin(
         Bls12_381_MillerLoop => {
             let g1 = get_g1(&args[0])?;
             let g2 = get_g2(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(bls12_381::miller_loop(g1, g2)))))
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(
+                bls12_381::miller_loop(g1, g2),
+            ))))
         }
         Bls12_381_MulMlResult => {
             let a = get_ml(&args[0])?;
             let b = get_ml(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(bls12_381::mul_ml_result(a, b)))))
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(
+                bls12_381::mul_ml_result(a, b),
+            ))))
         }
         Bls12_381_FinalVerify => {
             let a = get_ml(&args[0])?;
             let b = get_ml(&args[1])?;
-            Ok(Value::Constant(Constant::Bool(bls12_381::final_verify(a, b))))
+            Ok(Value::Constant(Constant::Bool(bls12_381::final_verify(
+                a, b,
+            ))))
         }
 
         Keccak_256 => {
@@ -583,19 +617,34 @@ pub fn evaluate_builtin(
             let pad = get_bool(&args[0])?;
             let a = get_bytestring(&args[1])?;
             let b = get_bytestring(&args[2])?;
-            Ok(Value::Constant(Constant::ByteString(bitwise_binop(a, b, pad, |x, y| x & y))))
+            Ok(Value::Constant(Constant::ByteString(bitwise_binop(
+                a,
+                b,
+                pad,
+                |x, y| x & y,
+            ))))
         }
         OrByteString => {
             let pad = get_bool(&args[0])?;
             let a = get_bytestring(&args[1])?;
             let b = get_bytestring(&args[2])?;
-            Ok(Value::Constant(Constant::ByteString(bitwise_binop(a, b, pad, |x, y| x | y))))
+            Ok(Value::Constant(Constant::ByteString(bitwise_binop(
+                a,
+                b,
+                pad,
+                |x, y| x | y,
+            ))))
         }
         XorByteString => {
             let pad = get_bool(&args[0])?;
             let a = get_bytestring(&args[1])?;
             let b = get_bytestring(&args[2])?;
-            Ok(Value::Constant(Constant::ByteString(bitwise_binop(a, b, pad, |x, y| x ^ y))))
+            Ok(Value::Constant(Constant::ByteString(bitwise_binop(
+                a,
+                b,
+                pad,
+                |x, y| x ^ y,
+            ))))
         }
         ComplementByteString => {
             let bs = get_bytestring(&args[0])?;
@@ -635,7 +684,10 @@ pub fn evaluate_builtin(
                     message: format!("byte value out of range: {byte_val}"),
                 });
             }
-            Ok(Value::Constant(Constant::ByteString(vec![byte_val as u8; len as usize])))
+            Ok(Value::Constant(Constant::ByteString(vec![
+                byte_val as u8;
+                len as usize
+            ])))
         }
         ShiftByteString => {
             // args: [bytestring, shift_amount]
@@ -818,7 +870,7 @@ fn get_data_pair_list(val: &Value) -> Result<Vec<(PlutusData, PlutusData)>, Mach
                         return Err(MachineError::TypeMismatch {
                             expected: "data",
                             actual: constant_type_name(other),
-                        })
+                        });
                     }
                 };
                 let vb = match b.as_ref() {
@@ -827,7 +879,7 @@ fn get_data_pair_list(val: &Value) -> Result<Vec<(PlutusData, PlutusData)>, Mach
                         return Err(MachineError::TypeMismatch {
                             expected: "data",
                             actual: constant_type_name(other),
-                        })
+                        });
                     }
                 };
                 Ok((ka, vb))
@@ -916,7 +968,10 @@ fn int_to_scalar_bytes(val: i128) -> (Vec<u8>, bool) {
     }
     let be_bytes = abs.to_be_bytes();
     // Strip leading zeros.
-    let start = be_bytes.iter().position(|&b| b != 0).unwrap_or(be_bytes.len());
+    let start = be_bytes
+        .iter()
+        .position(|&b| b != 0)
+        .unwrap_or(be_bytes.len());
     (be_bytes[start..].to_vec(), negative)
 }
 
@@ -944,9 +999,8 @@ fn verify_ed25519(vkey: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     let vk = yggdrasil_crypto::ed25519::VerificationKey::from_bytes(
         vkey.try_into().expect("checked 32 bytes"),
     );
-    let sig = yggdrasil_crypto::ed25519::Signature::from_bytes(
-        sig.try_into().expect("checked 64 bytes"),
-    );
+    let sig =
+        yggdrasil_crypto::ed25519::Signature::from_bytes(sig.try_into().expect("checked 64 bytes"));
     vk.verify(msg, &sig).is_ok()
 }
 
@@ -1107,17 +1161,8 @@ fn bytestring_to_integer(little_endian: bool, bs: &[u8]) -> i128 {
 /// `pad == true` (extend / OR-like): result length = max of inputs.
 ///
 /// Reference: CIP-0122 / Plutus bitwise operations, `semanticsAndByteString` etc.
-fn bitwise_binop(
-    a: &[u8],
-    b: &[u8],
-    pad: bool,
-    op: fn(u8, u8) -> u8,
-) -> Vec<u8> {
-    let (shorter, longer) = if a.len() <= b.len() {
-        (a, b)
-    } else {
-        (b, a)
-    };
+fn bitwise_binop(a: &[u8], b: &[u8], pad: bool, op: fn(u8, u8) -> u8) -> Vec<u8> {
+    let (shorter, longer) = if a.len() <= b.len() { (a, b) } else { (b, a) };
 
     if !pad {
         // Truncation semantics: result has length of the shorter input.
@@ -1162,11 +1207,7 @@ fn read_bit(bs: &[u8], bit_index: i128) -> Result<bool, MachineError> {
 /// Write bits at specified indices.
 ///
 /// Bit indexing: bit 0 is the LSB of the last byte.
-fn write_bits(
-    bs: &[u8],
-    indices: &[i128],
-    values: &[bool],
-) -> Result<Vec<u8>, MachineError> {
+fn write_bits(bs: &[u8], indices: &[i128], values: &[bool]) -> Result<Vec<u8>, MachineError> {
     if indices.len() != values.len() {
         return Err(MachineError::BuiltinError {
             builtin: "writeBits".into(),
@@ -1262,7 +1303,10 @@ fn rotate_bytestring(bs: &[u8], rot: i128) -> Vec<u8> {
     // Use shift-based rotation: rotate_left(n) = (bs << n) | (bs >> (total - n))
     let left = shift_bytestring(bs, effective);
     let right = shift_bytestring(bs, effective - total_bits);
-    left.iter().zip(right.iter()).map(|(&a, &b)| a | b).collect()
+    left.iter()
+        .zip(right.iter())
+        .map(|(&a, &b)| a | b)
+        .collect()
 }
 
 /// Find the index of the lowest set bit (bit 0 = LSB of last byte).
@@ -1457,61 +1501,94 @@ mod tests {
 
     #[test]
     fn add_integer_basic() {
-        assert_eq!(expect_int(eval(DefaultFun::AddInteger, &[int(3), int(4)]).unwrap()), 7);
+        assert_eq!(
+            expect_int(eval(DefaultFun::AddInteger, &[int(3), int(4)]).unwrap()),
+            7
+        );
     }
 
     #[test]
     fn add_integer_negative() {
-        assert_eq!(expect_int(eval(DefaultFun::AddInteger, &[int(-10), int(3)]).unwrap()), -7);
+        assert_eq!(
+            expect_int(eval(DefaultFun::AddInteger, &[int(-10), int(3)]).unwrap()),
+            -7
+        );
     }
 
     #[test]
     fn add_integer_zero() {
-        assert_eq!(expect_int(eval(DefaultFun::AddInteger, &[int(0), int(0)]).unwrap()), 0);
+        assert_eq!(
+            expect_int(eval(DefaultFun::AddInteger, &[int(0), int(0)]).unwrap()),
+            0
+        );
     }
 
     #[test]
     fn subtract_integer() {
-        assert_eq!(expect_int(eval(DefaultFun::SubtractInteger, &[int(10), int(3)]).unwrap()), 7);
+        assert_eq!(
+            expect_int(eval(DefaultFun::SubtractInteger, &[int(10), int(3)]).unwrap()),
+            7
+        );
     }
 
     #[test]
     fn subtract_integer_negative_result() {
-        assert_eq!(expect_int(eval(DefaultFun::SubtractInteger, &[int(3), int(10)]).unwrap()), -7);
+        assert_eq!(
+            expect_int(eval(DefaultFun::SubtractInteger, &[int(3), int(10)]).unwrap()),
+            -7
+        );
     }
 
     #[test]
     fn multiply_integer() {
-        assert_eq!(expect_int(eval(DefaultFun::MultiplyInteger, &[int(6), int(7)]).unwrap()), 42);
+        assert_eq!(
+            expect_int(eval(DefaultFun::MultiplyInteger, &[int(6), int(7)]).unwrap()),
+            42
+        );
     }
 
     #[test]
     fn multiply_integer_zero() {
-        assert_eq!(expect_int(eval(DefaultFun::MultiplyInteger, &[int(999), int(0)]).unwrap()), 0);
+        assert_eq!(
+            expect_int(eval(DefaultFun::MultiplyInteger, &[int(999), int(0)]).unwrap()),
+            0
+        );
     }
 
     #[test]
     fn divide_integer_positive() {
         // Haskell `div`: rounds toward -inf.
-        assert_eq!(expect_int(eval(DefaultFun::DivideInteger, &[int(7), int(2)]).unwrap()), 3);
+        assert_eq!(
+            expect_int(eval(DefaultFun::DivideInteger, &[int(7), int(2)]).unwrap()),
+            3
+        );
     }
 
     #[test]
     fn divide_integer_negative_rounds_down() {
         // -7 `div` 2 = -4 in Haskell (rounds toward -inf).
-        assert_eq!(expect_int(eval(DefaultFun::DivideInteger, &[int(-7), int(2)]).unwrap()), -4);
+        assert_eq!(
+            expect_int(eval(DefaultFun::DivideInteger, &[int(-7), int(2)]).unwrap()),
+            -4
+        );
     }
 
     #[test]
     fn divide_integer_negative_divisor() {
         // 7 `div` (-2) = -4 in Haskell (floor division, NOT Euclidean).
-        assert_eq!(expect_int(eval(DefaultFun::DivideInteger, &[int(7), int(-2)]).unwrap()), -4);
+        assert_eq!(
+            expect_int(eval(DefaultFun::DivideInteger, &[int(7), int(-2)]).unwrap()),
+            -4
+        );
     }
 
     #[test]
     fn divide_integer_both_negative() {
         // (-7) `div` (-2) = 3 in Haskell.
-        assert_eq!(expect_int(eval(DefaultFun::DivideInteger, &[int(-7), int(-2)]).unwrap()), 3);
+        assert_eq!(
+            expect_int(eval(DefaultFun::DivideInteger, &[int(-7), int(-2)]).unwrap()),
+            3
+        );
     }
 
     #[test]
@@ -1523,13 +1600,19 @@ mod tests {
     #[test]
     fn quotient_integer_positive() {
         // Haskell `quot`: rounds toward zero.
-        assert_eq!(expect_int(eval(DefaultFun::QuotientInteger, &[int(7), int(2)]).unwrap()), 3);
+        assert_eq!(
+            expect_int(eval(DefaultFun::QuotientInteger, &[int(7), int(2)]).unwrap()),
+            3
+        );
     }
 
     #[test]
     fn quotient_integer_negative_truncates() {
         // -7 `quot` 2 = -3 (truncate toward zero).
-        assert_eq!(expect_int(eval(DefaultFun::QuotientInteger, &[int(-7), int(2)]).unwrap()), -3);
+        assert_eq!(
+            expect_int(eval(DefaultFun::QuotientInteger, &[int(-7), int(2)]).unwrap()),
+            -3
+        );
     }
 
     #[test]
@@ -1540,13 +1623,19 @@ mod tests {
     #[test]
     fn remainder_integer() {
         // 7 `rem` 3 = 1 (sign follows dividend).
-        assert_eq!(expect_int(eval(DefaultFun::RemainderInteger, &[int(7), int(3)]).unwrap()), 1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::RemainderInteger, &[int(7), int(3)]).unwrap()),
+            1
+        );
     }
 
     #[test]
     fn remainder_integer_negative() {
         // -7 `rem` 3 = -1 (sign follows dividend).
-        assert_eq!(expect_int(eval(DefaultFun::RemainderInteger, &[int(-7), int(3)]).unwrap()), -1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::RemainderInteger, &[int(-7), int(3)]).unwrap()),
+            -1
+        );
     }
 
     #[test]
@@ -1557,25 +1646,37 @@ mod tests {
     #[test]
     fn mod_integer() {
         // 7 `mod` 3 = 1 (sign follows divisor).
-        assert_eq!(expect_int(eval(DefaultFun::ModInteger, &[int(7), int(3)]).unwrap()), 1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ModInteger, &[int(7), int(3)]).unwrap()),
+            1
+        );
     }
 
     #[test]
     fn mod_integer_negative() {
         // -7 `mod` 3 = 2 (Haskell mod: sign follows divisor).
-        assert_eq!(expect_int(eval(DefaultFun::ModInteger, &[int(-7), int(3)]).unwrap()), 2);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ModInteger, &[int(-7), int(3)]).unwrap()),
+            2
+        );
     }
 
     #[test]
     fn mod_integer_negative_divisor() {
         // 7 `mod` (-2) = -1 in Haskell (sign follows divisor).
-        assert_eq!(expect_int(eval(DefaultFun::ModInteger, &[int(7), int(-2)]).unwrap()), -1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ModInteger, &[int(7), int(-2)]).unwrap()),
+            -1
+        );
     }
 
     #[test]
     fn mod_integer_both_negative() {
         // (-7) `mod` (-2) = -1 in Haskell.
-        assert_eq!(expect_int(eval(DefaultFun::ModInteger, &[int(-7), int(-2)]).unwrap()), -1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ModInteger, &[int(-7), int(-2)]).unwrap()),
+            -1
+        );
     }
 
     #[test]
@@ -1589,32 +1690,44 @@ mod tests {
 
     #[test]
     fn equals_integer_true() {
-        assert!(expect_bool(eval(DefaultFun::EqualsInteger, &[int(42), int(42)]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::EqualsInteger, &[int(42), int(42)]).unwrap()
+        ));
     }
 
     #[test]
     fn equals_integer_false() {
-        assert!(!expect_bool(eval(DefaultFun::EqualsInteger, &[int(1), int(2)]).unwrap()));
+        assert!(!expect_bool(
+            eval(DefaultFun::EqualsInteger, &[int(1), int(2)]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_integer_true() {
-        assert!(expect_bool(eval(DefaultFun::LessThanInteger, &[int(1), int(2)]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::LessThanInteger, &[int(1), int(2)]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_integer_false_equal() {
-        assert!(!expect_bool(eval(DefaultFun::LessThanInteger, &[int(2), int(2)]).unwrap()));
+        assert!(!expect_bool(
+            eval(DefaultFun::LessThanInteger, &[int(2), int(2)]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_equals_integer_true() {
-        assert!(expect_bool(eval(DefaultFun::LessThanEqualsInteger, &[int(2), int(2)]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::LessThanEqualsInteger, &[int(2), int(2)]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_equals_integer_false() {
-        assert!(!expect_bool(eval(DefaultFun::LessThanEqualsInteger, &[int(3), int(2)]).unwrap()));
+        assert!(!expect_bool(
+            eval(DefaultFun::LessThanEqualsInteger, &[int(3), int(2)]).unwrap()
+        ));
     }
 
     // ===================================================================
@@ -1647,30 +1760,51 @@ mod tests {
 
     #[test]
     fn slice_bytestring_basic() {
-        let r = expect_bs(eval(DefaultFun::SliceByteString, &[int(1), int(2), bs(&[0, 1, 2, 3])]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::SliceByteString,
+                &[int(1), int(2), bs(&[0, 1, 2, 3])],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![1, 2]);
     }
 
     #[test]
     fn slice_bytestring_clamp() {
         // Start beyond end → empty.
-        let r = expect_bs(eval(DefaultFun::SliceByteString, &[int(100), int(5), bs(&[1, 2])]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::SliceByteString,
+                &[int(100), int(5), bs(&[1, 2])],
+            )
+            .unwrap(),
+        );
         assert!(r.is_empty());
     }
 
     #[test]
     fn length_of_bytestring() {
-        assert_eq!(expect_int(eval(DefaultFun::LengthOfByteString, &[bs(&[1, 2, 3])]).unwrap()), 3);
+        assert_eq!(
+            expect_int(eval(DefaultFun::LengthOfByteString, &[bs(&[1, 2, 3])]).unwrap()),
+            3
+        );
     }
 
     #[test]
     fn length_of_bytestring_empty() {
-        assert_eq!(expect_int(eval(DefaultFun::LengthOfByteString, &[bs(&[])]).unwrap()), 0);
+        assert_eq!(
+            expect_int(eval(DefaultFun::LengthOfByteString, &[bs(&[])]).unwrap()),
+            0
+        );
     }
 
     #[test]
     fn index_bytestring_valid() {
-        assert_eq!(expect_int(eval(DefaultFun::IndexByteString, &[bs(&[10, 20, 30]), int(1)]).unwrap()), 20);
+        assert_eq!(
+            expect_int(eval(DefaultFun::IndexByteString, &[bs(&[10, 20, 30]), int(1)]).unwrap()),
+            20
+        );
     }
 
     #[test]
@@ -1681,42 +1815,62 @@ mod tests {
 
     #[test]
     fn equals_bytestring_true() {
-        assert!(expect_bool(eval(DefaultFun::EqualsByteString, &[bs(&[1, 2]), bs(&[1, 2])]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::EqualsByteString, &[bs(&[1, 2]), bs(&[1, 2])]).unwrap()
+        ));
     }
 
     #[test]
     fn equals_bytestring_false() {
-        assert!(!expect_bool(eval(DefaultFun::EqualsByteString, &[bs(&[1]), bs(&[2])]).unwrap()));
+        assert!(!expect_bool(
+            eval(DefaultFun::EqualsByteString, &[bs(&[1]), bs(&[2])]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_bytestring_true() {
-        assert!(expect_bool(eval(DefaultFun::LessThanByteString, &[bs(&[1]), bs(&[2])]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::LessThanByteString, &[bs(&[1]), bs(&[2])]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_bytestring_false() {
-        assert!(!expect_bool(eval(DefaultFun::LessThanByteString, &[bs(&[2]), bs(&[1])]).unwrap()));
+        assert!(!expect_bool(
+            eval(DefaultFun::LessThanByteString, &[bs(&[2]), bs(&[1])]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_equals_bytestring_less() {
-        assert!(expect_bool(eval(DefaultFun::LessThanEqualsByteString, &[bs(&[1]), bs(&[2])]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::LessThanEqualsByteString, &[bs(&[1]), bs(&[2])]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_equals_bytestring_equal() {
-        assert!(expect_bool(eval(DefaultFun::LessThanEqualsByteString, &[bs(&[1, 2]), bs(&[1, 2])]).unwrap()));
+        assert!(expect_bool(
+            eval(
+                DefaultFun::LessThanEqualsByteString,
+                &[bs(&[1, 2]), bs(&[1, 2])]
+            )
+            .unwrap()
+        ));
     }
 
     #[test]
     fn less_than_equals_bytestring_greater() {
-        assert!(!expect_bool(eval(DefaultFun::LessThanEqualsByteString, &[bs(&[2]), bs(&[1])]).unwrap()));
+        assert!(!expect_bool(
+            eval(DefaultFun::LessThanEqualsByteString, &[bs(&[2]), bs(&[1])]).unwrap()
+        ));
     }
 
     #[test]
     fn less_than_equals_bytestring_empty() {
-        assert!(expect_bool(eval(DefaultFun::LessThanEqualsByteString, &[bs(&[]), bs(&[])]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::LessThanEqualsByteString, &[bs(&[]), bs(&[])]).unwrap()
+        ));
     }
 
     // ===================================================================
@@ -1775,18 +1929,28 @@ mod tests {
 
     #[test]
     fn append_string() {
-        let r = expect_string(eval(DefaultFun::AppendString, &[str_val("hello"), str_val(" world")]).unwrap());
+        let r = expect_string(
+            eval(
+                DefaultFun::AppendString,
+                &[str_val("hello"), str_val(" world")],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, "hello world");
     }
 
     #[test]
     fn equals_string_true() {
-        assert!(expect_bool(eval(DefaultFun::EqualsString, &[str_val("abc"), str_val("abc")]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::EqualsString, &[str_val("abc"), str_val("abc")]).unwrap()
+        ));
     }
 
     #[test]
     fn equals_string_false() {
-        assert!(!expect_bool(eval(DefaultFun::EqualsString, &[str_val("a"), str_val("b")]).unwrap()));
+        assert!(!expect_bool(
+            eval(DefaultFun::EqualsString, &[str_val("a"), str_val("b")]).unwrap()
+        ));
     }
 
     #[test]
@@ -1917,7 +2081,10 @@ mod tests {
 
     #[test]
     fn head_list() {
-        let l = list_val(Type::Integer, vec![Constant::Integer(1), Constant::Integer(2)]);
+        let l = list_val(
+            Type::Integer,
+            vec![Constant::Integer(1), Constant::Integer(2)],
+        );
         let r = eval(DefaultFun::HeadList, &[l]).unwrap();
         assert_eq!(expect_int(r), 1);
     }
@@ -1933,7 +2100,14 @@ mod tests {
 
     #[test]
     fn tail_list() {
-        let l = list_val(Type::Integer, vec![Constant::Integer(1), Constant::Integer(2), Constant::Integer(3)]);
+        let l = list_val(
+            Type::Integer,
+            vec![
+                Constant::Integer(1),
+                Constant::Integer(2),
+                Constant::Integer(3),
+            ],
+        );
         let r = eval(DefaultFun::TailList, &[l]).unwrap();
         match r {
             Value::Constant(Constant::ProtoList(_, items)) => {
@@ -1973,35 +2147,55 @@ mod tests {
     #[test]
     fn choose_data_constr() {
         let d = data_val(PlutusData::Constr(0, vec![]));
-        let r = eval(DefaultFun::ChooseData, &[d, int(1), int(2), int(3), int(4), int(5)]).unwrap();
+        let r = eval(
+            DefaultFun::ChooseData,
+            &[d, int(1), int(2), int(3), int(4), int(5)],
+        )
+        .unwrap();
         assert_eq!(expect_int(r), 1);
     }
 
     #[test]
     fn choose_data_map() {
         let d = data_val(PlutusData::Map(vec![]));
-        let r = eval(DefaultFun::ChooseData, &[d, int(1), int(2), int(3), int(4), int(5)]).unwrap();
+        let r = eval(
+            DefaultFun::ChooseData,
+            &[d, int(1), int(2), int(3), int(4), int(5)],
+        )
+        .unwrap();
         assert_eq!(expect_int(r), 2);
     }
 
     #[test]
     fn choose_data_list() {
         let d = data_val(PlutusData::List(vec![]));
-        let r = eval(DefaultFun::ChooseData, &[d, int(1), int(2), int(3), int(4), int(5)]).unwrap();
+        let r = eval(
+            DefaultFun::ChooseData,
+            &[d, int(1), int(2), int(3), int(4), int(5)],
+        )
+        .unwrap();
         assert_eq!(expect_int(r), 3);
     }
 
     #[test]
     fn choose_data_integer() {
         let d = data_val(PlutusData::Integer(42));
-        let r = eval(DefaultFun::ChooseData, &[d, int(1), int(2), int(3), int(4), int(5)]).unwrap();
+        let r = eval(
+            DefaultFun::ChooseData,
+            &[d, int(1), int(2), int(3), int(4), int(5)],
+        )
+        .unwrap();
         assert_eq!(expect_int(r), 4);
     }
 
     #[test]
     fn choose_data_bytes() {
         let d = data_val(PlutusData::Bytes(vec![1]));
-        let r = eval(DefaultFun::ChooseData, &[d, int(1), int(2), int(3), int(4), int(5)]).unwrap();
+        let r = eval(
+            DefaultFun::ChooseData,
+            &[d, int(1), int(2), int(3), int(4), int(5)],
+        )
+        .unwrap();
         assert_eq!(expect_int(r), 5);
     }
 
@@ -2026,28 +2220,43 @@ mod tests {
             Box::new(Constant::Data(PlutusData::Integer(1))),
             Box::new(Constant::Data(PlutusData::Integer(2))),
         );
-        let l = list_val(Type::Pair(Box::new(Type::Data), Box::new(Type::Data)), vec![pair]);
+        let l = list_val(
+            Type::Pair(Box::new(Type::Data), Box::new(Type::Data)),
+            vec![pair],
+        );
         let r = eval(DefaultFun::MapData, &[l]).unwrap();
-        assert!(matches!(r, Value::Constant(Constant::Data(PlutusData::Map(_)))));
+        assert!(matches!(
+            r,
+            Value::Constant(Constant::Data(PlutusData::Map(_)))
+        ));
     }
 
     #[test]
     fn list_data() {
         let l = list_val(Type::Data, vec![Constant::Data(PlutusData::Integer(1))]);
         let r = eval(DefaultFun::ListData, &[l]).unwrap();
-        assert!(matches!(r, Value::Constant(Constant::Data(PlutusData::List(_)))));
+        assert!(matches!(
+            r,
+            Value::Constant(Constant::Data(PlutusData::List(_)))
+        ));
     }
 
     #[test]
     fn i_data() {
         let r = eval(DefaultFun::IData, &[int(42)]).unwrap();
-        assert!(matches!(r, Value::Constant(Constant::Data(PlutusData::Integer(42)))));
+        assert!(matches!(
+            r,
+            Value::Constant(Constant::Data(PlutusData::Integer(42)))
+        ));
     }
 
     #[test]
     fn b_data() {
         let r = eval(DefaultFun::BData, &[bs(&[1, 2])]).unwrap();
-        assert!(matches!(r, Value::Constant(Constant::Data(PlutusData::Bytes(_)))));
+        assert!(matches!(
+            r,
+            Value::Constant(Constant::Data(PlutusData::Bytes(_)))
+        ));
     }
 
     #[test]
@@ -2066,7 +2275,10 @@ mod tests {
 
     #[test]
     fn un_map_data() {
-        let d = data_val(PlutusData::Map(vec![(PlutusData::Integer(1), PlutusData::Integer(2))]));
+        let d = data_val(PlutusData::Map(vec![(
+            PlutusData::Integer(1),
+            PlutusData::Integer(2),
+        )]));
         let r = eval(DefaultFun::UnMapData, &[d]).unwrap();
         assert!(matches!(r, Value::Constant(Constant::ProtoList(..))));
     }
@@ -2085,7 +2297,13 @@ mod tests {
 
     #[test]
     fn un_list_data_wrong_type() {
-        assert!(eval(DefaultFun::UnListData, &[data_val(PlutusData::Bytes(vec![]))]).is_err());
+        assert!(
+            eval(
+                DefaultFun::UnListData,
+                &[data_val(PlutusData::Bytes(vec![]))]
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2102,7 +2320,10 @@ mod tests {
     #[test]
     fn un_b_data() {
         let d = data_val(PlutusData::Bytes(vec![0xAB]));
-        assert_eq!(expect_bs(eval(DefaultFun::UnBData, &[d]).unwrap()), vec![0xAB]);
+        assert_eq!(
+            expect_bs(eval(DefaultFun::UnBData, &[d]).unwrap()),
+            vec![0xAB]
+        );
     }
 
     #[test]
@@ -2163,57 +2384,120 @@ mod tests {
 
     #[test]
     fn integer_to_bytestring_big_endian() {
-        let r = expect_bs(eval(DefaultFun::IntegerToByteString, &[bool_val(false), int(0), int(256)]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::IntegerToByteString,
+                &[bool_val(false), int(0), int(256)],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![1, 0]); // 256 = 0x0100
     }
 
     #[test]
     fn integer_to_bytestring_little_endian() {
-        let r = expect_bs(eval(DefaultFun::IntegerToByteString, &[bool_val(true), int(0), int(256)]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::IntegerToByteString,
+                &[bool_val(true), int(0), int(256)],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![0, 1]); // 256 LE = 0x0001
     }
 
     #[test]
     fn integer_to_bytestring_zero() {
-        let r = expect_bs(eval(DefaultFun::IntegerToByteString, &[bool_val(false), int(0), int(0)]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::IntegerToByteString,
+                &[bool_val(false), int(0), int(0)],
+            )
+            .unwrap(),
+        );
         assert!(r.is_empty()); // 0 with no required len = empty
     }
 
     #[test]
     fn integer_to_bytestring_zero_with_len() {
-        let r = expect_bs(eval(DefaultFun::IntegerToByteString, &[bool_val(false), int(4), int(0)]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::IntegerToByteString,
+                &[bool_val(false), int(4), int(0)],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![0, 0, 0, 0]);
     }
 
     #[test]
     fn integer_to_bytestring_padded() {
-        let r = expect_bs(eval(DefaultFun::IntegerToByteString, &[bool_val(false), int(4), int(1)]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::IntegerToByteString,
+                &[bool_val(false), int(4), int(1)],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![0, 0, 0, 1]);
     }
 
     #[test]
     fn integer_to_bytestring_negative_error() {
-        assert!(eval(DefaultFun::IntegerToByteString, &[bool_val(false), int(0), int(-1)]).is_err());
+        assert!(
+            eval(
+                DefaultFun::IntegerToByteString,
+                &[bool_val(false), int(0), int(-1)]
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn integer_to_bytestring_too_large_len() {
-        assert!(eval(DefaultFun::IntegerToByteString, &[bool_val(false), int(9000), int(1)]).is_err());
+        assert!(
+            eval(
+                DefaultFun::IntegerToByteString,
+                &[bool_val(false), int(9000), int(1)]
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn bytestring_to_integer_big_endian() {
-        assert_eq!(expect_int(eval(DefaultFun::ByteStringToInteger, &[bool_val(false), bs(&[1, 0])]).unwrap()), 256);
+        assert_eq!(
+            expect_int(
+                eval(
+                    DefaultFun::ByteStringToInteger,
+                    &[bool_val(false), bs(&[1, 0])]
+                )
+                .unwrap()
+            ),
+            256
+        );
     }
 
     #[test]
     fn bytestring_to_integer_little_endian() {
-        assert_eq!(expect_int(eval(DefaultFun::ByteStringToInteger, &[bool_val(true), bs(&[0, 1])]).unwrap()), 256);
+        assert_eq!(
+            expect_int(
+                eval(
+                    DefaultFun::ByteStringToInteger,
+                    &[bool_val(true), bs(&[0, 1])]
+                )
+                .unwrap()
+            ),
+            256
+        );
     }
 
     #[test]
     fn bytestring_to_integer_empty() {
-        assert_eq!(expect_int(eval(DefaultFun::ByteStringToInteger, &[bool_val(false), bs(&[])]).unwrap()), 0);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ByteStringToInteger, &[bool_val(false), bs(&[])]).unwrap()),
+            0
+        );
     }
 
     // ===================================================================
@@ -2223,26 +2507,50 @@ mod tests {
     #[test]
     fn and_bytestring_truncate() {
         // AND with truncation (pad=false): result = min length.
-        let r = expect_bs(eval(DefaultFun::AndByteString, &[bool_val(false), bs(&[0xFF, 0x0F]), bs(&[0x0F])]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::AndByteString,
+                &[bool_val(false), bs(&[0xFF, 0x0F]), bs(&[0x0F])],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![0x0F]); // only last byte used from shorter
     }
 
     #[test]
     fn and_bytestring_pad() {
         // AND with padding (pad=true): shorter is zero-padded on left.
-        let r = expect_bs(eval(DefaultFun::AndByteString, &[bool_val(true), bs(&[0xFF, 0x0F]), bs(&[0x0F])]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::AndByteString,
+                &[bool_val(true), bs(&[0xFF, 0x0F]), bs(&[0x0F])],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![0x00, 0x0F]); // 0xFF & 0x00 = 0x00, 0x0F & 0x0F = 0x0F
     }
 
     #[test]
     fn or_bytestring() {
-        let r = expect_bs(eval(DefaultFun::OrByteString, &[bool_val(false), bs(&[0xF0]), bs(&[0x0F])]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::OrByteString,
+                &[bool_val(false), bs(&[0xF0]), bs(&[0x0F])],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![0xFF]);
     }
 
     #[test]
     fn xor_bytestring() {
-        let r = expect_bs(eval(DefaultFun::XorByteString, &[bool_val(false), bs(&[0xFF]), bs(&[0xFF])]).unwrap());
+        let r = expect_bs(
+            eval(
+                DefaultFun::XorByteString,
+                &[bool_val(false), bs(&[0xFF]), bs(&[0xFF])],
+            )
+            .unwrap(),
+        );
         assert_eq!(r, vec![0x00]);
     }
 
@@ -2261,8 +2569,12 @@ mod tests {
     #[test]
     fn read_bit_basic() {
         // 0b10000000 = 0x80; bit 7 (MSB of byte = bit 7 from LSB) should be set.
-        assert!(expect_bool(eval(DefaultFun::ReadBit, &[bs(&[0x80]), int(7)]).unwrap()));
-        assert!(!expect_bool(eval(DefaultFun::ReadBit, &[bs(&[0x80]), int(0)]).unwrap()));
+        assert!(expect_bool(
+            eval(DefaultFun::ReadBit, &[bs(&[0x80]), int(7)]).unwrap()
+        ));
+        assert!(!expect_bool(
+            eval(DefaultFun::ReadBit, &[bs(&[0x80]), int(0)]).unwrap()
+        ));
     }
 
     #[test]
@@ -2367,32 +2679,56 @@ mod tests {
 
     #[test]
     fn count_set_bits() {
-        assert_eq!(expect_int(eval(DefaultFun::CountSetBits, &[bs(&[0xFF])]).unwrap()), 8);
-        assert_eq!(expect_int(eval(DefaultFun::CountSetBits, &[bs(&[0x00])]).unwrap()), 0);
-        assert_eq!(expect_int(eval(DefaultFun::CountSetBits, &[bs(&[0x0F, 0xF0])]).unwrap()), 8);
+        assert_eq!(
+            expect_int(eval(DefaultFun::CountSetBits, &[bs(&[0xFF])]).unwrap()),
+            8
+        );
+        assert_eq!(
+            expect_int(eval(DefaultFun::CountSetBits, &[bs(&[0x00])]).unwrap()),
+            0
+        );
+        assert_eq!(
+            expect_int(eval(DefaultFun::CountSetBits, &[bs(&[0x0F, 0xF0])]).unwrap()),
+            8
+        );
     }
 
     #[test]
     fn count_set_bits_empty() {
-        assert_eq!(expect_int(eval(DefaultFun::CountSetBits, &[bs(&[])]).unwrap()), 0);
+        assert_eq!(
+            expect_int(eval(DefaultFun::CountSetBits, &[bs(&[])]).unwrap()),
+            0
+        );
     }
 
     #[test]
     fn find_first_set_bit_basic() {
         // 0x01: bit 0 is set.
-        assert_eq!(expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[0x01])]).unwrap()), 0);
+        assert_eq!(
+            expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[0x01])]).unwrap()),
+            0
+        );
         // 0x02: bit 1 is set (bit 0 is the LSB of last byte).
-        assert_eq!(expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[0x02])]).unwrap()), 1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[0x02])]).unwrap()),
+            1
+        );
     }
 
     #[test]
     fn find_first_set_bit_all_zeros() {
-        assert_eq!(expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[0x00])]).unwrap()), -1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[0x00])]).unwrap()),
+            -1
+        );
     }
 
     #[test]
     fn find_first_set_bit_empty() {
-        assert_eq!(expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[])]).unwrap()), -1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::FindFirstSetBit, &[bs(&[])]).unwrap()),
+            -1
+        );
     }
 
     // ===================================================================
@@ -2402,19 +2738,28 @@ mod tests {
     #[test]
     fn exp_mod_integer_basic() {
         // 2^10 mod 1000 = 1024 mod 1000 = 24.
-        assert_eq!(expect_int(eval(DefaultFun::ExpModInteger, &[int(2), int(10), int(1000)]).unwrap()), 24);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ExpModInteger, &[int(2), int(10), int(1000)]).unwrap()),
+            24
+        );
     }
 
     #[test]
     fn exp_mod_integer_zero_exp() {
         // x^0 mod m = 1 (for m > 1).
-        assert_eq!(expect_int(eval(DefaultFun::ExpModInteger, &[int(5), int(0), int(7)]).unwrap()), 1);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ExpModInteger, &[int(5), int(0), int(7)]).unwrap()),
+            1
+        );
     }
 
     #[test]
     fn exp_mod_integer_mod_one() {
         // x^e mod 1 = 0.
-        assert_eq!(expect_int(eval(DefaultFun::ExpModInteger, &[int(5), int(10), int(1)]).unwrap()), 0);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ExpModInteger, &[int(5), int(10), int(1)]).unwrap()),
+            0
+        );
     }
 
     #[test]
@@ -2430,7 +2775,10 @@ mod tests {
     #[test]
     fn exp_mod_integer_negative_base() {
         // (-2)^3 mod 5 = -8 mod 5 = 2 (normalized).
-        assert_eq!(expect_int(eval(DefaultFun::ExpModInteger, &[int(-2), int(3), int(5)]).unwrap()), 2);
+        assert_eq!(
+            expect_int(eval(DefaultFun::ExpModInteger, &[int(-2), int(3), int(5)]).unwrap()),
+            2
+        );
     }
 
     // ===================================================================
@@ -2440,12 +2788,24 @@ mod tests {
     #[test]
     fn verify_ed25519_bad_key_length() {
         // Too short key → false.
-        assert!(!expect_bool(eval(DefaultFun::VerifyEd25519Signature, &[bs(&[0; 16]), bs(&[]), bs(&[0; 64])]).unwrap()));
+        assert!(!expect_bool(
+            eval(
+                DefaultFun::VerifyEd25519Signature,
+                &[bs(&[0; 16]), bs(&[]), bs(&[0; 64])]
+            )
+            .unwrap()
+        ));
     }
 
     #[test]
     fn verify_ed25519_bad_sig_length() {
-        assert!(!expect_bool(eval(DefaultFun::VerifyEd25519Signature, &[bs(&[0; 32]), bs(&[]), bs(&[0; 32])]).unwrap()));
+        assert!(!expect_bool(
+            eval(
+                DefaultFun::VerifyEd25519Signature,
+                &[bs(&[0; 32]), bs(&[]), bs(&[0; 32])]
+            )
+            .unwrap()
+        ));
     }
 
     // ===================================================================
@@ -2474,11 +2834,20 @@ mod tests {
     #[test]
     fn constant_type_name_all_variants() {
         assert_eq!(constant_type_name(&Constant::Integer(0)), "integer");
-        assert_eq!(constant_type_name(&Constant::ByteString(vec![])), "bytestring");
-        assert_eq!(constant_type_name(&Constant::String(String::new())), "string");
+        assert_eq!(
+            constant_type_name(&Constant::ByteString(vec![])),
+            "bytestring"
+        );
+        assert_eq!(
+            constant_type_name(&Constant::String(String::new())),
+            "string"
+        );
         assert_eq!(constant_type_name(&Constant::Unit), "unit");
         assert_eq!(constant_type_name(&Constant::Bool(true)), "bool");
-        assert_eq!(constant_type_name(&Constant::ProtoList(Type::Integer, vec![])), "list");
+        assert_eq!(
+            constant_type_name(&Constant::ProtoList(Type::Integer, vec![])),
+            "list"
+        );
         assert_eq!(
             constant_type_name(&Constant::ProtoPair(
                 Type::Integer,
@@ -2488,7 +2857,10 @@ mod tests {
             )),
             "pair"
         );
-        assert_eq!(constant_type_name(&Constant::Data(PlutusData::Integer(0))), "data");
+        assert_eq!(
+            constant_type_name(&Constant::Data(PlutusData::Integer(0))),
+            "data"
+        );
     }
 
     // ===================================================================

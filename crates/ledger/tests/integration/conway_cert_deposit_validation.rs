@@ -79,9 +79,17 @@ fn conway_state_bootstrap(key_deposit: u64, drep_deposit: u64) -> LedgerState {
 
 /// Minimal Conway tx body with a single cert, fee = 0, and the given UTxO
 /// input pointing at consumed.
-fn conway_tx_with_cert(input_hash: [u8; 32], output_coin: u64, fee: u64, cert: DCert) -> ConwayTxBody {
+fn conway_tx_with_cert(
+    input_hash: [u8; 32],
+    output_coin: u64,
+    fee: u64,
+    cert: DCert,
+) -> ConwayTxBody {
     ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: input_hash, index: 0 }],
+        inputs: vec![ShelleyTxIn {
+            transaction_id: input_hash,
+            index: 0,
+        }],
         outputs: vec![BabbageTxOut {
             address: vec![0x02],
             amount: Value::Coin(output_coin),
@@ -120,23 +128,37 @@ fn conway_pv11_rejects_incorrect_key_deposit_new_error() {
 
     let consumed = 1_000_000 + 3_000_000; // wrong deposit amount (3M ≠ 2M)
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xA0; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xA0; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xA1; 28]);
-    let block = make_conway_block(10, 1, 0xA2, vec![conway_tx_with_cert(
-        [0xA0; 32],
-        1_000_000,
-        0,
-        DCert::AccountRegistrationDeposit(cred, 3_000_000), // wrong deposit
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xA2,
+        vec![conway_tx_with_cert(
+            [0xA0; 32],
+            1_000_000,
+            0,
+            DCert::AccountRegistrationDeposit(cred, 3_000_000), // wrong deposit
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     // PV > 10: upstream `DepositIncorrectDELEG`
     assert_eq!(
         err,
-        LedgerError::DepositIncorrectDELEG { supplied: 3_000_000, expected: key_deposit }
+        LedgerError::DepositIncorrectDELEG {
+            supplied: 3_000_000,
+            expected: key_deposit
+        }
     );
 }
 
@@ -149,23 +171,37 @@ fn conway_pv10_rejects_incorrect_key_deposit_legacy_error() {
 
     let consumed = 1_000_000 + 3_000_000;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xA9; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xA9; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xAA; 28]);
-    let block = make_conway_block(10, 1, 0xAB, vec![conway_tx_with_cert(
-        [0xA9; 32],
-        1_000_000,
-        0,
-        DCert::AccountRegistrationDeposit(cred, 3_000_000),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xAB,
+        vec![conway_tx_with_cert(
+            [0xA9; 32],
+            1_000_000,
+            0,
+            DCert::AccountRegistrationDeposit(cred, 3_000_000),
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     // PV 10 (≤ 10): legacy error variant
     assert_eq!(
         err,
-        LedgerError::IncorrectDepositDELEG { supplied: 3_000_000, expected: key_deposit }
+        LedgerError::IncorrectDepositDELEG {
+            supplied: 3_000_000,
+            expected: key_deposit
+        }
     );
 }
 
@@ -176,22 +212,36 @@ fn conway_bootstrap_uses_legacy_incorrect_deposit_error_on_registration() {
 
     let consumed = 1_000_000 + 3_000_000;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xA6; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xA6; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xA7; 28]);
-    let block = make_conway_block(10, 1, 0xA8, vec![conway_tx_with_cert(
-        [0xA6; 32],
-        1_000_000,
-        0,
-        DCert::AccountRegistrationDeposit(cred, 3_000_000),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xA8,
+        vec![conway_tx_with_cert(
+            [0xA6; 32],
+            1_000_000,
+            0,
+            DCert::AccountRegistrationDeposit(cred, 3_000_000),
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::IncorrectDepositDELEG { supplied: 3_000_000, expected: key_deposit }
+        LedgerError::IncorrectDepositDELEG {
+            supplied: 3_000_000,
+            expected: key_deposit
+        }
     );
 }
 
@@ -202,19 +252,32 @@ fn conway_accepts_correct_key_deposit_on_registration() {
 
     let consumed = 1_000_000 + key_deposit;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xA3; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xA3; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xA4; 28]);
-    let block = make_conway_block(10, 1, 0xA5, vec![conway_tx_with_cert(
-        [0xA3; 32],
-        1_000_000,
-        0,
-        DCert::AccountRegistrationDeposit(cred, key_deposit),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xA5,
+        vec![conway_tx_with_cert(
+            [0xA3; 32],
+            1_000_000,
+            0,
+            DCert::AccountRegistrationDeposit(cred, key_deposit),
+        )],
+    );
 
-    state.apply_block(&block).expect("correct deposit should be accepted");
+    state
+        .apply_block(&block)
+        .expect("correct deposit should be accepted");
     assert!(state.stake_credentials().is_registered(&cred));
 }
 
@@ -229,8 +292,14 @@ fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool() {
 
     let consumed = 1_000_000 + 999_999;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xB0; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xB0; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     // Register a pool for delegation target
@@ -239,7 +308,10 @@ fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool() {
         vrf_keyhash: [0xBB; 32],
         pledge: 0,
         cost: 340_000_000,
-        margin: UnitInterval { numerator: 0, denominator: 1 },
+        margin: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
         reward_account: RewardAccount {
             network: 1,
             credential: StakeCredential::AddrKeyHash([0xBB; 28]),
@@ -250,17 +322,25 @@ fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool() {
     });
 
     let cred = StakeCredential::AddrKeyHash([0xB1; 28]);
-    let block = make_conway_block(10, 1, 0xB2, vec![conway_tx_with_cert(
-        [0xB0; 32],
-        1_000_000,
-        0,
-        DCert::AccountRegistrationDelegationToStakePool(cred, [0xBB; 28], 999_999), // wrong
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xB2,
+        vec![conway_tx_with_cert(
+            [0xB0; 32],
+            1_000_000,
+            0,
+            DCert::AccountRegistrationDelegationToStakePool(cred, [0xBB; 28], 999_999), // wrong
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::DepositIncorrectDELEG { supplied: 999_999, expected: key_deposit }
+        LedgerError::DepositIncorrectDELEG {
+            supplied: 999_999,
+            expected: key_deposit
+        }
     );
 }
 
@@ -275,22 +355,36 @@ fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_drep() {
 
     let consumed = 1_000_000 + 1_000_000;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xC0; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xC0; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xC1; 28]);
-    let block = make_conway_block(10, 1, 0xC2, vec![conway_tx_with_cert(
-        [0xC0; 32],
-        1_000_000,
-        0,
-        DCert::AccountRegistrationDelegationToDrep(cred, DRep::AlwaysAbstain, 1_000_000), // wrong
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xC2,
+        vec![conway_tx_with_cert(
+            [0xC0; 32],
+            1_000_000,
+            0,
+            DCert::AccountRegistrationDelegationToDrep(cred, DRep::AlwaysAbstain, 1_000_000), // wrong
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::DepositIncorrectDELEG { supplied: 1_000_000, expected: key_deposit }
+        LedgerError::DepositIncorrectDELEG {
+            supplied: 1_000_000,
+            expected: key_deposit
+        }
     );
 }
 
@@ -305,8 +399,14 @@ fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool_and_drep() {
 
     let consumed = 1_000_000 + 5_000_000;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xD0; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xD0; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     state.pool_state_mut().register(PoolParams {
@@ -314,7 +414,10 @@ fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool_and_drep() {
         vrf_keyhash: [0xDD; 32],
         pledge: 0,
         cost: 340_000_000,
-        margin: UnitInterval { numerator: 0, denominator: 1 },
+        margin: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
         reward_account: RewardAccount {
             network: 1,
             credential: StakeCredential::AddrKeyHash([0xDD; 28]),
@@ -325,22 +428,30 @@ fn conway_pv11_rejects_incorrect_deposit_on_reg_delegation_to_pool_and_drep() {
     });
 
     let cred = StakeCredential::AddrKeyHash([0xD1; 28]);
-    let block = make_conway_block(10, 1, 0xD2, vec![conway_tx_with_cert(
-        [0xD0; 32],
-        1_000_000,
-        0,
-        DCert::AccountRegistrationDelegationToStakePoolAndDrep(
-            cred,
-            [0xDD; 28],
-            DRep::AlwaysAbstain,
-            5_000_000, // wrong
-        ),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xD2,
+        vec![conway_tx_with_cert(
+            [0xD0; 32],
+            1_000_000,
+            0,
+            DCert::AccountRegistrationDelegationToStakePoolAndDrep(
+                cred,
+                [0xDD; 28],
+                DRep::AlwaysAbstain,
+                5_000_000, // wrong
+            ),
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::DepositIncorrectDELEG { supplied: 5_000_000, expected: key_deposit }
+        LedgerError::DepositIncorrectDELEG {
+            supplied: 5_000_000,
+            expected: key_deposit
+        }
     );
 }
 
@@ -358,22 +469,36 @@ fn conway_pv11_rejects_incorrect_key_refund_new_error() {
     state.deposit_pot_mut().key_deposits += key_deposit;
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xE1; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 200_000 },
+        ShelleyTxIn {
+            transaction_id: [0xE1; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 200_000,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xE2, vec![conway_tx_with_cert(
-        [0xE1; 32],
-        200_000,
-        0,
-        DCert::AccountUnregistrationDeposit(cred, 1_000_000), // wrong refund
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xE2,
+        vec![conway_tx_with_cert(
+            [0xE1; 32],
+            200_000,
+            0,
+            DCert::AccountUnregistrationDeposit(cred, 1_000_000), // wrong refund
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     // PV > 10: upstream uses RefundIncorrectDELEG
     assert_eq!(
         err,
-        LedgerError::RefundIncorrectDELEG { supplied: 1_000_000, expected: key_deposit }
+        LedgerError::RefundIncorrectDELEG {
+            supplied: 1_000_000,
+            expected: key_deposit
+        }
     );
 }
 
@@ -388,22 +513,36 @@ fn conway_pv10_rejects_incorrect_key_refund_legacy_error() {
     state.deposit_pot_mut().key_deposits += key_deposit;
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xE7; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 200_000 },
+        ShelleyTxIn {
+            transaction_id: [0xE7; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 200_000,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xE8, vec![conway_tx_with_cert(
-        [0xE7; 32],
-        200_000,
-        0,
-        DCert::AccountUnregistrationDeposit(cred, 1_000_000), // wrong refund
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xE8,
+        vec![conway_tx_with_cert(
+            [0xE7; 32],
+            200_000,
+            0,
+            DCert::AccountUnregistrationDeposit(cred, 1_000_000), // wrong refund
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     // PV 10 (≤ 10): legacy error variant
     assert_eq!(
         err,
-        LedgerError::IncorrectKeyDepositRefund { supplied: 1_000_000, expected: key_deposit }
+        LedgerError::IncorrectKeyDepositRefund {
+            supplied: 1_000_000,
+            expected: key_deposit
+        }
     );
 }
 
@@ -418,18 +557,31 @@ fn conway_accepts_correct_key_refund_on_unregistration() {
 
     // consumed + refund = output + fee → output = refund, consumed = 0
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xE4; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 0 },
+        ShelleyTxIn {
+            transaction_id: [0xE4; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 0,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xE5, vec![conway_tx_with_cert(
-        [0xE4; 32],
-        key_deposit,
-        0,
-        DCert::AccountUnregistrationDeposit(cred, key_deposit),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xE5,
+        vec![conway_tx_with_cert(
+            [0xE4; 32],
+            key_deposit,
+            0,
+            DCert::AccountUnregistrationDeposit(cred, key_deposit),
+        )],
+    );
 
-    state.apply_block(&block).expect("correct refund should be accepted");
+    state
+        .apply_block(&block)
+        .expect("correct refund should be accepted");
     assert!(!state.stake_credentials().is_registered(&cred));
 }
 
@@ -444,22 +596,36 @@ fn conway_rejects_incorrect_drep_deposit() {
 
     let consumed = 1_000_000 + 999_999;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xF0; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xF0; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xF1; 28]);
-    let block = make_conway_block(10, 1, 0xF2, vec![conway_tx_with_cert(
-        [0xF0; 32],
-        1_000_000,
-        0,
-        DCert::DrepRegistration(cred, 999_999, None), // wrong deposit
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xF2,
+        vec![conway_tx_with_cert(
+            [0xF0; 32],
+            1_000_000,
+            0,
+            DCert::DrepRegistration(cred, 999_999, None), // wrong deposit
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::DrepIncorrectDeposit { supplied: 999_999, expected: drep_deposit }
+        LedgerError::DrepIncorrectDeposit {
+            supplied: 999_999,
+            expected: drep_deposit
+        }
     );
 }
 
@@ -470,19 +636,32 @@ fn conway_accepts_correct_drep_deposit() {
 
     let consumed = 1_000_000 + drep_deposit;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xF3; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xF3; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let cred = StakeCredential::AddrKeyHash([0xF4; 28]);
-    let block = make_conway_block(10, 1, 0xF5, vec![conway_tx_with_cert(
-        [0xF3; 32],
-        1_000_000,
-        0,
-        DCert::DrepRegistration(cred, drep_deposit, None),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xF5,
+        vec![conway_tx_with_cert(
+            [0xF3; 32],
+            1_000_000,
+            0,
+            DCert::DrepRegistration(cred, drep_deposit, None),
+        )],
+    );
 
-    state.apply_block(&block).expect("correct drep deposit should be accepted");
+    state
+        .apply_block(&block)
+        .expect("correct drep deposit should be accepted");
 }
 
 // -----------------------------------------------------------------------
@@ -496,25 +675,41 @@ fn conway_rejects_incorrect_drep_refund() {
 
     let cred = StakeCredential::AddrKeyHash([0xF6; 28]);
     let drep = DRep::KeyHash([0xF6; 28]);
-    state.drep_state_mut().register(drep, RegisteredDrep::new(drep_deposit, None));
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new(drep_deposit, None));
     state.deposit_pot_mut().drep_deposits += drep_deposit;
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xF7; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 200_000 },
+        ShelleyTxIn {
+            transaction_id: [0xF7; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 200_000,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xF8, vec![conway_tx_with_cert(
-        [0xF7; 32],
-        200_000,
-        0,
-        DCert::DrepUnregistration(cred, 999_999), // wrong refund
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xF8,
+        vec![conway_tx_with_cert(
+            [0xF7; 32],
+            200_000,
+            0,
+            DCert::DrepUnregistration(cred, 999_999), // wrong refund
+        )],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
         err,
-        LedgerError::DrepIncorrectRefund { supplied: 999_999, expected: drep_deposit }
+        LedgerError::DrepIncorrectRefund {
+            supplied: 999_999,
+            expected: drep_deposit
+        }
     );
 }
 
@@ -525,22 +720,37 @@ fn conway_accepts_correct_drep_refund() {
 
     let cred = StakeCredential::AddrKeyHash([0xF9; 28]);
     let drep = DRep::KeyHash([0xF9; 28]);
-    state.drep_state_mut().register(drep, RegisteredDrep::new(drep_deposit, None));
+    state
+        .drep_state_mut()
+        .register(drep, RegisteredDrep::new(drep_deposit, None));
     state.deposit_pot_mut().drep_deposits += drep_deposit;
 
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xFA; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: 0 },
+        ShelleyTxIn {
+            transaction_id: [0xFA; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: 0,
+        },
     );
 
-    let block = make_conway_block(10, 1, 0xFB, vec![conway_tx_with_cert(
-        [0xFA; 32],
-        drep_deposit,
-        0,
-        DCert::DrepUnregistration(cred, drep_deposit),
-    )]);
+    let block = make_conway_block(
+        10,
+        1,
+        0xFB,
+        vec![conway_tx_with_cert(
+            [0xFA; 32],
+            drep_deposit,
+            0,
+            DCert::DrepUnregistration(cred, drep_deposit),
+        )],
+    );
 
-    state.apply_block(&block).expect("correct drep refund should be accepted");
+    state
+        .apply_block(&block)
+        .expect("correct drep refund should be accepted");
     assert!(!state.drep_state().is_registered(&drep));
 }
 
@@ -554,47 +764,70 @@ fn conway_rejects_partial_withdrawal() {
 
     let cred = StakeCredential::AddrKeyHash([0xFC; 28]);
     state.stake_credentials_mut().register(cred);
-    state.stake_credentials_mut().get_mut(&cred).unwrap().set_delegated_drep(Some(DRep::AlwaysAbstain));
-    let ra = RewardAccount { network: 1, credential: cred };
-    state.reward_accounts_mut().insert(ra, RewardAccountState::new(1_000_000, None));
+    state
+        .stake_credentials_mut()
+        .get_mut(&cred)
+        .unwrap()
+        .set_delegated_drep(Some(DRep::AlwaysAbstain));
+    let ra = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
+    state
+        .reward_accounts_mut()
+        .insert(ra, RewardAccountState::new(1_000_000, None));
 
     // Supply enough for output + fee + withdrawal = balance
     let consumed = 1_500_000u64;
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0xFD; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0xFD; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let mut withdrawals = std::collections::BTreeMap::new();
     withdrawals.insert(ra, 500_000); // partial: only 500k of 1M balance
 
-    let block = make_conway_block(10, 1, 0xFE, vec![ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0xFD; 32], index: 0 }],
-        outputs: vec![BabbageTxOut {
-            address: vec![0x02],
-            amount: Value::Coin(2_000_000),
-            datum_option: None,
-            script_ref: None,
+    let block = make_conway_block(
+        10,
+        1,
+        0xFE,
+        vec![ConwayTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xFD; 32],
+                index: 0,
+            }],
+            outputs: vec![BabbageTxOut {
+                address: vec![0x02],
+                amount: Value::Coin(2_000_000),
+                datum_option: None,
+                script_ref: None,
+            }],
+            fee: 0,
+            ttl: Some(100),
+            certificates: None,
+            validity_interval_start: None,
+            mint: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+            script_data_hash: None,
+            withdrawals: Some(withdrawals),
+            voting_procedures: None,
+            proposal_procedures: None,
+            treasury_donation: None,
+            current_treasury_value: None,
+            auxiliary_data_hash: None,
         }],
-        fee: 0,
-        ttl: Some(100),
-        certificates: None,
-        validity_interval_start: None,
-        mint: None,
-        collateral: None,
-        required_signers: None,
-        network_id: None,
-        collateral_return: None,
-        total_collateral: None,
-        reference_inputs: None,
-        script_data_hash: None,
-        withdrawals: Some(withdrawals),
-        voting_procedures: None,
-        proposal_procedures: None,
-        treasury_donation: None,
-        current_treasury_value: None,
-        auxiliary_data_hash: None,
-    }]);
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     assert_eq!(
@@ -613,48 +846,73 @@ fn conway_accepts_full_drain_withdrawal() {
 
     let cred = StakeCredential::AddrKeyHash([0x01; 28]);
     state.stake_credentials_mut().register(cred);
-    state.stake_credentials_mut().get_mut(&cred).unwrap().set_delegated_drep(Some(DRep::AlwaysAbstain));
-    let ra = RewardAccount { network: 1, credential: cred };
-    state.reward_accounts_mut().insert(ra, RewardAccountState::new(1_000_000, None));
+    state
+        .stake_credentials_mut()
+        .get_mut(&cred)
+        .unwrap()
+        .set_delegated_drep(Some(DRep::AlwaysAbstain));
+    let ra = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
+    state
+        .reward_accounts_mut()
+        .insert(ra, RewardAccountState::new(1_000_000, None));
 
     let consumed = 1_000_000u64; // consumed + withdrawal(1M) = output(2M) + fee(0)
     state.multi_era_utxo_mut().insert_shelley(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let mut withdrawals = std::collections::BTreeMap::new();
     withdrawals.insert(ra, 1_000_000); // full drain
 
-    let block = make_conway_block(10, 1, 0x03, vec![ConwayTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }],
-        outputs: vec![BabbageTxOut {
-            address: vec![0x02],
-            amount: Value::Coin(2_000_000),
-            datum_option: None,
-            script_ref: None,
+    let block = make_conway_block(
+        10,
+        1,
+        0x03,
+        vec![ConwayTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x02; 32],
+                index: 0,
+            }],
+            outputs: vec![BabbageTxOut {
+                address: vec![0x02],
+                amount: Value::Coin(2_000_000),
+                datum_option: None,
+                script_ref: None,
+            }],
+            fee: 0,
+            ttl: Some(100),
+            certificates: None,
+            validity_interval_start: None,
+            mint: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+            script_data_hash: None,
+            withdrawals: Some(withdrawals),
+            voting_procedures: None,
+            proposal_procedures: None,
+            treasury_donation: None,
+            current_treasury_value: None,
+            auxiliary_data_hash: None,
         }],
-        fee: 0,
-        ttl: Some(100),
-        certificates: None,
-        validity_interval_start: None,
-        mint: None,
-        collateral: None,
-        required_signers: None,
-        network_id: None,
-        collateral_return: None,
-        total_collateral: None,
-        reference_inputs: None,
-        script_data_hash: None,
-        withdrawals: Some(withdrawals),
-        voting_procedures: None,
-        proposal_procedures: None,
-        treasury_donation: None,
-        current_treasury_value: None,
-        auxiliary_data_hash: None,
-    }]);
+    );
 
-    state.apply_block(&block).expect("full drain withdrawal should be accepted");
+    state
+        .apply_block(&block)
+        .expect("full drain withdrawal should be accepted");
     assert_eq!(state.reward_accounts().get(&ra).unwrap().balance(), 0);
 }
 
@@ -671,32 +929,58 @@ fn shelley_rejects_partial_withdrawal() {
 
     let cred = StakeCredential::AddrKeyHash([0x04; 28]);
     state.stake_credentials_mut().register(cred);
-    let ra = RewardAccount { network: 1, credential: cred };
-    state.reward_accounts_mut().insert(ra, RewardAccountState::new(1_000_000, None));
+    let ra = RewardAccount {
+        network: 1,
+        credential: cred,
+    };
+    state
+        .reward_accounts_mut()
+        .insert(ra, RewardAccountState::new(1_000_000, None));
 
     let consumed = 1_000_000u64;
     state.utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x05; 32], index: 0 },
-        ShelleyTxOut { address: vec![0x01], amount: consumed },
+        ShelleyTxIn {
+            transaction_id: [0x05; 32],
+            index: 0,
+        },
+        ShelleyTxOut {
+            address: vec![0x01],
+            amount: consumed,
+        },
     );
 
     let mut withdrawals = std::collections::BTreeMap::new();
     withdrawals.insert(ra, 500_000); // partial — rejected in all eras
 
-    let block = super::ledger_state_basic::make_shelley_block_with_txs(5, 1, 0x06, vec![ShelleyTxBody {
-        inputs: vec![ShelleyTxIn { transaction_id: [0x05; 32], index: 0 }],
-        outputs: vec![ShelleyTxOut { address: vec![0x02], amount: 1_500_000 }],
-        fee: 0,
-        ttl: 100,
-        certificates: None,
-        withdrawals: Some(withdrawals),
-        update: None,
-        auxiliary_data_hash: None,
-    }]);
+    let block = super::ledger_state_basic::make_shelley_block_with_txs(
+        5,
+        1,
+        0x06,
+        vec![ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x05; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x02],
+                amount: 1_500_000,
+            }],
+            fee: 0,
+            ttl: 100,
+            certificates: None,
+            withdrawals: Some(withdrawals),
+            update: None,
+            auxiliary_data_hash: None,
+        }],
+    );
 
     let err = state.apply_block(&block).unwrap_err();
     match err {
-        LedgerError::WithdrawalNotFullDrain { account, requested, balance } => {
+        LedgerError::WithdrawalNotFullDrain {
+            account,
+            requested,
+            balance,
+        } => {
             assert_eq!(account, ra);
             assert_eq!(requested, 500_000);
             assert_eq!(balance, 1_000_000);

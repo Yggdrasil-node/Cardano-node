@@ -38,7 +38,10 @@ fn alonzo_block_rejects_missing_minting_redeemer_for_plutus_policy() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0x11; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0x11; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -47,7 +50,10 @@ fn alonzo_block_rejects_missing_minting_redeemer_for_plutus_policy() {
             datum_hash: None,
         }),
     );
-    let collateral = ShelleyTxIn { transaction_id: [0x12; 32], index: 0 };
+    let collateral = ShelleyTxIn {
+        transaction_id: [0x12; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         collateral.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -135,7 +141,10 @@ fn babbage_submitted_tx_rejects_missing_minting_redeemer_for_plutus_policy() {
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0x41; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0x41; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -145,7 +154,10 @@ fn babbage_submitted_tx_rejects_missing_minting_redeemer_for_plutus_policy() {
             script_ref: None,
         }),
     );
-    let collateral = ShelleyTxIn { transaction_id: [0x42; 32], index: 0 };
+    let collateral = ShelleyTxIn {
+        transaction_id: [0x42; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         collateral.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -197,9 +209,8 @@ fn babbage_submitted_tx_rejects_missing_minting_redeemer_for_plutus_policy() {
         plutus_v2_scripts: vec![script_bytes],
         plutus_v3_scripts: vec![],
     };
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     // Same as the Alonzo block case: upstream fires the script integrity
@@ -224,7 +235,10 @@ fn alonzo_block_rejects_missing_redeemer_phase1_with_valid_hash() {
     let mut state = LedgerState::new(Era::Alonzo);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0x51; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0x51; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -233,7 +247,10 @@ fn alonzo_block_rejects_missing_redeemer_phase1_with_valid_hash() {
             datum_hash: None,
         }),
     );
-    let collateral = ShelleyTxIn { transaction_id: [0x52; 32], index: 0 };
+    let collateral = ShelleyTxIn {
+        transaction_id: [0x52; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         collateral.clone(),
         MultiEraTxOut::Alonzo(AlonzoTxOut {
@@ -327,7 +344,10 @@ fn babbage_submitted_tx_rejects_missing_redeemer_phase1_with_valid_hash() {
     let mut state = LedgerState::new(Era::Babbage);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0x61; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0x61; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -337,7 +357,10 @@ fn babbage_submitted_tx_rejects_missing_redeemer_phase1_with_valid_hash() {
             script_ref: None,
         }),
     );
-    let collateral = ShelleyTxIn { transaction_id: [0x62; 32], index: 0 };
+    let collateral = ShelleyTxIn {
+        transaction_id: [0x62; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         collateral.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -397,9 +420,8 @@ fn babbage_submitted_tx_rejects_missing_redeemer_phase1_with_valid_hash() {
         ..ws
     };
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body, ws, true, None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -421,7 +443,10 @@ fn conway_block_rejects_missing_redeemer_even_when_is_valid_false() {
     let mut state = LedgerState::new(Era::Conway);
     state.set_protocol_params(permissive_params());
 
-    let input = ShelleyTxIn { transaction_id: [0x71; 32], index: 0 };
+    let input = ShelleyTxIn {
+        transaction_id: [0x71; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         input.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {
@@ -431,7 +456,10 @@ fn conway_block_rejects_missing_redeemer_even_when_is_valid_false() {
             script_ref: None,
         }),
     );
-    let collateral = ShelleyTxIn { transaction_id: [0x72; 32], index: 0 };
+    let collateral = ShelleyTxIn {
+        transaction_id: [0x72; 32],
+        index: 0,
+    };
     state.multi_era_utxo_mut().insert(
         collateral.clone(),
         MultiEraTxOut::Babbage(BabbageTxOut {

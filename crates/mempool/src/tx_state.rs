@@ -112,15 +112,8 @@ impl TxState {
     ///
     /// Returns a [`FilterOutcome`] indicating which TxIds should actually be
     /// fetched and which are already known or in flight.
-    pub fn filter_advertised(
-        &mut self,
-        peer: &SocketAddr,
-        txids: &[TxId],
-    ) -> FilterOutcome {
-        let peer_state = self
-            .peers
-            .entry(*peer)
-            .or_insert_with(PeerTxState::new);
+    pub fn filter_advertised(&mut self, peer: &SocketAddr, txids: &[TxId]) -> FilterOutcome {
+        let peer_state = self.peers.entry(*peer).or_insert_with(PeerTxState::new);
 
         let mut to_fetch = Vec::new();
         let mut already_known = Vec::new();
@@ -135,7 +128,10 @@ impl TxState {
             }
         }
 
-        FilterOutcome { to_fetch, already_known }
+        FilterOutcome {
+            to_fetch,
+            already_known,
+        }
     }
 
     /// Mark a set of TxIds as in-flight (being fetched from the given peer).
@@ -250,41 +246,58 @@ impl SharedTxState {
 
     /// Register a new peer.
     pub fn register_peer(&self, addr: SocketAddr) {
-        self.inner.write().expect("tx state poisoned").register_peer(addr);
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .register_peer(addr);
     }
 
     /// Unregister a peer and cancel its in-flight fetches.
     pub fn unregister_peer(&self, addr: &SocketAddr) {
-        self.inner.write().expect("tx state poisoned").unregister_peer(addr);
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .unregister_peer(addr);
     }
 
     /// Filter advertised TxIds against known + in-flight state.
-    pub fn filter_advertised(
-        &self,
-        peer: &SocketAddr,
-        txids: &[TxId],
-    ) -> FilterOutcome {
-        self.inner.write().expect("tx state poisoned").filter_advertised(peer, txids)
+    pub fn filter_advertised(&self, peer: &SocketAddr, txids: &[TxId]) -> FilterOutcome {
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .filter_advertised(peer, txids)
     }
 
     /// Mark TxIds as in-flight from the given peer.
     pub fn mark_in_flight(&self, peer: &SocketAddr, txids: &[TxId]) {
-        self.inner.write().expect("tx state poisoned").mark_in_flight(peer, txids);
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .mark_in_flight(peer, txids);
     }
 
     /// Mark TxIds as successfully received from the given peer.
     pub fn mark_received(&self, peer: &SocketAddr, txids: &[TxId]) {
-        self.inner.write().expect("tx state poisoned").mark_received(peer, txids);
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .mark_received(peer, txids);
     }
 
     /// Mark TxIds as not found (peer couldn't deliver).
     pub fn mark_not_found(&self, peer: &SocketAddr, txids: &[TxId]) {
-        self.inner.write().expect("tx state poisoned").mark_not_found(peer, txids);
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .mark_not_found(peer, txids);
     }
 
     /// Mark TxIds as confirmed in a block.
     pub fn mark_confirmed(&self, txids: &[TxId]) {
-        self.inner.write().expect("tx state poisoned").mark_confirmed(txids);
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .mark_confirmed(txids);
     }
 
     /// Check whether a TxId is known.
@@ -294,7 +307,10 @@ impl SharedTxState {
 
     /// Check whether a TxId is in flight.
     pub fn is_in_flight(&self, txid: &TxId) -> bool {
-        self.inner.read().expect("tx state poisoned").is_in_flight(txid)
+        self.inner
+            .read()
+            .expect("tx state poisoned")
+            .is_in_flight(txid)
     }
 
     /// Number of known TxIds.
@@ -304,7 +320,10 @@ impl SharedTxState {
 
     /// Number of globally in-flight TxIds.
     pub fn in_flight_count(&self) -> usize {
-        self.inner.read().expect("tx state poisoned").in_flight_count()
+        self.inner
+            .read()
+            .expect("tx state poisoned")
+            .in_flight_count()
     }
 }
 

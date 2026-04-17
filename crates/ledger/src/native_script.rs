@@ -34,13 +34,9 @@ pub fn evaluate_native_script(script: &NativeScript, ctx: &NativeScriptContext<'
     match script {
         NativeScript::ScriptPubkey(keyhash) => ctx.vkey_hashes.contains(keyhash),
 
-        NativeScript::ScriptAll(scripts) => {
-            scripts.iter().all(|s| evaluate_native_script(s, ctx))
-        }
+        NativeScript::ScriptAll(scripts) => scripts.iter().all(|s| evaluate_native_script(s, ctx)),
 
-        NativeScript::ScriptAny(scripts) => {
-            scripts.iter().any(|s| evaluate_native_script(s, ctx))
-        }
+        NativeScript::ScriptAny(scripts) => scripts.iter().any(|s| evaluate_native_script(s, ctx)),
 
         NativeScript::ScriptNOfK(n, scripts) => {
             let required = *n as usize;

@@ -28,8 +28,8 @@ pub use chain_selection::{ChainCandidate, VrfTiebreakerFlavor, select_preferred}
 pub use chain_state::{ChainEntry, ChainState, SecurityParam};
 /// Diffusion pipelining types and criterion.
 pub use diffusion_pipelining::{
-    DiffusionPipeliningSupport, HotIdentity, PeerPipeliningState, PipeliningEvent,
-    TentativeHeader, TentativeHeaderState, TentativeHeaderView, TentativeState,
+    DiffusionPipeliningSupport, HotIdentity, PeerPipeliningState, PipeliningEvent, TentativeHeader,
+    TentativeHeaderState, TentativeHeaderView, TentativeState,
 };
 /// Epoch size and slot-to-epoch helpers.
 pub use epoch::{EpochSize, epoch_first_slot, is_new_epoch, slot_to_epoch};
@@ -48,7 +48,6 @@ pub use nonce::{
 pub use opcert::{OcertCounters, OpCert, check_kes_period, kes_period_of_slot};
 /// Active slot coefficient wrapper, threshold, and leader check helpers.
 pub use praos::{
-    ActiveSlotCoeff, VrfMode, VrfUsage, check_is_leader, check_leader_value,
-    leadership_threshold, praos_vrf_input, tpraos_vrf_seed,
-    verify_leader_proof, verify_nonce_proof, vrf_input,
+    ActiveSlotCoeff, VrfMode, VrfUsage, check_is_leader, check_leader_value, leadership_threshold,
+    praos_vrf_input, tpraos_vrf_seed, verify_leader_proof, verify_nonce_proof, vrf_input,
 };

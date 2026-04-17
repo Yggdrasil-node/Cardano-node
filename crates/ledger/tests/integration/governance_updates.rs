@@ -1,5 +1,5 @@
-use super::*;
 use super::txbody_keys::sample_reward_account;
+use super::*;
 
 #[test]
 fn gov_action_info_action_round_trip() {
@@ -24,7 +24,9 @@ fn gov_action_no_confidence_round_trip() {
 
 #[test]
 fn gov_action_no_confidence_null_prev_round_trip() {
-    let ga = GovAction::NoConfidence { prev_action_id: None };
+    let ga = GovAction::NoConfidence {
+        prev_action_id: None,
+    };
     let bytes = ga.to_cbor_bytes();
     let decoded = GovAction::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(ga, decoded);
@@ -239,7 +241,9 @@ fn shelley_update_empty_proposals_round_trip() {
 fn proposal_procedure_with_typed_gov_action_all_variants() {
     for gov_action in [
         GovAction::InfoAction,
-        GovAction::NoConfidence { prev_action_id: None },
+        GovAction::NoConfidence {
+            prev_action_id: None,
+        },
         GovAction::HardForkInitiation {
             prev_action_id: None,
             protocol_version: (9, 0),

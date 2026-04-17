@@ -250,7 +250,11 @@ fn conway_tx_body_with_governance_fields() {
 fn conway_tx_body_unknown_keys_skipped() {
     let mut enc = Encoder::new();
     enc.map(4);
-    enc.unsigned(0).array(1).array(2).bytes(&[0x11; 32]).unsigned(0);
+    enc.unsigned(0)
+        .array(1)
+        .array(2)
+        .bytes(&[0x11; 32])
+        .unsigned(0);
     enc.unsigned(1).array(1);
     enc.map(2);
     enc.unsigned(0).bytes(&[0x01; 28]);

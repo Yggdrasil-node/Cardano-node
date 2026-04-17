@@ -35,20 +35,11 @@ pub trait PeerStateActions {
     fn close_peer_connection(&mut self, peer: SocketAddr) -> Result<(), Self::Error>;
 
     /// Execute a single translated peer state action.
-    fn execute_peer_state_action(
-        &mut self,
-        action: PeerStateAction,
-    ) -> Result<(), Self::Error> {
+    fn execute_peer_state_action(&mut self, action: PeerStateAction) -> Result<(), Self::Error> {
         match action {
-            PeerStateAction::EstablishConnection(peer) => {
-                self.establish_peer_connection(peer)
-            }
-            PeerStateAction::ActivateConnection(peer) => {
-                self.activate_peer_connection(peer)
-            }
-            PeerStateAction::DeactivateConnection(peer) => {
-                self.deactivate_peer_connection(peer)
-            }
+            PeerStateAction::EstablishConnection(peer) => self.establish_peer_connection(peer),
+            PeerStateAction::ActivateConnection(peer) => self.activate_peer_connection(peer),
+            PeerStateAction::DeactivateConnection(peer) => self.deactivate_peer_connection(peer),
             PeerStateAction::CloseConnection(peer) => self.close_peer_connection(peer),
         }
     }
@@ -56,10 +47,7 @@ pub trait PeerStateActions {
     /// Execute a sequence of translated actions in order.
     ///
     /// Execution stops at the first error and returns that error.
-    fn execute_peer_state_actions<I>(
-        &mut self,
-        actions: I,
-    ) -> Result<(), Self::Error>
+    fn execute_peer_state_actions<I>(&mut self, actions: I) -> Result<(), Self::Error>
     where
         I: IntoIterator<Item = PeerStateAction>,
     {
@@ -76,22 +64,12 @@ pub trait PeerStateActions {
 /// Returns `None` for non-connection actions that runtime code handles
 /// through other paths (`ForgetPeer`, `ShareRequest`, root refresh,
 /// inbound adoption).
-pub fn governor_action_to_peer_state_action(
-    action: &GovernorAction,
-) -> Option<PeerStateAction> {
+pub fn governor_action_to_peer_state_action(action: &GovernorAction) -> Option<PeerStateAction> {
     match action {
-        GovernorAction::PromoteToWarm(peer) => {
-            Some(PeerStateAction::EstablishConnection(*peer))
-        }
-        GovernorAction::PromoteToHot(peer) => {
-            Some(PeerStateAction::ActivateConnection(*peer))
-        }
-        GovernorAction::DemoteToWarm(peer) => {
-            Some(PeerStateAction::DeactivateConnection(*peer))
-        }
-        GovernorAction::DemoteToCold(peer) => {
-            Some(PeerStateAction::CloseConnection(*peer))
-        }
+        GovernorAction::PromoteToWarm(peer) => Some(PeerStateAction::EstablishConnection(*peer)),
+        GovernorAction::PromoteToHot(peer) => Some(PeerStateAction::ActivateConnection(*peer)),
+        GovernorAction::DemoteToWarm(peer) => Some(PeerStateAction::DeactivateConnection(*peer)),
+        GovernorAction::DemoteToCold(peer) => Some(PeerStateAction::CloseConnection(*peer)),
         GovernorAction::ForgetPeer(_)
         | GovernorAction::ShareRequest(_)
         | GovernorAction::RequestPublicRoots
@@ -102,9 +80,7 @@ pub fn governor_action_to_peer_state_action(
 
 /// Map a sequence of governor actions into peer-state actions,
 /// preserving order and dropping non-connection actions.
-pub fn governor_actions_to_peer_state_actions<'a, I>(
-    actions: I,
-) -> Vec<PeerStateAction>
+pub fn governor_actions_to_peer_state_actions<'a, I>(actions: I) -> Vec<PeerStateAction>
 where
     I: IntoIterator<Item = &'a GovernorAction>,
 {
@@ -191,10 +167,7 @@ mod tests {
     impl PeerStateActions for RecordingPeerStateActions {
         type Error = &'static str;
 
-        fn establish_peer_connection(
-            &mut self,
-            peer: SocketAddr,
-        ) -> Result<(), Self::Error> {
+        fn establish_peer_connection(&mut self, peer: SocketAddr) -> Result<(), Self::Error> {
             let action = PeerStateAction::EstablishConnection(peer);
             if self.fail_on == Some(action.clone()) {
                 return Err("establish failure");
@@ -203,10 +176,7 @@ mod tests {
             Ok(())
         }
 
-        fn activate_peer_connection(
-            &mut self,
-            peer: SocketAddr,
-        ) -> Result<(), Self::Error> {
+        fn activate_peer_connection(&mut self, peer: SocketAddr) -> Result<(), Self::Error> {
             let action = PeerStateAction::ActivateConnection(peer);
             if self.fail_on == Some(action.clone()) {
                 return Err("activate failure");
@@ -215,10 +185,7 @@ mod tests {
             Ok(())
         }
 
-        fn deactivate_peer_connection(
-            &mut self,
-            peer: SocketAddr,
-        ) -> Result<(), Self::Error> {
+        fn deactivate_peer_connection(&mut self, peer: SocketAddr) -> Result<(), Self::Error> {
             let action = PeerStateAction::DeactivateConnection(peer);
             if self.fail_on == Some(action.clone()) {
                 return Err("deactivate failure");
@@ -241,9 +208,8 @@ mod tests {
     fn execute_single_action_dispatches_to_trait_methods() {
         let mut recorder = RecordingPeerStateActions::default();
 
-        let result = recorder.execute_peer_state_action(
-            PeerStateAction::EstablishConnection(addr(2000)),
-        );
+        let result =
+            recorder.execute_peer_state_action(PeerStateAction::EstablishConnection(addr(2000)));
 
         assert!(result.is_ok());
         assert_eq!(

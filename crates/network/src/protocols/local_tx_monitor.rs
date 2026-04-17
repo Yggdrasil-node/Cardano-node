@@ -173,9 +173,7 @@ impl LocalTxMonitorState {
                 Ok(Self::StAcquired)
             }
             (Self::StAcquired, LocalTxMonitorMessage::MsgHasTx { .. }) => Ok(Self::StAcquired),
-            (Self::StAcquired, LocalTxMonitorMessage::MsgReplyHasTx { .. }) => {
-                Ok(Self::StAcquired)
-            }
+            (Self::StAcquired, LocalTxMonitorMessage::MsgReplyHasTx { .. }) => Ok(Self::StAcquired),
             (Self::StAcquired, LocalTxMonitorMessage::MsgGetSizes) => Ok(Self::StAcquired),
             (Self::StAcquired, LocalTxMonitorMessage::MsgReplyGetSizes { .. }) => {
                 Ok(Self::StAcquired)
@@ -215,8 +213,8 @@ impl LocalTxMonitorMessage {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
 use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 impl LocalTxMonitorMessage {
     /// Encode this message to CBOR bytes.
@@ -310,9 +308,7 @@ impl LocalTxMonitorMessage {
             3 => {
                 if len > 1 {
                     let tx_bytes = dec.bytes()?.to_vec();
-                    Ok(Self::MsgReplyNextTx {
-                        tx: Some(tx_bytes),
-                    })
+                    Ok(Self::MsgReplyNextTx { tx: Some(tx_bytes) })
                 } else {
                     Ok(Self::MsgReplyNextTx { tx: None })
                 }
@@ -364,7 +360,9 @@ mod tests {
 
     #[test]
     fn acquired_roundtrip() {
-        let msg = LocalTxMonitorMessage::MsgAcquired { slot_no: 42_000_000 };
+        let msg = LocalTxMonitorMessage::MsgAcquired {
+            slot_no: 42_000_000,
+        };
         let encoded = msg.to_cbor();
         let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
@@ -457,7 +455,9 @@ mod tests {
     #[test]
     fn idle_acquire() {
         let state = LocalTxMonitorState::StIdle;
-        let next = state.transition(&LocalTxMonitorMessage::MsgAcquire).unwrap();
+        let next = state
+            .transition(&LocalTxMonitorMessage::MsgAcquire)
+            .unwrap();
         assert_eq!(next, LocalTxMonitorState::StAcquiring);
     }
 
@@ -488,9 +488,7 @@ mod tests {
     fn acquired_has_tx() {
         let state = LocalTxMonitorState::StAcquired;
         let next = state
-            .transition(&LocalTxMonitorMessage::MsgHasTx {
-                tx_id: vec![0; 32],
-            })
+            .transition(&LocalTxMonitorMessage::MsgHasTx { tx_id: vec![0; 32] })
             .unwrap();
         assert_eq!(next, LocalTxMonitorState::StAcquired);
     }

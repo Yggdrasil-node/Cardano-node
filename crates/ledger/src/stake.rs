@@ -330,7 +330,11 @@ pub struct PoolStakeDistribution {
 impl PoolStakeDistribution {
     /// Constructs a distribution from pre-computed pool stakes and total.
     pub fn from_raw(pool_stakes: BTreeMap<PoolKeyHash, u64>, total_stake: u64) -> Self {
-        Self { pool_stakes, pool_vrf_keys: BTreeMap::new(), total_stake }
+        Self {
+            pool_stakes,
+            pool_vrf_keys: BTreeMap::new(),
+            total_stake,
+        }
     }
 
     /// Returns the absolute stake for `pool`, defaulting to zero.
@@ -719,9 +723,7 @@ mod tests {
         snapshot.stake.add(cred_b, 2000);
         snapshot.delegations.insert(cred_a, pool);
         snapshot.delegations.insert(cred_b, pool);
-        snapshot
-            .pool_params
-            .insert(pool, test_pool_params(10));
+        snapshot.pool_params.insert(pool, test_pool_params(10));
 
         let dist = snapshot.pool_stake_distribution();
         assert_eq!(dist.pool_stake(&pool), 3000);
@@ -767,12 +769,8 @@ mod tests {
         snapshot.stake.add(cred_b, 7000);
         snapshot.delegations.insert(cred_a, pool_a);
         snapshot.delegations.insert(cred_b, pool_b);
-        snapshot
-            .pool_params
-            .insert(pool_a, test_pool_params(10));
-        snapshot
-            .pool_params
-            .insert(pool_b, test_pool_params(20));
+        snapshot.pool_params.insert(pool_a, test_pool_params(10));
+        snapshot.pool_params.insert(pool_b, test_pool_params(20));
 
         let dist = snapshot.pool_stake_distribution();
         assert_eq!(dist.relative_stake(&pool_a), (3000, 10000));
@@ -827,8 +825,8 @@ mod tests {
             stake.encode_cbor(&mut enc);
             enc.into_bytes()
         };
-        let decoded = IndividualStake::decode_cbor(&mut Decoder::new(&bytes))
-            .expect("decode should succeed");
+        let decoded =
+            IndividualStake::decode_cbor(&mut Decoder::new(&bytes)).expect("decode should succeed");
         assert_eq!(stake, decoded);
     }
 
@@ -862,8 +860,8 @@ mod tests {
             snapshot.encode_cbor(&mut enc);
             enc.into_bytes()
         };
-        let decoded = StakeSnapshot::decode_cbor(&mut Decoder::new(&bytes))
-            .expect("decode should succeed");
+        let decoded =
+            StakeSnapshot::decode_cbor(&mut Decoder::new(&bytes)).expect("decode should succeed");
         assert_eq!(snapshot, decoded);
     }
 
@@ -880,8 +878,8 @@ mod tests {
             snapshots.encode_cbor(&mut enc);
             enc.into_bytes()
         };
-        let decoded = StakeSnapshots::decode_cbor(&mut Decoder::new(&bytes))
-            .expect("decode should succeed");
+        let decoded =
+            StakeSnapshots::decode_cbor(&mut Decoder::new(&bytes)).expect("decode should succeed");
         assert_eq!(snapshots, decoded);
     }
 
@@ -889,20 +887,14 @@ mod tests {
     // Proposal deposit voting weight tests (Gap AR/AS)
     // -----------------------------------------------------------------------
 
-    fn make_stake_creds_with_drep(
-        cred: StakeCredential,
-        drep: DRep,
-    ) -> StakeCredentials {
+    fn make_stake_creds_with_drep(cred: StakeCredential, drep: DRep) -> StakeCredentials {
         let mut creds = StakeCredentials::new();
         creds.register(cred);
         creds.get_mut(&cred).unwrap().set_delegated_drep(Some(drep));
         creds
     }
 
-    fn make_stake_creds_with_pool(
-        cred: StakeCredential,
-        pool: PoolKeyHash,
-    ) -> StakeCredentials {
+    fn make_stake_creds_with_pool(cred: StakeCredential, pool: PoolKeyHash) -> StakeCredentials {
         let mut creds = StakeCredentials::new();
         creds.register(cred);
         creds.get_mut(&cred).unwrap().set_delegated_pool(Some(pool));
@@ -921,11 +913,7 @@ mod tests {
         let mut proposal_deposits = BTreeMap::new();
         proposal_deposits.insert(cred, 500);
 
-        let dist = compute_drep_stake_distribution(
-            &snapshot,
-            &stake_creds,
-            &proposal_deposits,
-        );
+        let dist = compute_drep_stake_distribution(&snapshot, &stake_creds, &proposal_deposits);
         // Voting weight = UTxO stake (1000) + proposal deposit (500)
         assert_eq!(dist.get(&drep), Some(&1500));
     }
@@ -941,11 +929,7 @@ mod tests {
 
         let empty_deposits = BTreeMap::new();
 
-        let dist = compute_drep_stake_distribution(
-            &snapshot,
-            &stake_creds,
-            &empty_deposits,
-        );
+        let dist = compute_drep_stake_distribution(&snapshot, &stake_creds, &empty_deposits);
         assert_eq!(dist.get(&drep), Some(&2000));
     }
 
@@ -967,11 +951,7 @@ mod tests {
         let mut proposal_deposits = BTreeMap::new();
         proposal_deposits.insert(cred, 800);
 
-        augment_pool_dist_with_proposal_deposits(
-            &mut dist,
-            &stake_creds,
-            &proposal_deposits,
-        );
+        augment_pool_dist_with_proposal_deposits(&mut dist, &stake_creds, &proposal_deposits);
         // Pool stake = original (5000) + proposal deposit (800)
         assert_eq!(dist.pool_stake(&pool), 5800);
         assert_eq!(dist.total_active_stake(), 5800);
@@ -988,11 +968,7 @@ mod tests {
         let mut proposal_deposits = BTreeMap::new();
         proposal_deposits.insert(cred, 999);
 
-        augment_pool_dist_with_proposal_deposits(
-            &mut dist,
-            &stake_creds,
-            &proposal_deposits,
-        );
+        augment_pool_dist_with_proposal_deposits(&mut dist, &stake_creds, &proposal_deposits);
         // No pool delegation → pool dist unchanged
         assert_eq!(dist.total_active_stake(), 0);
     }

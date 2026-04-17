@@ -11,7 +11,7 @@
 ///    │                                               ▼
 ///    │  MsgRelease                            StAcquired ──MsgQuery──► StQuerying
 ///    └──────────────────────────────────────────────────                    │ MsgResult
-///                                                    ◄───────────────────────── 
+///                                                    ◄─────────────────────────
 ///    ▲  MsgReAcquire(point)
 ///    │  ──────────────────────────────── StAcquiring (again)
 ///
@@ -209,8 +209,8 @@ impl LocalStateQueryState {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
 use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 impl LocalStateQueryMessage {
     /// Encode this message to CBOR bytes.
@@ -311,7 +311,7 @@ impl LocalStateQueryMessage {
                     r => {
                         return Err(LedgerError::CborDecodeError(format!(
                             "unknown AcquireFailure tag: {r}"
-                        )))
+                        )));
                     }
                 };
                 Ok(Self::MsgFailure { reason })
@@ -406,15 +406,21 @@ mod tests {
     fn query_result_roundtrip() {
         let query_bytes = vec![0xDE, 0xAD];
         let result_bytes = vec![0xBE, 0xEF];
-        let q_msg = LocalStateQueryMessage::MsgQuery { query: query_bytes.clone() };
-        let r_msg = LocalStateQueryMessage::MsgResult { result: result_bytes.clone() };
+        let q_msg = LocalStateQueryMessage::MsgQuery {
+            query: query_bytes.clone(),
+        };
+        let r_msg = LocalStateQueryMessage::MsgResult {
+            result: result_bytes.clone(),
+        };
         assert_eq!(
             LocalStateQueryMessage::from_cbor(&q_msg.to_cbor()).unwrap(),
             LocalStateQueryMessage::MsgQuery { query: query_bytes }
         );
         assert_eq!(
             LocalStateQueryMessage::from_cbor(&r_msg.to_cbor()).unwrap(),
-            LocalStateQueryMessage::MsgResult { result: result_bytes }
+            LocalStateQueryMessage::MsgResult {
+                result: result_bytes
+            }
         );
     }
 
@@ -447,9 +453,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(s1, LocalStateQueryState::StAcquiring);
-        let s2 = s1
-            .transition(&LocalStateQueryMessage::MsgAcquired)
-            .unwrap();
+        let s2 = s1.transition(&LocalStateQueryMessage::MsgAcquired).unwrap();
         assert_eq!(s2, LocalStateQueryState::StAcquired);
     }
 
@@ -481,10 +485,11 @@ mod tests {
     fn state_machine_illegal_transition() {
         let s = LocalStateQueryState::StAcquired;
         // Can't send MsgAcquire in StAcquired
-        assert!(s
-            .transition(&LocalStateQueryMessage::MsgAcquire {
+        assert!(
+            s.transition(&LocalStateQueryMessage::MsgAcquire {
                 target: AcquireTarget::VolatileTip
             })
-            .is_err());
+            .is_err()
+        );
     }
 }

@@ -108,7 +108,7 @@ impl TraceSeverity {
     /// ANSI escape code prefix for coloured terminal output.
     fn ansi_colour(self) -> &'static str {
         match self {
-            Self::Debug => "\x1b[2m",          // dim
+            Self::Debug => "\x1b[2m",           // dim
             Self::Info => "",                   // default
             Self::Notice => "\x1b[36m",         // cyan
             Self::Warning => "\x1b[33m",        // yellow
@@ -168,8 +168,14 @@ impl Clone for NodeTracer {
 impl NodeTracer {
     /// Build a tracer from the effective node configuration.
     pub fn from_config(config: &NodeConfigFile) -> Self {
-        let forwarder = if config.trace_options.values().any(|cfg| cfg.backends.iter().any(|b| b == "Forwarder")) {
-            Some(TraceForwarder::new(config.trace_option_forwarder.socket_path.clone()))
+        let forwarder = if config
+            .trace_options
+            .values()
+            .any(|cfg| cfg.backends.iter().any(|b| b == "Forwarder"))
+        {
+            Some(TraceForwarder::new(
+                config.trace_option_forwarder.socket_path.clone(),
+            ))
         } else {
             None
         };
@@ -282,7 +288,11 @@ impl NodeTracer {
             .unwrap_or(TraceDetail::DNormal)
     }
 
-    fn resolve_severity<'a>(&'a self, namespace: &str, default_severity: &'a str) -> Option<&'a str> {
+    fn resolve_severity<'a>(
+        &'a self,
+        namespace: &str,
+        default_severity: &'a str,
+    ) -> Option<&'a str> {
         if !(self.turn_on_logging && self.use_trace_dispatcher) {
             return None;
         }
@@ -345,7 +355,11 @@ impl NodeTracer {
         let configured = self
             .namespace_config(namespace)
             .filter(|cfg| !cfg.backends.is_empty())
-            .or_else(|| self.trace_options.get("").filter(|cfg| !cfg.backends.is_empty()));
+            .or_else(|| {
+                self.trace_options
+                    .get("")
+                    .filter(|cfg| !cfg.backends.is_empty())
+            });
 
         configured
             .map(|cfg| {
@@ -356,7 +370,9 @@ impl NodeTracer {
                             Some(TraceBackend::StdoutHumanColoured)
                         }
                         s if s.starts_with("Stdout HumanFormat") => Some(TraceBackend::StdoutHuman),
-                        s if s.starts_with("Stdout MachineFormat") => Some(TraceBackend::StdoutMachine),
+                        s if s.starts_with("Stdout MachineFormat") => {
+                            Some(TraceBackend::StdoutMachine)
+                        }
                         "Forwarder" => Some(TraceBackend::Forwarder),
                         // EKGBackend flows through NodeMetrics — no trace-line output.
                         "EKGBackend" => None,
@@ -715,7 +731,8 @@ impl NodeMetrics {
 
     /// Update the latest observed block number.
     pub fn set_current_block_number(&self, block_number: u64) {
-        self.current_block_number.store(block_number, Ordering::Relaxed);
+        self.current_block_number
+            .store(block_number, Ordering::Relaxed);
     }
 
     /// Update the latest persisted checkpoint slot.
@@ -798,21 +815,25 @@ impl NodeMetrics {
         inbound: u64,
         outbound: u64,
     ) {
-        self.cm_full_duplex_conns.store(full_duplex, Ordering::Relaxed);
+        self.cm_full_duplex_conns
+            .store(full_duplex, Ordering::Relaxed);
         self.cm_duplex_conns.store(duplex, Ordering::Relaxed);
-        self.cm_unidirectional_conns.store(unidirectional, Ordering::Relaxed);
+        self.cm_unidirectional_conns
+            .store(unidirectional, Ordering::Relaxed);
         self.cm_inbound_conns.store(inbound, Ordering::Relaxed);
         self.cm_outbound_conns.store(outbound, Ordering::Relaxed);
     }
 
     /// Increment the inbound-connections-accepted counter.
     pub fn inc_inbound_accepted(&self) {
-        self.inbound_connections_accepted.fetch_add(1, Ordering::Relaxed);
+        self.inbound_connections_accepted
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment the inbound-connections-rejected counter.
     pub fn inc_inbound_rejected(&self) {
-        self.inbound_connections_rejected.fetch_add(1, Ordering::Relaxed);
+        self.inbound_connections_rejected
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Read a consistent snapshot of all current metric values.
@@ -842,14 +863,10 @@ impl NodeMetrics {
             established_peers: self.established_peers.load(Ordering::Relaxed),
             active_peers: self.active_peers.load(Ordering::Relaxed),
             known_big_ledger_peers: self.known_big_ledger_peers.load(Ordering::Relaxed),
-            established_big_ledger_peers: self
-                .established_big_ledger_peers
-                .load(Ordering::Relaxed),
+            established_big_ledger_peers: self.established_big_ledger_peers.load(Ordering::Relaxed),
             active_big_ledger_peers: self.active_big_ledger_peers.load(Ordering::Relaxed),
             known_local_root_peers: self.known_local_root_peers.load(Ordering::Relaxed),
-            established_local_root_peers: self
-                .established_local_root_peers
-                .load(Ordering::Relaxed),
+            established_local_root_peers: self.established_local_root_peers.load(Ordering::Relaxed),
             active_local_root_peers: self.active_local_root_peers.load(Ordering::Relaxed),
             warm_local_root_peers: self.established_local_root_peers.load(Ordering::Relaxed),
             hot_local_root_peers: self.active_local_root_peers.load(Ordering::Relaxed),
@@ -1338,13 +1355,7 @@ mod tests {
     #[test]
     fn coloured_human_line_no_ansi_for_info() {
         let tracer = NodeTracer::from_config(&default_config());
-        let line = tracer.format_human_line(
-            "Startup",
-            "Info",
-            "starting",
-            &BTreeMap::new(),
-            true,
-        );
+        let line = tracer.format_human_line("Startup", "Info", "starting", &BTreeMap::new(), true);
 
         // Info has no colour code, so no ANSI escape and no reset.
         assert!(!line.contains("\x1b["));
@@ -1414,7 +1425,10 @@ mod tests {
             },
         );
         let tracer = NodeTracer::from_config(&cfg);
-        assert_eq!(tracer.backends_for("Startup"), vec![TraceBackend::Forwarder]);
+        assert_eq!(
+            tracer.backends_for("Startup"),
+            vec![TraceBackend::Forwarder]
+        );
     }
 
     #[test]
@@ -1425,9 +1439,7 @@ mod tests {
             TraceNamespaceConfig {
                 severity: Some("Notice".to_owned()),
                 detail: None,
-                backends: vec![
-                    "PrometheusSimple suffix 127.0.0.1 12798".to_owned(),
-                ],
+                backends: vec!["PrometheusSimple suffix 127.0.0.1 12798".to_owned()],
                 max_frequency: None,
             },
         );
@@ -1455,7 +1467,10 @@ mod tests {
         let tracer = NodeTracer::from_config(&cfg);
         let backends = tracer.backends_for("Net");
         // Forwarder and stdout coloured backends both resolve.
-        assert_eq!(backends, vec![TraceBackend::Forwarder, TraceBackend::StdoutHumanColoured]);
+        assert_eq!(
+            backends,
+            vec![TraceBackend::Forwarder, TraceBackend::StdoutHumanColoured]
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1515,10 +1530,22 @@ mod tests {
 
     #[test]
     fn detail_from_label_parses_upstream_strings() {
-        assert_eq!(TraceDetail::from_label("DMinimal"), Some(TraceDetail::DMinimal));
-        assert_eq!(TraceDetail::from_label("DNormal"), Some(TraceDetail::DNormal));
-        assert_eq!(TraceDetail::from_label("DDetailed"), Some(TraceDetail::DDetailed));
-        assert_eq!(TraceDetail::from_label("DMaximum"), Some(TraceDetail::DMaximum));
+        assert_eq!(
+            TraceDetail::from_label("DMinimal"),
+            Some(TraceDetail::DMinimal)
+        );
+        assert_eq!(
+            TraceDetail::from_label("DNormal"),
+            Some(TraceDetail::DNormal)
+        );
+        assert_eq!(
+            TraceDetail::from_label("DDetailed"),
+            Some(TraceDetail::DDetailed)
+        );
+        assert_eq!(
+            TraceDetail::from_label("DMaximum"),
+            Some(TraceDetail::DMaximum)
+        );
         assert_eq!(TraceDetail::from_label("invalid"), None);
     }
 

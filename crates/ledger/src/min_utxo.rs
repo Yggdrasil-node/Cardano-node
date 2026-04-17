@@ -83,9 +83,7 @@ pub fn validate_output_not_too_big(
 /// entries are rejected.
 ///
 /// Reference: `Cardano.Ledger.Mary.Value` — non-zero invariant on `MaryValue`.
-pub fn validate_no_zero_valued_multi_asset(
-    outputs: &[MultiEraTxOut],
-) -> Result<(), LedgerError> {
+pub fn validate_no_zero_valued_multi_asset(outputs: &[MultiEraTxOut]) -> Result<(), LedgerError> {
     use crate::eras::mary::Value;
     for output in outputs {
         let val = output.value();
@@ -122,16 +120,12 @@ const BOOT_ADDR_ATTRS_MAX: usize = 64;
 /// Upstream restricts bootstrap address attribute size to prevent
 /// unbounded growth in the UTxO set. The limit is on the CBOR-serialized
 /// attributes map inside the address payload, not the address itself.
-pub fn validate_output_boot_addr_attrs(
-    outputs: &[MultiEraTxOut],
-) -> Result<(), LedgerError> {
+pub fn validate_output_boot_addr_attrs(outputs: &[MultiEraTxOut]) -> Result<(), LedgerError> {
     for output in outputs {
         let addr_bytes = output.address();
         if let Some(attrs_size) = byron_addr_attrs_size(addr_bytes) {
             if attrs_size > BOOT_ADDR_ATTRS_MAX {
-                return Err(LedgerError::OutputBootAddrAttrsTooBig {
-                    size: attrs_size,
-                });
+                return Err(LedgerError::OutputBootAddrAttrsTooBig { size: attrs_size });
             }
         }
     }
@@ -267,8 +261,11 @@ mod tests {
 
     // ----- Zero-valued multi-asset output tests -----
 
-    fn make_mary_output_with_assets(lovelace: u64, assets: Vec<([u8; 28], Vec<u8>, u64)>) -> MultiEraTxOut {
-        use crate::eras::mary::{MaryTxOut, Value, MultiAsset};
+    fn make_mary_output_with_assets(
+        lovelace: u64,
+        assets: Vec<([u8; 28], Vec<u8>, u64)>,
+    ) -> MultiEraTxOut {
+        use crate::eras::mary::{MaryTxOut, MultiAsset, Value};
         use std::collections::BTreeMap;
 
         let mut ma: MultiAsset = BTreeMap::new();
@@ -288,15 +285,15 @@ mod tests {
             vec![([0xAA; 28], vec![0x01], 0)], // zero quantity
         );
         let result = validate_no_zero_valued_multi_asset(&[output]);
-        assert!(matches!(result, Err(LedgerError::ZeroValuedMultiAssetOutput { .. })));
+        assert!(matches!(
+            result,
+            Err(LedgerError::ZeroValuedMultiAssetOutput { .. })
+        ));
     }
 
     #[test]
     fn nonzero_multi_asset_accepted() {
-        let output = make_mary_output_with_assets(
-            2_000_000,
-            vec![([0xAA; 28], vec![0x01], 100)],
-        );
+        let output = make_mary_output_with_assets(2_000_000, vec![([0xAA; 28], vec![0x01], 100)]);
         assert!(validate_no_zero_valued_multi_asset(&[output]).is_ok());
     }
 

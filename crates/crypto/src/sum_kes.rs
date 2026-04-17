@@ -289,9 +289,7 @@ pub fn gen_sum_kes_signing_key(
 /// Derives the SumKES verification key from a signing key.
 ///
 /// Reference: `deriveVerKeyKES` in upstream.
-pub fn derive_sum_kes_vk(
-    sk: &SumKesSigningKey,
-) -> Result<SumKesVerificationKey, CryptoError> {
+pub fn derive_sum_kes_vk(sk: &SumKesSigningKey) -> Result<SumKesVerificationKey, CryptoError> {
     if sk.depth == 0 {
         // Base case: derive Ed25519 VK from seed.
         let ed_sk = SigningKey::from_bytes(
@@ -306,7 +304,9 @@ pub fn derive_sum_kes_vk(
     // Extract vk_left and vk_right from the tail of the signing key data.
     let vk_left = extract_vk_left_from_sk(sk);
     let vk_right = extract_vk_right_from_sk(sk);
-    Ok(SumKesVerificationKey(hash_pair_of_vkeys(&vk_left, &vk_right)))
+    Ok(SumKesVerificationKey(hash_pair_of_vkeys(
+        &vk_left, &vk_right,
+    )))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -737,8 +737,7 @@ mod tests {
         let sk = gen_sum_kes_signing_key(&test_seed(1), 0).unwrap();
         let vk = derive_sum_kes_vk(&sk).unwrap();
         let sig = sign_sum_kes(&sk, 0, b"hello").unwrap();
-        verify_sum_kes(&vk, 0, b"hello", &sig)
-            .expect("depth 0 period 0 should verify");
+        verify_sum_kes(&vk, 0, b"hello", &sig).expect("depth 0 period 0 should verify");
     }
 
     #[test]
@@ -759,14 +758,12 @@ mod tests {
 
         // Period 0 with the initial key.
         let sig0 = sign_sum_kes(&sk, 0, b"test").unwrap();
-        verify_sum_kes(&vk, 0, b"test", &sig0)
-            .expect("depth 1 period 0 should verify");
+        verify_sum_kes(&vk, 0, b"test", &sig0).expect("depth 1 period 0 should verify");
 
         // Evolve to period 1.
         let sk1 = update_sum_kes(&sk, 0).unwrap().expect("should evolve");
         let sig1 = sign_sum_kes(&sk1, 1, b"test").unwrap();
-        verify_sum_kes(&vk, 1, b"test", &sig1)
-            .expect("depth 1 period 1 should verify");
+        verify_sum_kes(&vk, 1, b"test", &sig1).expect("depth 1 period 1 should verify");
     }
 
     #[test]
@@ -845,10 +842,7 @@ mod tests {
     #[test]
     fn wrong_vk_rejected() {
         let sk1 = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
-        let vk2 = derive_sum_kes_vk(
-            &gen_sum_kes_signing_key(&test_seed(2), 1).unwrap(),
-        )
-        .unwrap();
+        let vk2 = derive_sum_kes_vk(&gen_sum_kes_signing_key(&test_seed(2), 1).unwrap()).unwrap();
         let sig = sign_sum_kes(&sk1, 0, b"msg").unwrap();
         assert!(verify_sum_kes(&vk2, 0, b"msg", &sig).is_err());
     }
@@ -877,10 +871,11 @@ mod tests {
         let sk = gen_sum_kes_signing_key(&test_seed(1), 1).unwrap();
         let vk = derive_sum_kes_vk(&sk).unwrap();
 
-        let sk1 = update_sum_kes(&sk, 0).unwrap().expect("should evolve to period 1");
+        let sk1 = update_sum_kes(&sk, 0)
+            .unwrap()
+            .expect("should evolve to period 1");
         let sig = sign_sum_kes(&sk1, 1, b"evolved").unwrap();
-        verify_sum_kes(&vk, 1, b"evolved", &sig)
-            .expect("evolved key should sign period 1 validly");
+        verify_sum_kes(&vk, 1, b"evolved", &sig).expect("evolved key should sign period 1 validly");
     }
 
     #[test]

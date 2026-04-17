@@ -160,7 +160,10 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         tag: 0,
         index: 0,
         data: PlutusData::Integer(0),
-        ex_units: ExUnits { mem: 100, steps: 100 },
+        ex_units: ExUnits {
+            mem: 100,
+            steps: 100,
+        },
     });
 
     // Compute sdh including reference-input scripts so language_views contain V2 cost model.
@@ -200,12 +203,8 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         reference_inputs: Some(vec![reference_input]),
     };
 
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(
-        body,
-        ws,
-        true,
-        None,
-    ));
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected success, got: {:?}", result);
@@ -247,9 +246,11 @@ fn allegra_submitted_tx_rejects_missing_native_script_witness() {
         validity_interval_start: None,
     };
 
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, empty_witness_set(), None),
-    );
+    let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(
+        body,
+        empty_witness_set(),
+        None,
+    ));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -300,9 +301,7 @@ fn allegra_submitted_tx_accepts_native_script_witness() {
     let mut ws = empty_witness_set();
     ws.native_scripts = vec![always_true_script];
 
-    let submitted = MultiEraSubmittedTx::Allegra(
-        ShelleyCompatibleSubmittedTx::new(body, ws, None),
-    );
+    let submitted = MultiEraSubmittedTx::Allegra(ShelleyCompatibleSubmittedTx::new(body, ws, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected Allegra accept, got: {:?}", result);
@@ -355,9 +354,7 @@ fn mary_submitted_tx_rejects_missing_native_script_for_mint() {
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
 
-    let submitted = MultiEraSubmittedTx::Mary(
-        ShelleyCompatibleSubmittedTx::new(body, ws, None),
-    );
+    let submitted = MultiEraSubmittedTx::Mary(ShelleyCompatibleSubmittedTx::new(body, ws, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(

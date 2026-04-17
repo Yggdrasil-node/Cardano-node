@@ -49,7 +49,8 @@ impl LedgerStore for InMemoryLedgerStore {
             *existing = data;
         } else {
             self.snapshots.push((slot, data));
-            self.snapshots.sort_by_key(|(snapshot_slot, _)| *snapshot_slot);
+            self.snapshots
+                .sort_by_key(|(snapshot_slot, _)| *snapshot_slot);
         }
         Ok(())
     }
@@ -68,7 +69,9 @@ impl LedgerStore for InMemoryLedgerStore {
 
     fn truncate_after(&mut self, slot: Option<SlotNo>) -> Result<(), StorageError> {
         match slot {
-            Some(slot) => self.snapshots.retain(|(snapshot_slot, _)| *snapshot_slot <= slot),
+            Some(slot) => self
+                .snapshots
+                .retain(|(snapshot_slot, _)| *snapshot_slot <= slot),
             None => self.snapshots.clear(),
         }
         Ok(())

@@ -52,7 +52,10 @@ fn conway_pv11_params() -> ProtocolParameters {
 
 fn seed_babbage_utxo(state: &mut LedgerState, addr: &[u8]) {
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x01; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.to_vec(),
             amount: Value::Coin(5_000_000),
@@ -62,7 +65,10 @@ fn seed_babbage_utxo(state: &mut LedgerState, addr: &[u8]) {
     );
     // Second UTxO for reference-only inputs
     state.multi_era_utxo_mut().insert(
-        ShelleyTxIn { transaction_id: [0x02; 32], index: 0 },
+        ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        },
         MultiEraTxOut::Babbage(BabbageTxOut {
             address: addr.to_vec(),
             amount: Value::Coin(3_000_000),
@@ -150,18 +156,17 @@ fn babbage_submitted_tx_accepts_overlapping_reference_inputs() {
     seed_babbage_utxo(&mut state, &addr);
 
     // Spend input [0x01..] and also reference it — Babbage allows overlap.
-    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
-    let body = babbage_body_with_ref_inputs(
-        vec![overlap_input.clone()],
-        Some(vec![overlap_input]),
-        addr,
-    );
+    let overlap_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let body =
+        babbage_body_with_ref_inputs(vec![overlap_input.clone()], Some(vec![overlap_input]), addr);
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Babbage(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -181,19 +186,28 @@ fn babbage_submitted_tx_accepts_disjoint_reference_inputs() {
 
     // Spend [0x01..], reference [0x02..] — disjoint, should succeed
     let body = babbage_body_with_ref_inputs(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Babbage(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "disjoint ref inputs should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "disjoint ref inputs should succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -205,16 +219,18 @@ fn babbage_submitted_tx_accepts_no_reference_inputs() {
     seed_babbage_utxo(&mut state, &addr);
 
     let body = babbage_body_with_ref_inputs(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
         None,
         addr,
     );
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Babbage(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "no ref inputs should succeed: {:?}", result);
@@ -232,18 +248,17 @@ fn conway_submitted_tx_rejects_overlapping_reference_inputs() {
     state.set_protocol_params(conway_params());
     seed_babbage_utxo(&mut state, &addr);
 
-    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
-    let body = conway_body_with_ref_inputs(
-        vec![overlap_input.clone()],
-        Some(vec![overlap_input]),
-        addr,
-    );
+    let overlap_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let body =
+        conway_body_with_ref_inputs(vec![overlap_input.clone()], Some(vec![overlap_input]), addr);
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -262,26 +277,40 @@ fn conway_submitted_tx_accepts_disjoint_reference_inputs() {
     seed_babbage_utxo(&mut state, &addr);
 
     let body = conway_body_with_ref_inputs(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
-    assert!(result.is_ok(), "disjoint ref inputs should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "disjoint ref inputs should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
 // Block-application path — Babbage
 // ===========================================================================
 
-fn make_babbage_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_babbage_block(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Babbage,
         header: BlockHeader {
@@ -297,7 +326,12 @@ fn make_babbage_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasi
     }
 }
 
-fn make_conway_block(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<yggdrasil_ledger::Tx>) -> Block {
+fn make_conway_block(
+    slot: u64,
+    block_no: u64,
+    hash_seed: u8,
+    txs: Vec<yggdrasil_ledger::Tx>,
+) -> Block {
     Block {
         era: Era::Conway,
         header: BlockHeader {
@@ -322,24 +356,27 @@ fn babbage_block_accepts_overlapping_reference_inputs() {
     seed_babbage_utxo(&mut state, &addr);
 
     // Babbage allows overlapping spending and reference inputs.
-    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
-    let body = babbage_body_with_ref_inputs(
-        vec![overlap_input.clone()],
-        Some(vec![overlap_input]),
-        addr,
-    );
+    let overlap_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let body =
+        babbage_body_with_ref_inputs(vec![overlap_input.clone()], Some(vec![overlap_input]), addr);
     let body_bytes = body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_babbage_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_babbage_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
@@ -358,25 +395,38 @@ fn babbage_block_accepts_disjoint_reference_inputs() {
     seed_babbage_utxo(&mut state, &addr);
 
     let body = babbage_body_with_ref_inputs(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let body_bytes = body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_babbage_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_babbage_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
-    assert!(result.is_ok(), "disjoint ref inputs in block path should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "disjoint ref inputs in block path should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -391,24 +441,27 @@ fn conway_block_rejects_overlapping_reference_inputs() {
     state.set_protocol_params(conway_params());
     seed_babbage_utxo(&mut state, &addr);
 
-    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
-    let body = conway_body_with_ref_inputs(
-        vec![overlap_input.clone()],
-        Some(vec![overlap_input]),
-        addr,
-    );
+    let overlap_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let body =
+        conway_body_with_ref_inputs(vec![overlap_input.clone()], Some(vec![overlap_input]), addr);
     let body_bytes = body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_conway_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_conway_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
@@ -427,25 +480,38 @@ fn conway_block_accepts_disjoint_reference_inputs() {
     seed_babbage_utxo(&mut state, &addr);
 
     let body = conway_body_with_ref_inputs(
-        vec![ShelleyTxIn { transaction_id: [0x01; 32], index: 0 }],
-        Some(vec![ShelleyTxIn { transaction_id: [0x02; 32], index: 0 }]),
+        vec![ShelleyTxIn {
+            transaction_id: [0x01; 32],
+            index: 0,
+        }],
+        Some(vec![ShelleyTxIn {
+            transaction_id: [0x02; 32],
+            index: 0,
+        }]),
         addr,
     );
     let body_bytes = body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_conway_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_conway_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
-        is_valid: None,
-        },
-    ]);
+            is_valid: None,
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
-    assert!(result.is_ok(), "disjoint ref inputs in Conway block path should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "disjoint ref inputs in Conway block path should succeed: {:?}",
+        result
+    );
 }
 
 // ===========================================================================
@@ -454,32 +520,35 @@ fn conway_block_accepts_disjoint_reference_inputs() {
 
 #[test]
 fn disjointness_check_rejects_overlap_at_same_index() {
-    let input = ShelleyTxIn { transaction_id: [0xAA; 32], index: 3 };
-    let result = MultiEraUtxo::validate_reference_input_disjointness(
-        &[input.clone()],
-        &[input],
-    );
+    let input = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 3,
+    };
+    let result = MultiEraUtxo::validate_reference_input_disjointness(&[input.clone()], &[input]);
     assert!(matches!(result, Err(LedgerError::ReferenceInputContention)));
 }
 
 #[test]
 fn disjointness_check_accepts_same_txid_different_index() {
-    let spend = ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 };
-    let refer = ShelleyTxIn { transaction_id: [0xAA; 32], index: 1 };
-    let result = MultiEraUtxo::validate_reference_input_disjointness(
-        &[spend],
-        &[refer],
-    );
+    let spend = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 0,
+    };
+    let refer = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 1,
+    };
+    let result = MultiEraUtxo::validate_reference_input_disjointness(&[spend], &[refer]);
     assert!(result.is_ok());
 }
 
 #[test]
 fn disjointness_check_accepts_empty_ref_inputs() {
-    let spend = ShelleyTxIn { transaction_id: [0xAA; 32], index: 0 };
-    let result = MultiEraUtxo::validate_reference_input_disjointness(
-        &[spend],
-        &[],
-    );
+    let spend = ShelleyTxIn {
+        transaction_id: [0xAA; 32],
+        index: 0,
+    };
+    let result = MultiEraUtxo::validate_reference_input_disjointness(&[spend], &[]);
     assert!(result.is_ok());
 }
 
@@ -495,18 +564,17 @@ fn conway_pv11_submitted_tx_accepts_overlapping_reference_inputs() {
     state.set_protocol_params(conway_pv11_params());
     seed_babbage_utxo(&mut state, &addr);
 
-    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
-    let body = conway_body_with_ref_inputs(
-        vec![overlap_input.clone()],
-        Some(vec![overlap_input]),
-        addr,
-    );
+    let overlap_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let body =
+        conway_body_with_ref_inputs(vec![overlap_input.clone()], Some(vec![overlap_input]), addr);
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -524,24 +592,27 @@ fn conway_pv11_block_accepts_overlapping_reference_inputs() {
     state.set_protocol_params(conway_pv11_params());
     seed_babbage_utxo(&mut state, &addr);
 
-    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
-    let body = conway_body_with_ref_inputs(
-        vec![overlap_input.clone()],
-        Some(vec![overlap_input]),
-        addr,
-    );
+    let overlap_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let body =
+        conway_body_with_ref_inputs(vec![overlap_input.clone()], Some(vec![overlap_input]), addr);
     let body_bytes = body.to_cbor_bytes();
     let tx_id = compute_tx_id(&body_bytes);
 
-    let block = make_conway_block(10, 1, 0x01, vec![
-        yggdrasil_ledger::Tx {
+    let block = make_conway_block(
+        10,
+        1,
+        0x01,
+        vec![yggdrasil_ledger::Tx {
             id: tx_id,
             body: body_bytes,
             witnesses: None,
             auxiliary_data: None,
             is_valid: None,
-        },
-    ]);
+        }],
+    );
 
     let result = state.apply_block_validated(&block, None);
     assert!(
@@ -561,18 +632,17 @@ fn conway_pv10_submitted_tx_rejects_overlapping_reference_inputs() {
     state.set_protocol_params(params);
     seed_babbage_utxo(&mut state, &addr);
 
-    let overlap_input = ShelleyTxIn { transaction_id: [0x01; 32], index: 0 };
-    let body = conway_body_with_ref_inputs(
-        vec![overlap_input.clone()],
-        Some(vec![overlap_input]),
-        addr,
-    );
+    let overlap_input = ShelleyTxIn {
+        transaction_id: [0x01; 32],
+        index: 0,
+    };
+    let body =
+        conway_body_with_ref_inputs(vec![overlap_input.clone()], Some(vec![overlap_input]), addr);
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Conway(
-        AlonzoCompatibleSubmittedTx::new(body, ws, true, None),
-    );
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(

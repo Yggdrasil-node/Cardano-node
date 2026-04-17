@@ -210,11 +210,10 @@ impl CborDecode for AllegraTxBody {
                 7 => {
                     let raw = dec.bytes()?;
                     let hash: [u8; 32] =
-                        raw.try_into()
-                            .map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 32,
-                                actual: raw.len(),
-                            })?;
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 32,
+                            actual: raw.len(),
+                        })?;
                     auxiliary_data_hash = Some(hash);
                 }
                 8 => {
@@ -338,11 +337,10 @@ impl CborDecode for NativeScript {
                 }
                 let raw = dec.bytes()?;
                 let keyhash: [u8; 28] =
-                    raw.try_into()
-                        .map_err(|_| LedgerError::CborInvalidLength {
-                            expected: 28,
-                            actual: raw.len(),
-                        })?;
+                    raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                        expected: 28,
+                        actual: raw.len(),
+                    })?;
                 Ok(NativeScript::ScriptPubkey(keyhash))
             }
             1 => {
@@ -421,11 +419,17 @@ mod tests {
     use super::*;
 
     fn mk_txin(idx: u16) -> ShelleyTxIn {
-        ShelleyTxIn { transaction_id: [0xAA; 32], index: idx }
+        ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: idx,
+        }
     }
 
     fn mk_txout() -> ShelleyTxOut {
-        ShelleyTxOut { address: vec![0x61; 29], amount: 2_000_000 }
+        ShelleyTxOut {
+            address: vec![0x61; 29],
+            amount: 2_000_000,
+        }
     }
 
     // ── NativeScript round-trips ────────────────────────────────────────
@@ -459,11 +463,14 @@ mod tests {
 
     #[test]
     fn script_n_of_k_round_trip() {
-        let s = NativeScript::ScriptNOfK(2, vec![
-            NativeScript::ScriptPubkey([0x04; 28]),
-            NativeScript::ScriptPubkey([0x05; 28]),
-            NativeScript::ScriptPubkey([0x06; 28]),
-        ]);
+        let s = NativeScript::ScriptNOfK(
+            2,
+            vec![
+                NativeScript::ScriptPubkey([0x04; 28]),
+                NativeScript::ScriptPubkey([0x05; 28]),
+                NativeScript::ScriptPubkey([0x06; 28]),
+            ],
+        );
         let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, s);
     }
@@ -496,9 +503,7 @@ mod tests {
                 NativeScript::ScriptPubkey([0x07; 28]),
                 NativeScript::InvalidBefore(10),
             ]),
-            NativeScript::ScriptNOfK(1, vec![
-                NativeScript::InvalidHereafter(50),
-            ]),
+            NativeScript::ScriptNOfK(1, vec![NativeScript::InvalidHereafter(50)]),
         ]);
         let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, s);
@@ -506,9 +511,7 @@ mod tests {
 
     #[test]
     fn script_n_of_k_zero_threshold() {
-        let s = NativeScript::ScriptNOfK(0, vec![
-            NativeScript::ScriptPubkey([0x08; 28]),
-        ]);
+        let s = NativeScript::ScriptNOfK(0, vec![NativeScript::ScriptPubkey([0x08; 28])]);
         let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, s);
     }

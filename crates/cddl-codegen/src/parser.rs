@@ -152,14 +152,9 @@ fn collect_statements(schema: &str) -> Vec<String> {
 
         // Check if the next non-empty line starts with `//` (group-choice
         // continuation). If so, don't flush yet.
-        let next_is_continuation = lines
-            .get(i + 1)
-            .is_some_and(|next| next.starts_with("//"));
+        let next_is_continuation = lines.get(i + 1).is_some_and(|next| next.starts_with("//"));
 
-        if nesting_depth <= 0
-            && !current.trim().ends_with('=')
-            && !next_is_continuation
-        {
+        if nesting_depth <= 0 && !current.trim().ends_with('=') && !next_is_continuation {
             statements.push(current.trim().to_string());
             current.clear();
             nesting_depth = 0;
