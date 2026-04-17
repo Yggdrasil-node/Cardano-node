@@ -1782,6 +1782,54 @@ fn file_volatile_compact_on_clean_store_is_noop() {
 }
 
 #[test]
+fn file_volatile_open_applies_pending_delete_wal() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+
+    {
+        let mut store = FileVolatile::open(&path).expect("open");
+        store.add_block(test_block(0x01, 10)).expect("add 1");
+        store.add_block(test_block(0x02, 20)).expect("add 2");
+    }
+
+    let hash1 = HeaderHash([0x01; 32]);
+    let wal = serde_json::json!({
+        "version": 1,
+        "operation": "rollback_to_origin",
+        "hashes": [hex_hash(&hash1)],
+    });
+    std::fs::write(
+        path.join("wal.pending.json"),
+        serde_json::to_vec(&wal).expect("serialize wal"),
+    )
+    .expect("write wal");
+
+    let store = FileVolatile::open(&path).expect("reopen");
+
+    assert!(store.get_block(&hash1).is_none());
+    assert!(store.get_block(&HeaderHash([0x02; 32])).is_some());
+    assert!(!path.join("wal.pending.json").exists());
+}
+
+#[test]
+fn file_volatile_open_ignores_malformed_wal_and_clears_it() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("vol");
+
+    {
+        let mut store = FileVolatile::open(&path).expect("open");
+        store.add_block(test_block(0x0A, 10)).expect("add");
+    }
+
+    std::fs::write(path.join("wal.pending.json"), b"{ this is not valid json")
+        .expect("write malformed wal");
+
+    let store = FileVolatile::open(&path).expect("reopen");
+    assert!(store.get_block(&HeaderHash([0x0A; 32])).is_some());
+    assert!(!path.join("wal.pending.json").exists());
+}
+
+#[test]
 fn chain_db_gc_volatile_before_slot() {
     let immutable = InMemoryImmutable::default();
     let volatile = InMemoryVolatile::default();

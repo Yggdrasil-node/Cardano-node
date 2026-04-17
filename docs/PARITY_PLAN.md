@@ -33,11 +33,11 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting, post-forge adoption check)
 
 **To achieve full parity**, the remaining work focuses on:
-1. **Plutus CEK builtin coverage** (remaining edge cases and cost-model parity)
-2. **Storage WAL** (write-ahead log for multi-step mutations)
-3. **Integration testing** (mainnet-like end-to-end scenarios)
+1. **Plutus CEK drift monitoring** (keep Conway/Plomin cost-model key mapping in sync with upstream changes)
+2. **Integration testing** (mainnet-like end-to-end scenarios)
 
 **Recently completed parity items**:
+- ✅ **Storage WAL for multi-step volatile mutations (Round 83)** — `FileVolatile` now persists a delete-plan WAL (`wal.pending.json`) before multi-step delete operations (`prune_up_to`, `rollback_to`, `garbage_collect`) and replays/removes that plan on open. This closes the storage parity gap for write-ahead recovery on delete-heavy mutation paths and aligns with upstream VolatileDB-style crash-recovery intent.
 - ✅ **Post-forge adoption check** — after forging, compare chain tip with forged block point and emit `TraceAdoptedBlock`/`TraceDidntAdoptBlock` (upstream `NodeKernel.forkBlockForging`)
 - ✅ **Forged block self-validation** — block producer now self-validates each forged block before persistence (protocol version, body hash, body size, header identity), preventing local malformed-forge persistence drift.
 - ✅ **Forged issuer-key parity** — block producer credentials now require an explicit issuer cold verification key, validate OpCert signature against that key at startup, and forge headers with that issuer key (instead of using the KES hot key as proxy).
@@ -629,9 +629,9 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Corruption resilience**: skip/repair bad blocks on open
 
 **What's Missing**:
-- ⏸️ **WAL-style recovery** (write-ahead log for multi-step mutations)
+- Ongoing endurance validation against long-running mainnet-style churn and restarts
 
-**Parity Status**: **~92% complete** — Core functionality, GC (immutable + volatile), compaction, crash detection, and corruption resilience all working. Missing WAL.
+**Parity Status**: **~97% complete** — Core functionality, GC (immutable + volatile), compaction, crash detection, corruption resilience, and WAL-backed multi-step delete recovery are implemented.
 
 ---
 
@@ -1048,7 +1048,7 @@ TX expires (TTL):
 ### Validation Milestones
 
 **Milestone 1: Ledger Rules Complete** (end of Phase 1)
-- ✅ `cargo test-all -- --list` currently discovers 4200 tests
+- ✅ `cargo test-all -- --list` currently discovers 4208 tests
 - ✅ Collateral validation handles 100% of Alonzo+ blocks
 - ✅ Reward calculation matches mainnet within 1 lovelace
 - ✅ Governance proposals ratify correctly for 50+ actions
@@ -1082,7 +1082,7 @@ TX expires (TTL):
 ### Regression Prevention
 
 **Continuous**:
-- ✅ `cargo test-all` runs on every commit (currently 4200 discovered tests)
+- ✅ `cargo test-all` runs on every commit (currently 4208 discovered tests)
 - ✅ `cargo lint` is clippy `-D warnings` clean across all crates and targets
 - ✅ CBOR roundtrip parity tests golden comparisons
 

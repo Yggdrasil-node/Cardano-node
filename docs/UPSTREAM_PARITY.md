@@ -8,7 +8,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - `cargo check-all`: passing
 - `cargo test-all`: passing (0 failures)
-- `cargo test-all -- --list`: 4200 discovered tests
+- `cargo test-all -- --list`: 4208 discovered tests
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 
 ## Subsystem Status
@@ -27,7 +27,8 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 ## Open Gaps
 
-- No critical parity blockers are currently tracked in this matrix. Continue monitoring upstream behavior drift and interoperability/endurance coverage.
+- No critical parity blockers are currently tracked in this matrix.
+- Active validation focus: systematic mainnet bring-up rehearsal (interop checkpoints, restart resilience, and endurance traces) to harden operational parity evidence.
 
 ## Upstream Anchors
 

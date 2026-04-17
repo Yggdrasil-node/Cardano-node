@@ -11,6 +11,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use yggdrasil_ledger::{Block, HeaderHash, Point, SlotNo};
 
 use crate::error::StorageError;
@@ -53,12 +54,23 @@ pub struct FileVolatile {
     data_dir: PathBuf,
     /// Path to the write-ahead dirty sentinel file.
     dirty_path: PathBuf,
+    /// Path to the volatile delete WAL used for multi-step mutations.
+    wal_path: PathBuf,
     /// Ordered list of header hashes matching insertion order.
     chain: Vec<HeaderHash>,
     /// In-memory block cache keyed by header hash.
     index: HashMap<HeaderHash, Block>,
     /// Number of corrupted or unreadable files skipped during open.
     skipped_on_open: usize,
+}
+
+const VOLATILE_WAL_FILENAME: &str = "wal.pending.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VolatileWalDeletePlan {
+    version: u8,
+    operation: String,
+    hashes: Vec<String>,
 }
 
 impl FileVolatile {
@@ -72,6 +84,7 @@ impl FileVolatile {
         fs::create_dir_all(&data_dir)?;
 
         let dirty_path = data_dir.join("dirty.flag");
+        let wal_path = data_dir.join(VOLATILE_WAL_FILENAME);
         let had_dirty = dirty_path.exists();
         if had_dirty {
             eprintln!(
@@ -93,6 +106,52 @@ impl FileVolatile {
             }
             if tmp_removed > 0 {
                 eprintln!("  -> removed {tmp_removed} incomplete .tmp file(s)");
+            }
+        }
+
+        if wal_path.exists() {
+            eprintln!(
+                "[storage] VolatileStore: pending WAL found at {:?}; recovering delete plan",
+                wal_path
+            );
+
+            let mut recovered = 0usize;
+            let mut invalid = 0usize;
+            match fs::read(&wal_path) {
+                Ok(bytes) => match serde_json::from_slice::<VolatileWalDeletePlan>(&bytes) {
+                    Ok(plan) => {
+                        for hash_hex in plan.hashes {
+                            if let Some(hash) = hex_decode_hash(&hash_hex) {
+                                let _ = fs::remove_file(data_dir.join(format!(
+                                    "{}.cbor",
+                                    hex_encode(&hash.0)
+                                )));
+                                let _ = fs::remove_file(data_dir.join(format!(
+                                    "{}.json",
+                                    hex_encode(&hash.0)
+                                )));
+                                recovered += 1;
+                            } else {
+                                invalid += 1;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("  -> malformed WAL plan ignored: {err}");
+                    }
+                },
+                Err(err) => {
+                    eprintln!("  -> failed to read WAL plan: {err}");
+                }
+            }
+
+            let _ = fs::remove_file(&wal_path);
+            let _ = sync_dir(wal_path.parent());
+            if recovered > 0 {
+                eprintln!("  -> applied WAL deletion for {recovered} block file(s)");
+            }
+            if invalid > 0 {
+                eprintln!("  -> ignored {invalid} invalid WAL hash entries");
             }
         }
 
@@ -176,6 +235,7 @@ impl FileVolatile {
         Ok(Self {
             data_dir,
             dirty_path,
+            wal_path,
             chain,
             index,
             skipped_on_open: skipped,
@@ -200,6 +260,31 @@ impl FileVolatile {
     fn mark_clean(&self) -> std::io::Result<()> {
         let _ = fs::remove_file(&self.dirty_path);
         Ok(())
+    }
+
+    fn write_delete_wal(
+        &self,
+        operation: &'static str,
+        hashes: &[HeaderHash],
+    ) -> std::io::Result<()> {
+        if hashes.is_empty() {
+            return Ok(());
+        }
+
+        let plan = VolatileWalDeletePlan {
+            version: 1,
+            operation: operation.to_owned(),
+            hashes: hashes.iter().map(|h| hex_encode(&h.0)).collect(),
+        };
+
+        let bytes = serde_json::to_vec(&plan)
+            .map_err(|e| std::io::Error::other(format!("serialize volatile WAL: {e}")))?;
+        atomic_write_file(&self.wal_path, &bytes)
+    }
+
+    fn clear_delete_wal(&self) -> std::io::Result<()> {
+        let _ = fs::remove_file(&self.wal_path);
+        sync_dir(self.wal_path.parent())
     }
 
     fn block_path(&self, hash: &HeaderHash) -> PathBuf {
@@ -316,6 +401,7 @@ impl VolatileStore for FileVolatile {
                     .ok_or(StorageError::PointNotFound)?;
 
                 let removed: Vec<HeaderHash> = self.chain.drain(..prune_count).collect();
+                self.write_delete_wal("prune_up_to", &removed)?;
                 for removed_hash in removed {
                     let cbor_path = self.block_path(&removed_hash);
                     let json_path = self.legacy_json_block_path(&removed_hash);
@@ -323,6 +409,7 @@ impl VolatileStore for FileVolatile {
                     let _ = fs::remove_file(json_path);
                     self.index.remove(&removed_hash);
                 }
+                self.clear_delete_wal()?;
                 self.mark_clean()?;
                 Ok(())
             }
@@ -333,6 +420,7 @@ impl VolatileStore for FileVolatile {
         match point {
             Point::Origin => {
                 let _ = self.mark_dirty();
+                let _ = self.write_delete_wal("rollback_to_origin", &self.chain);
                 for hash in &self.chain {
                     let cbor_path = self.block_path(hash);
                     let json_path = self.legacy_json_block_path(hash);
@@ -341,12 +429,14 @@ impl VolatileStore for FileVolatile {
                 }
                 self.chain.clear();
                 self.index.clear();
+                let _ = self.clear_delete_wal();
                 let _ = self.mark_clean();
             }
             Point::BlockPoint(_, hash) => {
                 if let Some(pos) = self.chain.iter().position(|h| h == hash) {
                     let _ = self.mark_dirty();
                     let removed: Vec<HeaderHash> = self.chain.drain((pos + 1)..).collect();
+                    let _ = self.write_delete_wal("rollback_to_point", &removed);
                     for h in &removed {
                         let cbor_path = self.block_path(h);
                         let json_path = self.legacy_json_block_path(h);
@@ -354,6 +444,7 @@ impl VolatileStore for FileVolatile {
                         let _ = fs::remove_file(json_path);
                         self.index.remove(h);
                     }
+                    let _ = self.clear_delete_wal();
                     let _ = self.mark_clean();
                 }
             }
@@ -404,6 +495,7 @@ impl VolatileStore for FileVolatile {
         }
 
         let _ = self.mark_dirty();
+        let _ = self.write_delete_wal("garbage_collect", &to_remove);
         let count = to_remove.len();
         for hash in &to_remove {
             let cbor_path = self.block_path(hash);
@@ -415,6 +507,7 @@ impl VolatileStore for FileVolatile {
 
         let remove_set: std::collections::HashSet<HeaderHash> = to_remove.into_iter().collect();
         self.chain.retain(|h| !remove_set.contains(h));
+        let _ = self.clear_delete_wal();
         let _ = self.mark_clean();
         count
     }

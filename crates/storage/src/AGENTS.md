@@ -28,6 +28,7 @@ This directory owns storage interfaces and implementations, including rollback-a
 - `ChainDb` now also exposes typed ledger-checkpoint save/load helpers built on the ledger crate's deterministic CBOR codec, while the underlying `LedgerStore` trait remains raw-byte oriented for format flexibility.
 - `recover_ledger_state()` uses `try_restore_checkpoint()` to iterate backward through available snapshots when the latest checkpoint is corrupt, providing resilience against partial or interrupted writes.
 - File-backed store modules (`file_immutable.rs`, `file_volatile.rs`, `file_ledger.rs`) use atomic file writes (write-to-temp then `fs::rename`) so a crash mid-write never leaves a corrupt primary file.
+- `FileVolatile` now adds write-ahead delete journaling for multi-step mutations: before `prune_up_to`, `rollback_to`, and `garbage_collect` delete batches, it writes `wal.pending.json`; open-time recovery replays and clears pending plans so interrupted delete sequences converge deterministically.
 - `FileImmutable` and `FileVolatile` persist block payloads as deterministic CBOR files (`*.cbor`) while retaining backward-compatible reads of legacy JSON block files (`*.json`) during open.
 - Open-path loading deduplicates dual-format files by block hash and prefers CBOR over JSON when both exist for the same hash.
 - `VolatileStore::suffix_after(point)` returns blocks strictly after a given point, enabling rollback transaction capture and ledger state replay from volatile storage. Implemented for both `InMemoryVolatile` and `FileVolatile`.
