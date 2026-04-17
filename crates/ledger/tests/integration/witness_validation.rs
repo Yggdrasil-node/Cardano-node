@@ -4823,6 +4823,10 @@ fn conway_block_cross_block_lineage_chain() {
     let gov_id1 = GovActionId { transaction_id: hash1, gov_action_index: 0 };
 
     // Second proposal: HardForkInitiation chaining from the first.
+    // Uses (10, 1) — same major, minor+1 — which is valid under
+    // upstream `preceedingHardFork`: with no enacted root,
+    // `succVersion(9) = 10 >= 10` passes, then chaining walks to
+    // the pending (10, 0) and `pvCanFollow (10,0) (10,1)` succeeds.
     let (proposal_tx2, hash2) = make_proposal_tx(
         [0xB3; 32],
         &payment_address,
@@ -4833,7 +4837,7 @@ fn conway_block_cross_block_lineage_chain() {
             reward_account: reward_account.to_bytes().to_vec(),
             gov_action: GovAction::HardForkInitiation {
                 prev_action_id: Some(gov_id1.clone()),
-                protocol_version: (11, 0),
+                protocol_version: (10, 1),
             },
             anchor: Anchor { url: "https://example.invalid/hf2".to_owned(), data_hash: [0xB4; 32] },
         }],
@@ -4861,7 +4865,7 @@ fn conway_block_cross_block_lineage_chain() {
     let stored2 = state.governance_action(&gov_id2).unwrap();
     assert_eq!(
         stored2.proposal().gov_action,
-        GovAction::HardForkInitiation { prev_action_id: Some(gov_id1), protocol_version: (11, 0) },
+        GovAction::HardForkInitiation { prev_action_id: Some(gov_id1), protocol_version: (10, 1) },
     );
 }
 

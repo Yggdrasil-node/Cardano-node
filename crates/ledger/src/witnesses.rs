@@ -432,6 +432,12 @@ pub fn required_script_hashes_from_proposal_procedures(
 ) {
     use crate::eras::conway::GovAction;
 
+    // Only ParameterChange and TreasuryWithdrawals proposals require their
+    // guardrails script as a witness (and Plutus evaluation target).
+    // NewConstitution carries a guardrails_script_hash for future use after
+    // enactment — it does NOT require a script witness at proposal time.
+    // Reference: `getConwayScriptsNeeded` — `proposingScriptsNeeded` in
+    // `Cardano.Ledger.Conway.UTxO`.
     for proposal in proposal_procedures {
         match &proposal.gov_action {
             GovAction::ParameterChange {
@@ -446,12 +452,8 @@ pub fn required_script_hashes_from_proposal_procedures(
                     out.insert(*hash);
                 }
             }
-            GovAction::NewConstitution { constitution, .. } => {
-                if let Some(hash) = constitution.guardrails_script_hash {
-                    out.insert(hash);
-                }
-            }
-            GovAction::HardForkInitiation { .. }
+            GovAction::NewConstitution { .. }
+            | GovAction::HardForkInitiation { .. }
             | GovAction::NoConfidence { .. }
             | GovAction::UpdateCommittee { .. }
             | GovAction::InfoAction => {}
@@ -754,6 +756,37 @@ mod tests {
 
     #[test]
     fn collects_required_script_hashes_from_proposal_procedures() {
+        // ParameterChange guardrails scripts ARE required.
+        let param_change = crate::eras::conway::ProposalProcedure {
+            deposit: 1,
+            reward_account: crate::types::RewardAccount {
+                network: 1,
+                credential: crate::types::StakeCredential::AddrKeyHash([0xCC; 28]),
+            }
+            .to_bytes()
+            .to_vec(),
+            gov_action: crate::eras::conway::GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate::default(),
+                guardrails_script_hash: Some([0xAA; 28]),
+            },
+            anchor: crate::types::Anchor {
+                url: "https://example.invalid/proposal".to_string(),
+                data_hash: [0xFF; 32],
+            },
+        };
+
+        let mut required = HashSet::new();
+        required_script_hashes_from_proposal_procedures(&[param_change], &mut required);
+        assert!(required.contains(&[0xAA; 28]));
+        assert_eq!(required.len(), 1);
+    }
+
+    #[test]
+    fn new_constitution_guardrails_script_not_required_at_proposal_time() {
+        // NewConstitution's guardrails_script_hash is for FUTURE use after
+        // enactment. It does NOT require a script witness at proposal time.
+        // Reference: `getConwayScriptsNeeded` — `proposingScriptsNeeded`.
         let proposal = crate::eras::conway::ProposalProcedure {
             deposit: 1,
             reward_account: crate::types::RewardAccount {
@@ -780,9 +813,7 @@ mod tests {
 
         let mut required = HashSet::new();
         required_script_hashes_from_proposal_procedures(&[proposal], &mut required);
-
-        assert!(required.contains(&[0xEE; 28]));
-        assert_eq!(required.len(), 1);
+        assert!(required.is_empty(), "NewConstitution script hash must NOT be required");
     }
 
     #[test]

@@ -470,13 +470,35 @@ pub fn apply_epoch_boundary(
     }
 
     // -----------------------------------------------------------------------
-    // 5. Governance action expiry — remove expired proposals and refund
-    //    deposits to their return accounts (Conway+ EPOCH rule).
+    // 5. Ratification — tally votes for ALL surviving governance actions
+    //    (including expired-but-not-yet-removed ones) and enact any that
+    //    reach their acceptance thresholds.
+    //
+    //    Upstream: the DRep pulser runs `ratifyTransition` during the
+    //    epoch on ALL proposals, including those that will expire at the
+    //    epoch boundary.  An expired action that passes all ratification
+    //    checks IS enacted (upstream `ratifyTransition`: enactment happens
+    //    BEFORE the `gasExpiresAfter < reCurrentEpoch` guard).  Only
+    //    non-enacted expired actions are added to `rsExpired` and cleaned
+    //    up afterwards.  Therefore ratification MUST run before expiry
+    //    pruning so that an action expiring in the same epoch it becomes
+    //    ratifiable still gets enacted.
+    //
+    //    Reference: `Cardano.Ledger.Conway.Rules.Epoch` — epochTransition,
+    //    `Cardano.Ledger.Conway.Rules.Ratify` — ratifyTransition.
+    // -----------------------------------------------------------------------
+    let ratify_result = ratify_and_enact(ledger, new_epoch, snapshots, drep_activity);
+    let governance_actions_enacted = ratify_result.enacted_ids.len();
+
+    // -----------------------------------------------------------------------
+    // 5a. Governance action expiry — remove expired proposals that were
+    //     NOT enacted and refund their deposits to return accounts.
+    //     (Enacted proposals were already removed by `ratify_and_enact`.)
     // -----------------------------------------------------------------------
     let (expired_gov_action_ids, governance_deposit_refunds, expired_unclaimed_deposits) =
         remove_expired_governance_actions(ledger, new_epoch);
 
-    // 5a. Remove descendant proposals whose prev_action_id chains through
+    // 5b. Remove descendant proposals whose prev_action_id chains through
     //     an expired parent.  Upstream `proposalsRemoveWithDescendants`
     //     transitively removes descendants of expired proposals.
     //     Reference: Cardano.Ledger.Conway.Governance.Proposals.
@@ -488,16 +510,7 @@ pub fn apply_epoch_boundary(
     let governance_actions_expired =
         expired_gov_action_ids.len();
 
-    // -----------------------------------------------------------------------
-    // 5b. Ratification — tally votes for surviving governance actions and
-    //     enact any that reach their acceptance thresholds.
-    //     Upstream: `Cardano.Ledger.Conway.Rules.Ratify` — run at each
-    //     epoch boundary after expiry pruning.
-    // -----------------------------------------------------------------------
-    let ratify_result = ratify_and_enact(ledger, new_epoch, snapshots, drep_activity);
-    let governance_actions_enacted = ratify_result.enacted_ids.len();
-
-    // Credit unclaimed governance deposits to treasury — both from
+    // Credit unclaimed governance deposits to treasury — from
     // expired proposals with unregistered return accounts, from
     // descendants of expired proposals, AND from enacted actions
     // with unregistered return accounts.
@@ -511,7 +524,7 @@ pub fn apply_epoch_boundary(
     }
 
     // -----------------------------------------------------------------------
-    // 5b′. Flush accumulated Conway treasury donations into treasury.
+    // 5c. Flush accumulated Conway treasury donations into treasury.
     //
     //      Upstream ordering: donations are flushed to the main
     //      `ChainAccountState` treasury AFTER ratification results have
@@ -550,7 +563,7 @@ pub fn apply_epoch_boundary(
     }
 
     // -----------------------------------------------------------------------
-    // 5c. Dormant epoch counter — if no active (non-expired) governance
+    // 5d. Dormant epoch counter — if no active (non-expired) governance
     //     proposals remain, increment the dormant counter.  Otherwise
     //     leave it unchanged.
     //
@@ -569,7 +582,7 @@ pub fn apply_epoch_boundary(
     // when proposals first appeared.
 
     // -----------------------------------------------------------------------
-    // 5d. Committee state cleanup — prune hot-key authorization entries
+    // 5e. Committee state cleanup — prune hot-key authorization entries
     //     for cold credentials that are no longer active committee members.
     //
     //     Upstream `updateCommitteeState` in `Cardano.Ledger.Conway.Rules.Epoch`
@@ -1203,80 +1216,114 @@ fn ratify_and_enact(
 
         let gov_action = &action_state.proposal().gov_action;
 
+        // Pre-extract values needed after the immutable borrow ends.
+        let is_delaying = delaying_action(gov_action);
+        let is_expired = action_state
+            .expires_after()
+            .map_or(false, |ea| ea.0 < current_epoch.0);
+
         // --- Upstream ratifyTransition guard checks (order matters) ---
-
-        // 1. prevActionAsExpected — checked against CURRENT enact state
-        //    (lineage updates mid-loop are intended).
-        if !prev_action_as_expected(action_state, ledger.enact_state()) {
-            continue;
-        }
-
-        // 2. validCommitteeTerm — checked against CURRENT protocol params
-        //    from the evolving enact state.
-        if !valid_committee_term(
-            gov_action,
-            ledger
-                .protocol_params()
-                .and_then(|pp| pp.committee_term_limit),
-            current_epoch,
-        ) {
-            continue;
-        }
-
-        // 3. Delay flag — once a delaying action is enacted, stop.
-        if delayed {
-            continue;
-        }
-
-        // 4. withdrawalCanWithdraw — checked against the withdrawal budget
-        //    that tracks the full proposed amount (including unregistered
-        //    accounts), matching upstream `ensTreasury` semantics.
         //
-        //    Reference: `Cardano.Ledger.Conway.Rules.Ratify.withdrawalCanWithdraw`.
-        if !withdrawal_can_withdraw(gov_action, withdrawal_budget) {
-            continue;
-        }
-
-        // 5. acceptedByEveryone — committee + DRep + SPO thresholds.
-        //    Read committee quorum from CURRENT enact state (may have
-        //    changed after an earlier UpdateCommittee enactment).
+        // The upstream multi-guard has three branches:
+        //   1. All guards pass → ENACT.  Set `rsDelayed || delayingAction`.
+        //   2. `gasExpiresAfter < reCurrentEpoch` → add to `rsExpired`.
+        //      `rsDelayed` is **unchanged** (expired actions do NOT block
+        //      subsequent enactments).
+        //   3. Otherwise (not enacted, not expired) → set `rsDelayed ||
+        //      delayingAction`.  This means a non-enacted, non-expired
+        //      NoConfidence / HardFork / UpdateCommittee / NewConstitution
+        //      STILL prevents subsequent actions from being enacted.
         //
-        //    Upstream `ratifyTransition` recursively passes the updated
-        //    `RatifyState` (including `ensCurPParams` inside the
-        //    `EnactState`) so that after a `ParameterChange` enactment,
-        //    subsequent proposals see updated voting thresholds and
-        //    `min_committee_size`.  We re-read from `protocol_params()`
-        //    each iteration to match.
-        //
-        //    Reference: `votingDRepThreshold`, `votingStakePoolThreshold`,
-        //    `committeeAccepted` — all read from `rs ^. rsEnactStateL . ensCurPParamsL`.
-        let committee_quorum = ledger.enact_state().committee_quorum;
-        let has_committee = ledger.enact_state().has_committee;
+        // Reference: `Cardano.Ledger.Conway.Rules.Ratify` — ratifyTransition.
+        let passed_all_checks = 'guards: {
+            // 1. prevActionAsExpected — checked against CURRENT enact state
+            //    (lineage updates mid-loop are intended).
+            if !prev_action_as_expected(action_state, ledger.enact_state()) {
+                break 'guards false;
+            }
 
-        // Re-read thresholds from the (possibly updated) protocol params.
-        let pp = ledger.protocol_params().expect("checked at entry");
-        let pool_thresholds = pp.pool_voting_thresholds.clone().unwrap_or_default();
-        let drep_thresholds = pp.drep_voting_thresholds.clone().unwrap_or_default();
-        let min_committee_size = pp.min_committee_size.unwrap_or(0);
-        let is_bootstrap_phase = matches!(pp.protocol_version, Some((9, _)));
+            // 2. validCommitteeTerm — checked against CURRENT protocol params
+            //    from the evolving enact state.
+            if !valid_committee_term(
+                gov_action,
+                ledger
+                    .protocol_params()
+                    .and_then(|pp| pp.committee_term_limit),
+                current_epoch,
+            ) {
+                break 'guards false;
+            }
 
-        if !ratify_action(
-            action_state,
-            ledger.committee_state(),
-            &committee_quorum,
-            ledger.drep_state(),
-            &drep_delegated_stake,
-            current_epoch,
-            drep_activity,
-            &drep_thresholds,
-            &pool_stake_dist,
-            &pool_thresholds,
-            min_committee_size,
-            is_bootstrap_phase,
-            has_committee,
-            ledger.pool_state(),
-            ledger.stake_credentials(),
-        ) {
+            // 3. Delay flag — once a delaying action is enacted (or a
+            //    non-enacted non-expired delaying action is encountered),
+            //    stop enacting.
+            if delayed {
+                break 'guards false;
+            }
+
+            // 4. withdrawalCanWithdraw — checked against the withdrawal budget
+            //    that tracks the full proposed amount (including unregistered
+            //    accounts), matching upstream `ensTreasury` semantics.
+            //
+            //    Reference: `Cardano.Ledger.Conway.Rules.Ratify.withdrawalCanWithdraw`.
+            if !withdrawal_can_withdraw(gov_action, withdrawal_budget) {
+                break 'guards false;
+            }
+
+            // 5. acceptedByEveryone — committee + DRep + SPO thresholds.
+            //    Read committee quorum from CURRENT enact state (may have
+            //    changed after an earlier UpdateCommittee enactment).
+            //
+            //    Upstream `ratifyTransition` recursively passes the updated
+            //    `RatifyState` (including `ensCurPParams` inside the
+            //    `EnactState`) so that after a `ParameterChange` enactment,
+            //    subsequent proposals see updated voting thresholds and
+            //    `min_committee_size`.  We re-read from `protocol_params()`
+            //    each iteration to match.
+            //
+            //    Reference: `votingDRepThreshold`, `votingStakePoolThreshold`,
+            //    `committeeAccepted` — all read from `rs ^. rsEnactStateL . ensCurPParamsL`.
+            let committee_quorum = ledger.enact_state().committee_quorum;
+            let has_committee = ledger.enact_state().has_committee;
+
+            // Re-read thresholds from the (possibly updated) protocol params.
+            let pp = ledger.protocol_params().expect("checked at entry");
+            let pool_thresholds = pp.pool_voting_thresholds.clone().unwrap_or_default();
+            let drep_thresholds = pp.drep_voting_thresholds.clone().unwrap_or_default();
+            let min_committee_size = pp.min_committee_size.unwrap_or(0);
+            let is_bootstrap_phase = matches!(pp.protocol_version, Some((9, _)));
+
+            if !ratify_action(
+                action_state,
+                ledger.committee_state(),
+                &committee_quorum,
+                ledger.drep_state(),
+                &drep_delegated_stake,
+                current_epoch,
+                drep_activity,
+                &drep_thresholds,
+                &pool_stake_dist,
+                &pool_thresholds,
+                min_committee_size,
+                is_bootstrap_phase,
+                has_committee,
+                ledger.pool_state(),
+                ledger.stake_credentials(),
+            ) {
+                break 'guards false;
+            }
+
+            true
+        };
+
+        if !passed_all_checks {
+            // Upstream `otherwise` branch: non-enacted, non-expired
+            // delaying actions set the delay flag.  Expired actions
+            // do NOT change the flag (upstream expired branch passes
+            // `rsDelayed` unchanged).
+            if !is_expired && is_delaying {
+                delayed = true;
+            }
             continue;
         }
 
@@ -1329,7 +1376,7 @@ fn ratify_and_enact(
             }
 
             // Set delay flag if this is a delaying action type.
-            if delaying_action(&state.proposal().gov_action) {
+            if is_delaying {
                 delayed = true;
             }
         }
@@ -5028,6 +5075,104 @@ mod tests {
             guardrails_script_hash: None,
         }), 5);
         assert_eq!(action_priority(&GovAction::InfoAction), 6);
+    }
+
+    #[test]
+    fn test_non_enacted_delaying_action_blocks_subsequent() {
+        // Upstream ratifyTransition `otherwise` branch: a delaying action
+        // (NoConfidence) that does NOT pass acceptedByEveryone but is NOT
+        // expired still sets `rsDelayed`, blocking subsequent enactments.
+        //
+        // Setup: DRep motion_no_confidence threshold = 100% (impossible to
+        // reach with zero DRep votes), all other thresholds = 0%.
+        // NoConfidence (priority 0) has no votes → fails acceptance.
+        // ParameterChange (priority 4) would normally pass zero thresholds,
+        // but NoConfidence is delaying → ParameterChange blocked.
+        //
+        // Reference: Cardano.Ledger.Conway.Rules.Ratify — ratifyTransition.
+        let mut ledger = make_auto_pass_ledger();
+
+        // Override: set motion_no_confidence DRep threshold to 100%.
+        if let Some(pp) = ledger.protocol_params_mut() {
+            if let Some(ref mut drep_t) = pp.drep_voting_thresholds {
+                drep_t.motion_no_confidence = UnitInterval { numerator: 1, denominator: 1 };
+            }
+        }
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot.
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Insert a NoConfidence (delaying, will fail acceptance) and a
+        // ParameterChange (non-delaying, would otherwise pass).
+        let gai_nc = test_gov_action_id(0x01, 0);
+        let gas_nc = GovernanceActionState::new(test_no_confidence_proposal());
+        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
+
+        let gai_pc = test_gov_action_id(0x02, 0);
+        let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
+        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // Neither should be enacted: NoConfidence failed acceptance,
+        // ParameterChange blocked by the delay flag.
+        assert_eq!(event.governance_actions_enacted, 0);
+        assert!(ledger.governance_actions().contains_key(&gai_nc));
+        assert!(ledger.governance_actions().contains_key(&gai_pc));
+    }
+
+    #[test]
+    fn test_expired_delaying_action_does_not_block() {
+        // Upstream: an expired delaying action that fails acceptance is
+        // added to `rsExpired` but does NOT set `rsDelayed`.  Subsequent
+        // non-delaying actions should be able to pass.
+        //
+        // Reference: Cardano.Ledger.Conway.Rules.Ratify — ratifyTransition,
+        //   expired branch passes `rsDelayed` unchanged.
+        let mut ledger = make_auto_pass_ledger();
+
+        // Set motion_no_confidence threshold to 100% so NoConfidence fails.
+        if let Some(pp) = ledger.protocol_params_mut() {
+            if let Some(ref mut drep_t) = pp.drep_voting_thresholds {
+                drep_t.motion_no_confidence = UnitInterval { numerator: 1, denominator: 1 };
+            }
+        }
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Epoch 1: populate mark snapshot.
+        let _ = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Insert a NoConfidence that is expired AND fails acceptance.
+        let gai_nc = test_gov_action_id(0x01, 0);
+        let gas_nc = GovernanceActionState::new_with_lifetime(
+            test_no_confidence_proposal(),
+            EpochNo(0), // proposed in epoch 0
+            Some(1),    // lifetime 1 → expires_after = epoch 1
+        );
+        ledger.governance_actions_mut().insert(gai_nc.clone(), gas_nc);
+
+        // Insert a ParameterChange that should pass.
+        let gai_pc = test_gov_action_id(0x02, 0);
+        let gas_pc = GovernanceActionState::new(test_parameter_change_proposal());
+        ledger.governance_actions_mut().insert(gai_pc.clone(), gas_pc);
+
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf)
+            .expect("epoch 2");
+
+        // ParameterChange should be enacted (expired NoConfidence did NOT
+        // set delay flag).
+        assert_eq!(event.governance_actions_enacted, 1);
+        assert!(event.enacted_gov_action_ids.contains(&gai_pc));
+        // NoConfidence should have been removed by expiry, not enactment.
+        assert!(!ledger.governance_actions().contains_key(&gai_nc));
     }
 
     #[test]
