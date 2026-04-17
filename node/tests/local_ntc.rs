@@ -21,7 +21,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tempfile::tempdir;
-use yggdrasil_ledger::{CborDecode, Decoder, Encoder, Era, LedgerState, Point};
+use yggdrasil_ledger::{CborDecode, CborEncode, Decoder, Encoder, Era, HeaderHash, LedgerState, Point, SlotNo};
 use yggdrasil_mempool::{Mempool, SharedMempool};
 use yggdrasil_network::{
     AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
@@ -143,6 +143,40 @@ async fn ntc_local_state_query_current_era_round_trip() {
     let _ = client.release().await;
     let _ = client.done().await;
 
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
+/// End-to-end test: acquiring a point that is not on the chain fails.
+///
+/// On an empty ChainDb, only `Origin` is on-chain; any `BlockPoint` must be
+/// rejected with acquire failure.
+#[tokio::test]
+async fn ntc_local_state_query_rejects_unknown_acquire_point() {
+    let (socket_path, shutdown, handle, _tmp) = spawn_local_server().await;
+
+    let mut conn = ntc_connect(&socket_path, TEST_MAGIC, true)
+        .await
+        .expect("ntc_connect should succeed against our test accept loop");
+
+    let sq_handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_STATE_QUERY)
+        .expect("NTC_LOCAL_STATE_QUERY handle missing");
+    let mut client = LocalStateQueryClient::new(sq_handle);
+
+    let requested = Point::BlockPoint(SlotNo(42), HeaderHash([7u8; 32]));
+    let mut enc = Encoder::new();
+    requested.encode_cbor(&mut enc);
+    let requested_bytes = enc.into_bytes();
+
+    let result = client.acquire(AcquireTarget::Point(requested_bytes)).await;
+    assert!(
+        result.is_err(),
+        "acquire must fail for a point not on the current chain"
+    );
+
+    let _ = client.done().await;
     let _ = shutdown.send(());
     let _ = handle.await;
 }

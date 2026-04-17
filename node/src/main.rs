@@ -2122,6 +2122,11 @@ struct RunNodeRequest {
 /// `GET /metrics`, a JSON snapshot on `GET /metrics/json`, and a simple health
 /// check on `GET /health`.
 ///
+/// Upstream-compatible debug aliases are also accepted:
+/// - `GET /debug` and `GET /debug/metrics` (JSON metrics)
+/// - `GET /debug/metrics/prometheus` (Prometheus text)
+/// - `GET /debug/health` (health JSON)
+///
 /// Uses raw tokio TCP — no HTTP framework dependency required.
 async fn serve_metrics(port: u16, metrics: std::sync::Arc<NodeMetrics>) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2138,33 +2143,7 @@ async fn serve_metrics(port: u16, metrics: std::sync::Arc<NodeMetrics>) -> std::
                 _ => return,
             };
             let request = String::from_utf8_lossy(&buf[..n]);
-
-            let (status, content_type, body) = if request.starts_with("GET /health") {
-                let snap = metrics.snapshot();
-                let body = serde_json::json!({
-                    "status": "ok",
-                    "uptime_seconds": snap.uptime_ms / 1000,
-                    "blocks_synced": snap.blocks_synced,
-                    "current_slot": snap.current_slot,
-                })
-                .to_string();
-                ("200 OK", "application/json", body)
-            } else if request.starts_with("GET /metrics/json") {
-                let snap = metrics.snapshot();
-                match serde_json::to_string_pretty(&snap) {
-                    Ok(json) => ("200 OK", "application/json", json),
-                    Err(_) => (
-                        "500 Internal Server Error",
-                        "text/plain",
-                        "serialization error".to_owned(),
-                    ),
-                }
-            } else if request.starts_with("GET /metrics") {
-                let body = metrics.snapshot().to_prometheus_text();
-                ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
-            } else {
-                ("404 Not Found", "text/plain", "not found\n".to_owned())
-            };
+            let (status, content_type, body) = metrics_http_response(&request, &metrics);
 
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -2172,6 +2151,40 @@ async fn serve_metrics(port: u16, metrics: std::sync::Arc<NodeMetrics>) -> std::
             );
             let _ = stream.write_all(response.as_bytes()).await;
         });
+    }
+}
+
+fn metrics_http_response(request: &str, metrics: &NodeMetrics) -> (&'static str, &'static str, String) {
+    if request.starts_with("GET /health") || request.starts_with("GET /debug/health") {
+        let snap = metrics.snapshot();
+        let body = serde_json::json!({
+            "status": "ok",
+            "uptime_seconds": snap.uptime_ms / 1000,
+            "blocks_synced": snap.blocks_synced,
+            "current_slot": snap.current_slot,
+        })
+        .to_string();
+        ("200 OK", "application/json", body)
+    } else if request.starts_with("GET /debug/metrics/prometheus")
+        || request.starts_with("GET /metrics")
+    {
+        let body = metrics.snapshot().to_prometheus_text();
+        ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
+    } else if request.starts_with("GET /metrics/json")
+        || request.starts_with("GET /debug/metrics")
+        || request.starts_with("GET /debug ")
+    {
+        let snap = metrics.snapshot();
+        match serde_json::to_string_pretty(&snap) {
+            Ok(json) => ("200 OK", "application/json", json),
+            Err(_) => (
+                "500 Internal Server Error",
+                "text/plain",
+                "serialization error".to_owned(),
+            ),
+        }
+    } else {
+        ("404 Not Found", "text/plain", "not found\n".to_owned())
     }
 }
 
@@ -2190,7 +2203,7 @@ mod tests {
     };
     use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
     use yggdrasil_node::config::default_config;
-    use yggdrasil_node::tracer::NodeTracer;
+    use yggdrasil_node::tracer::{NodeMetrics, NodeTracer};
 
     #[test]
     fn checkpoint_trace_override_creates_namespace_when_missing() {
@@ -2369,6 +2382,42 @@ mod tests {
         );
 
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn metrics_http_response_supports_debug_json_alias() {
+        let metrics = NodeMetrics::new();
+        let (status, content_type, body) =
+            super::metrics_http_response("GET /debug HTTP/1.1\r\n\r\n", &metrics);
+
+        assert_eq!(status, "200 OK");
+        assert_eq!(content_type, "application/json");
+        assert!(body.contains("\"blocks_synced\""));
+    }
+
+    #[test]
+    fn metrics_http_response_supports_debug_prometheus_alias() {
+        let metrics = NodeMetrics::new();
+        metrics.add_blocks_synced(3);
+        let (status, content_type, body) = super::metrics_http_response(
+            "GET /debug/metrics/prometheus HTTP/1.1\r\n\r\n",
+            &metrics,
+        );
+
+        assert_eq!(status, "200 OK");
+        assert_eq!(content_type, "text/plain; version=0.0.4; charset=utf-8");
+        assert!(body.contains("yggdrasil_blocks_synced 3"));
+    }
+
+    #[test]
+    fn metrics_http_response_supports_debug_health_alias() {
+        let metrics = NodeMetrics::new();
+        let (status, content_type, body) =
+            super::metrics_http_response("GET /debug/health HTTP/1.1\r\n\r\n", &metrics);
+
+        assert_eq!(status, "200 OK");
+        assert_eq!(content_type, "application/json");
+        assert!(body.contains("\"status\":\"ok\""));
     }
 
     #[test]

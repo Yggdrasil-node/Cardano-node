@@ -154,12 +154,9 @@ impl Clone for NodeTracer {
             use_trace_dispatcher: self.use_trace_dispatcher,
             trace_option_node_name: self.trace_option_node_name.clone(),
             trace_options: self.trace_options.clone(),
-            last_emit_ms: Arc::new(Mutex::new(
-                self.last_emit_ms
-                    .lock()
-                    .expect("node tracer emit-map mutex poisoned")
-                    .clone(),
-            )),
+            // Share emit-rate state across clones so `max_frequency` limits
+            // remain global when runtime tasks hold cloned tracers.
+            last_emit_ms: Arc::clone(&self.last_emit_ms),
             // Preserve the forwarder transport across runtime task clones so
             // all spawned loops keep emitting Forwarder backend events.
             forwarder: self.forwarder.clone(),
@@ -1501,6 +1498,16 @@ mod tests {
             .expect("forwarder should be configured on cloned tracer");
 
         assert!(Arc::ptr_eq(original, cloned_forwarder));
+    }
+
+    #[test]
+    fn clone_shares_rate_limiter_state() {
+        let tracer = NodeTracer::from_config(&default_config());
+        let cloned = tracer.clone();
+
+        assert!(tracer.should_emit("Node.Recovery.Checkpoint", 1_000));
+        assert!(!cloned.should_emit("Node.Recovery.Checkpoint", 1_500));
+        assert!(cloned.should_emit("Node.Recovery.Checkpoint", 2_000));
     }
 
     // -----------------------------------------------------------------------

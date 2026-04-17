@@ -1252,8 +1252,45 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                     tip_block_no,
                     tip_hash,
                 ) else {
+                    // Upstream: TraceSlotIsImmutable — emitted when the
+                    // current slot is not strictly ahead of the chain tip
+                    // slot, meaning forging would target an immutable or
+                    // already-occupied slot. The forge loop must skip this
+                    // slot rather than silently dropping it from the trace
+                    // record.
+                    //
+                    // Reference: cardano-node `Ouroboros.Consensus.Node.Tracers`
+                    // `TraceSlotIsImmutable` and `NodeKernel.forkBlockForging`
+                    // (`mkCurrentBlockContext` returning `Left ImmutableSlot`).
+                    tracer.trace_runtime(
+                        "Node.BlockProduction",
+                        "Warning",
+                        "slot is immutable",
+                        trace_fields([
+                            ("slot", json!(current_slot.0)),
+                            ("tipSlot", json!(tip_slot.map(|s| s.0))),
+                        ]),
+                    );
                     continue;
                 };
+
+                // Upstream: TraceStartLeadershipCheck — emitted at the start
+                // of every slot's leadership check, before the VRF/KES
+                // evaluation. Operators rely on this event for per-slot
+                // forge-loop liveness monitoring.
+                //
+                // Reference: cardano-node `Ouroboros.Consensus.Node.Tracers`
+                // `TraceStartLeadershipCheck` and `NodeKernel.forkBlockForging`
+                // (`traceWith tracer (TraceStartLeadershipCheck currentSlot)`).
+                tracer.trace_runtime(
+                    "Node.BlockProduction",
+                    "Debug",
+                    "starting leadership check",
+                    trace_fields([
+                        ("slot", json!(current_slot.0)),
+                        ("blockNo", json!(context.block_number.0)),
+                    ]),
+                );
 
                 // Read live epoch nonce and sigma from the shared state
                 // updated by the sync pipeline, falling back to the static
@@ -1286,7 +1323,23 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                 );
 
                 let election = match should_forge {
-                    ShouldForge::NotLeader => continue,
+                    ShouldForge::NotLeader => {
+                        // Upstream: TraceNodeNotLeader — emitted whenever
+                        // the slot leadership check determined the node is
+                        // not the elected leader for this slot. Kept at
+                        // Debug severity to match upstream's high-frequency
+                        // per-slot tracing.
+                        //
+                        // Reference: cardano-node `Ouroboros.Consensus.Node.Tracers`
+                        // `TraceNodeNotLeader` and `NodeKernel.forkBlockForging`.
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Debug",
+                            "not slot leader",
+                            trace_fields([("slot", json!(current_slot.0))]),
+                        );
+                        continue;
+                    }
                     ShouldForge::ForgeStateUpdateError(err) => {
                         tracer.trace_runtime(
                             "Node.BlockProduction",
@@ -1313,6 +1366,24 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                     }
                     ShouldForge::ShouldForge(election) => election,
                 };
+
+                // Upstream: TraceNodeIsLeader — emitted once leader election
+                // has succeeded for this slot and before block construction
+                // begins. Operators rely on this event to count elected
+                // slots and reconcile against `TraceForgedBlock` /
+                // `TraceAdoptedBlock`.
+                //
+                // Reference: cardano-node `Ouroboros.Consensus.Node.Tracers`
+                // `TraceNodeIsLeader` and `NodeKernel.forkBlockForging`.
+                tracer.trace_runtime(
+                    "Node.BlockProduction",
+                    "Notice",
+                    "elected as slot leader",
+                    trace_fields([
+                        ("slot", json!(current_slot.0)),
+                        ("blockNo", json!(context.block_number.0)),
+                    ]),
+                );
 
                 let entries = mempool_entries_for_forging(&mempool);
                 let (selected_preview, selected_size) =
@@ -1348,10 +1419,21 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                 };
 
                 if let Err(err) = self_validate_forged_block(&forged) {
+                    // Upstream: TraceForgedInvalidBlock — emitted at
+                    // Critical severity when a locally forged block fails
+                    // self-validation (protocol-version, body-hash,
+                    // body-size, or header-identity check). This is more
+                    // serious than a peer's invalid block: it indicates a
+                    // local mempool/validation inconsistency that produced
+                    // a malformed block, and operators must investigate.
+                    //
+                    // Reference: cardano-node `Ouroboros.Consensus.Node.Tracers`
+                    // `TraceForgedInvalidBlock` and `NodeKernel.forkBlockForging`
+                    // (post-forge `getIsInvalidBlock` check).
                     tracer.trace_runtime(
                         "Node.BlockProduction",
-                        "Error",
-                        "forged block failed self-validation",
+                        "Critical",
+                        "forged invalid block (self-validation failed)",
                         trace_fields([
                             ("slot", json!(forged.slot.0)),
                             ("blockNo", json!(forged.block_number.0)),

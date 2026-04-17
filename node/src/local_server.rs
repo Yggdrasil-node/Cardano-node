@@ -397,29 +397,57 @@ where
             Some(recovery.ledger_state.snapshot())
         }
         AcquireTarget::Point(point) => {
-            // Acquire at a specific historical point.
-            // Recover the full ledger state and check that the tip matches.
-            let recovery =
-                recover_ledger_state_chaindb(&db, yggdrasil_ledger::LedgerState::new(Era::Byron))
-                    .ok()?;
-            let snapshot = recovery.ledger_state.snapshot();
-            if snapshot.tip() == &Point::Origin {
-                Some(snapshot)
-            } else {
-                // Decode the requested point and compare with snapshot tip.
-                let mut dec = yggdrasil_ledger::cbor::Decoder::new(point);
-                let requested = Point::decode_cbor(&mut dec).ok();
-                if requested.as_ref() == Some(snapshot.tip()) {
-                    Some(snapshot)
-                } else {
-                    // Specific historical point replay is not yet implemented.
-                    // Report unavailability so the client can retry with
-                    // VolatileTip or back off.
-                    None
-                }
-            }
+            let mut dec = yggdrasil_ledger::cbor::Decoder::new(point);
+            let requested = Point::decode_cbor(&mut dec).ok()?;
+            recover_snapshot_at_point(&db, &requested)
         }
     }
+}
+
+/// Recover a ledger snapshot at an explicit chain point.
+///
+/// Reference: `ouroboros-network` LocalStateQuery acquire semantics
+/// (`MsgAcquire point`) where acquisition succeeds only when the point is on
+/// the node's current chain.
+fn recover_snapshot_at_point<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    requested: &Point,
+) -> Option<LedgerStateSnapshot>
+where
+    I: ImmutableStore + Send + Sync,
+    V: VolatileStore + Send + Sync,
+    L: LedgerStore + Send + Sync,
+{
+    if requested == &Point::Origin {
+        return Some(yggdrasil_ledger::LedgerState::new(Era::Byron).snapshot());
+    }
+
+    let tip = chain_db.tip();
+    if requested == &tip {
+        let recovery =
+            recover_ledger_state_chaindb(chain_db, yggdrasil_ledger::LedgerState::new(Era::Byron))
+                .ok()?;
+        return Some(recovery.ledger_state.snapshot());
+    }
+
+    let mut state = yggdrasil_ledger::LedgerState::new(Era::Byron);
+    let immutable_blocks = chain_db.immutable().suffix_after(&Point::Origin).ok()?;
+    for block in &immutable_blocks {
+        state.apply_block(block).ok()?;
+        if &state.tip == requested {
+            return Some(state.snapshot());
+        }
+    }
+
+    let volatile_blocks = chain_db.volatile().suffix_after(&state.tip);
+    for block in &volatile_blocks {
+        state.apply_block(block).ok()?;
+        if &state.tip == requested {
+            return Some(state.snapshot());
+        }
+    }
+
+    None
 }
 
 // ---------------------------------------------------------------------------
