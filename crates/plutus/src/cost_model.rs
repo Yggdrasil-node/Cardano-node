@@ -470,8 +470,23 @@ pub struct CostModel {
     ///
     /// When a `DefaultFun` key is present here, its `BuiltinCostEntry` is
     /// evaluated against actual argument sizes. When absent, the flat
-    /// `builtin_cpu` / `builtin_mem` fallback is used instead.
+    /// `builtin_cpu` / `builtin_mem` fallback is used instead — unless
+    /// [`Self::strict_builtin_costs`] is set, in which case
+    /// [`builtin_cost`](Self::builtin_cost) returns a structural
+    /// `MachineError::MissingBuiltinCost` to surface incomplete cost models
+    /// at runtime instead of silently charging fallback costs.
     pub builtin_costs: HashMap<DefaultFun, BuiltinCostEntry>,
+
+    /// When true, [`Self::builtin_cost`] fails with
+    /// `MachineError::MissingBuiltinCost` for any builtin lacking a per-builtin
+    /// entry instead of returning the flat fallback. Production cost models
+    /// derived from upstream genesis parameters should set this to `true` so
+    /// missing builtins are surfaced as a structural error rather than masked
+    /// by uncalibrated default costs.
+    ///
+    /// Reference: upstream `Cardano.Ledger.Alonzo.Plutus.CostModels`
+    /// `mkCostModel` requires complete builtin coverage.
+    pub strict_builtin_costs: bool,
 }
 
 impl Default for CostModel {
@@ -485,6 +500,7 @@ impl Default for CostModel {
             builtin_cpu: 1_000,
             builtin_mem: 1_000,
             builtin_costs: HashMap::new(),
+            strict_builtin_costs: false,
         }
     }
 }
@@ -595,6 +611,9 @@ impl CostModel {
             builtin_cpu,
             builtin_mem,
             builtin_costs,
+            // Production-derived models must surface uncalibrated builtins
+            // instead of silently falling back to flat costs.
+            strict_builtin_costs: true,
         })
     }
 
@@ -642,13 +661,22 @@ impl CostModel {
     /// Cost charged for invoking a saturated builtin.
     ///
     /// Uses the per-builtin [`BuiltinCostEntry`] when available, evaluated
-    /// against the actual argument sizes. Falls back to the flat
-    /// `builtin_cpu` / `builtin_mem` costs for any builtin with no entry.
-    pub fn builtin_cost(&self, fun: DefaultFun, args: &[Value]) -> ExBudget {
+    /// against the actual argument sizes. When [`Self::strict_builtin_costs`]
+    /// is `false`, falls back to the flat `builtin_cpu` / `builtin_mem` costs
+    /// for any builtin without a per-builtin entry. When strict mode is
+    /// enabled, returns [`MachineError::MissingBuiltinCost`] instead so
+    /// incomplete cost models surface as a structural failure.
+    pub fn builtin_cost(
+        &self,
+        fun: DefaultFun,
+        args: &[Value],
+    ) -> Result<ExBudget, crate::MachineError> {
         if let Some(entry) = self.builtin_costs.get(&fun) {
-            entry.evaluate(args)
+            Ok(entry.evaluate(args))
+        } else if self.strict_builtin_costs {
+            Err(crate::MachineError::MissingBuiltinCost(format!("{fun:?}")))
         } else {
-            ExBudget::new(self.builtin_cpu, self.builtin_mem)
+            Ok(ExBudget::new(self.builtin_cpu, self.builtin_mem))
         }
     }
 }
@@ -1759,10 +1787,12 @@ mod tests {
         let model =
             CostModel::from_alonzo_genesis_params(&sample_params()).expect("derive cost model");
         // sha2_256 on empty input — per-builtin entry must win over flat fallback
-        let cost = model.builtin_cost(
-            DefaultFun::Sha2_256,
-            &[Value::Constant(crate::types::Constant::ByteString(vec![]))],
-        );
+        let cost = model
+            .builtin_cost(
+                DefaultFun::Sha2_256,
+                &[Value::Constant(crate::types::Constant::ByteString(vec![]))],
+            )
+            .expect("per-builtin entry present");
         assert_eq!(
             cost.cpu, 2_477_736,
             "builtin_cost must use per-builtin entry, not flat fallback"
@@ -1774,22 +1804,26 @@ mod tests {
         let model =
             CostModel::from_alonzo_genesis_params(&sample_params()).expect("derive cost model");
 
-        let short = model.builtin_cost(
-            DefaultFun::VerifyEd25519Signature,
-            &[
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 1])),
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
-            ],
-        );
-        let long = model.builtin_cost(
-            DefaultFun::VerifyEd25519Signature,
-            &[
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 9])),
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
-            ],
-        );
+        let short = model
+            .builtin_cost(
+                DefaultFun::VerifyEd25519Signature,
+                &[
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 1])),
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
+                ],
+            )
+            .expect("per-builtin entry present");
+        let long = model
+            .builtin_cost(
+                DefaultFun::VerifyEd25519Signature,
+                &[
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 9])),
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
+                ],
+            )
+            .expect("per-builtin entry present");
 
         assert_eq!(short.cpu, 5_010);
         assert_eq!(long.cpu, 5_090);
@@ -1800,14 +1834,16 @@ mod tests {
         let model =
             CostModel::from_alonzo_genesis_params(&sample_params()).expect("derive cost model");
 
-        let cost = model.builtin_cost(
-            DefaultFun::VerifySchnorrSecp256k1Signature,
-            &[
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 3])),
-                Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
-            ],
-        );
+        let cost = model
+            .builtin_cost(
+                DefaultFun::VerifySchnorrSecp256k1Signature,
+                &[
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 32])),
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 3])),
+                    Value::Constant(crate::types::Constant::ByteString(vec![0u8; 64])),
+                ],
+            )
+            .expect("per-builtin entry present");
 
         assert_eq!(cost.cpu, 7_060);
         assert_eq!(cost.mem, 10);
@@ -1815,11 +1851,35 @@ mod tests {
 
     #[test]
     fn builtin_cost_falls_back_for_unknown_builtin() {
-        // Default model has no per-builtin entries — flat fallback applies.
+        // Default (non-strict) model has no per-builtin entries — flat fallback applies.
         let model = CostModel::default();
-        let cost = model.builtin_cost(DefaultFun::AddInteger, &[]);
+        assert!(
+            !model.strict_builtin_costs,
+            "default model must not be strict so tests/non-production paths can use flat fallback"
+        );
+        let cost = model
+            .builtin_cost(DefaultFun::AddInteger, &[])
+            .expect("non-strict fallback returns Ok");
         assert_eq!(cost.cpu, model.builtin_cpu);
         assert_eq!(cost.mem, model.builtin_mem);
+    }
+
+    #[test]
+    fn strict_builtin_cost_errors_on_missing_entry() {
+        // Production-derived models reject uncalibrated builtins instead of
+        // silently charging the flat fallback. We approximate this by toggling
+        // strict mode on a default model and looking up a builtin with no entry.
+        let model = CostModel {
+            strict_builtin_costs: true,
+            ..CostModel::default()
+        };
+        let err = model
+            .builtin_cost(DefaultFun::AddInteger, &[])
+            .expect_err("strict mode must reject missing builtin entry");
+        assert!(matches!(
+            err,
+            crate::MachineError::MissingBuiltinCost(_)
+        ));
     }
 
     #[test]

@@ -86,7 +86,7 @@ fn cbor_bytes(len: usize) -> Vec<u8> {
 
 /// Encodes a CBOR text item of the given UTF-8 byte length.
 fn cbor_text(len: usize) -> Vec<u8> {
-    let text: String = std::iter::repeat('x').take(len).collect();
+    let text = "x".repeat(len);
     let mut enc = Encoder::new();
     enc.text(&text);
     enc.into_bytes()

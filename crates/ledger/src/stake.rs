@@ -905,7 +905,7 @@ mod tests {
     fn drep_distribution_includes_proposal_deposits() {
         let cred = test_cred(1);
         let drep = DRep::KeyHash([0xAA; 28]);
-        let stake_creds = make_stake_creds_with_drep(cred, drep.clone());
+        let stake_creds = make_stake_creds_with_drep(cred, drep);
 
         let mut snapshot = StakeSnapshot::empty();
         snapshot.stake.add(cred, 1000);
@@ -922,7 +922,7 @@ mod tests {
     fn drep_distribution_no_proposal_deposits() {
         let cred = test_cred(2);
         let drep = DRep::KeyHash([0xBB; 28]);
-        let stake_creds = make_stake_creds_with_drep(cred, drep.clone());
+        let stake_creds = make_stake_creds_with_drep(cred, drep);
 
         let mut snapshot = StakeSnapshot::empty();
         snapshot.stake.add(cred, 2000);

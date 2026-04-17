@@ -582,9 +582,9 @@ pub enum LedgerError {
 
     /// Post-PV11 variant of `PPViewHashesDontMatch`.
     ///
-    /// Reference: `Cardano.Ledger.Conway.Rules.Utxo` — at protocol version
-    /// >= 11 the error is reported as `ScriptIntegrityHashMismatch` instead
-    /// of `PPViewHashesDontMatch`.
+    /// Reference: `Cardano.Ledger.Conway.Rules.Utxo` — at protocol version >= 11
+    /// the error is reported as `ScriptIntegrityHashMismatch` instead of
+    /// `PPViewHashesDontMatch`.
     #[error(
         "script integrity hash mismatch (PV>=11): declared {declared:02x?}, computed {computed:02x?}"
     )]

@@ -649,7 +649,7 @@ pub fn validate_reference_scripts_well_formed(
 ) -> Result<(), LedgerError> {
     let mut malformed: Vec<[u8; 28]> = Vec::new();
 
-    let iter = outputs.iter().chain(collateral_return.into_iter());
+    let iter = outputs.iter().chain(collateral_return);
     for txout in iter {
         if let Some(sref) = &txout.script_ref {
             if !is_plutus_script_well_formed(&sref.0, evaluator) {
@@ -1256,7 +1256,6 @@ mod tests {
     fn ppup_proposer_not_in_gen_delegs_excluded() {
         use crate::eras::shelley::ShelleyUpdate;
         use crate::protocol_params::ProtocolParameterUpdate;
-        use crate::state::GenesisDelegationState;
         use std::collections::BTreeMap;
 
         let outsider: [u8; 28] = [0xFF; 28];

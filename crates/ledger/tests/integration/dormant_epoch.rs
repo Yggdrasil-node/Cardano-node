@@ -10,7 +10,7 @@
 use super::*;
 use std::collections::BTreeMap;
 use yggdrasil_ledger::{
-    GovernanceActionState, IndividualStake, StakeSnapshot, StakeSnapshots, apply_epoch_boundary,
+    GovernanceActionState, StakeSnapshot, StakeSnapshots, apply_epoch_boundary,
 };
 
 // ---------------------------------------------------------------------------

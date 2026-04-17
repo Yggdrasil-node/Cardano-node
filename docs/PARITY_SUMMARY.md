@@ -230,7 +230,7 @@
 - ✅ Collateral validation (all edge cases)
 - ✅ Reward calculation (upstream RUPD→SNAP ordering + reserves accounting)
 - ✅ Governance ratification tally (AlwaysNoConfidence auto-yes, deposit lifecycle, lineage subtree pruning complete)
-- 📊 **Validation**: Pass 1400+ ledger tests
+- 📊 **Validation**: Workspace test baseline currently at 4137 discovered tests (`cargo test-all -- --list`)
 - 📊 **Testnet**: Sync 50+ epochs without error
 
 ### Phase 2: Plutus (Weeks 3-5)
@@ -303,7 +303,7 @@
 1. **Read** [docs/PARITY_PLAN.md](docs/PARITY_PLAN.md) for detailed subsystem analysis
 2. **Review** UPSTREAM_RESEARCH.md for governance enactment & ratification rules
 3. **Assign** Phase 1 tasks (ledger rules completion)
-4. **Baseline** current test suite (1228 → target 1400+)
+4. **Baseline** current test suite (current discovered baseline: 4137 tests)
 5. **Schedule** weekly sync to track phase progress
 
 ---

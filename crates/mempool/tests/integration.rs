@@ -882,19 +882,21 @@ fn shared_mempool_capacity_returns_configured_max() {
 /// Returns a `ProtocolParameters` instance with a very high `min_fee_a` so
 /// that entries with a low declared fee will fail the fee check.
 fn params_with_high_min_fee() -> ProtocolParameters {
-    let mut p = ProtocolParameters::default();
     // min_fee_a is the coefficient; set it very high so even 500-byte txs
     // require a huge fee.
-    p.min_fee_a = 1_000_000; // lovelace per byte
-    p
+    ProtocolParameters {
+        min_fee_a: 1_000_000, // lovelace per byte
+        ..ProtocolParameters::default()
+    }
 }
 
 /// Returns a `ProtocolParameters` instance with a very small `max_tx_size`
 /// so that all but the tiniest entries will fail the size check.
 fn params_with_small_max_tx_size() -> ProtocolParameters {
-    let mut p = ProtocolParameters::default();
-    p.max_tx_size = 50; // bytes
-    p
+    ProtocolParameters {
+        max_tx_size: 50, // bytes
+        ..ProtocolParameters::default()
+    }
 }
 
 #[test]

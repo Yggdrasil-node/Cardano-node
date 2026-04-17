@@ -294,7 +294,7 @@ impl CekMachine {
                 if forces >= needed_forces && args.len() >= needed_args {
                     let result =
                         evaluate_builtin(builtin, &args, &self.cost_model, &mut self.logs)?;
-                    let cost = self.cost_model.builtin_cost(builtin, &args);
+                    let cost = self.cost_model.builtin_cost(builtin, &args)?;
                     self.budget.spend(cost)?;
                     Ok(State::Returning(result))
                 } else {
@@ -328,7 +328,7 @@ impl CekMachine {
 
                 if new_forces >= needed_forces && args.len() >= needed_args {
                     let result = evaluate_builtin(fun, &args, &self.cost_model, &mut self.logs)?;
-                    let cost = self.cost_model.builtin_cost(fun, &args);
+                    let cost = self.cost_model.builtin_cost(fun, &args)?;
                     self.budget.spend(cost)?;
                     Ok(State::Returning(result))
                 } else {
@@ -1151,6 +1151,7 @@ mod tests {
             builtin_cpu: 1_000,
             builtin_mem: 1_000,
             builtin_costs: std::collections::HashMap::new(),
+            strict_builtin_costs: false,
         }
     }
 

@@ -1235,7 +1235,7 @@ pub fn chrono_parse_system_start(s: &str) -> Option<f64> {
     let hour: u32 = s.get(11..13)?.parse().ok()?;
     let min: u32 = s.get(14..16)?.parse().ok()?;
     let sec: u32 = s.get(17..19)?.parse().ok()?;
-    if month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || min > 59 || sec > 59 {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 59 {
         return None;
     }
     // Convert to days since epoch using a well-known civil-calendar formula.

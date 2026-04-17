@@ -419,6 +419,13 @@ pub fn check_is_leader(
 ///
 /// Reference: `validateVRFSignature` in
 /// `Ouroboros.Consensus.Protocol.Praos`.
+//
+// Argument count mirrors upstream `validateVRFSignature`, which threads
+// the verification key, slot, epoch nonce, proof bytes, stake fraction
+// (numerator/denominator), active-slot coefficient, and VRF mode through
+// a single call site. Bagging into a struct here would diverge from the
+// upstream signature without simplifying the call sites.
+#[allow(clippy::too_many_arguments)]
 pub fn verify_leader_proof(
     vk: &VrfVerificationKey,
     slot: SlotNo,
@@ -709,6 +716,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(non_snake_case)] // mirrors upstream `mkInputVRF` from `Ouroboros.Consensus.Protocol.Praos.VRF`
     fn mkInputVRF_matches_upstream_blake2b_hash() {
         // Verify that praos_vrf_input is Blake2b-256 of the raw slot||nonce bytes.
         let slot = SlotNo(42);

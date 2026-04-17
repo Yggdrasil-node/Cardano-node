@@ -87,6 +87,19 @@ pub enum MachineError {
     /// Cryptographic operation failed (e.g. invalid BLS point).
     #[error("crypto error: {0}")]
     CryptoError(String),
+
+    /// Cost model is missing an entry for a builtin invoked at runtime.
+    ///
+    /// Upstream cost models always cover every builtin available at the
+    /// active language version; a missing entry indicates an incomplete or
+    /// malformed cost model rather than a script-level failure. Surfaced as
+    /// a structural error so it cannot be collapsed to opaque
+    /// `EvaluationFailure`.
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Plutus.CostModels` —
+    /// `mkCostModel` requires complete coverage of `DefaultFun`.
+    #[error("cost model missing entry for builtin: {0}")]
+    MissingBuiltinCost(String),
 }
 
 impl MachineError {

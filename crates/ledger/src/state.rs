@@ -5582,7 +5582,7 @@ impl LedgerState {
                     tx.body
                         .proposal_procedures
                         .as_ref()
-                        .map_or(false, |p| !p.is_empty()),
+                        .is_some_and(|p| !p.is_empty()),
                     &mut staged_drep_state,
                     &mut staged_num_dormant,
                     self.current_epoch,
@@ -7669,7 +7669,7 @@ impl LedgerState {
             let conway_blk_v3_hashes = {
                 let ws_bytes = witness_bytes.as_deref();
                 let ws_decoded =
-                    ws_bytes.map(|wb| crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb));
+                    ws_bytes.map(crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes);
                 let ws_ref = match &ws_decoded {
                     Some(Ok(w)) => Some(w),
                     _ => None,
@@ -7864,7 +7864,7 @@ impl LedgerState {
                 update_dormant_drep_expiries(
                     body.proposal_procedures
                         .as_ref()
-                        .map_or(false, |p| !p.is_empty()),
+                        .is_some_and(|p| !p.is_empty()),
                     &mut staged_drep_state,
                     &mut staged_num_dormant,
                     self.current_epoch,
@@ -8840,7 +8840,7 @@ fn validate_conway_proposals(
     protocol_version: Option<(u64, u64)>,
     gov_action_deposit: Option<u64>,
     expected_network_id: Option<u8>,
-    protocol_params: Option<&crate::protocol_params::ProtocolParameters>,
+    _protocol_params: Option<&crate::protocol_params::ProtocolParameters>,
     enact_state: &EnactState,
     gov_action_lifetime: Option<u64>,
 ) -> Result<(), LedgerError> {
@@ -10179,7 +10179,9 @@ fn authorize_committee_hot_credential(
     }
 
     // Step 3: insert new hot-key authorization.
-    let member_state = committee_state.get_mut(&cold_credential).unwrap();
+    let Some(member_state) = committee_state.get_mut(&cold_credential) else {
+        return Err(LedgerError::CommitteeIsUnknown(cold_credential));
+    };
     member_state.set_authorization(Some(CommitteeAuthorization::CommitteeHotCredential(
         hot_credential,
     )));
@@ -10217,7 +10219,9 @@ fn resign_committee_cold_credential(
     }
 
     // Step 3: insert resignation.
-    let member_state = committee_state.get_mut(&cold_credential).unwrap();
+    let Some(member_state) = committee_state.get_mut(&cold_credential) else {
+        return Err(LedgerError::CommitteeIsUnknown(cold_credential));
+    };
     member_state.set_authorization(Some(CommitteeAuthorization::CommitteeMemberResigned(
         anchor,
     )));
@@ -24343,7 +24347,7 @@ mod tests {
         utxo.insert(existing_input.clone(), MultiEraTxOut::Babbage(existing_out));
 
         // Tx A: spends existing_input (with ref-script → 3 bytes).
-        let tx_a_inputs = vec![existing_input];
+        let tx_a_inputs = [existing_input];
         let total_a = utxo.total_ref_scripts_size(&tx_a_inputs, None);
         assert_eq!(total_a, 3);
 
@@ -24393,7 +24397,7 @@ mod tests {
 
         // --- Tx A: spends existing_input (3 bytes from original UTxO).
         let tx_a_id = [0xAA; 32];
-        let tx_a_inputs = vec![existing_input];
+        let tx_a_inputs = [existing_input];
         let mut tx_a_ref_total: usize = 0;
         for input in tx_a_inputs.iter() {
             let txout = overlay.get(input).or_else(|| utxo.get(input));
@@ -24420,7 +24424,7 @@ mod tests {
 
         // --- Tx B: ref_inputs = [Tx A's output at index 0].
         // With running UTxO overlay, Tx B CAN see Tx A's output.
-        let tx_b_ref_inputs = vec![tx_a_out_key];
+        let tx_b_ref_inputs = [tx_a_out_key];
         let mut tx_b_ref_total: usize = 0;
         for input in tx_b_ref_inputs.iter() {
             let txout = overlay.get(input).or_else(|| utxo.get(input));

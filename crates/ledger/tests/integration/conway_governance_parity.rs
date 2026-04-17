@@ -2136,7 +2136,7 @@ fn post_bootstrap_rejects_withdrawal_without_drep_delegation() {
     state.stake_credentials_mut().register(cred);
     state
         .reward_accounts_mut()
-        .insert(account.clone(), RewardAccountState::new(1_000, None));
+        .insert(account, RewardAccountState::new(1_000, None));
 
     let consumed = 10_000_000u64;
     let withdrawal_amount = 1_000u64;
@@ -2195,7 +2195,7 @@ fn post_bootstrap_accepts_withdrawal_with_drep_delegation() {
         .set_delegated_drep(Some(drep));
     state
         .reward_accounts_mut()
-        .insert(account.clone(), RewardAccountState::new(1_000, None));
+        .insert(account, RewardAccountState::new(1_000, None));
 
     // Register the DRep (required for non-bootstrap).
     state
@@ -2251,7 +2251,7 @@ fn bootstrap_phase_allows_withdrawal_without_drep_delegation() {
     state.stake_credentials_mut().register(cred);
     state
         .reward_accounts_mut()
-        .insert(account.clone(), RewardAccountState::new(500, None));
+        .insert(account, RewardAccountState::new(500, None));
 
     let consumed = 10_000_000u64;
     let withdrawal_amount = 500u64;
@@ -2305,7 +2305,7 @@ fn post_bootstrap_allows_script_hash_withdrawal_without_drep() {
     state.stake_credentials_mut().register(cred);
     state
         .reward_accounts_mut()
-        .insert(account.clone(), RewardAccountState::new(800, None));
+        .insert(account, RewardAccountState::new(800, None));
 
     let consumed = 10_000_000u64;
     let withdrawal_amount = 800u64;
@@ -2759,7 +2759,7 @@ fn ratification_thresholds_evolve_after_parameter_change() {
     };
     state
         .reward_accounts_mut()
-        .insert(ra_target.clone(), RewardAccountState::new(0, None));
+        .insert(ra_target, RewardAccountState::new(0, None));
 
     // Reward accounts for proposal return addresses.
     state.reward_accounts_mut().insert(
@@ -2858,7 +2858,7 @@ fn ratification_thresholds_evolve_after_parameter_change() {
         gov_action_index: 0,
     };
     let mut withdrawals = BTreeMap::new();
-    withdrawals.insert(ra_target.clone(), 100u64);
+    withdrawals.insert(ra_target, 100u64);
     let proposal_b = ProposalProcedure {
         deposit: 100_000,
         reward_account: reward_account_bytes([0xA2; 28]),

@@ -62,13 +62,6 @@ struct U256 {
 }
 
 impl U256 {
-    const ZERO: Self = U256 { hi: 0, lo: 0 };
-
-    #[inline]
-    fn from_u128(v: u128) -> Self {
-        U256 { hi: 0, lo: v }
-    }
-
     #[inline]
     fn is_zero(self) -> bool {
         self.hi == 0 && self.lo == 0
@@ -260,12 +253,9 @@ pub struct EpochRewardPot {
 /// `deltaR1 = rationalToCoinViaFloor (min 1 eta * rho * reserves)`.
 pub fn compute_epoch_reward_pot(params: &RewardParams) -> EpochRewardPot {
     // η clamped to 1: min(1, eta).
-    let eta_clamped = if params.eta.denominator == 0 {
-        UnitInterval {
-            numerator: 1,
-            denominator: 1,
-        }
-    } else if params.eta.numerator >= params.eta.denominator {
+    let eta_clamped = if params.eta.denominator == 0
+        || params.eta.numerator >= params.eta.denominator
+    {
         UnitInterval {
             numerator: 1,
             denominator: 1,
@@ -346,13 +336,13 @@ pub fn max_pool_reward(
 
     // σ' = min(σ, z) where σ = p/t, z = 1/k.
     // Compare p/t vs 1/k ↔ p*k vs t.
-    let (sig_n, sig_d) = if p.checked_mul(k).map_or(false, |pk| pk <= t) {
+    let (sig_n, sig_d) = if p.checked_mul(k).is_some_and(|pk| pk <= t) {
         (p, t)
     } else {
         (1u128, k)
     };
     // s' = min(s, z)
-    let (s_n, s_d) = if pi.checked_mul(k).map_or(false, |pk| pk <= t) {
+    let (s_n, s_d) = if pi.checked_mul(k).is_some_and(|pk| pk <= t) {
         (pi, t)
     } else {
         (1u128, k)
@@ -1632,9 +1622,15 @@ mod tests {
         // Small values.
         assert_eq!(U256::widening_mul(7, 13), U256 { hi: 0, lo: 91 });
         // One operand zero.
-        assert_eq!(U256::widening_mul(0, u128::MAX), U256::ZERO);
+        assert_eq!(U256::widening_mul(0, u128::MAX), U256 { hi: 0, lo: 0 });
         // Max × 1 = MAX.
-        assert_eq!(U256::widening_mul(u128::MAX, 1), U256::from_u128(u128::MAX));
+        assert_eq!(
+            U256::widening_mul(u128::MAX, 1),
+            U256 {
+                hi: 0,
+                lo: u128::MAX
+            }
+        );
     }
 
     #[test]
@@ -1650,8 +1646,11 @@ mod tests {
 
     #[test]
     fn u256_add_basic() {
-        let a = U256::from_u128(u128::MAX);
-        let b = U256::from_u128(1);
+        let a = U256 {
+            hi: 0,
+            lo: u128::MAX,
+        };
+        let b = U256 { hi: 0, lo: 1 };
         let sum = a.add(b);
         assert_eq!(sum, U256 { hi: 1, lo: 0 });
     }
@@ -1666,23 +1665,21 @@ mod tests {
     #[test]
     fn u256_div_u128_exact() {
         // 100 / 10 = 10.
-        let v = U256::from_u128(100);
+        let v = U256 { hi: 0, lo: 100 };
         assert_eq!(v.div_u128(10), 10);
     }
 
     #[test]
     fn u256_div_floor_basic() {
         // Small values: 7 / 3 = 2.
-        let num = U256::from_u128(7);
-        let den = U256::from_u128(3);
+        let num = U256 { hi: 0, lo: 7 };
+        let den = U256 { hi: 0, lo: 3 };
         assert_eq!(u256_div_floor(num, den), 2);
     }
 
     #[test]
     fn u256_div_floor_both_large() {
         // (2^128 + 1) / 2 = floor = 2^127.  Denominator > u128.
-        let big_num = U256 { hi: 1, lo: 1 };
-        let big_den = U256::from_u128(2);
         // (2^128+1)/2 = 2^127 + 0.5, floor = 2^127 which is ~1.7×10^38.
         // Our function caps at u64 — but 2^127 exceeds u64.
         // Use smaller values to stay in u64 range.
@@ -1729,8 +1726,6 @@ mod tests {
                 denominator: 3,
             },
         };
-
-        let pot = compute_epoch_reward_pot(&params);
 
         // Single floor: floor(2/3 × 1/3 × 100) = floor(200/9) = floor(22.222...) = 22.
         // Double floor: floor(floor(100 × 1/3) × 2/3) = floor(33 × 2/3) = floor(22) = 22.

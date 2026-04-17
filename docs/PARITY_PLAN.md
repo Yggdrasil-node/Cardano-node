@@ -54,6 +54,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - ✅ **OutsideForecast** — `validate_outside_forecast()` in `utxo.rs` implements upstream infrastructure from `Cardano.Ledger.Shelley.Rules.Utxo`; correctly modeled as no-op since `unsafeLinearExtendEpochInfo` makes the check always pass.
 - ✅ **BlocksMade tracking** — `LedgerState.blocks_made` (element 23, upstream `NewEpochState.nesBcur`) tracks per-pool block production; `record_block_producer()` called automatically from `apply_block_validated()` for non-Byron blocks; `take_blocks_made()` clears at epoch boundary. `derive_pool_performance()` computes `UnitInterval` ratios from internal block counts + stake distribution; `apply_epoch_boundary()` uses internally derived performance when caller passes empty performance map.
 - ✅ **Dynamic block-producer nonce/sigma** — Block producer loop now reads live epoch nonce and pool relative stake from `SharedBlockProducerState` (falling back to static config). Sync pipeline pushes updated values via `update_bp_state_nonce()` after every batch and `update_bp_state_sigma()` after epoch boundary stake snapshot rotation. `main.rs` computes `bp_pool_key_hash` (Blake2b-224 of cold issuer key) and threads both shared state and hash into the reconnecting sync request. Fixes leader election stalling after the first epoch transition.
+- ✅ **Plutus cost-model strict mode (April 2026)** — `CostModel` now carries `strict_builtin_costs: bool`. `CostModel::from_alonzo_genesis_params()` (production-derived models from Alonzo named maps and Conway V3 array) sets it to `true`. `CostModel::builtin_cost()` returns `Result<ExBudget, MachineError>` and yields the new structural `MachineError::MissingBuiltinCost(name)` for any builtin invoked at runtime that lacks a per-builtin entry. `CekMachine` propagates the error so incomplete cost models surface as a structural failure (not collapsed to opaque `EvaluationFailure`) instead of being silently masked by the flat `builtin_cpu`/`builtin_mem` fallback. The non-strict default is retained so unit tests can keep using `CostModel::default()` for synthetic UPLC scripts. Reference: `Cardano.Ledger.Alonzo.Plutus.CostModels` — `mkCostModel` requires complete builtin coverage.
 - ✅ **Protocol parameters keys 12 & 13** — `ProtocolParameters.d` (decentralization, CDDL key 12, `Option<UnitInterval>`) and `ProtocolParameters.extra_entropy` (CDDL key 13, `Option<Nonce>`) added with full CBOR map round-trip codec, `ProtocolParameterUpdate` propagation, `apply_update()` support, and Shelley genesis wiring (`decentralisationParam`, `extraEntropy` JSON). Present in Shelley–Alonzo, naturally absent in Babbage/Conway.
 - ✅ **ppuWellFormed cross-field over-validation removal (Round 75, Gap AN)** — `conway_protocol_param_update_well_formed()` included three checks not in upstream `ppuWellFormed` (`Cardano.Ledger.Conway.PParams`): effective-zero checks merging proposed values with current protocol params, and a cross-field `max_tx_size > max_block_body_size` check. Upstream only validates individual proposed field values for non-zero without merging or cross-referencing. Removed the extra block and unused `protocol_params` parameter. Updated 2 existing tests, added 1 new regression test.
 
@@ -1047,7 +1048,7 @@ TX expires (TTL):
 ### Validation Milestones
 
 **Milestone 1: Ledger Rules Complete** (end of Phase 1)
-- ✅ `cargo test --workspace` passes with 1400+ tests
+- ✅ `cargo test-all -- --list` currently discovers 4137 tests
 - ✅ Collateral validation handles 100% of Alonzo+ blocks
 - ✅ Reward calculation matches mainnet within 1 lovelace
 - ✅ Governance proposals ratify correctly for 50+ actions
@@ -1081,8 +1082,8 @@ TX expires (TTL):
 ### Regression Prevention
 
 **Continuous**:
-- ✅ `cargo test-all` runs on every commit (1400+ tests)
-- ✅ `cargo lint` clean (except pre-existing lint in cddl-codegen, crypto)
+- ✅ `cargo test-all` runs on every commit (currently 4137 discovered tests)
+- ✅ `cargo lint` is clippy `-D warnings` clean across all crates and targets
 - ✅ CBOR roundtrip parity tests golden comparisons
 
 **Weekly**:

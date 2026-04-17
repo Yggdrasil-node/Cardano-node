@@ -366,13 +366,12 @@ pub fn apply_epoch_boundary(
     // `ssStakeGo` — the same snapshot used for reward distribution.
     // Pre-rotation in our code, `snapshots.go` corresponds to upstream's
     // `ssStakeGo` at the time `startStep` would read it.
-    let effective_performance: BTreeMap<PoolKeyHash, UnitInterval>;
-    if pool_performance.is_empty() && !ledger.blocks_made().is_empty() {
-        effective_performance =
-            derive_pool_performance(ledger.blocks_made(), &snapshots.go, d_param);
-    } else {
-        effective_performance = pool_performance.clone();
-    }
+    let effective_performance: BTreeMap<PoolKeyHash, UnitInterval> =
+        if pool_performance.is_empty() && !ledger.blocks_made().is_empty() {
+            derive_pool_performance(ledger.blocks_made(), &snapshots.go, d_param)
+        } else {
+            pool_performance.clone()
+        };
     // Clear blocks_made for the new epoch (upstream NEWEPOCH rotates nesBcur).
     ledger.take_blocks_made();
 
@@ -1230,7 +1229,7 @@ fn ratify_and_enact(
         let is_delaying = delaying_action(gov_action);
         let is_expired = action_state
             .expires_after()
-            .map_or(false, |ea| ea.0 < current_epoch.0);
+            .is_some_and(|ea| ea.0 < current_epoch.0);
 
         // --- Upstream ratifyTransition guard checks (order matters) ---
         //
@@ -2394,7 +2393,7 @@ mod tests {
         let ra = test_reward_account(0xD0);
         ledger
             .reward_accounts_mut()
-            .insert(ra.clone(), RewardAccountState::new(0, None));
+            .insert(ra, RewardAccountState::new(0, None));
 
         // Parent: ParameterChange proposed in epoch 0, expires at epoch 1.
         let parent_id = test_gov_action_id(0xA0, 0);
@@ -3418,35 +3417,6 @@ mod tests {
 
     // -- Enacted deposit refund -------------------------------------------
 
-    /// Helper that creates a governance-ready ledger with a proposal whose
-    /// deposit is set to `deposit_amount` and whose return account is
-    /// `reward_account_byte`.  An InfoAction is used so it will be
-    /// automatically ratified at the next epoch boundary.
-    fn make_ledger_with_deposited_info_action(
-        deposit_amount: u64,
-        reward_account_byte: u8,
-    ) -> (LedgerState, GovActionId) {
-        let mut ledger = make_governance_ledger();
-        let ra = test_reward_account(reward_account_byte);
-        ledger
-            .reward_accounts_mut()
-            .insert(ra, RewardAccountState::new(0, None));
-
-        let proposal = crate::eras::conway::ProposalProcedure {
-            deposit: deposit_amount,
-            reward_account: ra.to_bytes().to_vec(),
-            gov_action: GovAction::InfoAction,
-            anchor: Anchor {
-                url: String::new(),
-                data_hash: [0; 32],
-            },
-        };
-        let gai = test_gov_action_id(0xEA, 0);
-        let gas = GovernanceActionState::new(proposal);
-        ledger.governance_actions_mut().insert(gai.clone(), gas);
-        (ledger, gai)
-    }
-
     #[test]
     fn test_enacted_action_deposit_refunded_to_return_account() {
         let deposit = 500_000_000u64;
@@ -4425,12 +4395,11 @@ mod tests {
             network: 1,
             credential: registered_cred,
         };
-        ledger.reward_accounts_mut().insert(
-            registered_ra.clone(),
-            crate::RewardAccountState::new(0, None),
-        );
+        ledger
+            .reward_accounts_mut()
+            .insert(registered_ra, crate::RewardAccountState::new(0, None));
         let mut wdrls_b = BTreeMap::new();
-        wdrls_b.insert(registered_ra.clone(), 200);
+        wdrls_b.insert(registered_ra, 200);
         let proposal_b = crate::eras::conway::ProposalProcedure {
             deposit: 0,
             reward_account: vec![],
@@ -4535,9 +4504,9 @@ mod tests {
         };
         ledger
             .reward_accounts_mut()
-            .insert(ra.clone(), crate::RewardAccountState::new(0, None));
+            .insert(ra, crate::RewardAccountState::new(0, None));
         let mut wdrls = BTreeMap::new();
-        wdrls.insert(ra.clone(), 800);
+        wdrls.insert(ra, 800);
         let proposal = crate::eras::conway::ProposalProcedure {
             deposit: 0,
             reward_account: vec![],
@@ -5577,7 +5546,7 @@ mod tests {
         // Pool 2: expected 25% of 10 = 2.5, actual 5.
         // performance = 5 * 1000 / (250 * 10) = 5000 / 2500 = 2.0
         let p2 = perf.get(&test_pool(2)).unwrap();
-        assert!(p2.numerator * 1 > p2.denominator * 1); // > 1.0
+        assert!(p2.numerator > p2.denominator); // > 1.0
     }
 
     #[test]

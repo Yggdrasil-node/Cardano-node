@@ -2541,12 +2541,10 @@ mod tests {
         assert_eq!(major, 2, "value should be byte string");
         // Additional info tells length
         let info = bytes[value_start] & 0x1f;
-        let (payload_start, _payload_len) = if info < 24 {
-            (value_start + 1, info as usize)
-        } else if info == 24 {
-            (value_start + 2, bytes[value_start + 1] as usize)
-        } else {
-            panic!("unexpected byte string length encoding");
+        let (payload_start, _payload_len) = match info {
+            0..=23 => (value_start + 1, info as usize),
+            24 => (value_start + 2, bytes[value_start + 1] as usize),
+            _ => panic!("unexpected byte string length encoding"),
         };
         // First byte of payload should be indefinite array start
         assert_eq!(
@@ -2608,12 +2606,10 @@ mod tests {
         pos += 1;
         for _ in 0..arr_len {
             // Skip each integer (could be 1 byte for small values)
-            if bytes[pos] < 24 {
-                pos += 1;
-            } else if bytes[pos] == 24 {
-                pos += 2;
-            } else {
-                panic!("test values should be small");
+            match bytes[pos] {
+                0..=23 => pos += 1,
+                24 => pos += 2,
+                _ => panic!("test values should be small"),
             }
         }
         // Now we should be at V1 key

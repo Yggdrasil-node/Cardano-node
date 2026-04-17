@@ -655,7 +655,7 @@ impl Mempool {
             // Size check.
             let invalid = validate_tx_size(params, entry.body.len()).is_err()
                 // ExUnits check (script txs only).
-                || total_ex_units.as_ref().map_or(false, |eu| validate_tx_ex_units(params, eu).is_err())
+                || total_ex_units.as_ref().is_some_and(|eu| validate_tx_ex_units(params, eu).is_err())
                 // Minimum fee check.
                 || validate_fee(params, entry.body.len(), total_ex_units.as_ref(), entry.fee).is_err();
 

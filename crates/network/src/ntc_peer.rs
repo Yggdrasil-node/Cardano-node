@@ -128,6 +128,7 @@ pub enum NtcPeerError {
 // ---------------------------------------------------------------------------
 
 /// Encode NtC version data as CBOR `[network_magic, query]`.
+#[cfg(test)]
 fn encode_ntc_version_data(magic: u32, query: bool) -> Vec<u8> {
     let mut enc = Encoder::new();
     enc.array(2).unsigned(magic as u64).bool(query);

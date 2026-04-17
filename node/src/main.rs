@@ -2471,8 +2471,10 @@ mod tests {
     #[test]
     fn forged_header_protocol_version_uses_ledger_protocol_when_present() {
         let mut state = LedgerState::new(Era::Byron);
-        let mut params = yggdrasil_ledger::ProtocolParameters::default();
-        params.protocol_version = Some((9, 1));
+        let params = yggdrasil_ledger::ProtocolParameters {
+            protocol_version: Some((9, 1)),
+            ..yggdrasil_ledger::ProtocolParameters::default()
+        };
         state.set_protocol_params(params);
 
         assert_eq!(forged_header_protocol_version(&state, 10), (9, 1));
