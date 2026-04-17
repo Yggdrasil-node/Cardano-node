@@ -6833,6 +6833,7 @@ impl LedgerState {
                     tx_id.0,
                     body.collateral.as_deref(),
                     None,
+                    body.outputs.len(),
                 );
             }
         }
@@ -7281,6 +7282,7 @@ impl LedgerState {
                     tx_id.0,
                     body.collateral.as_deref(),
                     body.collateral_return.as_ref(),
+                    body.outputs.len(),
                 );
             }
         }
@@ -8038,6 +8040,7 @@ impl LedgerState {
                     tx_id.0,
                     body.collateral.as_deref(),
                     body.collateral_return.as_ref(),
+                    body.outputs.len(),
                 );
             }
         }
@@ -8437,6 +8440,22 @@ fn conway_expected_previous_hard_fork_version(
             prev_action_id,
             protocol_version,
         } => {
+            // Upstream safety guard from `preceedingHardFork`: when the
+            // proposed major version exceeds `succVersion(pvMajor current)`,
+            // always compare against the current protocol version instead of
+            // following the proposal chain.  This prevents chaining
+            // HardFork proposals that would result in jumping more than
+            // one major version ahead of the live protocol.
+            //
+            // Reference: `Cardano.Ledger.Conway.Rules.Gov` —
+            // `preceedingHardFork`:
+            //   | Just (pvMajor newProtVer) > succVersion (pvMajor (pp ^. ppProtocolVersionL))
+            //   -> Just (mPrev, newProtVer, pp ^. ppProtocolVersionL)
+            let cur = current_protocol_version?;
+            if protocol_version.0 > cur.0.saturating_add(1) {
+                return Some((prev_action_id.clone(), *protocol_version, cur));
+            }
+
             let expected = match prev_action_id {
                 Some(action_id) => governance_actions.get(action_id).and_then(|action_state| {
                     match &action_state.proposal().gov_action {
@@ -13185,6 +13204,88 @@ mod tests {
             invalid_result,
             Err(LedgerError::ProposalCantFollow { .. })
         ));
+    }
+
+    /// Upstream `preceedingHardFork` safety guard: when the proposed major
+    /// version exceeds `succVersion(pvMajor current)` (i.e. jumps more than
+    /// one major version ahead of the live protocol), the check must compare
+    /// against the current PP version rather than following the stored
+    /// proposal chain, so `pvCanFollow` fails.
+    ///
+    /// Example: current PP = 9.0, stored HardFork A = 10.0, new proposal B
+    /// referencing A with version 11.0 must be rejected.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Rules.Gov` — `preceedingHardFork`:
+    ///   `Just (pvMajor newProtVer) > succVersion (pvMajor (pp ^. ppProtocolVersionL))`
+    #[test]
+    fn test_hard_fork_chain_rejects_major_version_jump() {
+        let stored_id = sample_gov_action_id(70);
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut stored_actions = sample_governance_actions_with(vec![(
+            stored_id.clone(),
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+        )]);
+
+        // Proposal that chains off stored A: version 11.0 while current PP
+        // is 9.0 — jumps more than one major version, must be rejected.
+        let proposal = vec![sample_proposal(
+            GovAction::HardForkInitiation {
+                prev_action_id: Some(stored_id.clone()),
+                protocol_version: (11, 0),
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xBB; 32]),
+            &proposal,
+            EpochNo(0),
+            &mut stored_actions,
+            &stake_creds,
+            Some((9, 0)),
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::ProposalCantFollow { .. })),
+            "chained HardFork 9.0 → stored 10.0 → proposed 11.0 should be rejected: {:?}",
+            result
+        );
+
+        // Same chain but with current PP 10.0 — version 11.0 is within
+        // one major step, should be allowed.
+        let mut stored_actions2 = sample_governance_actions_with(vec![(
+            stored_id.clone(),
+            GovAction::HardForkInitiation {
+                prev_action_id: None,
+                protocol_version: (10, 0),
+            },
+        )]);
+        let ok_result = validate_conway_proposals(
+            crate::types::TxId([0xBB; 32]),
+            &proposal,
+            EpochNo(0),
+            &mut stored_actions2,
+            &stake_creds,
+            Some((10, 0)),
+            None,
+            None,
+            None,
+            &es,
+            None,
+        );
+        assert!(
+            ok_result.is_ok(),
+            "chained HardFork 10.0 → stored 10.0 → proposed 11.0 should be accepted: {:?}",
+            ok_result
+        );
     }
 
     #[test]

@@ -975,6 +975,7 @@ pub(crate) fn apply_collateral_only(
     tx_id: [u8; 32],
     collateral: Option<&[ShelleyTxIn]>,
     collateral_return: Option<&BabbageTxOut>,
+    num_outputs: usize,
 ) {
     // Remove collateral inputs.
     if let Some(collateral_inputs) = collateral {
@@ -983,12 +984,12 @@ pub(crate) fn apply_collateral_only(
         }
     }
     // Add collateral return output (Babbage+).
+    // Upstream `mkCollateralTxIn`: index = length(body outputs).
+    // Reference: `Cardano.Ledger.Babbage.TxBody` — `mkCollateralTxIn`.
     if let Some(ret) = collateral_return {
         let ret_txin = ShelleyTxIn {
             transaction_id: tx_id,
-            // The collateral return uses output index = 2^16 - 1 (65535)
-            // as a sentinel, matching upstream `CollRet` semantics.
-            index: u16::MAX,
+            index: num_outputs as u16,
         };
         utxo.insert(ret_txin, MultiEraTxOut::Babbage(ret.clone()));
     }

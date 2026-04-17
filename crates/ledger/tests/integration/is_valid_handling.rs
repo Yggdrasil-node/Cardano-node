@@ -645,3 +645,133 @@ fn babbage_block_is_valid_false_skips_mir_collection() {
         state.instantaneous_rewards().ir_reserves,
     );
 }
+
+/// Babbage block with `is_valid = false` tx with collateral return must place
+/// the collateral return output at index `body.outputs.len()`, not `u16::MAX`.
+///
+/// Upstream `mkCollateralTxIn`: `TxIn txId (mkTxIxFor body)` where
+/// `mkTxIxFor body = fromIntegral $ length (body ^. outputsTxBodyL)`.
+///
+/// Reference: `Cardano.Ledger.Babbage.TxBody` — `mkCollateralTxIn`.
+#[test]
+fn babbage_collateral_return_index_equals_outputs_len() {
+    let keyhash = [0xEE; 28];
+    let addr = enterprise_addr(1, &keyhash);
+
+    let mut state = LedgerState::new(Era::Babbage);
+    state.set_protocol_params(permissive_params());
+
+    let spend_input = ShelleyTxIn {
+        transaction_id: [0x60; 32],
+        index: 0,
+    };
+    let collateral_input = ShelleyTxIn {
+        transaction_id: [0x61; 32],
+        index: 0,
+    };
+    seed_utxo(&mut state, spend_input.clone(), &addr, 5_000_000);
+    seed_utxo(&mut state, collateral_input.clone(), &addr, 3_000_000);
+
+    // Transaction with 2 regular outputs + collateral return.
+    let body = BabbageTxBody {
+        inputs: vec![spend_input.clone()],
+        outputs: vec![
+            BabbageTxOut {
+                address: addr.clone(),
+                amount: Value::Coin(2_500_000),
+                datum_option: None,
+                script_ref: None,
+            },
+            BabbageTxOut {
+                address: addr.clone(),
+                amount: Value::Coin(2_500_000),
+                datum_option: None,
+                script_ref: None,
+            },
+        ],
+        fee: 0,
+        ttl: Some(1_000),
+        certificates: None,
+        withdrawals: None,
+        update: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: Some(vec![collateral_input.clone()]),
+        required_signers: None,
+        network_id: None,
+        collateral_return: Some(BabbageTxOut {
+            address: addr,
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        }),
+        total_collateral: Some(2_000_000),
+        reference_inputs: None,
+    };
+    let body_bytes = body.to_cbor_bytes();
+    let tx_id = compute_tx_id(&body_bytes);
+
+    let block = Block {
+        era: Era::Babbage,
+        header: BlockHeader {
+            hash: HeaderHash([0x04; 32]),
+            prev_hash: HeaderHash([0u8; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(1),
+            issuer_vkey: [0x11; 32],
+        },
+        transactions: vec![Tx {
+            id: tx_id,
+            body: body_bytes,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: Some(false),
+        }],
+        raw_cbor: None,
+        header_cbor_size: None,
+    };
+
+    state
+        .apply_block_validated(&block, None)
+        .expect("block with is_valid=false and collateral return should apply");
+
+    // Collateral input must be consumed.
+    assert!(
+        state.multi_era_utxo().get(&collateral_input).is_none(),
+        "collateral input must be consumed"
+    );
+
+    // Collateral return output must be at index = outputs.len() = 2.
+    let correct_return_txin = ShelleyTxIn {
+        transaction_id: tx_id.0,
+        index: 2, // body.outputs.len()
+    };
+    assert!(
+        state.multi_era_utxo().get(&correct_return_txin).is_some(),
+        "collateral return must be at index {} (= outputs.len()), \
+         but not found in UTxO",
+        2,
+    );
+
+    // No output should exist at the old sentinel (u16::MAX).
+    let old_sentinel_txin = ShelleyTxIn {
+        transaction_id: tx_id.0,
+        index: u16::MAX,
+    };
+    assert!(
+        state.multi_era_utxo().get(&old_sentinel_txin).is_none(),
+        "collateral return must NOT be at u16::MAX index"
+    );
+
+    // Normal outputs must NOT be produced for is_valid=false tx.
+    let output_0 = ShelleyTxIn {
+        transaction_id: tx_id.0,
+        index: 0,
+    };
+    assert!(
+        state.multi_era_utxo().get(&output_0).is_none(),
+        "regular output at index 0 must not be produced for is_valid=false"
+    );
+}
