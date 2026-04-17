@@ -1206,6 +1206,35 @@ async fn apply_cm_actions(
     changed
 }
 
+/// Split timeout-driven CM actions into those the governor can execute
+/// directly and those that should be handled by the inbound loop.
+///
+/// The inbound accept loop owns the abort-handle registry for inbound mux
+/// sessions, so inbound prune/terminate effects are deferred there.
+fn split_timeout_cm_actions_for_governor(
+    peer_manager: &OutboundPeerManager,
+    actions: Vec<CmAction>,
+) -> (Vec<CmAction>, usize) {
+    let mut applicable = Vec::new();
+    let mut deferred = 0usize;
+
+    for action in actions {
+        match &action {
+            CmAction::PruneConnections(_) | CmAction::StartResponderTimeout(_) => {
+                deferred += 1;
+            }
+            CmAction::TerminateConnection(conn_id)
+                if !peer_manager.warm_peers.contains_key(&conn_id.remote) =>
+            {
+                deferred += 1;
+            }
+            _ => applicable.push(action),
+        }
+    }
+
+    (applicable, deferred)
+}
+
 /// Run the local block-producer loop until shutdown.
 ///
 /// The loop advances a relative slot clock, evaluates Praos leadership using
@@ -1784,13 +1813,32 @@ pub async fn run_governor_loop<I, V, L, F>(
                     };
                     if !timeout_actions.is_empty() {
                         let action_count = timeout_actions.len();
+                        let (applicable_actions, deferred_actions) =
+                            split_timeout_cm_actions_for_governor(
+                                &peer_manager,
+                                timeout_actions,
+                            );
+
+                        if deferred_actions > 0 {
+                            tracer.trace_runtime(
+                                "Net.Governor",
+                                "Debug",
+                                "connection-manager timeout actions deferred to inbound loop",
+                                trace_fields([("deferredActions", json!(deferred_actions))]),
+                            );
+                        }
+
+                        if applicable_actions.is_empty() {
+                            continue;
+                        }
+
                         let changed = apply_cm_actions(
                             &mut peer_manager,
                             &peer_registry,
                             &connection_manager,
                             &mut governor_state,
                             &node_config,
-                            timeout_actions,
+                            applicable_actions,
                             &tracer,
                         )
                         .await;
@@ -1800,6 +1848,8 @@ pub async fn run_governor_loop<I, V, L, F>(
                             "connection-manager timeout tick applied",
                             trace_fields([
                                 ("actions", json!(action_count)),
+                                ("appliedActions", json!(action_count - deferred_actions)),
+                                ("deferredActions", json!(deferred_actions)),
                                 ("changed", json!(changed)),
                             ]),
                         );
@@ -5938,6 +5988,44 @@ mod tests {
         assert_eq!(bundle.hot, ControlMessage::Terminate);
         assert_eq!(bundle.warm, ControlMessage::Terminate);
         assert_eq!(bundle.established, ControlMessage::Terminate);
+    }
+
+    #[test]
+    fn split_timeout_actions_defers_inbound_scoped_actions() {
+        let warm_peer: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let inbound_peer: std::net::SocketAddr = "5.6.7.8:3001".parse().unwrap();
+
+        let mut mgr = super::OutboundPeerManager::new();
+        mgr.warm_peers.insert(
+            warm_peer,
+            super::ManagedWarmPeer::new(fake_peer_session(warm_peer), std::time::Instant::now()),
+        );
+
+        let warm_conn_id = yggdrasil_network::ConnectionId {
+            local: super::outbound_cm_local_addr(),
+            remote: warm_peer,
+        };
+        let inbound_conn_id = yggdrasil_network::ConnectionId {
+            local: super::outbound_cm_local_addr(),
+            remote: inbound_peer,
+        };
+
+        let actions = vec![
+            yggdrasil_network::CmAction::PruneConnections(vec![inbound_peer]),
+            yggdrasil_network::CmAction::StartResponderTimeout(inbound_conn_id),
+            yggdrasil_network::CmAction::TerminateConnection(inbound_conn_id),
+            yggdrasil_network::CmAction::TerminateConnection(warm_conn_id),
+        ];
+
+        let (applicable, deferred) =
+            super::split_timeout_cm_actions_for_governor(&mgr, actions);
+
+        assert_eq!(deferred, 3);
+        assert_eq!(applicable.len(), 1);
+        assert!(matches!(
+            applicable[0],
+            yggdrasil_network::CmAction::TerminateConnection(conn_id) if conn_id.remote == warm_peer
+        ));
     }
 
     #[test]

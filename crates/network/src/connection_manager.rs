@@ -1185,6 +1185,19 @@ impl ConnectionManagerState {
             }
         }
 
+        // Opportunistically collect any stale terminated entries that may
+        // remain from non-timeout CM transitions.
+        let terminated: Vec<SocketAddr> = self
+            .connections
+            .iter()
+            .filter_map(|(peer, entry)| {
+                matches!(entry.state, ConnectionState::TerminatedState { .. }).then_some(*peer)
+            })
+            .collect();
+        for peer in terminated {
+            self.connections.remove(&peer);
+        }
+
         actions.append(&mut self.maybe_prune());
         actions
     }
@@ -1276,17 +1289,15 @@ impl ConnectionManagerState {
 
         let excess = (inbound - self.limits.hard_limit) as usize;
 
-        // Collect prunable connections: inbound idle or terminated.
+        // Collect prunable connections: inbound idle only.
+        //
+        // Terminated entries are cleaned up by `timeout_tick` directly and
+        // should never consume prune budget, since they do not contribute to
+        // `inbound_connection_count`.
         let mut prunable: Vec<(SocketAddr, ConnStateId)> = self
             .connections
             .iter()
-            .filter(|(_, e)| {
-                matches!(
-                    e.state,
-                    ConnectionState::InboundIdleState { .. }
-                        | ConnectionState::TerminatedState { .. }
-                )
-            })
+            .filter(|(_, e)| matches!(e.state, ConnectionState::InboundIdleState { .. }))
             .map(|(addr, e)| (*addr, e.conn_state_id))
             .collect();
 
@@ -1401,6 +1412,48 @@ mod tests {
         let _ = cm.timeout_tick(deadline + std::time::Duration::from_secs(1));
 
         assert_eq!(cm.abstract_state_of(&p), AbstractState::UnknownConnectionSt);
+    }
+
+    #[test]
+    fn timeout_tick_pruning_excludes_terminated_entries() {
+        let mut cm = ConnectionManagerState::with_limits(AcceptedConnectionsLimit {
+            hard_limit: 10,
+            soft_limit: 1,
+            delay: std::time::Duration::from_secs(1),
+        });
+
+        let p1 = peer(2101);
+        let p2 = peer(2102);
+        let p3 = peer(2103);
+
+        for p in [p1, p2, p3] {
+            let cid = ConnectionId {
+                local: local(),
+                remote: p,
+            };
+            cm.include_inbound_connection(cid).expect("include inbound");
+            cm.inbound_handshake_done(p, DataFlow::Duplex)
+                .expect("inbound handshake");
+        }
+
+        let _ = cm.mark_terminating(p2, Some("test terminated cleanup".to_owned()));
+        cm.time_wait_expired(p2).expect("time wait expiry");
+        assert_eq!(cm.abstract_state_of(&p2), AbstractState::TerminatedSt);
+
+        cm.limits.hard_limit = 1;
+
+        let actions = cm.timeout_tick(Instant::now());
+
+        assert_eq!(cm.abstract_state_of(&p2), AbstractState::UnknownConnectionSt);
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            CmAction::PruneConnections(addrs) => {
+                assert_eq!(addrs.len(), 1);
+                assert!(addrs[0] == p1 || addrs[0] == p3);
+                assert_ne!(addrs[0], p2);
+            }
+            other => panic!("expected PruneConnections, got {:?}", other),
+        }
     }
 
     // -- Acquire outbound --
