@@ -131,6 +131,10 @@ pub struct RuntimeGovernorConfig {
     pub tick_interval: Duration,
     /// KeepAlive cadence for established warm peers.
     pub keepalive_interval: Option<Duration>,
+    /// Node-level peer-sharing willingness for governor association mode.
+    pub peer_sharing: NodePeerSharing,
+    /// Consensus mode used to derive governor churn regime.
+    pub consensus_mode: ConsensusMode,
     /// Target peer counts maintained by the governor.
     pub targets: GovernorTargets,
 }
@@ -140,11 +144,15 @@ impl RuntimeGovernorConfig {
     pub fn new(
         tick_interval: Duration,
         keepalive_interval: Option<Duration>,
+        peer_sharing: NodePeerSharing,
+        consensus_mode: ConsensusMode,
         targets: GovernorTargets,
     ) -> Self {
         Self {
             tick_interval,
             keepalive_interval,
+            peer_sharing,
+            consensus_mode,
             targets,
         }
     }
@@ -429,6 +437,7 @@ impl OutboundPeerManager {
             peer_addr: peer,
             network_magic: node_config.network_magic,
             protocol_versions: node_config.protocol_versions.clone(),
+            peer_sharing: node_config.peer_sharing,
         };
 
         match bootstrap(&peer_config).await {
@@ -1624,6 +1633,14 @@ pub async fn run_governor_loop<I, V, L, F>(
         "peer governor started",
         trace_fields([
             ("tickIntervalSecs", json!(config.tick_interval.as_secs())),
+            ("peerSharing", json!(config.peer_sharing.is_enabled())),
+            (
+                "consensusMode",
+                json!(match config.consensus_mode {
+                    ConsensusMode::PraosMode => "PraosMode",
+                    ConsensusMode::GenesisMode => "GenesisMode",
+                }),
+            ),
             ("targetKnown", json!(config.targets.target_known)),
             (
                 "targetEstablished",
@@ -1813,7 +1830,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                 let association_mode = compute_association_mode(
                     &topology.bootstrap_peers,
                     &topology.use_ledger_peers,
-                    NodePeerSharing::PeerSharingEnabled,
+                    config.peer_sharing,
                     ledger_state_judgement,
                 );
                 governor_state.fetch_mode =
@@ -1821,7 +1838,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                 governor_state.churn_regime = pick_churn_regime(
                     churn_mode_from_fetch_mode(governor_state.fetch_mode),
                     &topology.bootstrap_peers,
-                    ConsensusMode::PraosMode,
+                    config.consensus_mode,
                 );
 
                 if let Some(shared_inbound_peers) = inbound_peers.as_ref() {
@@ -2629,6 +2646,8 @@ pub struct NodeConfig {
     pub network_magic: u32,
     /// Protocol versions to propose during handshake, ordered by preference.
     pub protocol_versions: Vec<HandshakeVersion>,
+    /// Peer-sharing wire value for handshake proposals (0 = disabled, >=1 = enabled).
+    pub peer_sharing: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -4407,7 +4426,7 @@ async fn bootstrap_with_attempt_state(
                 NodeToNodeVersionData {
                     network_magic: config.network_magic,
                     initiator_only_diffusion_mode: false,
-                    peer_sharing: 1,
+                    peer_sharing: config.peer_sharing,
                     query: false,
                 },
             )
@@ -5057,6 +5076,7 @@ mod tests {
             peer_addr: local_addr(3001),
             network_magic: 42,
             protocol_versions: vec![HandshakeVersion(15)],
+            peer_sharing: 1,
         }
     }
 

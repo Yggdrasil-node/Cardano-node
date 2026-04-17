@@ -1861,6 +1861,7 @@ mod tests {
             peer_addr: listen_addr,
             network_magic: 42,
             protocol_versions: vec![HandshakeVersion(15)],
+            peer_sharing: 1,
         })
         .await
         .expect("bootstrap client");
@@ -2067,6 +2068,7 @@ mod tests {
             peer_addr: listen_addr,
             network_magic: 42,
             protocol_versions: vec![HandshakeVersion(15)],
+            peer_sharing: 1,
         })
         .await
         .expect("bootstrap client");

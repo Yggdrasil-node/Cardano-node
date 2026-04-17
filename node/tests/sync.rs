@@ -324,6 +324,7 @@ async fn sync_step_rollforward_fetches_blocks() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -365,6 +366,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -436,6 +438,7 @@ async fn sync_step_rollback_skips_blockfetch() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -468,6 +471,7 @@ async fn sync_steps_tracks_progress_and_point() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -834,6 +838,7 @@ async fn sync_step_decoded_rollforward_decodes_shelley_blocks() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -873,6 +878,7 @@ async fn sync_step_decoded_reports_decode_error_on_invalid_block_bytes() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -915,6 +921,7 @@ async fn sync_step_typed_rollforward_decodes_header_tip_and_blocks() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -961,6 +968,7 @@ async fn sync_step_typed_rollback_decodes_points() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1003,6 +1011,7 @@ async fn sync_steps_typed_tracks_progress_and_rollbacks() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1057,6 +1066,7 @@ async fn sync_until_typed_stops_at_target_point() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1104,6 +1114,7 @@ async fn apply_typed_progress_to_volatile_applies_forwards_and_rollbacks() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1269,6 +1280,7 @@ async fn typed_find_intersect_found() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1300,6 +1312,7 @@ async fn typed_find_intersect_not_found() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1341,6 +1354,7 @@ async fn sync_batch_apply_updates_volatile_store() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1379,6 +1393,7 @@ async fn keepalive_heartbeat_terminates_on_connection_close() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1498,6 +1513,7 @@ async fn run_sync_service_shutdown_after_batches() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1886,6 +1902,7 @@ async fn sync_step_multi_era_rollforward() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");

@@ -813,6 +813,7 @@ fn main() -> Result<()> {
                 peer_addr,
                 network_magic: magic,
                 protocol_versions,
+                peer_sharing: file_cfg.peer_sharing,
             };
 
             let governor_config = RuntimeGovernorConfig::new(
@@ -820,6 +821,8 @@ fn main() -> Result<()> {
                 file_cfg
                     .keepalive_interval_secs
                     .map(std::time::Duration::from_secs),
+                NodePeerSharing::from_wire(file_cfg.peer_sharing),
+                file_cfg.consensus_mode.to_network_mode(),
                 GovernorTargets {
                     target_known: file_cfg.governor_target_known,
                     target_established: file_cfg.governor_target_established,

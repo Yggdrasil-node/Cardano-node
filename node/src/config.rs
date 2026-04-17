@@ -19,9 +19,10 @@ use thiserror::Error;
 use yggdrasil_ledger::ProtocolParameters;
 pub use yggdrasil_network::derive_peer_snapshot_freshness;
 use yggdrasil_network::{
-    LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement, LocalRootConfig,
-    PeerAccessPoint, PeerSnapshotFreshness, PublicRootConfig, TopologyConfig, UseLedgerPeers,
-    eligible_ledger_peer_candidates, ordered_peer_fallbacks, resolve_peer_access_points,
+    ConsensusMode, LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
+    LocalRootConfig, PeerAccessPoint, PeerSnapshotFreshness, PublicRootConfig, TopologyConfig,
+    UseLedgerPeers, eligible_ledger_peer_candidates, ordered_peer_fallbacks,
+    resolve_peer_access_points,
 };
 use yggdrasil_plutus::CostModel;
 
@@ -119,6 +120,27 @@ fn default_trace_forwarder_socket_path() -> String {
     "/tmp/cardano-trace-forwarder.sock".to_owned()
 }
 
+/// Runtime consensus mode used for governor churn-regime selection.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub enum ConsensusModeConfig {
+    /// Plain Praos mode.
+    #[serde(rename = "PraosMode")]
+    PraosMode,
+    /// Genesis consensus mode.
+    #[serde(rename = "GenesisMode")]
+    GenesisMode,
+}
+
+impl ConsensusModeConfig {
+    /// Convert to the network-owned consensus mode type.
+    pub fn to_network_mode(self) -> ConsensusMode {
+        match self {
+            Self::PraosMode => ConsensusMode::PraosMode,
+            Self::GenesisMode => ConsensusMode::GenesisMode,
+        }
+    }
+}
+
 /// On-disk node configuration parsed from a JSON file.
 ///
 /// CLI flags can override individual fields.
@@ -183,6 +205,18 @@ pub struct NodeConfigFile {
     /// KeepAlive heartbeat interval in seconds. `null` disables heartbeats.
     #[serde(default)]
     pub keepalive_interval_secs: Option<u64>,
+    /// Peer-sharing handshake wire value (0 = disabled, >=1 = enabled).
+    ///
+    /// This value is advertised in node-to-node handshake version data and
+    /// also drives governor association-mode decisions.
+    #[serde(default = "default_peer_sharing", alias = "PeerSharing")]
+    pub peer_sharing: u8,
+    /// Runtime consensus mode used for peer-governor churn regime selection.
+    #[serde(
+        default = "default_consensus_mode",
+        alias = "ConsensusMode"
+    )]
+    pub consensus_mode: ConsensusModeConfig,
     /// Governor tick interval in seconds. Defaults to 5.
     #[serde(default = "default_governor_tick_interval_secs")]
     pub governor_tick_interval_secs: u64,
@@ -767,6 +801,14 @@ fn default_governor_tick_interval_secs() -> u64 {
     5
 }
 
+fn default_peer_sharing() -> u8 {
+    1
+}
+
+fn default_consensus_mode() -> ConsensusModeConfig {
+    ConsensusModeConfig::PraosMode
+}
+
 fn default_governor_target_known() -> usize {
     20
 }
@@ -1020,6 +1062,8 @@ pub fn mainnet_config() -> NodeConfigFile {
         active_slot_coeff: 0.05,
         max_major_protocol_version: default_max_major_protocol_version(),
         keepalive_interval_secs: Some(60),
+        peer_sharing: default_peer_sharing(),
+        consensus_mode: default_consensus_mode(),
         governor_tick_interval_secs: default_governor_tick_interval_secs(),
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
@@ -1078,6 +1122,8 @@ pub fn preprod_config() -> NodeConfigFile {
         active_slot_coeff: 0.05,
         max_major_protocol_version: default_max_major_protocol_version(),
         keepalive_interval_secs: Some(60),
+        peer_sharing: default_peer_sharing(),
+        consensus_mode: default_consensus_mode(),
         governor_tick_interval_secs: default_governor_tick_interval_secs(),
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
@@ -1136,6 +1182,8 @@ pub fn preview_config() -> NodeConfigFile {
         active_slot_coeff: 0.05,
         max_major_protocol_version: default_max_major_protocol_version(),
         keepalive_interval_secs: Some(60),
+        peer_sharing: default_peer_sharing(),
+        consensus_mode: default_consensus_mode(),
         governor_tick_interval_secs: default_governor_tick_interval_secs(),
         governor_target_known: default_governor_target_known(),
         governor_target_established: default_governor_target_established(),
@@ -1207,6 +1255,8 @@ mod tests {
             parsed.governor_target_active_big_ledger,
             cfg.governor_target_active_big_ledger
         );
+        assert_eq!(parsed.peer_sharing, cfg.peer_sharing);
+        assert_eq!(parsed.consensus_mode, cfg.consensus_mode);
         assert_eq!(parsed.turn_on_logging, cfg.turn_on_logging);
         assert_eq!(parsed.use_trace_dispatcher, cfg.use_trace_dispatcher);
         assert_eq!(parsed.trace_option_node_name, cfg.trace_option_node_name);
@@ -1242,6 +1292,8 @@ mod tests {
         assert_eq!(cfg.security_param_k, 2160);
         assert!((cfg.active_slot_coeff - 0.05).abs() < f64::EPSILON);
         assert!(cfg.keepalive_interval_secs.is_none());
+        assert_eq!(cfg.peer_sharing, 1);
+        assert_eq!(cfg.consensus_mode, ConsensusModeConfig::PraosMode);
         assert_eq!(cfg.governor_tick_interval_secs, 5);
         assert_eq!(cfg.governor_target_known, 20);
         assert_eq!(cfg.governor_target_established, 10);
@@ -1283,6 +1335,21 @@ mod tests {
         assert_eq!(cfg.governor_target_known_big_ledger, 8);
         assert_eq!(cfg.governor_target_established_big_ledger, 3);
         assert_eq!(cfg.governor_target_active_big_ledger, 1);
+    }
+
+    #[test]
+    fn config_parses_peer_sharing_and_consensus_mode_aliases() {
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "PeerSharing": 0,
+            "ConsensusMode": "GenesisMode"
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+
+        assert_eq!(cfg.peer_sharing, 0);
+        assert_eq!(cfg.consensus_mode, ConsensusModeConfig::GenesisMode);
     }
 
     #[test]

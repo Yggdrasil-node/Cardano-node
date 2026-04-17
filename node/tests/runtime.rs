@@ -741,6 +741,7 @@ async fn runtime_bootstrap_creates_all_drivers() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -774,6 +775,7 @@ async fn runtime_bootstrap_uses_fallback_peer_when_primary_fails() {
         peer_addr: bad_addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap_with_fallbacks(&config, &[good_addr])
@@ -836,6 +838,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         peer_addr: first_addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -924,6 +927,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         peer_addr: first_addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -1006,6 +1010,7 @@ async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure(
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -1084,6 +1089,7 @@ async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -1177,6 +1183,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -1283,6 +1290,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         peer_addr: first_addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -1407,6 +1415,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         peer_addr: first_addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
     let service_config = VerifiedSyncServiceConfig {
         batch_size: 1,
@@ -1501,6 +1510,7 @@ async fn runtime_serves_txsubmission_requests_from_mempool() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1561,6 +1571,7 @@ async fn runtime_txsubmission_service_runs_to_protocol_completion() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1609,6 +1620,7 @@ async fn runtime_txsubmission_service_stops_on_shutdown() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
@@ -1807,6 +1819,7 @@ async fn runtime_txsubmission_service_shared_observes_concurrent_insert() {
         peer_addr: addr,
         network_magic: magic,
         protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
     };
 
     let mut session = bootstrap(&config).await.expect("bootstrap");
