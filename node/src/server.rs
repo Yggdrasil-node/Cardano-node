@@ -265,24 +265,108 @@ fn now_ms(start: &Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
 
-fn execute_cm_actions(cm_actions: Vec<CmAction>) {
+/// Registry of inbound session abort handles keyed by remote `SocketAddr`.
+///
+/// This is the bridge that lets connection-manager `TerminateConnection` and
+/// `PruneConnections` actions actually abort the inbound mux/session tasks
+/// that were spawned by `run_inbound_accept_loop`.
+///
+/// Reference: upstream `Ouroboros.Network.ConnectionManager.Core` `terminate`
+/// invocation in the inbound responder server (`Ouroboros.Network.Server2`),
+/// which closes the associated mux when the connection-manager state machine
+/// transitions to `TerminatingState`.
+#[derive(Clone, Default)]
+pub struct InboundSessionAborts {
+    inner: Arc<RwLock<BTreeMap<SocketAddr, (tokio::task::AbortHandle, tokio::task::AbortHandle)>>>,
+}
+
+impl InboundSessionAborts {
+    /// Register a session's mux abort handles.
+    pub fn insert(&self, peer: SocketAddr, mux: &MuxHandle) {
+        let pair = (mux.reader.abort_handle(), mux.writer.abort_handle());
+        if let Ok(mut map) = self.inner.write() {
+            map.insert(peer, pair);
+        }
+    }
+
+    /// Remove a session entry (called when the session task exits normally).
+    pub fn remove(&self, peer: &SocketAddr) {
+        if let Ok(mut map) = self.inner.write() {
+            map.remove(peer);
+        }
+    }
+
+    /// Abort the session for `peer` if still registered. Returns `true` when
+    /// an entry was found and aborted.
+    pub fn abort(&self, peer: &SocketAddr) -> bool {
+        let pair_opt = self.inner.write().ok().and_then(|mut map| map.remove(peer));
+        if let Some((reader, writer)) = pair_opt {
+            reader.abort();
+            writer.abort();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl std::fmt::Debug for InboundSessionAborts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let len = self.inner.read().map(|m| m.len()).unwrap_or(0);
+        f.debug_struct("InboundSessionAborts").field("len", &len).finish()
+    }
+}
+
+fn execute_cm_actions(cm_actions: Vec<CmAction>, aborts: Option<&InboundSessionAborts>) {
     for action in cm_actions {
         match action {
-            CmAction::StartResponderTimeout(_)
-            | CmAction::PruneConnections(_)
-            | CmAction::StartConnect(_)
-            | CmAction::TerminateConnection(_) => {
-                // Runtime-side CM effects are tracked by state transitions only in
-                // this slice; concrete transport teardown is handled by session task
-                // lifecycle in the inbound server.
+            CmAction::TerminateConnection(cid) => {
+                // Abort the inbound mux for this peer if the session is still
+                // alive; matches upstream `terminate` in `Ouroboros.Network.Server2`.
+                if let Some(reg) = aborts {
+                    let _ = reg.abort(&cid.remote);
+                }
+            }
+            CmAction::PruneConnections(peers) => {
+                // Pruning evicts idle/terminated inbound connections beyond
+                // the hard limit; tear down each affected inbound session.
+                if let Some(reg) = aborts {
+                    for peer in peers {
+                        let _ = reg.abort(&peer);
+                    }
+                }
+            }
+            CmAction::StartResponderTimeout(_) => {
+                // The CM `timeout_tick` loop fires the responder-timeout
+                // expiry directly from `responder_timeout_deadline`; this
+                // action is informational only.
+            }
+            CmAction::StartConnect(_) => {
+                // Outbound dialing is handled by the runtime governor bridge,
+                // not the inbound accept loop. Inbound CM operations should
+                // never produce this action; ignore defensively.
             }
         }
     }
 }
 
+fn process_connection_manager_timeouts(
+    connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    aborts: Option<&InboundSessionAborts>,
+) {
+    let cm_actions = {
+        let mut cm = connection_manager
+            .write()
+            .expect("connection manager lock poisoned");
+        cm.timeout_tick(Instant::now())
+    };
+    execute_cm_actions(cm_actions, aborts);
+}
+
 fn apply_inbound_governor_actions(
     inbound_governor: &Arc<RwLock<InboundGovernorState>>,
     connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    aborts: Option<&InboundSessionAborts>,
     actions: Vec<InboundGovernorAction>,
 ) {
     let mut pending = actions;
@@ -296,7 +380,7 @@ fn apply_inbound_governor_actions(
                         .expect("connection manager lock poisoned");
                     cm.promoted_to_warm_remote(conn_id.remote)
                 };
-                execute_cm_actions(cm_actions);
+                execute_cm_actions(cm_actions, aborts);
             }
             InboundGovernorAction::DemotedToColdRemote(conn_id) => {
                 let (_result, cm_actions) = {
@@ -305,7 +389,7 @@ fn apply_inbound_governor_actions(
                         .expect("connection manager lock poisoned");
                     cm.demoted_to_cold_remote(conn_id.remote)
                 };
-                execute_cm_actions(cm_actions);
+                execute_cm_actions(cm_actions, aborts);
             }
             InboundGovernorAction::ReleaseInboundConnection(conn_id) => {
                 let (release_result, cm_actions) = {
@@ -314,7 +398,7 @@ fn apply_inbound_governor_actions(
                         .expect("connection manager lock poisoned");
                     cm.release_inbound_connection(conn_id.remote)
                 };
-                execute_cm_actions(cm_actions);
+                execute_cm_actions(cm_actions, aborts);
 
                 if let OperationResult::OperationSuccess(commit_result) = release_result {
                     let follow_up = {
@@ -336,6 +420,7 @@ fn apply_inbound_governor_actions(
 fn process_inbound_governor_events(
     inbound_governor: &Arc<RwLock<InboundGovernorState>>,
     connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    aborts: Option<&InboundSessionAborts>,
     now_ms: u64,
     events: Vec<InboundGovernorEvent>,
 ) {
@@ -346,13 +431,14 @@ fn process_inbound_governor_events(
                 .expect("inbound governor lock poisoned");
             ig.step(event, now_ms)
         };
-        apply_inbound_governor_actions(inbound_governor, connection_manager, actions);
+        apply_inbound_governor_actions(inbound_governor, connection_manager, aborts, actions);
     }
 }
 
 fn update_inbound_responder_counters(
     inbound_governor: &Arc<RwLock<InboundGovernorState>>,
     connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    aborts: Option<&InboundSessionAborts>,
     peer: SocketAddr,
     counters: ResponderCounters,
     now_ms: u64,
@@ -371,7 +457,7 @@ fn update_inbound_responder_counters(
         ig.set_responder_counters(&peer, counters);
     }
 
-    process_inbound_governor_events(inbound_governor, connection_manager, now_ms, events);
+    process_inbound_governor_events(inbound_governor, connection_manager, aborts, now_ms, events);
 }
 
 impl InboundPeerSession {
@@ -1105,7 +1191,9 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
         .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0)));
     let start = Instant::now();
     let mut inactivity_tick = tokio::time::interval(Duration::from_millis(31_400));
+    let mut cm_timeout_tick = tokio::time::interval(Duration::from_secs(1));
     let mut session_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    let session_aborts = InboundSessionAborts::default();
     tokio::pin!(shutdown);
 
     loop {
@@ -1114,6 +1202,11 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
             _ = &mut shutdown => break,
             // Reap completed session tasks to free memory.
             Some(_) = session_tasks.join_next(), if !session_tasks.is_empty() => {}
+            _ = cm_timeout_tick.tick(), if connection_manager.is_some() => {
+                if let Some(shared_cm) = connection_manager.as_ref() {
+                    process_connection_manager_timeouts(shared_cm, Some(&session_aborts));
+                }
+            }
             _ = inactivity_tick.tick() => {
                 if let (Some(shared_ig), Some(shared_cm)) =
                     (inbound_governor.as_ref(), connection_manager.as_ref())
@@ -1121,6 +1214,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     process_inbound_governor_events(
                         shared_ig,
                         shared_cm,
+                        Some(&session_aborts),
                         now_ms(&start),
                         vec![InboundGovernorEvent::InactivityTimeout],
                     );
@@ -1238,11 +1332,17 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                             now_ms(&start),
                         )
                     };
-                    apply_inbound_governor_actions(shared_ig, shared_cm, actions);
+                    apply_inbound_governor_actions(
+                        shared_ig,
+                        shared_cm,
+                        Some(&session_aborts),
+                        actions,
+                    );
                 }
 
                 let session = InboundPeerSession::from_connection(conn, addr)
                     .ok_or(InboundServiceError::MissingProtocol { addr })?;
+                session_aborts.insert(addr, &session.mux);
 
                 if let Some(t) = tracer {
                     t.trace_runtime(
@@ -1278,6 +1378,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 let shared_inbound_peers = inbound_peers.clone();
                 let shared_cm = connection_manager.clone();
                 let shared_ig = inbound_governor.clone();
+                let session_aborts_clone = session_aborts.clone();
                 let session_tx_state = shared_tx_state.clone();
                 let session_tip_notify = tip_notify.clone();
                 let remote_addr = session.remote_addr;
@@ -1291,6 +1392,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     let ka = {
                         let shared_ig = shared_ig.clone();
                         let shared_cm = shared_cm.clone();
+                        let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
@@ -1304,6 +1406,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1324,6 +1427,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1335,6 +1439,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     let bf = bp.map(|provider| {
                         let shared_ig = shared_ig.clone();
                         let shared_cm = shared_cm.clone();
+                        let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
@@ -1348,6 +1453,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1368,6 +1474,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1379,6 +1486,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     let cs = cp.map(|provider| {
                         let shared_ig = shared_ig.clone();
                         let shared_cm = shared_cm.clone();
+                        let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
                         let notify = session_tip_notify.clone();
                         tokio::spawn(async move {
@@ -1393,6 +1501,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1413,6 +1522,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1424,6 +1534,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     let tx = tx_consumer.map(|consumer| {
                         let shared_ig = shared_ig.clone();
                         let shared_cm = shared_cm.clone();
+                        let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
                         let dedup = session_tx_state.as_ref().map(|ts| (ts.clone(), connection_id.remote));
                         tokio::spawn(async move {
@@ -1438,6 +1549,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1459,6 +1571,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 update_inbound_responder_counters(
                                     ig,
                                     cm,
+                                    Some(&session_aborts),
                                     connection_id.remote,
                                     counters,
                                     now_ms(&base),
@@ -1471,6 +1584,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         ps_provider.map(|provider| {
                             let shared_ig = shared_ig.clone();
                             let shared_cm = shared_cm.clone();
+                            let session_aborts = session_aborts_clone.clone();
                             let responder_counters = responder_counters.clone();
                             tokio::spawn(async move {
                                 if let (Some(ig), Some(cm)) =
@@ -1484,6 +1598,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                     update_inbound_responder_counters(
                                         ig,
                                         cm,
+                                        Some(&session_aborts),
                                         connection_id.remote,
                                         counters,
                                         now_ms(&base),
@@ -1504,6 +1619,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                     update_inbound_responder_counters(
                                         ig,
                                         cm,
+                                        Some(&session_aborts),
                                         connection_id.remote,
                                         counters,
                                         now_ms(&base),
@@ -1528,6 +1644,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         process_inbound_governor_events(
                             shared_ig,
                             cm_state,
+                            Some(&session_aborts_clone),
                             now_ms(&base),
                             vec![InboundGovernorEvent::MuxFinished(connection_id)],
                         );
@@ -1540,13 +1657,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         };
                         let (_release_result, cm_actions) =
                             cm.release_inbound_connection(remote_addr);
-                        for action in cm_actions {
-                            if let CmAction::TerminateConnection(cid) = action {
-                                if cid.remote == remote_addr {
-                                    session.mux.abort();
-                                }
-                            }
-                        }
+                        execute_cm_actions(cm_actions, Some(&session_aborts_clone));
                         let _ = cm.mark_terminating(
                             remote_addr,
                             Some("inbound session ended".to_owned()),
@@ -1560,6 +1671,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                             peers.remove(&remote_addr);
                         }
                     }
+                    session_aborts_clone.remove(&remote_addr);
                 });
             }
         }
@@ -1589,6 +1701,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
             process_inbound_governor_events(
                 shared_ig,
                 shared_cm,
+                Some(&session_aborts),
                 now_ms(&start),
                 vec![InboundGovernorEvent::CommitRemote(*conn_id)],
             );
@@ -1614,19 +1727,24 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockProvider, ChainProvider, PeerSharingProvider, SharedChainDb,
-        SharedPeerSharingProvider, TxSubmissionConsumer, run_inbound_accept_loop,
+        BlockProvider, ChainProvider, InboundSessionAborts, PeerSharingProvider, SharedChainDb,
+        SharedPeerSharingProvider, TxSubmissionConsumer, process_connection_manager_timeouts,
+        run_inbound_accept_loop,
     };
     use crate::NodeConfig;
     use crate::runtime::bootstrap;
     use std::collections::HashMap;
+    use std::net::SocketAddr;
     use std::sync::{Arc, Mutex, RwLock};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
         ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo,
     };
-    use yggdrasil_network::{HandshakeVersion, NextResponse, PeerListener, TxIdAndSize};
+    use yggdrasil_network::{
+        ConnStateId, ConnectionEntry, ConnectionId, ConnectionManagerState, ConnectionState,
+        HandshakeVersion, MuxError, MuxHandle, NextResponse, PeerListener, TxIdAndSize,
+    };
     use yggdrasil_storage::{
         ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         VolatileStore,
@@ -1648,6 +1766,57 @@ mod tests {
             kes_period: 100,
             sigma: [seed.wrapping_add(2); 64],
         }
+    }
+
+    #[tokio::test]
+    async fn inbound_session_aborts_aborts_registered_mux_and_is_idempotent() {
+        let aborts = InboundSessionAborts::default();
+        let peer = SocketAddr::from(([127, 0, 0, 1], 3001));
+
+        let mux = MuxHandle {
+            reader: tokio::spawn(async { std::future::pending::<Result<(), MuxError>>().await }),
+            writer: tokio::spawn(async { std::future::pending::<Result<(), MuxError>>().await }),
+        };
+
+        aborts.insert(peer, &mux);
+        assert!(aborts.abort(&peer));
+        assert!(!aborts.abort(&peer));
+
+        assert!(mux.reader.await.is_err(), "reader task should be aborted");
+        assert!(mux.writer.await.is_err(), "writer task should be aborted");
+    }
+
+    #[test]
+    fn process_connection_manager_timeouts_removes_expired_terminating_entry() {
+        let peer = SocketAddr::from(([127, 0, 0, 1], 4001));
+        let conn_id = ConnectionId {
+            local: SocketAddr::from(([127, 0, 0, 1], 3001)),
+            remote: peer,
+        };
+
+        let mut cm = ConnectionManagerState::new();
+        cm.connections.insert(
+            peer,
+            ConnectionEntry {
+                conn_state_id: ConnStateId(1),
+                state: ConnectionState::TerminatingState {
+                    conn_id,
+                    error: None,
+                },
+                responder_timeout_deadline: None,
+                time_wait_deadline: Some(Instant::now() - Duration::from_secs(1)),
+            },
+        );
+
+        let cm = Arc::new(RwLock::new(cm));
+        let aborts = InboundSessionAborts::default();
+        process_connection_manager_timeouts(&cm, Some(&aborts));
+
+        let cm = cm.read().expect("cm lock poisoned");
+        assert!(
+            !cm.connections.contains_key(&peer),
+            "expired terminating entry should be removed by timeout tick"
+        );
     }
 
     fn make_shelley_block(

@@ -1109,9 +1109,12 @@ fn update_registry_status_from_cm(
     registry.set_status(peer, peer_status_from_cm_state(state))
 }
 
-fn apply_cm_actions(
+async fn apply_cm_actions(
     peer_manager: &mut OutboundPeerManager,
     peer_registry: &Arc<RwLock<PeerRegistry>>,
+    connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    governor_state: &mut GovernorState,
+    node_config: &NodeConfig,
     actions: Vec<CmAction>,
     tracer: &NodeTracer,
 ) -> bool {
@@ -1119,12 +1122,55 @@ fn apply_cm_actions(
     for cm_action in actions {
         match cm_action {
             CmAction::StartConnect(peer) => {
-                tracer.trace_runtime(
-                    "Net.Governor",
-                    "Debug",
-                    "connection-manager start-connect action deferred to caller",
-                    trace_fields([("peer", json!(peer.to_string()))]),
-                );
+                if peer_manager
+                    .promote_to_warm(node_config, peer, governor_state, tracer)
+                    .await
+                {
+                    let data_flow = peer_manager
+                        .warm_peers
+                        .get(&peer)
+                        .map(|managed| data_flow_from_version_data(&managed.session.version_data))
+                        .unwrap_or(DataFlow::Duplex);
+
+                    let handshake_result = {
+                        let mut cm = connection_manager
+                            .write()
+                            .expect("connection manager lock poisoned");
+                        cm.outbound_handshake_done(outbound_cm_local_addr(), peer, data_flow)
+                    };
+
+                    match handshake_result {
+                        Ok(_) => {
+                            changed |= update_registry_status_from_cm(
+                                connection_manager,
+                                peer_registry,
+                                peer,
+                            );
+                        }
+                        Err(err) => {
+                            let _ = peer_manager.demote_to_cold(peer);
+                            let mut cm = connection_manager
+                                .write()
+                                .expect("connection manager lock poisoned");
+                            let _ = cm.outbound_connect_failed(peer);
+                            governor_state.record_failure(peer);
+                            tracer.trace_runtime(
+                                "Net.Governor",
+                                "Warning",
+                                "connection-manager outbound handshake transition failed",
+                                trace_fields([
+                                    ("peer", json!(peer.to_string())),
+                                    ("error", json!(err.to_string())),
+                                ]),
+                            );
+                        }
+                    }
+                } else {
+                    let mut cm = connection_manager
+                        .write()
+                        .expect("connection manager lock poisoned");
+                    let _ = cm.outbound_connect_failed(peer);
+                }
             }
             CmAction::TerminateConnection(conn_id) => {
                 let peer = conn_id.remote;
@@ -1685,9 +1731,13 @@ pub async fn run_governor_loop<I, V, L, F>(
                     let changed = apply_cm_actions(
                         &mut peer_manager,
                         &peer_registry,
+                        &connection_manager,
+                        &mut governor_state,
+                        &node_config,
                         cm_actions,
                         &tracer,
-                    );
+                    )
+                    .await;
 
                     match release_result {
                         ReleaseOutboundResult::DemotedToColdLocal(_)
@@ -1737,9 +1787,13 @@ pub async fn run_governor_loop<I, V, L, F>(
                         let changed = apply_cm_actions(
                             &mut peer_manager,
                             &peer_registry,
+                            &connection_manager,
+                            &mut governor_state,
+                            &node_config,
                             timeout_actions,
                             &tracer,
-                        );
+                        )
+                        .await;
                         tracer.trace_runtime(
                             "Net.Governor",
                             "Debug",
@@ -1939,86 +1993,16 @@ pub async fn run_governor_loop<I, V, L, F>(
                                     }
                                 };
 
-                                let mut changed = false;
-                                for cm_action in cm_actions {
-                                    match cm_action {
-                                        CmAction::StartConnect(start_peer) => {
-                                            if peer_manager
-                                                .promote_to_warm(
-                                                    &node_config,
-                                                    start_peer,
-                                                    &mut governor_state,
-                                                    &tracer,
-                                                )
-                                                .await
-                                            {
-                                                let data_flow = peer_manager
-                                                    .warm_peers
-                                                    .get(&start_peer)
-                                                    .map(|managed| {
-                                                        data_flow_from_version_data(
-                                                            &managed.session.version_data,
-                                                        )
-                                                    })
-                                                    .unwrap_or(DataFlow::Duplex);
-
-                                                let handshake_result = {
-                                                    let mut cm = connection_manager
-                                                        .write()
-                                                        .expect("connection manager lock poisoned");
-                                                    cm.outbound_handshake_done(
-                                                        outbound_cm_local_addr(),
-                                                        start_peer,
-                                                        data_flow,
-                                                    )
-                                                };
-
-                                                match handshake_result {
-                                                    Ok(_) => {
-                                                        changed |= update_registry_status_from_cm(
-                                                            &connection_manager,
-                                                            &peer_registry,
-                                                            start_peer,
-                                                        );
-                                                    }
-                                                    Err(err) => {
-                                                        let _ = peer_manager.demote_to_cold(start_peer);
-                                                        let mut cm = connection_manager
-                                                            .write()
-                                                            .expect("connection manager lock poisoned");
-                                                        let _ = cm.outbound_connect_failed(start_peer);
-                                                        governor_state.record_failure(start_peer);
-                                                        tracer.trace_runtime(
-                                                            "Net.Governor",
-                                                            "Warning",
-                                                            "connection-manager outbound handshake transition failed",
-                                                            trace_fields([
-                                                                (
-                                                                    "peer",
-                                                                    json!(start_peer.to_string()),
-                                                                ),
-                                                                ("error", json!(err.to_string())),
-                                                            ]),
-                                                        );
-                                                    }
-                                                }
-                                            } else {
-                                                let mut cm = connection_manager
-                                                    .write()
-                                                    .expect("connection manager lock poisoned");
-                                                let _ = cm.outbound_connect_failed(start_peer);
-                                            }
-                                        }
-                                        other => {
-                                            changed |= apply_cm_actions(
-                                                &mut peer_manager,
-                                                &peer_registry,
-                                                vec![other],
-                                                &tracer,
-                                            );
-                                        }
-                                    }
-                                }
+                                let mut changed = apply_cm_actions(
+                                    &mut peer_manager,
+                                    &peer_registry,
+                                    &connection_manager,
+                                    &mut governor_state,
+                                    &node_config,
+                                    cm_actions,
+                                    &tracer,
+                                )
+                                .await;
 
                                 if matches!(acquire_result, AcquireOutboundResult::Reused(_)) {
                                     governor_state.record_success(peer);
@@ -2070,9 +2054,13 @@ pub async fn run_governor_loop<I, V, L, F>(
                                 let mut changed = apply_cm_actions(
                                     &mut peer_manager,
                                     &peer_registry,
+                                    &connection_manager,
+                                    &mut governor_state,
+                                    &node_config,
                                     cm_actions,
                                     &tracer,
-                                );
+                                )
+                                .await;
 
                                 match release_result {
                                     ReleaseOutboundResult::Error(err) => {

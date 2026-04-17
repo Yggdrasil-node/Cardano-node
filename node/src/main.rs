@@ -14,7 +14,7 @@ use yggdrasil_consensus::{
     NonceEvolutionState, OcertCounters, SecurityParam, TentativeState,
 };
 use yggdrasil_ledger::{
-    Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint, SlotNo,
+    Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint,
     StakeCredential,
 };
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
@@ -663,20 +663,21 @@ fn main() -> Result<()> {
                 .and_then(|g| g.system_start.as_deref())
                 .and_then(genesis::chrono_parse_system_start);
 
-            // Compute FutureBlockCheckConfig from genesis system_start.
-            // This provides the blocks-from-the-future detection for sync.
+            // Compute FutureBlockCheckConfig from genesis `system_start` and
+            // slot length. The wall slot is derived dynamically per check.
             // Reference: `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`
             let future_check: Option<FutureBlockCheckConfig> = shelley_genesis
                 .as_ref()
                 .and_then(|g| g.system_start.as_deref())
                 .and_then(|start| {
                     let slot_len = genesis_slot_length.unwrap_or(1.0);
-                    let wall_slot = genesis::current_wall_slot(start, slot_len)?;
+                    let system_start_unix_secs = genesis::chrono_parse_system_start(start)?;
                     let clock_skew = ClockSkew::default_for_slot_length(
                         std::time::Duration::from_secs_f64(slot_len),
                     );
                     Some(FutureBlockCheckConfig {
-                        current_wall_slot: SlotNo(wall_slot),
+                        system_start_unix_secs,
+                        slot_length_secs: slot_len,
                         clock_skew,
                     })
                 });

@@ -2138,10 +2138,74 @@ pub struct VerificationConfig {
 /// Reference: `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`.
 #[derive(Clone, Copy, Debug)]
 pub struct FutureBlockCheckConfig {
-    /// The current wall-clock slot at the time of validation.
-    pub current_wall_slot: SlotNo,
+    /// Shelley genesis `systemStart` as Unix seconds.
+    pub system_start_unix_secs: f64,
+    /// Shelley genesis slot length in seconds.
+    pub slot_length_secs: f64,
     /// Maximum tolerable clock skew.
     pub clock_skew: ClockSkew,
+}
+
+fn near_future_wait_duration_until_slot_at(
+    now_secs: f64,
+    system_start_unix_secs: f64,
+    slot_length_secs: f64,
+    target_slot: SlotNo,
+) -> Option<std::time::Duration> {
+    if slot_length_secs <= 0.0 {
+        return None;
+    }
+
+    // Wait until the start boundary of `target_slot`.
+    let target_secs = system_start_unix_secs + (target_slot.0 as f64 * slot_length_secs);
+    let wait_secs = target_secs - now_secs;
+    if wait_secs <= 0.0 {
+        return None;
+    }
+
+    Some(std::time::Duration::from_secs_f64(wait_secs))
+}
+
+fn near_future_wait_duration(
+    system_start_unix_secs: f64,
+    slot_length_secs: f64,
+    target_slot: SlotNo,
+) -> Option<std::time::Duration> {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(system_start_unix_secs);
+    near_future_wait_duration_until_slot_at(
+        now_secs,
+        system_start_unix_secs,
+        slot_length_secs,
+        target_slot,
+    )
+}
+
+impl FutureBlockCheckConfig {
+    /// Compute the current wall-clock slot from `systemStart` and slot length.
+    ///
+    /// This mirrors upstream `InFutureCheck` behavior where "now" is
+    /// re-evaluated for each header arrival, instead of freezing a startup
+    /// snapshot for the lifetime of the sync service.
+    pub fn current_wall_slot(self) -> SlotNo {
+        if self.slot_length_secs <= 0.0 {
+            return SlotNo(0);
+        }
+
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(self.system_start_unix_secs);
+
+        if now_secs <= self.system_start_unix_secs {
+            return SlotNo(0);
+        }
+
+        let elapsed = now_secs - self.system_start_unix_secs;
+        SlotNo((elapsed / self.slot_length_secs).floor() as u64)
+    }
 }
 
 /// Parameters required for VRF leader-eligibility verification.
@@ -3156,9 +3220,9 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                     // Blocks-from-the-future check: reject blocks whose
                     // slot exceeds the tolerable clock skew window.
                     //
-                    // Near-future blocks (within skew) are tolerated:
-                    // upstream would introduce a brief delay but we process
-                    // them immediately to avoid blocking the sync batch.
+                    // Near-future blocks (within skew) are tolerated after
+                    // waiting until their slot is no longer in the future,
+                    // matching upstream `InFutureCheck` behavior.
                     //
                     // Far-future blocks trigger a peer-attributable error
                     // (see `SyncError::is_peer_attributable`) which causes
@@ -3168,12 +3232,20 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                     // Reference: `InFutureCheck.handleHeaderArrival` in
                     // `ouroboros-consensus`.
                     if let Some(ref fc) = config.future_check {
+                        let current_wall_slot = fc.current_wall_slot();
+                        let mut max_near_future_slot: Option<SlotNo> = None;
                         for block in &decoded_blocks {
                             let block_slot = block.slot();
-                            match judge_header_slot(block_slot, fc.current_wall_slot, fc.clock_skew)
+                            match judge_header_slot(block_slot, current_wall_slot, fc.clock_skew)
                             {
-                                FutureSlotJudgement::NotFuture
-                                | FutureSlotJudgement::NearFuture { .. } => {}
+                                FutureSlotJudgement::NotFuture => {}
+                                FutureSlotJudgement::NearFuture { .. } => {
+                                    max_near_future_slot = Some(
+                                        max_near_future_slot
+                                            .map(|s| std::cmp::max(s, block_slot))
+                                            .unwrap_or(block_slot),
+                                    );
+                                }
                                 FutureSlotJudgement::FarFuture { excess_slots } => {
                                     if tentative_set {
                                         if let Some(state) = tentative_state {
@@ -3186,6 +3258,16 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                     });
                                 }
                             }
+                        }
+
+                        if let Some(wait) = max_near_future_slot.and_then(|slot| {
+                            near_future_wait_duration(
+                                fc.system_start_unix_secs,
+                                fc.slot_length_secs,
+                                slot,
+                            )
+                        }) {
+                            tokio::time::sleep(wait).await;
                         }
                     }
                 }
@@ -3480,6 +3562,53 @@ mod tests {
             snapshot.stake.add(cred, *amount);
         }
         snapshot
+    }
+
+    #[test]
+    fn near_future_wait_duration_until_slot_at_returns_delta_to_boundary() {
+        // system_start=1000, slot_length=2s, target slot 8 starts at 1016.
+        let wait = near_future_wait_duration_until_slot_at(1010.5, 1000.0, 2.0, SlotNo(8))
+            .expect("wait duration");
+        assert_eq!(wait, std::time::Duration::from_secs_f64(5.5));
+    }
+
+    #[test]
+    fn near_future_wait_duration_until_slot_at_none_when_past_or_invalid() {
+        assert!(near_future_wait_duration_until_slot_at(1020.0, 1000.0, 2.0, SlotNo(8)).is_none());
+        assert!(near_future_wait_duration_until_slot_at(1010.0, 1000.0, 0.0, SlotNo(8)).is_none());
+        assert!(near_future_wait_duration_until_slot_at(1010.0, 1000.0, -1.0, SlotNo(8)).is_none());
+    }
+
+    #[test]
+    fn future_block_check_current_wall_slot_advances_with_time() {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time before epoch")
+            .as_secs_f64();
+        let cfg = FutureBlockCheckConfig {
+            system_start_unix_secs: now_secs - 20.0,
+            slot_length_secs: 1.0,
+            clock_skew: ClockSkew::default_for_slot_length(std::time::Duration::from_secs(1)),
+        };
+
+        let a = cfg.current_wall_slot().0;
+        let b = cfg.current_wall_slot().0;
+        assert!(b >= a);
+        assert!(a >= 19, "wall slot should be near elapsed seconds");
+    }
+
+    #[test]
+    fn future_block_check_current_wall_slot_is_zero_before_system_start() {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time before epoch")
+            .as_secs_f64();
+        let cfg = FutureBlockCheckConfig {
+            system_start_unix_secs: now_secs + 3600.0,
+            slot_length_secs: 1.0,
+            clock_skew: ClockSkew::default_for_slot_length(std::time::Duration::from_secs(1)),
+        };
+        assert_eq!(cfg.current_wall_slot(), SlotNo(0));
     }
 
     #[test]
