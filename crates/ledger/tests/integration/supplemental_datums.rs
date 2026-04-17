@@ -68,6 +68,20 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
         }),
     );
 
+    // Witness set: native script + an orphan datum that isn't referenced anywhere.
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    let orphan_datum = PlutusData::Integer(999.into());
+    ws.plutus_data.push(orphan_datum.clone());
+    let orphan_hash = {
+        use yggdrasil_ledger::CborEncode;
+        let cbor = orphan_datum.to_cbor_bytes();
+        yggdrasil_crypto::blake2b::hash_bytes_256(&cbor).0
+    };
+
+    // Compute correct script_data_hash — upstream requires it when datums present.
+    let sdh = compute_test_script_data_hash(&ws, None, false);
+
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
@@ -83,21 +97,10 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
-    };
-
-    // Witness set: native script + an orphan datum that isn't referenced anywhere.
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    let orphan_datum = PlutusData::Integer(999.into());
-    ws.plutus_data.push(orphan_datum.clone());
-    let orphan_hash = {
-        use yggdrasil_ledger::CborEncode;
-        let cbor = orphan_datum.to_cbor_bytes();
-        yggdrasil_crypto::blake2b::hash_bytes_256(&cbor).0
     };
 
     let body_bytes = body.to_cbor_bytes();
@@ -165,6 +168,14 @@ fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
         yggdrasil_crypto::blake2b::hash_bytes_256(&cbor).0
     };
 
+    // Witness set includes the native script + datum that matches the output hash
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.plutus_data.push(declared_datum);
+
+    // Compute correct script_data_hash — upstream requires it when datums present.
+    let sdh = compute_test_script_data_hash(&ws, None, false);
+
     let body = AlonzoTxBody {
         inputs: vec![input],
         outputs: vec![AlonzoTxOut {
@@ -180,16 +191,11 @@ fn alonzo_block_accepts_supplemental_datum_declared_in_output() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
     };
-
-    // Witness set includes the native script + datum that matches the output hash
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.plutus_data.push(declared_datum);
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();
@@ -272,6 +278,14 @@ fn babbage_block_accepts_supplemental_datum_from_reference_input() {
         }),
     );
 
+    // Witness set includes the native script + supplemental datum
+    let mut ws = empty_witness_set();
+    ws.native_scripts.push(native);
+    ws.plutus_data.push(ref_datum);
+
+    // Compute correct script_data_hash — upstream requires it when datums present.
+    let sdh = compute_test_script_data_hash(&ws, None, false);
+
     let body = BabbageTxBody {
         inputs: vec![spending_input],
         outputs: vec![BabbageTxOut {
@@ -288,7 +302,7 @@ fn babbage_block_accepts_supplemental_datum_from_reference_input() {
         auxiliary_data_hash: None,
         validity_interval_start: None,
         mint: None,
-        script_data_hash: None,
+        script_data_hash: Some(sdh),
         collateral: None,
         required_signers: None,
         network_id: None,
@@ -296,11 +310,6 @@ fn babbage_block_accepts_supplemental_datum_from_reference_input() {
         total_collateral: None,
         collateral_return: None,
     };
-
-    // Witness set includes the native script + supplemental datum
-    let mut ws = empty_witness_set();
-    ws.native_scripts.push(native);
-    ws.plutus_data.push(ref_datum);
 
     let body_bytes = body.to_cbor_bytes();
     let ws_bytes = ws.to_cbor_bytes();

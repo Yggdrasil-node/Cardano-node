@@ -4639,6 +4639,18 @@ impl LedgerState {
                         &[],
                         None,
                     )?;
+                    crate::plutus_validation::validate_no_missing_redeemers(
+                        Some(&witness_bytes),
+                        &required_scripts,
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
+                        None,
+                    )?;
                 }
                 // Phase-2 Plutus script validation (Alonzo submitted).
                 // Submitted transactions always have is_valid = true (checked above),
@@ -5004,6 +5016,18 @@ impl LedgerState {
                         .unwrap_or_default();
                     crate::plutus_validation::validate_no_extra_redeemers(
                         Some(&witness_bytes),
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &[],
+                        &[],
+                        tx.body.reference_inputs.as_deref(),
+                    )?;
+                    crate::plutus_validation::validate_no_missing_redeemers(
+                        Some(&witness_bytes),
+                        &required_scripts,
                         &staged,
                         &sorted_inputs,
                         &sorted_policies,
@@ -5437,6 +5461,18 @@ impl LedgerState {
                         .to_vec();
                     crate::plutus_validation::validate_no_extra_redeemers(
                         Some(&witness_bytes),
+                        &staged,
+                        &sorted_inputs,
+                        &sorted_policies,
+                        certs_slice,
+                        &sorted_rewards,
+                        &sorted_voters,
+                        &proposal_slice,
+                        tx.body.reference_inputs.as_deref(),
+                    )?;
+                    crate::plutus_validation::validate_no_missing_redeemers(
+                        Some(&witness_bytes),
+                        &required_scripts,
                         &staged,
                         &sorted_inputs,
                         &sorted_policies,
@@ -6674,6 +6710,18 @@ impl LedgerState {
                     &[],
                     None,
                 )?;
+                crate::plutus_validation::validate_no_missing_redeemers(
+                    witness_bytes.as_deref(),
+                    &required_scripts,
+                    &staged,
+                    &sorted_inputs,
+                    &sorted_policies,
+                    certs_slice,
+                    &sorted_rewards,
+                    &[],
+                    &[],
+                    None,
+                )?;
             }
             // ── is_valid bifurcation (Phase-2 / collateral-only) ──
             let run_phase2 = || -> Result<(), LedgerError> {
@@ -7102,6 +7150,18 @@ impl LedgerState {
                     .unwrap_or_default();
                 crate::plutus_validation::validate_no_extra_redeemers(
                     witness_bytes.as_deref(),
+                    &staged,
+                    &sorted_inputs,
+                    &sorted_policies,
+                    certs_slice,
+                    &sorted_rewards,
+                    &[],
+                    &[],
+                    body.reference_inputs.as_deref(),
+                )?;
+                crate::plutus_validation::validate_no_missing_redeemers(
+                    witness_bytes.as_deref(),
+                    &required_scripts,
                     &staged,
                     &sorted_inputs,
                     &sorted_policies,
@@ -7683,6 +7743,18 @@ impl LedgerState {
                     body.proposal_procedures.as_deref().unwrap_or(&[]).to_vec();
                 crate::plutus_validation::validate_no_extra_redeemers(
                     witness_bytes.as_deref(),
+                    &staged,
+                    &sorted_inputs,
+                    &sorted_policies,
+                    certs_slice,
+                    &sorted_rewards,
+                    &sorted_voters,
+                    &proposal_slice,
+                    body.reference_inputs.as_deref(),
+                )?;
+                crate::plutus_validation::validate_no_missing_redeemers(
+                    witness_bytes.as_deref(),
+                    &required_scripts,
                     &staged,
                     &sorted_inputs,
                     &sorted_policies,
@@ -8645,7 +8717,6 @@ fn conway_unit_interval_well_formed(value: &UnitInterval) -> bool {
 
 fn conway_protocol_param_update_well_formed(
     update: &crate::protocol_params::ProtocolParameterUpdate,
-    protocol_params: Option<&crate::protocol_params::ProtocolParameters>,
     protocol_version: Option<(u64, u64)>,
 ) -> bool {
     let unit_interval_fields = [
@@ -8734,25 +8805,6 @@ fn conway_protocol_param_update_well_formed(
         return false;
     }
 
-    let effective_max_block_body_size = update
-        .max_block_body_size
-        .or_else(|| protocol_params.map(|params| params.max_block_body_size));
-    let effective_max_tx_size = update
-        .max_tx_size
-        .or_else(|| protocol_params.map(|params| params.max_tx_size));
-
-    if effective_max_block_body_size == Some(0) || effective_max_tx_size == Some(0) {
-        return false;
-    }
-
-    if let (Some(max_tx_size), Some(max_block_body_size)) =
-        (effective_max_tx_size, effective_max_block_body_size)
-    {
-        if max_tx_size > max_block_body_size {
-            return false;
-        }
-    }
-
     true
 }
 
@@ -8798,7 +8850,6 @@ fn validate_conway_proposals(
 
             if !conway_protocol_param_update_well_formed(
                 protocol_param_update,
-                protocol_params,
                 protocol_version,
             ) {
                 return Err(LedgerError::MalformedProposal(proposal.gov_action.clone()));
@@ -13930,8 +13981,11 @@ mod tests {
         assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
     }
 
+    /// Upstream `ppuWellFormed` does not check cross-field relationships between
+    /// `max_tx_size` and `max_block_body_size` within the same update.
+    /// Reference: `Cardano.Ledger.Conway.PParams` — `ppuWellFormed`.
     #[test]
-    fn test_parameter_change_rejects_tx_size_larger_than_block_body_size() {
+    fn test_parameter_change_accepts_tx_size_larger_than_block_body_size() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
         let proposals = vec![sample_proposal(
@@ -13960,11 +14014,14 @@ mod tests {
             &es,
             None,
         );
-        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+        assert!(result.is_ok(), "cross-field tx_size > block_body_size accepted (no upstream check)");
     }
 
+    /// Upstream `ppuWellFormed` does not merge proposed values with current
+    /// protocol parameters for cross-field consistency checks.
+    /// Reference: `Cardano.Ledger.Conway.PParams` — `ppuWellFormed`.
     #[test]
-    fn test_parameter_change_rejects_tx_size_larger_than_current_block_body_size() {
+    fn test_parameter_change_accepts_tx_size_larger_than_current_block_body_size() {
         let es = EnactState::default();
         let stake_creds = empty_stake_creds_with(1);
         let proposals = vec![sample_proposal(
@@ -13996,7 +14053,7 @@ mod tests {
             &es,
             None,
         );
-        assert!(matches!(result, Err(LedgerError::MalformedProposal(_))));
+        assert!(result.is_ok(), "tx_size > current block_body_size accepted (no effective merge in upstream)");
     }
 
     #[test]
@@ -14297,6 +14354,53 @@ mod tests {
             None,
         );
         assert!(result.is_ok(), "nOpt=0 accepted at PV 10 (< 11)");
+    }
+
+    /// Upstream `ppuWellFormed` does NOT perform cross-field consistency
+    /// checks or merge proposed values with current protocol parameters.
+    /// A proposal that sets `max_tx_size` larger than the current
+    /// `max_block_body_size` is still accepted.
+    /// Reference: `Cardano.Ledger.Conway.PParams` — `ppuWellFormed`.
+    #[test]
+    fn test_ppu_well_formed_no_cross_field_consistency() {
+        let es = EnactState::default();
+        let stake_creds = empty_stake_creds_with(1);
+        let mut params = crate::protocol_params::ProtocolParameters::default();
+        params.max_block_body_size = 65536;
+        params.max_tx_size = 16384;
+
+        // Propose max_tx_size larger than current max_block_body_size.
+        // Upstream ppuWellFormed accepts individual non-zero values
+        // without checking cross-field relationships.
+        let proposals = vec![sample_proposal(
+            GovAction::ParameterChange {
+                prev_action_id: None,
+                protocol_param_update: crate::protocol_params::ProtocolParameterUpdate {
+                    max_tx_size: Some(100_000),
+                    ..Default::default()
+                },
+                guardrails_script_hash: None,
+            },
+            1,
+            1,
+        )];
+        let result = validate_conway_proposals(
+            crate::types::TxId([0xAA; 32]),
+            &proposals,
+            EpochNo(0),
+            &mut BTreeMap::new(),
+            &stake_creds,
+            Some((10, 0)),
+            None,
+            None,
+            Some(&params),
+            &es,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "max_tx_size > max_block_body_size accepted (no cross-field check in upstream)"
+        );
     }
 
     /// Upstream GOV rule does NOT have `ExpirationEpochTooLarge` — committee member

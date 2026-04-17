@@ -103,7 +103,8 @@ pub use utxo::{MultiEraTxOut, MultiEraUtxo, MAX_REF_SCRIPT_SIZE_PER_TX};
 // -- Stake distribution re-exports --------------------------------------------
 pub use stake::{
     Delegations, IndividualStake, PoolStakeDistribution, StakeSnapshot, StakeSnapshots,
-    compute_drep_stake_distribution, compute_stake_snapshot,
+    augment_pool_dist_with_proposal_deposits, compute_drep_stake_distribution,
+    compute_proposal_deposits_per_credential, compute_stake_snapshot,
 };
 
 // -- Reward re-exports --------------------------------------------------------

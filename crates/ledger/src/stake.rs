@@ -21,7 +21,9 @@ use std::collections::BTreeMap;
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::error::LedgerError;
 use crate::state::{PoolState, RewardAccounts, StakeCredentials};
-use crate::types::{Address, DRep, PoolKeyHash, PoolParams, StakeCredential, VrfKeyHash};
+use crate::types::{
+    Address, DRep, PoolKeyHash, PoolParams, RewardAccount, StakeCredential, VrfKeyHash,
+};
 use crate::utxo::MultiEraUtxo;
 
 // ---------------------------------------------------------------------------
@@ -549,11 +551,17 @@ pub fn compute_stake_snapshot(
 // ---------------------------------------------------------------------------
 
 /// Computes the aggregate stake delegated to each DRep from the current
-/// UTxO set, reward account balances, and credential-level DRep delegations.
+/// UTxO set, reward account balances, credential-level DRep delegations,
+/// and per-credential governance proposal deposits.
 ///
 /// Only credentials whose `delegated_drep` is `Some` contribute.
 /// The `AlwaysAbstain` and `AlwaysNoConfidence` sentinels are included
 /// because the tally engine handles them generically.
+///
+/// Proposal deposits are added to each credential's voting weight,
+/// matching upstream `computeDRepDistr` in
+/// `Cardano.Ledger.Conway.Governance.DRepPulser`:
+///   `stakeAndDeposits = fold $ mInstantStake <> mProposalDeposit`
 ///
 /// Reference: `Cardano.Ledger.Conway.Rules.Ratify` — the DRep
 /// stake-weighted tally uses a per-DRep aggregate derived from the
@@ -561,12 +569,15 @@ pub fn compute_stake_snapshot(
 pub fn compute_drep_stake_distribution(
     snapshot: &StakeSnapshot,
     stake_creds: &StakeCredentials,
+    proposal_deposits: &BTreeMap<StakeCredential, u64>,
 ) -> BTreeMap<DRep, u64> {
     let mut drep_stakes: BTreeMap<DRep, u64> = BTreeMap::new();
 
     for (cred, cred_state) in stake_creds.iter() {
         if let Some(drep) = cred_state.delegated_drep() {
-            let amount = snapshot.stake.get(cred);
+            let stake = snapshot.stake.get(cred);
+            let deposit = proposal_deposits.get(cred).copied().unwrap_or(0);
+            let amount = stake.saturating_add(deposit);
             if amount > 0 {
                 *drep_stakes.entry(drep).or_insert(0) += amount;
             }
@@ -574,6 +585,65 @@ pub fn compute_drep_stake_distribution(
     }
 
     drep_stakes
+}
+
+/// Augments a pool stake distribution with per-credential governance
+/// proposal deposits for credentials delegated to pools.
+///
+/// Upstream `computeDRepDistr` adds proposal deposits to the SPO pool
+/// distribution for credentials delegated to a stake pool:
+///   `addToPoolDistr accountState mProposalDeposit distr`
+///
+/// Regular stake and rewards are already in the pool distribution from
+/// the SNAP snapshot; only proposal deposits need to be added here.
+///
+/// Reference: `Cardano.Ledger.Conway.Governance.DRepPulser.computeDRepDistr`.
+pub fn augment_pool_dist_with_proposal_deposits(
+    pool_dist: &mut PoolStakeDistribution,
+    stake_creds: &StakeCredentials,
+    proposal_deposits: &BTreeMap<StakeCredential, u64>,
+) {
+    for (cred, deposit) in proposal_deposits {
+        if *deposit == 0 {
+            continue;
+        }
+        // Only add if the credential is delegated to a pool.
+        if let Some(cred_state) = stake_creds.get(cred) {
+            if let Some(pool_hash) = cred_state.delegated_pool() {
+                if let Some(pool_stake) = pool_dist.pool_stakes.get_mut(&pool_hash) {
+                    *pool_stake = pool_stake.saturating_add(*deposit);
+                    pool_dist.total_stake = pool_dist.total_stake.saturating_add(*deposit);
+                }
+            }
+        }
+    }
+}
+
+/// Computes per-credential proposal deposit totals from active governance
+/// actions.
+///
+/// Upstream `proposalsDeposits` in `Cardano.Ledger.Conway.Governance.Proposals`
+/// aggregates proposal deposits by the staking credential of each proposal's
+/// return address.
+pub fn compute_proposal_deposits_per_credential(
+    governance_actions: &BTreeMap<
+        crate::eras::conway::GovActionId,
+        crate::state::GovernanceActionState,
+    >,
+) -> BTreeMap<StakeCredential, u64> {
+    let mut deposits: BTreeMap<StakeCredential, u64> = BTreeMap::new();
+
+    for state in governance_actions.values() {
+        let proposal = state.proposal();
+        if proposal.deposit == 0 {
+            continue;
+        }
+        if let Some(ra) = RewardAccount::from_bytes(&proposal.reward_account) {
+            *deposits.entry(ra.credential).or_insert(0) += proposal.deposit;
+        }
+    }
+
+    deposits
 }
 
 // ---------------------------------------------------------------------------
@@ -813,5 +883,117 @@ mod tests {
         let decoded = StakeSnapshots::decode_cbor(&mut Decoder::new(&bytes))
             .expect("decode should succeed");
         assert_eq!(snapshots, decoded);
+    }
+
+    // -----------------------------------------------------------------------
+    // Proposal deposit voting weight tests (Gap AR/AS)
+    // -----------------------------------------------------------------------
+
+    fn make_stake_creds_with_drep(
+        cred: StakeCredential,
+        drep: DRep,
+    ) -> StakeCredentials {
+        let mut creds = StakeCredentials::new();
+        creds.register(cred);
+        creds.get_mut(&cred).unwrap().set_delegated_drep(Some(drep));
+        creds
+    }
+
+    fn make_stake_creds_with_pool(
+        cred: StakeCredential,
+        pool: PoolKeyHash,
+    ) -> StakeCredentials {
+        let mut creds = StakeCredentials::new();
+        creds.register(cred);
+        creds.get_mut(&cred).unwrap().set_delegated_pool(Some(pool));
+        creds
+    }
+
+    #[test]
+    fn drep_distribution_includes_proposal_deposits() {
+        let cred = test_cred(1);
+        let drep = DRep::KeyHash([0xAA; 28]);
+        let stake_creds = make_stake_creds_with_drep(cred, drep.clone());
+
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.stake.add(cred, 1000);
+
+        let mut proposal_deposits = BTreeMap::new();
+        proposal_deposits.insert(cred, 500);
+
+        let dist = compute_drep_stake_distribution(
+            &snapshot,
+            &stake_creds,
+            &proposal_deposits,
+        );
+        // Voting weight = UTxO stake (1000) + proposal deposit (500)
+        assert_eq!(dist.get(&drep), Some(&1500));
+    }
+
+    #[test]
+    fn drep_distribution_no_proposal_deposits() {
+        let cred = test_cred(2);
+        let drep = DRep::KeyHash([0xBB; 28]);
+        let stake_creds = make_stake_creds_with_drep(cred, drep.clone());
+
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.stake.add(cred, 2000);
+
+        let empty_deposits = BTreeMap::new();
+
+        let dist = compute_drep_stake_distribution(
+            &snapshot,
+            &stake_creds,
+            &empty_deposits,
+        );
+        assert_eq!(dist.get(&drep), Some(&2000));
+    }
+
+    #[test]
+    fn pool_dist_augmented_with_proposal_deposits() {
+        let cred = test_cred(3);
+        let pool = test_pool(30);
+        let stake_creds = make_stake_creds_with_pool(cred, pool);
+
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.stake.add(cred, 5000);
+        snapshot.delegations.insert(cred, pool);
+        snapshot.pool_params.insert(pool, test_pool_params(30));
+
+        let mut dist = snapshot.pool_stake_distribution();
+        assert_eq!(dist.pool_stake(&pool), 5000);
+        assert_eq!(dist.total_active_stake(), 5000);
+
+        let mut proposal_deposits = BTreeMap::new();
+        proposal_deposits.insert(cred, 800);
+
+        augment_pool_dist_with_proposal_deposits(
+            &mut dist,
+            &stake_creds,
+            &proposal_deposits,
+        );
+        // Pool stake = original (5000) + proposal deposit (800)
+        assert_eq!(dist.pool_stake(&pool), 5800);
+        assert_eq!(dist.total_active_stake(), 5800);
+    }
+
+    #[test]
+    fn pool_dist_augment_skips_undelegated_deposits() {
+        let cred = test_cred(4);
+        let drep = DRep::KeyHash([0xCC; 28]);
+        // Credential is DRep-delegated, NOT pool-delegated
+        let stake_creds = make_stake_creds_with_drep(cred, drep);
+
+        let mut dist = PoolStakeDistribution::default();
+        let mut proposal_deposits = BTreeMap::new();
+        proposal_deposits.insert(cred, 999);
+
+        augment_pool_dist_with_proposal_deposits(
+            &mut dist,
+            &stake_creds,
+            &proposal_deposits,
+        );
+        // No pool delegation → pool dist unchanged
+        assert_eq!(dist.total_active_stake(), 0);
     }
 }

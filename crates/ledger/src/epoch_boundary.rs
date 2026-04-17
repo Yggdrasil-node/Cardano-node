@@ -26,7 +26,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::LedgerError;
 use crate::rewards::{compute_epoch_rewards, EpochRewardDistribution, RewardParams};
-use crate::stake::{compute_drep_stake_distribution, compute_stake_snapshot, StakeSnapshots};
+use crate::stake::{
+    augment_pool_dist_with_proposal_deposits, compute_drep_stake_distribution,
+    compute_proposal_deposits_per_credential, compute_stake_snapshot, StakeSnapshots,
+};
 use crate::state::{EnactOutcome, LedgerState};
 use crate::types::{EpochNo, PoolKeyHash, RewardAccount, UnitInterval};
 use crate::eras::conway::GovActionId;
@@ -293,8 +296,20 @@ pub fn apply_epoch_boundary(
     //    (non-empty), use it directly.  Otherwise derive performance
     //    from the ledger's internal `blocks_made` (upstream `nesBcur`).
     //
+    //    NOTE (pulsing phase shift): upstream reward computation is
+    //    *pulsed* across the epoch via `startStep`/`pulseStep`/
+    //    `completeStep` and the resulting `RewardUpdate` is only applied
+    //    the *following* epoch boundary (`applyRUpdFiltered` in
+    //    NEWEPOCH).  We compute rewards **inline** at the current epoch
+    //    boundary, which shifts reward application one epoch earlier.
+    //    The stake distribution (`snapshots.go`) and fee value are
+    //    identical to what `startStep` would read from `ssStakeGo` and
+    //    `ssFee`; only the application timing differs.
+    //
     //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — RUPD runs
     //    before EPOCH (which contains SNAP).
+    //    Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward`
+    //    — `startStep`, `completeRupd`.
     // -----------------------------------------------------------------------
     let fee_pot = std::mem::take(&mut snapshots.fee_pot);
 
@@ -328,9 +343,14 @@ pub fn apply_epoch_boundary(
     };
 
     // Derive effective performance: caller-provided or from internal blocks_made.
+    //
+    // Upstream `mkApparentPerformance` in `mkPoolRewardInfo` uses data from
+    // `ssStakeGo` — the same snapshot used for reward distribution.
+    // Pre-rotation in our code, `snapshots.go` corresponds to upstream's
+    // `ssStakeGo` at the time `startStep` would read it.
     let effective_performance: BTreeMap<PoolKeyHash, UnitInterval>;
     if pool_performance.is_empty() && !ledger.blocks_made().is_empty() {
-        effective_performance = derive_pool_performance(ledger.blocks_made(), &snapshots.set, d_param);
+        effective_performance = derive_pool_performance(ledger.blocks_made(), &snapshots.go, d_param);
     } else {
         effective_performance = pool_performance.clone();
     }
@@ -413,14 +433,14 @@ pub fn apply_epoch_boundary(
     //    is subtracted from reserves.  The fee pot comes from transaction
     //    fees, not from reserves.
     //
+    //    NOTE: Conway treasury donations are flushed AFTER ratification
+    //    (step 5b below), matching upstream ordering where
+    //    `casTreasuryL <>~ utxosDonationL` runs after
+    //    `applyEnactedWithdrawals` / `proposalsApplyEnactment`.
+    //
     //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — accounting
     //    update step.
     // -----------------------------------------------------------------------
-    // Flush accumulated Conway treasury donations into treasury.
-    //
-    // Reference: `Cardano.Ledger.Conway.Rules.Epoch` — epoch boundary:
-    // `casTreasuryL <>~ utxosDonationL`, then `utxosDonationL .~ zero`.
-    let donations_transferred = ledger.flush_donations_to_treasury();
     {
         let acct = ledger.accounting_mut();
         // Upstream reserves change: deltaR = -deltaR1 + deltaR2
@@ -489,6 +509,29 @@ pub fn apply_epoch_boundary(
         let acct = ledger.accounting_mut();
         acct.treasury = acct.treasury.saturating_add(total_unclaimed);
     }
+
+    // -----------------------------------------------------------------------
+    // 5b′. Flush accumulated Conway treasury donations into treasury.
+    //
+    //      Upstream ordering: donations are flushed to the main
+    //      `ChainAccountState` treasury AFTER ratification results have
+    //      been applied (`applyEnactedWithdrawals`, `proposalsApplyEnactment`,
+    //      `returnProposalDeposits`):
+    //
+    //        chainAccountState3 = chainAccountState2
+    //           & casTreasuryL <>~ (utxosDonationL <> fold unclaimed)
+    //
+    //      This ensures `withdrawal_can_withdraw` during ratification
+    //      evaluates against a treasury that does NOT include the
+    //      current epoch's accumulated donations — matching the upstream
+    //      pulsing model where `ensTreasury` is captured before donations
+    //      are flushed.
+    //
+    //      Reference: `Cardano.Ledger.Conway.Rules.Epoch` — epoch
+    //      boundary: `casTreasuryL <>~ utxosDonationL`, then
+    //      `utxosDonationL .~ zero`.
+    // -----------------------------------------------------------------------
+    let donations_transferred = ledger.flush_donations_to_treasury();
 
     // Debit the deposit pot for all returned/unclaimed proposal deposits.
     // Upstream reconciles via `utxosDepositedL .~ totalObligation certState govState`
@@ -1077,12 +1120,35 @@ fn ratify_and_enact(
         return RatifyAndEnactResult::default();
     }
 
-    // Compute DRep delegated stake distribution from the mark snapshot.
-    let drep_delegated_stake =
-        compute_drep_stake_distribution(&snapshots.mark, ledger.stake_credentials());
+    // Compute per-credential governance proposal deposits for use in
+    // DRep and SPO voting weight calculations.
+    //
+    // Upstream `proposalsDeposits` aggregates proposal deposits by the
+    // staking credential of each proposal's return address, and
+    // `computeDRepDistr` adds these to both DRep and pool distributions.
+    //
+    // Reference: Cardano.Ledger.Conway.Governance.DRepPulser.computeDRepDistr.
+    let proposal_deposits =
+        compute_proposal_deposits_per_credential(ledger.governance_actions());
 
-    // Compute SPO pool stake distribution from the mark snapshot.
-    let pool_stake_dist = snapshots.mark.pool_stake_distribution();
+    // Compute DRep delegated stake distribution from the mark snapshot,
+    // including proposal deposits in each credential's voting weight.
+    let drep_delegated_stake = compute_drep_stake_distribution(
+        &snapshots.mark,
+        ledger.stake_credentials(),
+        &proposal_deposits,
+    );
+
+    // Compute SPO pool stake distribution from the mark snapshot,
+    // then augment with per-credential proposal deposits for pool-delegated
+    // credentials (upstream adds only deposits to pool distribution since
+    // regular stake is already in the SNAP snapshot).
+    let mut pool_stake_dist = snapshots.mark.pool_stake_distribution();
+    augment_pool_dist_with_proposal_deposits(
+        &mut pool_stake_dist,
+        ledger.stake_credentials(),
+        &proposal_deposits,
+    );
 
     // Collect proposal IDs sorted by governance action priority, then
     // by GovActionId within the same priority.  This matches upstream
@@ -1115,6 +1181,17 @@ fn ratify_and_enact(
     let mut deposit_targets: Vec<(Vec<u8>, u64)> = Vec::new();
     let mut enacted_purposes: BTreeSet<crate::state::ConwayGovActionPurpose> = BTreeSet::new();
     let mut delayed = false;
+
+    // Upstream `ensTreasury` is decremented by the FULL proposed withdrawal
+    // amount (including amounts to unregistered accounts) after each enacted
+    // `TreasuryWithdrawals`.  The actual treasury in `LedgerState` only
+    // debits registered accounts.  To match the upstream check semantics we
+    // track a separate withdrawal budget that is reduced by the full
+    // proposed total regardless of registration status.
+    //
+    // Reference: `Cardano.Ledger.Conway.Rules.Enact` —
+    //   `ensTreasury st <-> wdrlsAmount` where `wdrlsAmount = fold wdrls`.
+    let mut withdrawal_budget: u64 = ledger.accounting().treasury;
 
     for id in &sorted_ids {
         // Look up the action (it may have been removed by an earlier
@@ -1151,9 +1228,12 @@ fn ratify_and_enact(
             continue;
         }
 
-        // 4. withdrawalCanWithdraw — checked against CURRENT treasury from
-        //    the evolving enact state.
-        if !withdrawal_can_withdraw(gov_action, ledger.accounting().treasury) {
+        // 4. withdrawalCanWithdraw — checked against the withdrawal budget
+        //    that tracks the full proposed amount (including unregistered
+        //    accounts), matching upstream `ensTreasury` semantics.
+        //
+        //    Reference: `Cardano.Ledger.Conway.Rules.Ratify.withdrawalCanWithdraw`.
+        if !withdrawal_can_withdraw(gov_action, withdrawal_budget) {
             continue;
         }
 
@@ -1234,6 +1314,19 @@ fn ratify_and_enact(
 
             outcomes.push(outcome);
             enacted_ids.push(id.clone());
+
+            // Decrement the withdrawal budget by the FULL proposed amount
+            // (upstream `ensTreasury -= fold wdrls` in ENACT rule) so that
+            // subsequent `withdrawalCanWithdraw` checks see the reduced
+            // budget regardless of how much was actually credited to
+            // registered accounts.
+            if let crate::eras::conway::GovAction::TreasuryWithdrawals {
+                withdrawals, ..
+            } = &state.proposal().gov_action
+            {
+                let full_proposed: u64 = withdrawals.values().sum();
+                withdrawal_budget = withdrawal_budget.saturating_sub(full_proposed);
+            }
 
             // Set delay flag if this is a delaying action type.
             if delaying_action(&state.proposal().gov_action) {
@@ -4186,6 +4279,213 @@ mod tests {
 
         assert_eq!(event.governance_actions_enacted, 0);
         assert!(ledger.governance_actions().contains_key(&gai));
+    }
+
+    /// Two TreasuryWithdrawals proposals where the first targets an
+    /// unregistered reward account.  Upstream `ensTreasury` is decremented
+    /// by the FULL proposed amount (including unregistered), so the second
+    /// proposal should be rejected because the total exceeds the original
+    /// treasury.  Without the withdrawal-budget fix, our code would only
+    /// debit the registered portion and incorrectly let the second pass.
+    ///
+    /// Upstream reference: `Cardano.Ledger.Conway.Rules.Enact` —
+    ///   `ensTreasury st <-> wdrlsAmount` where `wdrlsAmount = fold wdrls`.
+    #[test]
+    fn test_withdrawal_budget_accounts_for_unregistered_amounts() {
+        let mut ledger = make_governance_ledger();
+
+        // Auto-pass all votes (0% thresholds).
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 0, denominator: 1 };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+        }
+        ledger.enact_state_mut().committee_quorum = UnitInterval { numerator: 0, denominator: 1 };
+
+        // Treasury = 1000.
+        ledger.accounting_mut().reserves = 0;
+        ledger.accounting_mut().treasury = 1_000;
+
+        // --- Proposal A: 900 to an UNREGISTERED account ---
+        let unregistered_ra = crate::RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0xF0; 28]),
+        };
+        // Intentionally do NOT register this account.
+        let mut wdrls_a = BTreeMap::new();
+        wdrls_a.insert(unregistered_ra, 900);
+        let proposal_a = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals: wdrls_a,
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+
+        // --- Proposal B: 200 to a REGISTERED account ---
+        let registered_cred = StakeCredential::AddrKeyHash([0xF1; 28]);
+        ledger.stake_credentials_mut().register(registered_cred);
+        let registered_ra = crate::RewardAccount {
+            network: 1,
+            credential: registered_cred,
+        };
+        ledger.reward_accounts_mut().insert(
+            registered_ra.clone(),
+            crate::RewardAccountState::new(0, None),
+        );
+        let mut wdrls_b = BTreeMap::new();
+        wdrls_b.insert(registered_ra.clone(), 200);
+        let proposal_b = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals: wdrls_b,
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+
+        // Insert both proposals.  TreasuryWithdrawals has priority 5, so
+        // both have the same priority and are ordered by GovActionId.
+        // Use IDs that sort A before B.
+        let gai_a = test_gov_action_id(0xE6, 0);
+        let gai_b = test_gov_action_id(0xE6, 1);
+        ledger
+            .governance_actions_mut()
+            .insert(gai_a.clone(), GovernanceActionState::new(proposal_a));
+        ledger
+            .governance_actions_mut()
+            .insert(gai_b.clone(), GovernanceActionState::new(proposal_b));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+
+        // Run a SINGLE epoch boundary.  Both proposals are evaluated in the
+        // same ratification pass.
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // Proposal A: 900 <= 1000  →  passes.
+        // After A: budget = 1000 - 900 = 100 (even though actual treasury
+        // stays 1000 because the account was unregistered).
+        // Proposal B: 200 <= 100  →  FAILS (upstream semantics).
+        //
+        // Only proposal A should be enacted.
+        assert_eq!(
+            event.governance_actions_enacted, 1,
+            "only proposal A should be enacted; B should be blocked by withdrawal budget"
+        );
+        // Proposal B should remain in governance actions (not enacted).
+        assert!(
+            ledger.governance_actions().contains_key(&gai_b),
+            "proposal B should remain in governance actions"
+        );
+        // The registered account should NOT have received the 200
+        // (proposal B was rejected).
+        assert_eq!(
+            ledger
+                .reward_accounts()
+                .get(&registered_ra)
+                .unwrap()
+                .balance(),
+            0,
+            "registered account should not be credited because proposal B was rejected"
+        );
+    }
+
+    /// Upstream `Cardano.Ledger.Conway.Rules.Epoch` flushes donations to
+    /// the main treasury AFTER ratification (`applyEnactedWithdrawals`,
+    /// `proposalsApplyEnactment`, `returnProposalDeposits`).  This means
+    /// `withdrawal_can_withdraw` during ratification evaluates against a
+    /// treasury that does NOT include the current epoch's accumulated
+    /// donations.  Previously our code flushed donations before ratification,
+    /// which inflated the budget.  This test ensures that donations do not
+    /// inflate the withdrawal budget.
+    #[test]
+    fn test_donation_not_included_in_withdrawal_budget() {
+        let mut ledger = make_governance_ledger();
+
+        // Auto-pass all votes.
+        let mut drep_thresholds = DRepVotingThresholds::default();
+        drep_thresholds.treasury_withdrawal = UnitInterval { numerator: 0, denominator: 1 };
+        if let Some(pp) = ledger.protocol_params_mut() {
+            pp.drep_voting_thresholds = Some(drep_thresholds);
+        }
+        ledger.enact_state_mut().committee_quorum = UnitInterval { numerator: 0, denominator: 1 };
+
+        // Treasury = 500.  Donations = 600.  Combined = 1100.
+        ledger.accounting_mut().reserves = 0;
+        ledger.accounting_mut().treasury = 500;
+        // Simulate accumulated donations.
+        ledger.accumulate_donation(600);
+
+        // Propose a withdrawal of 800 — exceeds treasury (500) but fits
+        // in treasury+donations (1100).  Upstream would reject it because
+        // donations are flushed AFTER ratification.
+        let cred = StakeCredential::AddrKeyHash([0xD0; 28]);
+        ledger.stake_credentials_mut().register(cred);
+        let ra = crate::RewardAccount {
+            network: 1,
+            credential: cred,
+        };
+        ledger.reward_accounts_mut().insert(
+            ra.clone(),
+            crate::RewardAccountState::new(0, None),
+        );
+        let mut wdrls = BTreeMap::new();
+        wdrls.insert(ra.clone(), 800);
+        let proposal = crate::eras::conway::ProposalProcedure {
+            deposit: 0,
+            reward_account: vec![],
+            gov_action: GovAction::TreasuryWithdrawals {
+                withdrawals: wdrls,
+                guardrails_script_hash: None,
+            },
+            anchor: crate::types::Anchor {
+                url: String::new(),
+                data_hash: [0; 32],
+            },
+        };
+        let gai = test_gov_action_id(0xD0, 0);
+        ledger
+            .governance_actions_mut()
+            .insert(gai.clone(), GovernanceActionState::new(proposal));
+
+        let mut snapshots = StakeSnapshots::new();
+        let perf = BTreeMap::new();
+        let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf)
+            .expect("epoch 1");
+
+        // The withdrawal should be rejected: 800 > 500 (treasury without
+        // donations).  The donations (600) should NOT inflate the budget.
+        assert_eq!(
+            event.governance_actions_enacted, 0,
+            "withdrawal of 800 exceeds pre-donation treasury of 500; must be rejected"
+        );
+        assert!(
+            ledger.governance_actions().contains_key(&gai),
+            "proposal should remain in governance actions"
+        );
+        // The account should not have been credited.
+        assert_eq!(
+            ledger.reward_accounts().get(&ra).unwrap().balance(),
+            0,
+            "account should not be credited because withdrawal was rejected"
+        );
+        // Donations should still have been flushed to treasury at the end
+        // of the epoch boundary (just after ratification, not before).
+        assert_eq!(
+            event.donations_transferred, 600,
+            "donations should still be transferred to treasury"
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -274,17 +274,18 @@ pub fn compute_script_data_hash(
 
 /// Validate a declared `script_data_hash` against locally computed value.
 ///
-/// Implements the bidirectional upstream `ppViewHashesDontMatch` check:
-/// - When Plutus redeemers are present, the hash MUST be declared and match.
-/// - When no Plutus redeemers exist, the hash MUST be absent.
+/// Implements the upstream `mkScriptIntegrity` / `checkScriptIntegrityHash`
+/// check: a script integrity hash is required when ANY of (redeemers,
+/// datums, language views) is non-empty.  Only when all three are empty
+/// does upstream return `SNothing` and expect no declared hash.
 ///
 /// At protocol version >= 11 (Conway post-bootstrap) the mismatch error is
 /// reported as `ScriptIntegrityHashMismatch` instead of
 /// `PPViewHashesDontMatch`.  Pre-PV11 or when version is unknown, the
 /// legacy error is returned.
 ///
-/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxo` —
-/// `ppViewHashesDontMatch` / `hashScriptIntegrity`;
+/// Reference: `Cardano.Ledger.Alonzo.Tx` — `mkScriptIntegrity`,
+/// `checkScriptIntegrityHash`;
 /// `Cardano.Ledger.Conway.Rules.Utxo` — `ScriptIntegrityHashMismatch`.
 pub fn validate_script_data_hash(
     declared: Option<[u8; 32]>,
@@ -297,12 +298,24 @@ pub fn validate_script_data_hash(
     required_script_hashes: Option<&HashSet<[u8; 28]>>,
     protocol_version: Option<(u64, u64)>,
 ) -> Result<(), LedgerError> {
-    // Determine whether the transaction includes Plutus redeemers.
-    // Upstream `hashScriptIntegrity` returns `SNothing` when no languages
-    // are used (i.e. `redeemers == []`).
-    let has_redeemers = witness_has_redeemers(witness_bytes);
+    // Upstream `mkScriptIntegrity` returns `SNothing` only when ALL THREE
+    // of (redeemers, langViews, datums) are null.  If any one is non-empty,
+    // the integrity hash is computed and must be present and match.
+    //
+    // Reference: `Cardano.Ledger.Alonzo.Tx.mkScriptIntegrity`:
+    //   | null (txRedeemers ^. unRedeemersL)
+    //   , null langViews
+    //   , null (txDats ^. unTxDatsL) = SNothing
+    //   | otherwise = SJust $ ScriptIntegrity txRedeemers txDats langViews
+    let needs_hash = script_integrity_needed(
+        witness_bytes,
+        utxo,
+        reference_inputs,
+        spending_inputs,
+        required_script_hashes,
+    );
 
-    match (declared, has_redeemers) {
+    match (declared, needs_hash) {
         (None, false) => Ok(()),
         (Some(declared_hash), false) => {
             Err(LedgerError::UnexpectedScriptIntegrityHash {
@@ -342,23 +355,57 @@ pub fn validate_script_data_hash(
     }
 }
 
-/// Quick check whether the witness set contains at least one redeemer.
+/// Determine whether a script integrity hash is needed for this transaction.
 ///
-/// Avoids a full `ShelleyWitnessSet` decode by scanning the top-level CBOR
-/// map for key 5 (redeemers in Alonzo/Babbage array format) or key 5 with
-/// a non-empty container.  Falls back to full decode when the scan is
-/// inconclusive.
-fn witness_has_redeemers(witness_bytes: Option<&[u8]>) -> bool {
+/// Upstream `mkScriptIntegrity` returns `SNothing` only when ALL THREE
+/// of (redeemers, txDats, langViews) are null.  We replicate that logic:
+/// if any one of the three components is non-empty, the hash is required.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Tx.mkScriptIntegrity`
+fn script_integrity_needed(
+    witness_bytes: Option<&[u8]>,
+    utxo: Option<&MultiEraUtxo>,
+    reference_inputs: Option<&[ShelleyTxIn]>,
+    spending_inputs: Option<&[ShelleyTxIn]>,
+    required_script_hashes: Option<&HashSet<[u8; 28]>>,
+) -> bool {
     let Some(wb) = witness_bytes else {
         return false;
     };
-    // Full parse — the witness set is already decoded at other call sites,
-    // so this cost is negligible compared to the surrounding validation.
-    match crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb) {
-        Ok(ws) => !ws.redeemers.is_empty(),
-        // Parse failure ⇒ conservative: treat as no redeemers.
-        Err(_) => false,
+    let ws = match crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb) {
+        Ok(ws) => ws,
+        // Parse failure ⇒ conservative: treat as no components present.
+        Err(_) => return false,
+    };
+
+    // 1. Redeemers non-empty?
+    if !ws.redeemers.is_empty() {
+        return true;
     }
+
+    // 2. Datums non-empty?
+    if !ws.plutus_data.is_empty() {
+        return true;
+    }
+
+    // 3. Language views non-empty?  This is derived from Plutus scripts
+    //    that are both provided AND needed (i.e. in `required_script_hashes`).
+    let scripts = collect_all_plutus_scripts(
+        &ws,
+        utxo.unwrap_or(&MultiEraUtxo::new()),
+        reference_inputs,
+        spending_inputs,
+    );
+    let has_lang_views = scripts.iter().any(|(hash, _)| {
+        required_script_hashes
+            .map(|required| required.contains(hash))
+            .unwrap_or(true)
+    });
+    if has_lang_views {
+        return true;
+    }
+
+    false
 }
 
 fn encode_redeemers_for_script_data_hash(
@@ -1007,6 +1054,71 @@ pub fn validate_no_extra_redeemers(
                     index: redeemer.index,
                 });
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validates that every required Plutus-backed purpose has a matching
+/// redeemer pointer in the witness set (Phase-1 UTXOW check).
+///
+/// This is the `MissingRedeemers` half of upstream `hasExactSetOfRedeemers`.
+/// Paired with [`validate_no_extra_redeemers`] (the `ExtraRedeemers` half),
+/// these two functions together replicate the full predicate.
+///
+/// Must be called unconditionally before the `is_valid` dispatch so that
+/// `is_valid=false` transactions are also caught.
+///
+/// Reference: `Cardano.Ledger.Alonzo.Rules.Utxow.hasExactSetOfRedeemers`
+pub fn validate_no_missing_redeemers(
+    witness_bytes: Option<&[u8]>,
+    required_script_hashes: &std::collections::HashSet<[u8; 28]>,
+    spending_utxo: &MultiEraUtxo,
+    sorted_inputs: &[crate::eras::shelley::ShelleyTxIn],
+    sorted_policy_ids: &[[u8; 28]],
+    certificates: &[DCert],
+    sorted_reward_accounts: &[Vec<u8>],
+    sorted_voters: &[Voter],
+    proposal_procedures: &[ProposalProcedure],
+    reference_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
+) -> Result<(), LedgerError> {
+    let wb = match witness_bytes {
+        Some(wb) => wb,
+        None => return Ok(()),
+    };
+
+    let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
+
+    let plutus_scripts = collect_all_plutus_scripts(
+        &ws,
+        spending_utxo,
+        reference_inputs,
+        Some(sorted_inputs),
+    );
+
+    let actual_redeemer_ptrs: std::collections::HashSet<(u8, u64)> = ws
+        .redeemers
+        .iter()
+        .map(|r| (r.tag, r.index))
+        .collect();
+
+    for expected in collect_required_plutus_redeemers(
+        required_script_hashes,
+        &plutus_scripts,
+        spending_utxo,
+        sorted_inputs,
+        sorted_policy_ids,
+        certificates,
+        sorted_reward_accounts,
+        sorted_voters,
+        proposal_procedures,
+    ) {
+        if !actual_redeemer_ptrs.contains(&(expected.tag, expected.index)) {
+            return Err(LedgerError::MissingRedeemer {
+                hash: expected.hash,
+                purpose: expected.purpose,
+            });
         }
     }
 

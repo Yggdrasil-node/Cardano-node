@@ -133,9 +133,13 @@ fn alonzo_block_rejects_plutus_script_locked_input_without_datum_hash() {
     };
 
     let result = state.apply_block_validated(&block, None);
+    // Upstream fires the script integrity check (UTXOW) before the
+    // UnspendableUTxONoDatumHash check (UTXOS).  This transaction has a Plutus
+    // V1 script in the witness set (langViews non-empty) but no script_data_hash,
+    // so the integrity check fires first.
     assert!(
-        matches!(result, Err(LedgerError::UnspendableUTxONoDatumHash { .. })),
-        "expected UnspendableUTxONoDatumHash, got: {result:?}",
+        matches!(result, Err(LedgerError::MissingRequiredScriptIntegrityHash)),
+        "expected MissingRequiredScriptIntegrityHash, got: {result:?}",
     );
 }
 

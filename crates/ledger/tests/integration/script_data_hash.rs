@@ -753,3 +753,112 @@ fn minimal_ws_with_redeemer() -> Vec<u8> {
     });
     ws.to_cbor_bytes()
 }
+
+// ── Datums-without-redeemers (upstream triple-null guard) ────────────
+
+/// Upstream `mkScriptIntegrity` requires a hash when the witness set
+/// contains datums even without redeemers.  Reference:
+///   | null redeemers, null langViews, null datums = SNothing
+///   | otherwise = SJust $ ScriptIntegrity ...
+#[test]
+fn datums_without_redeemers_requires_script_data_hash() {
+    let mut ws = empty_witness_set();
+    ws.plutus_data.push(PlutusData::Integer(42));
+    let wb = ws.to_cbor_bytes();
+
+    // No declared hash, but datums present → must error
+    let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
+        None,
+        Some(&wb),
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(
+        matches!(result, Err(LedgerError::MissingRequiredScriptIntegrityHash)),
+        "expected MissingRequiredScriptIntegrityHash when datums present without redeemers, got: {result:?}",
+    );
+}
+
+/// When datums are present and the correct hash is declared, validation passes.
+#[test]
+fn datums_without_redeemers_accepts_matching_hash() {
+    let mut ws = empty_witness_set();
+    ws.plutus_data.push(PlutusData::Integer(42));
+    let wb = ws.to_cbor_bytes();
+
+    // Compute the expected hash for datums-only witness set.
+    let computed = yggdrasil_ledger::plutus_validation::compute_script_data_hash(
+        Some(&wb),
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+
+    let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
+        Some(computed),
+        Some(&wb),
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(result.is_ok(), "expected Ok with matching datums-only hash, got: {result:?}");
+}
+
+/// When datums are present but the declared hash is wrong, validation fails.
+#[test]
+fn datums_without_redeemers_rejects_wrong_hash() {
+    let mut ws = empty_witness_set();
+    ws.plutus_data.push(PlutusData::Integer(42));
+    let wb = ws.to_cbor_bytes();
+
+    let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
+        Some([0xDD; 32]),
+        Some(&wb),
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(
+        matches!(result, Err(LedgerError::PPViewHashesDontMatch { .. })),
+        "expected PPViewHashesDontMatch for wrong datums-only hash, got: {result:?}",
+    );
+}
+
+/// A declared hash with an empty witness set (no redeemers, no datums, no
+/// scripts) must still be rejected as unexpected.
+#[test]
+fn empty_witness_with_declared_hash_is_unexpected() {
+    let wb = empty_witness_set().to_cbor_bytes();
+    let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
+        Some([0xEE; 32]),
+        Some(&wb),
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(
+        matches!(result, Err(LedgerError::UnexpectedScriptIntegrityHash { .. })),
+        "expected UnexpectedScriptIntegrityHash for empty witness, got: {result:?}",
+    );
+}

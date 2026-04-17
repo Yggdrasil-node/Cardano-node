@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated June 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 81 parity audit rounds completed (691+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 83 parity audit rounds completed (709+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 81 audit rounds covering 691+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 83 audit rounds covering 709+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -68,7 +68,7 @@
 - `validate_outside_forecast()` — OutsideForecast infrastructure (upstream no-op due to `unsafeLinearExtendEpochInfo`)
 - `delegate_stake_credential()` — Pool-registration check on delegation: all eras (Shelley through Conway) reject delegation to unregistered pools via `DelegateeNotRegisteredDELEG` (upstream `Cardano.Ledger.Shelley.Rules.Deleg`)
 - `PoolState::find_pool_by_vrf_key()` — Conway VRF key uniqueness enforcement: new pool registrations reject duplicate VRF keys, re-registrations allow same pool's own key (upstream `VRFKeyHashAlreadyRegistered` / `hardforkConwayDisallowDuplicatedVRFKeys`)
-- `conway_protocol_param_update_well_formed()` — Exact upstream `ppuWellFormed` check set: 10 unconditional zero-reject fields + bootstrap-gated `coinsPerUTxOByte` + PV11-gated `nOpt` (upstream `Cardano.Ledger.Conway.PParams`)
+- `conway_protocol_param_update_well_formed()` — Exact upstream `ppuWellFormed` check set: 10 unconditional zero-reject fields + bootstrap-gated `coinsPerUTxOByte` + PV11-gated `nOpt` + no cross-field checks (upstream `Cardano.Ledger.Conway.PParams`)
 - `record_block_producer()` / `take_blocks_made()` — Per-pool block production tracking in LedgerState (upstream `NewEpochState.nesBcur`)
 - `derive_pool_performance()` — Pool performance ratios from internal blocks_made + stake distribution; d>=0.8 early-return gives perf=1 for all block-producing pools (upstream `mkApparentPerformance`)
 - `StakeCredentials::clear_pool_delegations()` — POOLREAP delegation cleanup on pool retirement (upstream `removeStakePoolDelegations`)
@@ -138,7 +138,7 @@
 - `compute_epoch_rewards()` — Complete: upstream RUPD→SNAP ordering, delta_reserves-only reserves debit, fee pot not subtracted from reserves
 - `ratify_action()` — Vote tallying complete incl. AlwaysNoConfidence auto-yes for NoConfidence/UpdateCommittee; CC expired-member term filtering; CC hot/cold credential resolution (votes keyed by HOT credential per Conway CDDL, tally resolves cold→hot); threshold math complete; `defaultStakePoolVote` post-bootstrap SPO default vote from pool reward-account DRep delegation (AlwaysAbstain→Abstain, AlwaysNoConfidence→auto-Yes on NoConfidence, else implicit No)
 - `validate_conway_proposals()` — Proposal validation includes `WellFormedUnitIntervalRatification` (committee quorum must be valid unit interval: denominator > 0 and numerator ≤ denominator)
-- `ratify_and_enact()` — Enacted+expired+subtree-pruned deposit refunds via returnProposalDeposits; unclaimed→treasury
+- `ratify_and_enact()` — Enacted+expired+subtree-pruned deposit refunds via returnProposalDeposits; unclaimed→treasury; withdrawal budget tracks FULL proposed amounts (including unregistered accounts) matching upstream `ensTreasury <-> wdrlsAmount` from ENACT rule
 - `remove_lineage_conflicting_proposals()` — proposalsApplyEnactment: purpose-root chain validation removes stale proposals
 - `apply_submitted_tx()` — Pre-mempool validation for LocalTxSubmission and runtime mempool admission paths
 
@@ -362,4 +362,10 @@
 | 72 | Babbage/Conway standalone collateral input-count check | 6 | Gap AK: after AI, `validate_alonzo_plus_tx()` unintentionally skipped `max_collateral_inputs` checks when no redeemers were present. Upstream Babbage UTXO enforces `validateTooManyCollateralInputs` as a standalone check independent of redeemers. Fixed with era-aware `enforce_collateral_input_limit` wiring (false in Alonzo, true in Babbage/Conway) and regression coverage. |
 | 73 | Conway `disjointRefInputs` PV gating | 6 | Gap AL: `validate_reference_input_disjointness` enforced unconditionally in both Conway block-apply and submitted-tx paths. Upstream `disjointRefInputs` in `Cardano.Ledger.Babbage.Rules.Utxo` is PV-gated: `pvMajor > eraProtVerHigh @BabbageEra && pvMajor < natVersion @11`, meaning disjointness is only enforced at PV 9–10 (early Conway). At PV 11+ the check is relaxed. Fixed with `disjoint_ref_inputs_enforced()` helper gating both call sites; 3 new PV-gating tests. |
 | 74 | Conway HARDFORK `updateDRepDelegations` cleanup | 6 | Gap AM: protocol-version transition cleanup from bootstrap to post-bootstrap was not covered by regression tests. Upstream HARDFORK rule runs `updateDRepDelegations` when `pvMajor newPv == 10`, clearing dangling delegations to non-existent DReps created during bootstrap (`preserveIncorrectDelegation`). Verified and locked with 4 integration tests covering PV9→10 cleanup, preservation of registered/builtin DReps, non-hardfork no-op, and PV10→11 no-cleanup behavior. |
-| **Total** | **All subsystems** | **667** | **34 fix rounds** |
+| 75 | `ppuWellFormed` cross-field over-validation removal | 6 | Gap AN: `conway_protocol_param_update_well_formed()` included three checks not present in upstream `ppuWellFormed` (`Cardano.Ledger.Conway.PParams`): (1) effective-zero check merging proposed values with current protocol params, (2) cross-field `max_tx_size > max_block_body_size` consistency check, (3) effective-zero check on resolved `max_block_body_size` / `max_tx_size`. Upstream only validates individual proposed field values for non-zero without merging or cross-referencing. Removed the extra block and unused `protocol_params` parameter from function signature. Updated 2 existing tests to assert acceptance. Added 1 new regression test. |
+| 76 | Withdrawal budget parity (`withdrawalCanWithdraw`) | 6 | Gap AO: `withdrawal_budget` tracked separately from live treasury, decremented by FULL proposed amount (including unregistered accounts). Matches upstream `ensTreasury st <-> wdrlsAmount`. |
+| 77 | Epoch boundary: donation ordering + performance snapshot | 10 | Gap AP: `flush_donations_to_treasury()` moved from before to after ratification, matching upstream `casTreasuryL <>~ utxosDonationL` ordering — donations no longer inflate `withdrawal_budget`. Gap AQ: `derive_pool_performance()` changed from `snapshots.set` to `snapshots.go`, matching upstream `mkApparentPerformance` using `ssStakeGo`. Documented inline-vs-pulsed reward phase shift. |
+| 78 | Proposal deposits in DRep/SPO voting weights | 8 | Gap AR: `compute_drep_stake_distribution` did not include per-credential proposal deposits in DRep voting weight — upstream `computeDRepDistr` computes `stakeAndDeposits = fold $ mInstantStake <> mProposalDeposit`. Gap AS: SPO pool distribution not augmented with proposal deposits — upstream `addToPoolDistr` adds proposal deposits to pool stakes for SPO voting. Fixed both via `compute_proposal_deposits_per_credential()` + wiring into `ratify_and_enact()`. |
+| 79 | Script integrity hash triple-null guard | 6 | Gap AT: `validate_script_data_hash()` only checked for redeemers to decide if a `script_data_hash` was needed. Upstream `mkScriptIntegrity` returns `SNothing` only when ALL THREE of (redeemers, datums, langViews) are null; if ANY is non-empty the hash is required. Fixed via `script_integrity_needed()` which checks redeemers, witness datums, and language views (Plutus scripts provided ∩ needed). Updated error ordering in tests: `MissingRedeemer` / `UnspendableUTxONoDatumHash` tests now expect `MissingRequiredScriptIntegrityHash` when `script_data_hash` is absent (upstream UTXOW fires before UTXOS). Supplemental datum tests now compute and declare the correct hash. |
+| 80 | MissingRedeemers Phase-1 extraction | 6 | Gap AU: `MissingRedeemers` check was inside `validate_plutus_scripts()` (Phase-2), so `is_valid=false` transactions skipped it. Upstream `hasExactSetOfRedeemers` runs both `ExtraRedeemers` and `MissingRedeemers` at Phase-1 unconditionally in UTXOW. Extracted `validate_no_missing_redeemers()` as standalone Phase-1 function paired with existing `validate_no_extra_redeemers()`. Wired into all 6 per-era call sites (Alonzo/Babbage/Conway × block-apply + submitted-tx). 3 new tests: Alonzo block + Babbage submitted-tx with valid hash but no redeemer, Conway `is_valid=false` with missing redeemer. |
+| **Total** | **All subsystems** | **709** | **40 fix rounds** |
