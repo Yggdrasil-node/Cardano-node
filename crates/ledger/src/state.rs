@@ -3847,8 +3847,15 @@ impl LedgerState {
         self.adopt_scheduled_genesis_delegations(slot);
 
         // Block-level size validation when protocol parameters are available.
+        //
+        // BBODY uses the full serialized transaction payload that appears in
+        // the block body (body + witnesses + is_valid + aux/null), not just
+        // transaction body bytes.
+        //
+        // Reference: `Cardano.Ledger.Shelley.Rules.Bbody` —
+        // `validateMaxBlockBodySize`.
         if let Some(params) = &self.protocol_params {
-            let body_size: usize = block.transactions.iter().map(|tx| tx.body.len()).sum();
+            let body_size: usize = block.transactions.iter().map(|tx| tx.serialized_size()).sum();
             if body_size > params.max_block_body_size as usize {
                 return Err(LedgerError::BlockTooLarge {
                     actual: body_size,
