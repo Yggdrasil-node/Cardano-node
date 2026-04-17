@@ -42,7 +42,7 @@ The project has a complete Cardano-era type system and a functional node binary:
 - Storage crate now also exposes a minimal `ChainDb` coordination layer for best-known tip recovery, typed ledger checkpoint restore and replay, checkpoint retention/truncation, volatile-prefix promotion into immutable storage, and rollback-time snapshot truncation without moving sync policy into `node`.
 - Consensus hardening with `SecurityParam`, `ChainState` volatile chain tracker, rollback depth enforcement, and stability window detection.
 
-Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas. `cargo test-all -- --list` currently discovers 4208 tests across all crates.
+Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas. `cargo test-all -- --list` currently discovers 4210 tests across all crates.
 
 The next architecture milestones are end-to-end multi-peer management, dedicated tracer transport/metrics export, and mainnet sync endurance testing.
 

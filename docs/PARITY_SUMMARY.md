@@ -2,7 +2,7 @@
 
 **Prepared**: April 2, 2026 (updated April 2026)  
 **For**: Yggdrasil Rust Cardano Node Team  
-**Status**: 86 parity audit rounds completed (739+ upstream rule areas verified); production-ready across all subsystems
+**Status**: 87 parity audit rounds completed (745+ upstream rule areas verified); production-ready across all subsystems
 
 ---
 
@@ -23,7 +23,7 @@
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 99% |
 | **Monitoring** | NodeMetrics (35+ counters/gauges) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 86 audit rounds covering 739+ upstream rule areas verified with zero open gaps)
+**Overall Node Readiness**: ~99% (can sync testnet, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 87 audit rounds covering 745+ upstream rule areas verified with zero open gaps)
 
 ---
 
@@ -230,7 +230,7 @@
 - ✅ Collateral validation (all edge cases)
 - ✅ Reward calculation (upstream RUPD→SNAP ordering + reserves accounting)
 - ✅ Governance ratification tally (AlwaysNoConfidence auto-yes, deposit lifecycle, lineage subtree pruning complete)
-- 📊 **Validation**: Workspace test baseline currently at 4208 discovered tests (`cargo test-all -- --list`)
+- 📊 **Validation**: Workspace test baseline currently at 4210 discovered tests (`cargo test-all -- --list`)
 - 📊 **Testnet**: Sync 50+ epochs without error
 
 ### Phase 2: Plutus (Weeks 3-5)
@@ -304,7 +304,7 @@
 2. **Interoperability checkpointing**: compare chain tip and selected block/body hashes against an upstream Haskell node at fixed intervals (15 min, 60 min, 6 h).
 3. **Restart resilience pass**: execute kill/restart cycles at 5-min and 30-min intervals and verify storage WAL + dirty-flag recovery leaves tip progression monotonic.
 4. **Plutus drift watch**: on each Conway genesis refresh, re-run 302-key V3 array mapping assertions and strict builtin-cost completeness checks.
-5. **Weekly parity audit cadence**: continue rule-by-rule upstream audits (Round 84+) and append only evidence-backed deltas.
+5. **Weekly parity audit cadence**: continue rule-by-rule upstream audits (Round 85+) and append only evidence-backed deltas.
 
 ---
 
@@ -371,4 +371,5 @@
 | 81 | Collateral return index + HardFork version jump guard | 12 | Gap AV: `apply_collateral_only()` used `u16::MAX` (65535) for the collateral return output index. Upstream `mkCollateralTxIn` uses `fromIntegral $ length (body ^. outputsTxBodyL)` — the index equals the number of regular outputs. Fixed by passing `body.outputs.len()` from all 3 Alonzo/Babbage/Conway call sites. Gap AW: `conway_expected_previous_hard_fork_version()` lacked `preceedingHardFork` safety guard — proposals jumping more than one major version ahead of the live protocol were not blocked. Added early return when `protocol_version.0 > cur.0.saturating_add(1)`, matching upstream guard. Updated cross-block lineage chain test to use valid (10,1) instead of invalid (11,0). Comprehensive Conway rule audit: LEDGER/LEDGERS/BBODY/UTXO (23 variants)/UTXOW (19 variants via `babbageUtxowTransition` 10 checks)/UTXOS (2 variants)/GOV (19 variants)/DELEG (8 variants)/GOVCERT (6 variants)/CERT/CERTS/POOL (6 variants) — all verified. EPOCH/NEWEPOCH ordering parity confirmed. Submitted-tx vs block-apply path consistency verified for all eras. |
 | 82 | Ratification ordering + delay flag semantics + proposing script witnesses | 12 | Gap AX: `required_script_hashes_from_proposal_procedures` incorrectly included `NewConstitution.constitution.guardrails_script_hash` as a required proposing script witness. Upstream `getConwayScriptsNeeded` → `proposingScriptsNeeded` only requires script witnesses for `ParameterChange` and `TreasuryWithdrawals` guardrails scripts; `NewConstitution` guardrails are for post-enactment use. Removed `NewConstitution` branch. 2 new tests. Gap AY: `apply_epoch_boundary` removed expired governance actions BEFORE running `ratify_and_enact`. Upstream `epochTransition` runs RATIFY (which includes both enacted and expired sets) BEFORE expiry cleanup — an expired action that passes all ratification checks should still be enacted. Reordered to ratify-first, expire-after. Gap AZ: `ratify_and_enact` only set `delayed = true` after successful enactment. Upstream `ratifyTransition` `otherwise` branch sets `rsDelayed \|\| delayingAction gas` for ALL non-enacted, non-expired delaying actions (NoConfidence/HardFork/UpdateCommittee/NewConstitution), preventing subsequent enactments even when the delaying action itself fails acceptance. Expired actions do NOT change the flag. Restructured loop with labeled block guards. 3 new tests. Deep verification: voter witness collection (VKey + script), committee/DRep/SPO tally functions, SPO default votes, DRep activity tracking, pparam group classification, `validCommitteeTerm`, `withdrawalCanWithdraw`, ratification guard order, `ProposalReturnAccountDoesNotExist` PV gating. |
 | 83 | Storage volatile delete WAL recovery | 6 | Gap BA: multi-step volatile delete paths (`prune_up_to`, `rollback_to`, `garbage_collect`) had no persisted delete plan if a crash occurred between partial file deletion and state convergence. Fixed by adding `wal.pending.json` delete-plan journaling in `FileVolatile` plus open-time WAL replay/cleanup and regression tests for valid and malformed WAL plans. |
-| **Total** | **All subsystems** | **739** | **46 fix rounds** |
+| 84 | BBODY max block body size full-byte accounting | 6 | Gap BB: `apply_block_validated()` measured block body size as `sum(tx.body.len())`, undercounting witness/aux/is_valid payload bytes. Fixed by summing `Tx::serialized_size()` (full tx CBOR payload parity with BBODY accounting intent). Added regression tests for single-tx and multi-tx undercount scenarios. |
+| **Total** | **All subsystems** | **745** | **47 fix rounds** |

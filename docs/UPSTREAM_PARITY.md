@@ -8,7 +8,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - `cargo check-all`: passing
 - `cargo test-all`: passing (0 failures)
-- `cargo test-all -- --list`: 4208 discovered tests
+- `cargo test-all -- --list`: 4210 discovered tests
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 
 ## Subsystem Status
