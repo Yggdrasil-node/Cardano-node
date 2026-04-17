@@ -133,16 +133,21 @@ pub use mux::{
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use ledger_peers_provider::{
-    LedgerPeerProvider, LedgerPeerProviderError, LedgerPeerProviderKind, LedgerPeerProviderRefresh,
+    ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, LedgerPeerProvider,
+    LedgerPeerProviderError, LedgerPeerProviderKind, LedgerPeerProviderRefresh,
     LedgerPeerRegistryUpdate, LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
+    LiveLedgerPeerRefreshObservation, PeerSnapshotFileObservation, PeerSnapshotFileSource,
     PeerSnapshotFreshness, ScriptedLedgerPeerProvider, apply_ledger_peer_refresh,
     derive_peer_snapshot_freshness, eligible_ledger_peer_candidates, judge_ledger_peer_usage,
+    live_refresh_ledger_peer_registry, live_refresh_ledger_peer_registry_observed,
     merge_ledger_peer_snapshots, reconcile_ledger_peer_registry_with_policy,
     refresh_ledger_peer_registry,
 };
 pub use listener::{PeerListener, PeerListenerError};
 #[cfg(unix)]
-pub use ntc_peer::{NodeToClientVersionData, NtcPeerConnection, NtcPeerError, ntc_accept};
+pub use ntc_peer::{
+    NodeToClientVersionData, NtcPeerConnection, NtcPeerError, ntc_accept, ntc_connect,
+};
 pub use peer::{PeerConnection, PeerError, accept as peer_accept, connect as peer_connect};
 pub use peer_registry::{
     PeerRegistry, PeerRegistryEntry, PeerRegistryStatusCounts, PeerSource, PeerStatus,

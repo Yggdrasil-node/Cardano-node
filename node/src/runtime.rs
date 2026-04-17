@@ -43,18 +43,20 @@ use yggdrasil_mempool::{
 };
 use yggdrasil_network::{
     AbstractState, AcquireOutboundResult, AfterSlot, BlockFetchClient, ChainSyncClient, CmAction,
-    ConnectionManagerState, ConsensusMode, ControlMessage, DataFlow, DnsRefreshPolicy,
-    DnsRootPeerProvider, GovernorAction, GovernorState, GovernorTargets, HandshakeVersion,
-    KeepAliveClient, LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
-    LocalRootConfig, LocalRootTargets, MiniProtocolNum, NodePeerSharing, NodeToNodeVersionData,
-    PeerAccessPoint, PeerAttemptState, PeerConnection, PeerError, PeerRegistry,
-    PeerSelectionCounters, PeerSelectionTimeouts, PeerSharingClient, PeerSnapshotFreshness,
+    ConnectionManagerState, ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, ConsensusMode,
+    ControlMessage, DataFlow, DnsRefreshPolicy, DnsRootPeerProvider, GovernorAction,
+    GovernorState, GovernorTargets, HandshakeVersion, KeepAliveClient, LedgerPeerSnapshot,
+    LedgerPeerUseDecision, LedgerStateJudgement, LiveLedgerPeerRefreshObservation,
+    LocalRootConfig, LocalRootTargets,
+    MiniProtocolNum, NodePeerSharing, NodeToNodeVersionData, PeerAccessPoint, PeerAttemptState,
+    PeerConnection, PeerError, PeerRegistry, PeerSelectionCounters, PeerSelectionTimeouts,
+    PeerSharingClient, PeerSnapshotFileObservation, PeerSnapshotFileSource, PeerSnapshotFreshness,
     PeerSource, PeerStateAction, PeerStatus, ReleaseOutboundResult, RootPeerProviderState,
     TemperatureBundle, TopologyConfig, TxIdAndSize, TxServerRequest, TxSubmissionClient,
     TxSubmissionClientError, UseLedgerPeers, churn_mode_from_fetch_mode, compute_association_mode,
     derive_peer_snapshot_freshness, eligible_ledger_peer_candidates, fetch_mode_from_judgement,
-    governor_action_to_peer_state_action, merge_ledger_peer_snapshots, peer_attempt_state,
-    peer_selection_mode, pick_churn_regime, reconcile_ledger_peer_registry_with_policy,
+    governor_action_to_peer_state_action, live_refresh_ledger_peer_registry_observed,
+    merge_ledger_peer_snapshots, peer_attempt_state, peer_selection_mode, pick_churn_regime,
     refresh_root_peer_state_and_registry, resolve_peer_access_points,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
@@ -899,106 +901,139 @@ fn ledger_peer_snapshot_from_ledger_state(ledger_state: &LedgerState) -> LedgerP
     LedgerPeerSnapshot::new(ledger_peers, Vec::new())
 }
 
+/// Live consensus-fed ledger-peer source backed by `ChainDb`.
+///
+/// Implements the network crate's `ConsensusLedgerPeerSource` trait so the
+/// network-owned `live_refresh_ledger_peer_registry` orchestration can pull
+/// authoritative `(latest_slot, judgement, ledger_snapshot)` inputs from the
+/// node's storage layer without the network crate depending on storage types.
+struct ChainDbConsensusLedgerSource<'a, I, V, L>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    chain_db: &'a Arc<RwLock<ChainDb<I, V, L>>>,
+    base_ledger_state: &'a LedgerState,
+    tracer: &'a NodeTracer,
+}
+
+impl<I, V, L> ConsensusLedgerPeerSource for ChainDbConsensusLedgerSource<'_, I, V, L>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    fn observe(&mut self) -> ConsensusLedgerPeerInputs {
+        let chain_db = self.chain_db.read().expect("chain db lock poisoned");
+        let tip = chain_db.recovery().tip;
+        match recover_ledger_state_chaindb(&chain_db, self.base_ledger_state.clone()) {
+            Ok(recovery) => ConsensusLedgerPeerInputs {
+                latest_slot: point_slot(&recovery.point).or_else(|| point_slot(&tip)),
+                judgement: LedgerStateJudgement::YoungEnough,
+                ledger_snapshot: ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state),
+            },
+            Err(err) => {
+                self.tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "failed to recover ledger peers from chain db",
+                    trace_fields([("error", json!(err.to_string()))]),
+                );
+                ConsensusLedgerPeerInputs {
+                    latest_slot: point_slot(&tip),
+                    judgement: LedgerStateJudgement::Unavailable,
+                    ledger_snapshot: LedgerPeerSnapshot::default(),
+                }
+            }
+        }
+    }
+}
+
+/// Live `peerSnapshotFile` source that re-reads the configured snapshot path
+/// each tick.
+struct FilePeerSnapshotSource<'a> {
+    path: Option<&'a str>,
+    tracer: &'a NodeTracer,
+}
+
+impl PeerSnapshotFileSource for FilePeerSnapshotSource<'_> {
+    fn observe(&mut self) -> PeerSnapshotFileObservation {
+        let Some(path) = self.path else {
+            return PeerSnapshotFileObservation::not_configured();
+        };
+
+        match load_peer_snapshot_file(Path::new(path)) {
+            Ok(loaded_snapshot) => {
+                PeerSnapshotFileObservation::loaded(loaded_snapshot.slot, loaded_snapshot.snapshot)
+            }
+            Err(err) => {
+                self.tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Warning",
+                    "failed to refresh configured peer snapshot",
+                    trace_fields([
+                        ("snapshotPath", json!(path)),
+                        ("error", json!(err.to_string())),
+                    ]),
+                );
+                PeerSnapshotFileObservation::unavailable()
+            }
+        }
+    }
+}
+
 fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
     registry: &mut PeerRegistry,
     chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
     base_ledger_state: &LedgerState,
     topology: &TopologyConfig,
     tracer: &NodeTracer,
-) -> bool
+) -> LiveLedgerPeerRefreshObservation
 where
     I: ImmutableStore,
     V: VolatileStore,
     L: LedgerStore,
 {
     if !topology.use_ledger_peers.enabled() {
-        return false;
+        return LiveLedgerPeerRefreshObservation {
+            update: yggdrasil_network::LedgerPeerRegistryUpdate {
+                decision: LedgerPeerUseDecision::Disabled,
+                changed: false,
+            },
+            latest_slot: None,
+            judgement: LedgerStateJudgement::Unavailable,
+            peer_snapshot_freshness: PeerSnapshotFreshness::NotConfigured,
+        };
     }
 
-    let (latest_slot, ledger_state_judgement, ledger_snapshot) = {
-        let chain_db = chain_db.read().expect("chain db lock poisoned");
-        let tip = chain_db.recovery().tip;
-        match recover_ledger_state_chaindb(&chain_db, base_ledger_state.clone()) {
-            Ok(recovery) => (
-                point_slot(&recovery.point).or_else(|| point_slot(&tip)),
-                LedgerStateJudgement::YoungEnough,
-                ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state),
-            ),
-            Err(err) => {
-                tracer.trace_runtime(
-                    "Net.PeerSelection",
-                    "Warning",
-                    "failed to recover ledger peers from chain db",
-                    trace_fields([("error", json!(err.to_string()))]),
-                );
-                (
-                    point_slot(&tip),
-                    LedgerStateJudgement::Unavailable,
-                    LedgerPeerSnapshot::default(),
-                )
-            }
-        }
+    let mut consensus_source = ChainDbConsensusLedgerSource {
+        chain_db,
+        base_ledger_state,
+        tracer,
+    };
+    let mut snapshot_source = FilePeerSnapshotSource {
+        path: topology.peer_snapshot_file.as_deref(),
+        tracer,
     };
 
-    let mut snapshot_slot = None;
-    let mut snapshot_available = topology.peer_snapshot_file.is_none();
-    let mut snapshot_file = None;
-
-    if let Some(peer_snapshot_file) = topology.peer_snapshot_file.as_deref() {
-        match load_peer_snapshot_file(Path::new(peer_snapshot_file)) {
-            Ok(loaded_snapshot) => {
-                snapshot_slot = loaded_snapshot.slot;
-                snapshot_available = true;
-                snapshot_file = Some(loaded_snapshot.snapshot);
-            }
-            Err(err) => {
-                tracer.trace_runtime(
-                    "Net.PeerSelection",
-                    "Warning",
-                    "failed to refresh configured peer snapshot",
-                    trace_fields([
-                        ("snapshotPath", json!(peer_snapshot_file)),
-                        ("error", json!(err.to_string())),
-                    ]),
-                );
-            }
-        }
-    }
-
-    let peer_snapshot_freshness = derive_peer_snapshot_freshness(
-        topology.use_ledger_peers,
-        topology.peer_snapshot_file.is_some(),
-        snapshot_slot,
-        latest_slot,
-        snapshot_available,
-    );
-
-    let update = reconcile_ledger_peer_registry_with_policy(
+    let observation = live_refresh_ledger_peer_registry_observed(
         registry,
-        merge_ledger_peer_snapshots(&ledger_snapshot, snapshot_file),
         topology.use_ledger_peers,
-        latest_slot,
-        ledger_state_judgement,
-        peer_snapshot_freshness,
+        &mut consensus_source,
+        &mut snapshot_source,
     );
 
-    if update.changed {
+    if observation.update.changed {
         tracer.trace_runtime(
             "Net.PeerSelection",
             "Info",
             "ledger peer registry refreshed",
-            trace_fields([
-                ("decision", json!(format!("{:?}", update.decision))),
-                ("latestSlot", json!(latest_slot)),
-                (
-                    "peerSnapshotFreshness",
-                    json!(format!("{:?}", peer_snapshot_freshness)),
-                ),
-            ]),
+            trace_fields([("decision", json!(format!("{:?}", observation.update.decision)))]),
         );
     }
 
-    update.changed
+    observation
 }
 
 fn governor_action_name(action: &GovernorAction) -> &'static str {
@@ -1492,7 +1527,7 @@ pub async fn run_governor_loop<I, V, L, F>(
     {
         let mut registry = peer_registry.write().expect("peer registry lock poisoned");
         root_sources.sync_registry(&mut registry);
-        refresh_ledger_peer_sources_from_chain_db(
+        let _ = refresh_ledger_peer_sources_from_chain_db(
             &mut registry,
             &chain_db,
             &base_ledger_state,
@@ -1621,13 +1656,6 @@ pub async fn run_governor_loop<I, V, L, F>(
                 {
                     let mut registry = peer_registry.write().expect("peer registry lock poisoned");
                     root_sources.refresh(&mut registry, &tracer);
-                    refresh_ledger_peer_sources_from_chain_db(
-                        &mut registry,
-                        &chain_db,
-                        &base_ledger_state,
-                        &topology,
-                        &tracer,
-                    );
                 }
 
                 peer_manager
@@ -1636,6 +1664,17 @@ pub async fn run_governor_loop<I, V, L, F>(
 
                 // Peer sharing is now governor-driven via ShareRequest actions
                 // dispatched to specific target peers, matching upstream behavior.
+
+                let ledger_observation = {
+                    let mut registry = peer_registry.write().expect("peer registry lock poisoned");
+                    refresh_ledger_peer_sources_from_chain_db(
+                        &mut registry,
+                        &chain_db,
+                        &base_ledger_state,
+                        &topology,
+                        &tracer,
+                    )
+                };
 
                 peer_manager
                     .refresh_hot_peer_tips(&peer_registry, &mut governor_state, &tracer)
@@ -1683,18 +1722,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                 }
 
                 let local_root_groups = root_sources.local_root_targets();
-                let ledger_state_judgement = {
-                    let chain_db = chain_db
-                        .read()
-                        .expect("chain db lock poisoned");
-                    if recover_ledger_state_chaindb(&chain_db, base_ledger_state.clone())
-                        .is_ok()
-                    {
-                        LedgerStateJudgement::YoungEnough
-                    } else {
-                        LedgerStateJudgement::Unavailable
-                    }
-                };
+                let ledger_state_judgement = ledger_observation.judgement;
 
                 let selection_mode = peer_selection_mode(
                     &topology.bootstrap_peers,
@@ -2072,7 +2100,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             GovernorAction::RequestBigLedgerPeers => {
                                 governor_state.mark_big_ledger_request_started();
                                 let refresh_now = Instant::now();
-                                let changed = {
+                                let observation = {
                                     let mut registry = peer_registry
                                         .write()
                                         .expect("peer registry lock poisoned");
@@ -2084,6 +2112,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                                         &tracer,
                                     )
                                 };
+                                let changed = observation.update.changed;
                                 governor_state.complete_big_ledger_request(
                                     refresh_now,
                                     changed,
@@ -4919,8 +4948,8 @@ mod tests {
     use yggdrasil_mempool::SharedMempool;
     use yggdrasil_network::{
         AfterSlot, BlockFetchClientError, ChainSyncClientError, GovernorTargets, HandshakeVersion,
-        LocalRootConfig, PeerAccessPoint, PeerRegistry, PeerSource, PeerStatus, TopologyConfig,
-        UseBootstrapPeers, UseLedgerPeers,
+        LedgerStateJudgement, LocalRootConfig, PeerAccessPoint, PeerRegistry, PeerSource,
+        PeerStatus, TopologyConfig, UseBootstrapPeers, UseLedgerPeers,
     };
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
@@ -5698,7 +5727,7 @@ mod tests {
         let tracer = NodeTracer::disabled();
         let mut registry = yggdrasil_network::PeerRegistry::default();
 
-        let changed = refresh_ledger_peer_sources_from_chain_db(
+        let observation = refresh_ledger_peer_sources_from_chain_db(
             &mut registry,
             &chain_db,
             &base_ledger_state,
@@ -5706,7 +5735,8 @@ mod tests {
             &tracer,
         );
 
-        assert!(changed);
+        assert!(observation.update.changed);
+        assert_eq!(observation.judgement, LedgerStateJudgement::YoungEnough);
         let entry = registry
             .get(&relay_peer)
             .expect("ledger-derived relay peer should be present");

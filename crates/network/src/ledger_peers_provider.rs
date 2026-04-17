@@ -82,6 +82,23 @@ pub struct LedgerPeerRegistryUpdate {
     pub changed: bool,
 }
 
+/// Observation emitted by one live ledger-peer refresh tick.
+///
+/// Carries the policy update together with the consensus-fed inputs used for
+/// that decision so callers can reuse a single authoritative observation per
+/// tick.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveLedgerPeerRefreshObservation {
+    /// Registry update produced by policy reconciliation.
+    pub update: LedgerPeerRegistryUpdate,
+    /// Latest slot observed from the consensus source.
+    pub latest_slot: Option<u64>,
+    /// Consensus judgement for whether the ledger view is usable.
+    pub judgement: LedgerStateJudgement,
+    /// Freshness judgement for the optional snapshot-file overlay.
+    pub peer_snapshot_freshness: PeerSnapshotFreshness,
+}
+
 /// A normalized snapshot of ledger-derived peer sets.
 ///
 /// Big-ledger peers are kept disjoint from ledger peers to match the upstream
@@ -382,6 +399,166 @@ pub fn reconcile_ledger_peer_registry_with_policy(
     };
 
     LedgerPeerRegistryUpdate { decision, changed }
+}
+
+/// Authoritative inputs observed from the consensus/storage layer for one
+/// ledger-peer refresh tick.
+///
+/// Mirrors the upstream `Ouroboros.Network.PeerSelection.LedgerPeers.Type`
+/// `LedgerPeersConsensusInterface` shape: a bundle of `(ledgerStateJudgement,
+/// latestSlotNo, ledgerPeerSnapshot)` derived from the live ledger view, fed
+/// into the network-owned ledger-peer provider.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ConsensusLedgerPeerInputs {
+    /// The latest slot observed on the consensus chain tip, when known.
+    pub latest_slot: Option<u64>,
+    /// Whether the current ledger view is recent enough for ledger peers.
+    pub judgement: LedgerStateJudgement,
+    /// The ledger-derived peer snapshot extracted from the current view.
+    pub ledger_snapshot: LedgerPeerSnapshot,
+}
+
+/// Result of polling a configured peer-snapshot file source.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PeerSnapshotFileObservation {
+    /// Whether a snapshot file is configured at all.
+    pub configured: bool,
+    /// Whether the snapshot file was successfully observed this tick.
+    pub available: bool,
+    /// Slot recorded inside the snapshot file, when present.
+    pub snapshot_slot: Option<u64>,
+    /// The snapshot read from the file, when one was loaded.
+    pub overlay: Option<LedgerPeerSnapshot>,
+}
+
+impl PeerSnapshotFileObservation {
+    /// Convenience constructor for "no snapshot file is configured".
+    pub fn not_configured() -> Self {
+        Self {
+            configured: false,
+            available: true,
+            snapshot_slot: None,
+            overlay: None,
+        }
+    }
+
+    /// Convenience constructor for "snapshot configured but unavailable".
+    pub fn unavailable() -> Self {
+        Self {
+            configured: true,
+            available: false,
+            snapshot_slot: None,
+            overlay: None,
+        }
+    }
+
+    /// Convenience constructor for a successfully loaded snapshot.
+    pub fn loaded(slot: Option<u64>, overlay: LedgerPeerSnapshot) -> Self {
+        Self {
+            configured: true,
+            available: true,
+            snapshot_slot: slot,
+            overlay: Some(overlay),
+        }
+    }
+}
+
+/// A live consensus-fed source of ledger-peer inputs.
+///
+/// Implementations bridge the network crate's ledger-peer provider layer into
+/// the consensus/storage layer without making the network crate depend on any
+/// concrete storage type. The node provides a `ChainDb`-backed implementation
+/// at runtime; tests use scripted implementations.
+pub trait ConsensusLedgerPeerSource {
+    /// Observe the current ledger-peer inputs from the consensus layer.
+    fn observe(&mut self) -> ConsensusLedgerPeerInputs;
+}
+
+/// A live source for the optional `peerSnapshotFile` overlay.
+pub trait PeerSnapshotFileSource {
+    /// Poll the peer-snapshot file for a fresh observation.
+    fn observe(&mut self) -> PeerSnapshotFileObservation;
+}
+
+/// Run one live ledger-peer refresh tick using the supplied consensus-fed
+/// sources, then reconcile the resulting snapshot into the peer registry under
+/// the configured topology policy.
+///
+/// This is the network-owned orchestration entry point that replaces inline
+/// node-side bookkeeping; the node only supplies trait implementations bridged
+/// to its concrete storage and configuration layers.
+pub fn live_refresh_ledger_peer_registry<C, S>(
+    registry: &mut PeerRegistry,
+    use_ledger_peers: UseLedgerPeers,
+    consensus_source: &mut C,
+    snapshot_source: &mut S,
+) -> LedgerPeerRegistryUpdate
+where
+    C: ConsensusLedgerPeerSource + ?Sized,
+    S: PeerSnapshotFileSource + ?Sized,
+{
+    live_refresh_ledger_peer_registry_observed(
+        registry,
+        use_ledger_peers,
+        consensus_source,
+        snapshot_source,
+    )
+    .update
+}
+
+/// Run one live ledger-peer refresh tick and return both the registry update
+/// and the consensus-fed observations used to compute it.
+pub fn live_refresh_ledger_peer_registry_observed<C, S>(
+    registry: &mut PeerRegistry,
+    use_ledger_peers: UseLedgerPeers,
+    consensus_source: &mut C,
+    snapshot_source: &mut S,
+) -> LiveLedgerPeerRefreshObservation
+where
+    C: ConsensusLedgerPeerSource + ?Sized,
+    S: PeerSnapshotFileSource + ?Sized,
+{
+    if !use_ledger_peers.enabled() {
+        return LiveLedgerPeerRefreshObservation {
+            update: LedgerPeerRegistryUpdate {
+                decision: LedgerPeerUseDecision::Disabled,
+                changed: false,
+            },
+            latest_slot: None,
+            judgement: LedgerStateJudgement::Unavailable,
+            peer_snapshot_freshness: PeerSnapshotFreshness::NotConfigured,
+        };
+    }
+
+    let consensus_inputs = consensus_source.observe();
+    let snapshot_observation = snapshot_source.observe();
+
+    let merged_snapshot =
+        merge_ledger_peer_snapshots(&consensus_inputs.ledger_snapshot, snapshot_observation.overlay);
+
+    let peer_snapshot_freshness = derive_peer_snapshot_freshness(
+        use_ledger_peers,
+        snapshot_observation.configured,
+        snapshot_observation.snapshot_slot,
+        consensus_inputs.latest_slot,
+        snapshot_observation.available,
+    );
+
+    let update = reconcile_ledger_peer_registry_with_policy(
+        registry,
+        merged_snapshot,
+        use_ledger_peers,
+        consensus_inputs.latest_slot,
+        consensus_inputs.judgement,
+        peer_snapshot_freshness,
+    );
+
+    LiveLedgerPeerRefreshObservation {
+        update,
+        latest_slot: consensus_inputs.latest_slot,
+        judgement: consensus_inputs.judgement,
+        peer_snapshot_freshness,
+    }
 }
 
 /// In-memory scripted provider useful for tests and early integration.
@@ -823,5 +1000,155 @@ mod tests {
             [PeerSource::PeerSourcePeerShare].into_iter().collect()
         );
         assert_eq!(entry.status, PeerStatus::PeerHot);
+    }
+
+    #[derive(Default)]
+    struct StaticConsensusSource {
+        observations: VecDeque<ConsensusLedgerPeerInputs>,
+        last: ConsensusLedgerPeerInputs,
+    }
+
+    impl ConsensusLedgerPeerSource for StaticConsensusSource {
+        fn observe(&mut self) -> ConsensusLedgerPeerInputs {
+            if let Some(next) = self.observations.pop_front() {
+                self.last = next;
+            }
+            self.last.clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct StaticSnapshotSource {
+        observations: VecDeque<PeerSnapshotFileObservation>,
+        last: PeerSnapshotFileObservation,
+    }
+
+    impl PeerSnapshotFileSource for StaticSnapshotSource {
+        fn observe(&mut self) -> PeerSnapshotFileObservation {
+            if let Some(next) = self.observations.pop_front() {
+                self.last = next;
+            }
+            self.last.clone()
+        }
+    }
+
+    #[test]
+    fn live_refresh_short_circuits_when_ledger_peers_disabled() {
+        let mut registry = PeerRegistry::default();
+        let mut consensus_source = StaticConsensusSource::default();
+        let mut snapshot_source = StaticSnapshotSource::default();
+
+        let update = live_refresh_ledger_peer_registry(
+            &mut registry,
+            UseLedgerPeers::DontUseLedgerPeers,
+            &mut consensus_source,
+            &mut snapshot_source,
+        );
+
+        assert_eq!(update.decision, LedgerPeerUseDecision::Disabled);
+        assert!(!update.changed);
+    }
+
+    #[test]
+    fn live_refresh_reconciles_consensus_inputs_through_policy() {
+        let ledger_peer: SocketAddr = "127.0.0.50:3001".parse().expect("addr");
+        let big_ledger_peer: SocketAddr = "127.0.0.51:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+
+        let mut consensus_source = StaticConsensusSource {
+            observations: VecDeque::from([ConsensusLedgerPeerInputs {
+                latest_slot: Some(200),
+                judgement: LedgerStateJudgement::YoungEnough,
+                ledger_snapshot: LedgerPeerSnapshot::new(
+                    [ledger_peer],
+                    [big_ledger_peer],
+                ),
+            }]),
+            last: ConsensusLedgerPeerInputs::default(),
+        };
+        let mut snapshot_source = StaticSnapshotSource {
+            observations: VecDeque::from([PeerSnapshotFileObservation::not_configured()]),
+            last: PeerSnapshotFileObservation::default(),
+        };
+
+        let update = live_refresh_ledger_peer_registry(
+            &mut registry,
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::After(100)),
+            &mut consensus_source,
+            &mut snapshot_source,
+        );
+
+        assert_eq!(update.decision, LedgerPeerUseDecision::Eligible);
+        assert!(update.changed);
+        assert!(registry.get(&ledger_peer).is_some());
+        assert!(registry.get(&big_ledger_peer).is_some());
+    }
+
+    #[test]
+    fn live_refresh_blocks_when_ledger_state_too_old() {
+        let ledger_peer: SocketAddr = "127.0.0.52:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(ledger_peer, PeerSource::PeerSourceLedger);
+
+        let mut consensus_source = StaticConsensusSource {
+            observations: VecDeque::from([ConsensusLedgerPeerInputs {
+                latest_slot: Some(100),
+                judgement: LedgerStateJudgement::TooOld,
+                ledger_snapshot: LedgerPeerSnapshot::new([ledger_peer], Vec::<SocketAddr>::new()),
+            }]),
+            last: ConsensusLedgerPeerInputs::default(),
+        };
+        let mut snapshot_source = StaticSnapshotSource {
+            observations: VecDeque::from([PeerSnapshotFileObservation::not_configured()]),
+            last: PeerSnapshotFileObservation::default(),
+        };
+
+        let update = live_refresh_ledger_peer_registry(
+            &mut registry,
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+            &mut consensus_source,
+            &mut snapshot_source,
+        );
+
+        assert_eq!(
+            update.decision,
+            LedgerPeerUseDecision::BlockedByLedgerState {
+                judgement: LedgerStateJudgement::TooOld,
+            }
+        );
+        assert!(update.changed);
+        assert!(registry.get(&ledger_peer).is_none());
+    }
+
+    #[test]
+    fn live_refresh_observed_returns_shared_consensus_judgement() {
+        let mut registry = PeerRegistry::default();
+        let mut consensus_source = StaticConsensusSource {
+            observations: VecDeque::from([ConsensusLedgerPeerInputs {
+                latest_slot: Some(777),
+                judgement: LedgerStateJudgement::YoungEnough,
+                ledger_snapshot: LedgerPeerSnapshot::default(),
+            }]),
+            last: ConsensusLedgerPeerInputs::default(),
+        };
+        let mut snapshot_source = StaticSnapshotSource {
+            observations: VecDeque::from([PeerSnapshotFileObservation::not_configured()]),
+            last: PeerSnapshotFileObservation::default(),
+        };
+
+        let observation = live_refresh_ledger_peer_registry_observed(
+            &mut registry,
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::After(100)),
+            &mut consensus_source,
+            &mut snapshot_source,
+        );
+
+        assert_eq!(observation.latest_slot, Some(777));
+        assert_eq!(observation.judgement, LedgerStateJudgement::YoungEnough);
+        assert_eq!(
+            observation.peer_snapshot_freshness,
+            PeerSnapshotFreshness::NotConfigured
+        );
+        assert_eq!(observation.update.decision, LedgerPeerUseDecision::Eligible);
     }
 }

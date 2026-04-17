@@ -166,6 +166,9 @@ enum Command {
         /// Path to the NtC Unix domain socket of the running node.
         #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
         socket_path: PathBuf,
+        /// Network magic used by the running node.
+        #[arg(long, env = "CARDANO_NODE_NETWORK_MAGIC", default_value_t = 764824073)]
+        network_magic: u32,
         /// Query tag to execute.
         #[command(subcommand)]
         query: QueryCommand,
@@ -176,6 +179,9 @@ enum Command {
         /// Path to the NtC Unix domain socket of the running node.
         #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
         socket_path: PathBuf,
+        /// Network magic used by the running node.
+        #[arg(long, env = "CARDANO_NODE_NETWORK_MAGIC", default_value_t = 764824073)]
+        network_magic: u32,
         /// Path to a file containing the CBOR-encoded transaction.
         #[arg(long, conflicts_with = "tx_hex")]
         tx_file: Option<PathBuf>,
@@ -283,24 +289,17 @@ struct StorageValidationReport {
 /// Reference: `cardano-cli query` commands against
 /// `ouroboros-network-protocols` LocalStateQuery.
 #[cfg(unix)]
-async fn run_query(socket_path: PathBuf, query: QueryCommand) -> Result<()> {
-    use tokio::net::UnixStream;
+async fn run_query(socket_path: PathBuf, network_magic: u32, query: QueryCommand) -> Result<()> {
     use yggdrasil_network::{
-        AcquireTarget, LocalStateQueryClient, MiniProtocolDir, MiniProtocolNum, start_mux_unix,
+        AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect,
     };
 
-    let stream = UnixStream::connect(&socket_path)
+    let mut conn = ntc_connect(&socket_path, network_magic, true)
         .await
         .wrap_err_with(|| format!("failed to connect to NtC socket {}", socket_path.display()))?;
 
-    let protocols = [
-        MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
-        MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
-        MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
-    ];
-    let (mut handles, _mux) = start_mux_unix(stream, MiniProtocolDir::Initiator, &protocols, 32);
-
-    let sq_handle = handles
+    let sq_handle = conn
+        .protocols
         .remove(&MiniProtocolNum::NTC_LOCAL_STATE_QUERY)
         .expect("NTC_LOCAL_STATE_QUERY handle missing");
     let mut client = LocalStateQueryClient::new(sq_handle);
@@ -475,24 +474,15 @@ fn decode_ntc_result(query: &QueryCommand, result: &[u8]) -> Result<serde_json::
 /// Reference: `cardano-cli transaction submit` against
 /// `ouroboros-network-protocols` LocalTxSubmission.
 #[cfg(unix)]
-async fn run_submit_tx(socket_path: PathBuf, tx_bytes: Vec<u8>) -> Result<()> {
-    use tokio::net::UnixStream;
-    use yggdrasil_network::{
-        LocalTxSubmissionClient, MiniProtocolDir, MiniProtocolNum, start_mux_unix,
-    };
+async fn run_submit_tx(socket_path: PathBuf, network_magic: u32, tx_bytes: Vec<u8>) -> Result<()> {
+    use yggdrasil_network::{LocalTxSubmissionClient, MiniProtocolNum, ntc_connect};
 
-    let stream = UnixStream::connect(&socket_path)
+    let mut conn = ntc_connect(&socket_path, network_magic, false)
         .await
         .wrap_err_with(|| format!("failed to connect to NtC socket {}", socket_path.display()))?;
 
-    let protocols = [
-        MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
-        MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
-        MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
-    ];
-    let (mut handles, _mux) = start_mux_unix(stream, MiniProtocolDir::Initiator, &protocols, 32);
-
-    let tx_handle = handles
+    let tx_handle = conn
+        .protocols
         .remove(&MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION)
         .expect("NTC_LOCAL_TX_SUBMISSION handle missing");
     let mut client = LocalTxSubmissionClient::new(tx_handle);
@@ -937,13 +927,18 @@ fn main() -> Result<()> {
             }))
         }
         #[cfg(unix)]
-        Command::Query { socket_path, query } => {
+        Command::Query {
+            socket_path,
+            network_magic,
+            query,
+        } => {
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(run_query(socket_path, query))
+            rt.block_on(run_query(socket_path, network_magic, query))
         }
         #[cfg(unix)]
         Command::SubmitTx {
             socket_path,
+            network_magic,
             tx_file,
             tx_hex,
         } => {
@@ -958,7 +953,7 @@ fn main() -> Result<()> {
                 (None, None) => bail!("one of --tx-file or --tx-hex is required"),
             };
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(run_submit_tx(socket_path, tx_bytes))
+            rt.block_on(run_submit_tx(socket_path, network_magic, tx_bytes))
         }
     }
 }

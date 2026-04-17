@@ -1048,7 +1048,7 @@ TX expires (TTL):
 ### Validation Milestones
 
 **Milestone 1: Ledger Rules Complete** (end of Phase 1)
-- ✅ `cargo test-all -- --list` currently discovers 4137 tests
+- ✅ `cargo test-all -- --list` currently discovers 4200 tests
 - ✅ Collateral validation handles 100% of Alonzo+ blocks
 - ✅ Reward calculation matches mainnet within 1 lovelace
 - ✅ Governance proposals ratify correctly for 50+ actions
@@ -1082,7 +1082,7 @@ TX expires (TTL):
 ### Regression Prevention
 
 **Continuous**:
-- ✅ `cargo test-all` runs on every commit (currently 4137 discovered tests)
+- ✅ `cargo test-all` runs on every commit (currently 4200 discovered tests)
 - ✅ `cargo lint` is clippy `-D warnings` clean across all crates and targets
 - ✅ CBOR roundtrip parity tests golden comparisons
 

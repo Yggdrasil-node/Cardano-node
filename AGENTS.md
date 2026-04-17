@@ -235,4 +235,6 @@
 - 4128 workspace tests pass across all crates, 0 failures.
 - 4131 workspace tests pass across all crates, 0 failures.
 - 4137 workspace tests pass across all crates, 0 failures.
+- 4141 workspace tests pass across all crates, 0 failures.
+- 4200 workspace tests pass across all crates, 0 failures.
 - New subfolder-level AGENTS.md files should only be added where a folder has a stable domain boundary.

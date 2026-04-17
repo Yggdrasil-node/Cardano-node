@@ -1,11 +1,9 @@
 //! Node-to-client (NtC) connection lifecycle.
 //!
-//! Defines the node-to-client (NtC) protocol surface and version-data helpers.
-//!
-//! Full Unix-socket NtC connection setup is not yet wired because the current
-//! mux implementation only supports `TcpStream`. The public `ntc_connect()` and
-//! `ntc_accept()` functions therefore return an explicit unsupported error until
-//! Unix-socket bearer support lands.
+//! Defines the node-to-client (NtC) protocol surface and version-data helpers,
+//! plus the client-side ([`ntc_connect`]) and server-side ([`ntc_accept`])
+//! handshake drivers.  Both sides operate over [`tokio::net::UnixStream`] using
+//! the shared mini-protocol multiplexer.
 //!
 //! ## NtC Mini-Protocol IDs
 //!
@@ -119,8 +117,6 @@ pub enum NtcPeerError {
     Cbor(String),
     #[error("mux error: {0}")]
     Mux(String),
-    #[error("unsupported: {0}")]
-    Unsupported(&'static str),
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +233,92 @@ fn encode_ntc_refuse_version_mismatch(proposed: &[HandshakeVersion]) -> Vec<u8> 
     enc.into_bytes()
 }
 
+/// Encode `ProposeVersions [0, {versionNumber => versionData}]` as CBOR.
+///
+/// Used by the client side of the NtC handshake to advertise our supported
+/// protocol versions.  Each version proposes the same `(network_magic, query)`
+/// payload as expected by the server.
+///
+/// Reference: `Ouroboros.Network.Protocol.Handshake.Codec` — `MsgProposeVersions`.
+fn encode_ntc_propose_versions(
+    versions: &[HandshakeVersion],
+    data: &NodeToClientVersionData,
+) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(0); // tag 0 = ProposeVersions
+    enc.map(versions.len() as u64);
+    for v in versions {
+        enc.unsigned(v.0 as u64);
+        enc.array(2)
+            .unsigned(data.network_magic as u64)
+            .bool(data.query);
+    }
+    enc.into_bytes()
+}
+
+/// Decoded server response to `ProposeVersions`.
+#[derive(Clone, Debug)]
+enum NtcHandshakeReply {
+    /// Server accepted one of our proposed versions.
+    Accept(HandshakeVersion, NodeToClientVersionData),
+    /// Server refused with a textual reason (decoded best-effort).
+    Refuse(String),
+}
+
+/// Decode the server's reply to a `ProposeVersions` message.
+///
+/// Handles both `MsgAcceptVersion [1, version, versionData]` and
+/// `MsgRefuse [2, refuseReason]` (with the three upstream refuse reasons:
+/// `VersionMismatch [0, [*ver]]`, `HandshakeDecodeError [1, ver, str]`, and
+/// `Refused [2, ver, str]`).
+fn decode_ntc_handshake_reply(bytes: &[u8]) -> Result<NtcHandshakeReply, NtcPeerError> {
+    let cbor_err = |e: LedgerError| NtcPeerError::Cbor(e.to_string());
+    let mut dec = Decoder::new(bytes);
+    let msg_len = dec.array().map_err(cbor_err)?;
+    if msg_len < 2 {
+        return Err(NtcPeerError::Cbor(format!(
+            "NtC handshake reply too short: {msg_len}"
+        )));
+    }
+    let tag = dec.unsigned().map_err(cbor_err)?;
+    match tag {
+        1 => {
+            // AcceptVersion: [1, versionNumber, versionData]
+            if msg_len != 3 {
+                return Err(NtcPeerError::Cbor(format!(
+                    "NtC AcceptVersion expects 3 elements, got {msg_len}"
+                )));
+            }
+            let ver = dec.unsigned().map_err(cbor_err)? as u16;
+            let vd_start = dec.position();
+            dec.skip().map_err(cbor_err)?;
+            let vd_end = dec.position();
+            let vd = decode_ntc_version_data(&bytes[vd_start..vd_end])?;
+            Ok(NtcHandshakeReply::Accept(HandshakeVersion(ver), vd))
+        }
+        2 => {
+            // Refuse: [2, refuseReason]
+            let reason_len = dec.array().map_err(cbor_err)?;
+            if reason_len < 1 {
+                return Err(NtcPeerError::Cbor(
+                    "NtC Refuse reason missing tag".to_string(),
+                ));
+            }
+            let reason_tag = dec.unsigned().map_err(cbor_err)?;
+            let msg = match reason_tag {
+                0 => "version mismatch".to_string(),
+                1 => "handshake decode error".to_string(),
+                2 => "version refused".to_string(),
+                other => format!("unknown refuse reason {other}"),
+            };
+            Ok(NtcHandshakeReply::Refuse(msg))
+        }
+        other => Err(NtcPeerError::HandshakeRefused(format!(
+            "unexpected NtC handshake reply tag {other}"
+        ))),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -255,10 +337,62 @@ pub async fn ntc_connect(
     network_magic: u32,
     query_only: bool,
 ) -> Result<NtcPeerConnection, NtcPeerError> {
-    let _ = (socket_path.as_ref(), network_magic, query_only);
-    Err(NtcPeerError::Unsupported(
-        "NtC client-side connect is not yet implemented",
-    ))
+    let stream = UnixStream::connect(socket_path.as_ref()).await?;
+    ntc_connect_stream(stream, network_magic, query_only).await
+}
+
+/// Run the NtC client handshake on an already-connected Unix stream.
+///
+/// Used by [`ntc_connect`] and by tests that need to drive both sides over
+/// an in-memory `UnixStream` pair.
+pub async fn ntc_connect_stream(
+    stream: UnixStream,
+    network_magic: u32,
+    query_only: bool,
+) -> Result<NtcPeerConnection, NtcPeerError> {
+    let (mut handles, mux_handle) =
+        mux::start_unix(stream, MiniProtocolDir::Initiator, &NTC_PROTOCOLS, 32);
+
+    let mut hs = handles
+        .remove(&MiniProtocolNum::HANDSHAKE)
+        .expect("handshake handle must be registered");
+
+    let propose_data = NodeToClientVersionData {
+        network_magic,
+        query: query_only,
+    };
+    let propose_bytes = encode_ntc_propose_versions(&NTC_SUPPORTED_VERSIONS, &propose_data);
+    hs.send(propose_bytes).await.map_err(|e| {
+        NtcPeerError::Io(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            e.to_string(),
+        ))
+    })?;
+
+    let reply_bytes = hs.recv().await.ok_or_else(|| {
+        NtcPeerError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "connection closed before NtC handshake reply",
+        ))
+    })?;
+
+    match decode_ntc_handshake_reply(&reply_bytes)? {
+        NtcHandshakeReply::Accept(version, vd) => {
+            if vd.network_magic != network_magic {
+                return Err(NtcPeerError::HandshakeRefused(format!(
+                    "server returned mismatching network magic {} (expected {})",
+                    vd.network_magic, network_magic
+                )));
+            }
+            Ok(NtcPeerConnection {
+                version,
+                version_data: vd,
+                protocols: handles,
+                mux: mux_handle,
+            })
+        }
+        NtcHandshakeReply::Refuse(reason) => Err(NtcPeerError::HandshakeRefused(reason)),
+    }
 }
 
 /// Accept an inbound NtC connection from a Unix socket stream.
@@ -429,5 +563,89 @@ mod tests {
         assert_eq!(reason_tag, 0); // VersionMismatch
         let versions_len = dec.array().unwrap();
         assert_eq!(versions_len, 2);
+    }
+
+    #[test]
+    fn encode_ntc_propose_versions_roundtrip() {
+        let vd = NodeToClientVersionData {
+            network_magic: 764_824_073,
+            query: false,
+        };
+        let bytes = encode_ntc_propose_versions(
+            &[HandshakeVersion::NTC_V16, HandshakeVersion::NTC_V15],
+            &vd,
+        );
+        let proposals = decode_ntc_propose_versions(&bytes).unwrap();
+        assert_eq!(proposals.len(), 2);
+        for (_, p_vd) in &proposals {
+            assert_eq!(p_vd.network_magic, vd.network_magic);
+            assert_eq!(p_vd.query, vd.query);
+        }
+        let versions: Vec<_> = proposals.iter().map(|(v, _)| *v).collect();
+        assert!(versions.contains(&HandshakeVersion::NTC_V16));
+        assert!(versions.contains(&HandshakeVersion::NTC_V15));
+    }
+
+    #[test]
+    fn decode_ntc_handshake_reply_accept_roundtrip() {
+        let vd = NodeToClientVersionData {
+            network_magic: 1,
+            query: true,
+        };
+        let bytes = encode_ntc_accept_version(HandshakeVersion::NTC_V14, &vd);
+        match decode_ntc_handshake_reply(&bytes).unwrap() {
+            NtcHandshakeReply::Accept(ver, decoded) => {
+                assert_eq!(ver, HandshakeVersion::NTC_V14);
+                assert_eq!(decoded, vd);
+            }
+            NtcHandshakeReply::Refuse(_) => panic!("expected accept"),
+        }
+    }
+
+    #[test]
+    fn decode_ntc_handshake_reply_refuse_version_mismatch() {
+        let bytes = encode_ntc_refuse_version_mismatch(&[HandshakeVersion::NTC_V16]);
+        match decode_ntc_handshake_reply(&bytes).unwrap() {
+            NtcHandshakeReply::Refuse(reason) => {
+                assert!(reason.contains("version mismatch"), "got: {reason}");
+            }
+            NtcHandshakeReply::Accept(_, _) => panic!("expected refuse"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ntc_connect_and_accept_handshake_succeeds() {
+        let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
+        let magic = 1;
+        let server = tokio::spawn(async move { ntc_accept(server_stream, magic).await });
+        let client = tokio::spawn(async move {
+            ntc_connect_stream(client_stream, magic, true).await
+        });
+
+        let server_conn = server.await.unwrap().expect("server handshake");
+        let client_conn = client.await.unwrap().expect("client handshake");
+
+        assert_eq!(server_conn.version, HandshakeVersion::NTC_V16);
+        assert_eq!(client_conn.version, HandshakeVersion::NTC_V16);
+        assert_eq!(server_conn.version_data.network_magic, magic);
+        assert_eq!(client_conn.version_data.network_magic, magic);
+        assert!(client_conn.version_data.query);
+    }
+
+    #[tokio::test]
+    async fn ntc_connect_rejects_wrong_magic() {
+        let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
+        let server = tokio::spawn(async move { ntc_accept(server_stream, 1).await });
+        let client = tokio::spawn(async move {
+            ntc_connect_stream(client_stream, 999, false).await
+        });
+
+        let server_res = server.await.unwrap();
+        let client_res = client.await.unwrap();
+        assert!(matches!(server_res, Err(NtcPeerError::VersionMismatch)));
+        assert!(matches!(
+            client_res,
+            Err(NtcPeerError::HandshakeRefused(_))
+        ));
     }
 }
