@@ -74,6 +74,27 @@ pub enum GenesisCostModelError {
     /// current simplified flat CEK cost model.
     #[error(transparent)]
     CostModel(#[from] CostModelError),
+    /// Conway `plutusV3CostModel` array length is not a known upstream shape.
+    #[error(
+        "unsupported Conway plutusV3CostModel length {actual}; expected one of: {supported:?}"
+    )]
+    UnsupportedConwayV3ArrayLength {
+        /// Actual number of entries found in `plutusV3CostModel`.
+        actual: usize,
+        /// Supported upstream lengths for this release.
+        supported: &'static [usize],
+    },
+    /// Conway `plutusV3CostModel` array could not be fully mapped onto
+    /// the local named-parameter table.
+    #[error(
+        "Conway plutusV3CostModel mapping mismatch: expected {expected} entries, mapped {mapped}"
+    )]
+    IncompleteConwayV3Mapping {
+        /// Number of values present in the source array.
+        expected: usize,
+        /// Number of values successfully mapped to named parameters.
+        mapped: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -789,7 +810,7 @@ pub fn build_shelley_genesis_bootstrap(
 pub fn build_plutus_cost_model(
     alonzo: &AlonzoGenesis,
     conway: Option<&ConwayGenesis>,
-) -> Result<Option<CostModel>, CostModelError> {
+) -> Result<Option<CostModel>, GenesisCostModelError> {
     let named_params = alonzo
         .cost_models
         .get("PlutusV1")
@@ -802,7 +823,20 @@ pub fn build_plutus_cost_model(
                 return Ok(None);
             };
 
+            // Upstream Conway genesis currently ships either:
+            // - 251 entries (through byteStringToInteger-memory-arguments-slope)
+            // - 302 entries (adds bitwise/ripemd_160/expModInteger tail)
+            // Any other length indicates a spec drift we should fail fast on.
+            const SUPPORTED_CONWAY_V3_ARRAY_LENGTHS: &[usize] = &[251, 302];
+            if !SUPPORTED_CONWAY_V3_ARRAY_LENGTHS.contains(&v3_array.len()) {
+                return Err(GenesisCostModelError::UnsupportedConwayV3ArrayLength {
+                    actual: v3_array.len(),
+                    supported: SUPPORTED_CONWAY_V3_ARRAY_LENGTHS,
+                });
+            }
+
             let named = conway_v3_named_params(v3_array);
+            ensure_conway_v3_mapping_complete(v3_array.len(), named.len())?;
             if named.is_empty() {
                 return Ok(None);
             }
@@ -1132,6 +1166,16 @@ fn conway_v3_named_params(values: &[i64]) -> BTreeMap<String, i64> {
         .zip(values.iter())
         .map(|(name, value)| ((*name).to_owned(), *value))
         .collect()
+}
+
+fn ensure_conway_v3_mapping_complete(
+    expected: usize,
+    mapped: usize,
+) -> Result<(), GenesisCostModelError> {
+    if expected == mapped {
+        return Ok(());
+    }
+    Err(GenesisCostModelError::IncompleteConwayV3Mapping { expected, mapped })
 }
 
 // ---------------------------------------------------------------------------
@@ -1868,6 +1912,60 @@ mod tests {
                 .builtin_costs
                 .contains_key(&yggdrasil_plutus::DefaultFun::ExpModInteger)
         );
+    }
+
+    #[test]
+    fn build_plutus_cost_model_rejects_short_conway_v3_array() {
+        let mut alonzo = sample_alonzo();
+        alonzo.cost_models.clear();
+
+        let mut conway = sample_conway();
+        conway.plutus_v3_cost_model = Some((0..250).map(|n| n as i64).collect());
+
+        let err = build_plutus_cost_model(&alonzo, Some(&conway))
+            .expect_err("250-entry Conway array must be rejected");
+
+        assert!(matches!(
+            err,
+            GenesisCostModelError::UnsupportedConwayV3ArrayLength {
+                actual: 250,
+                supported: &[251, 302],
+            }
+        ));
+    }
+
+    #[test]
+    fn build_plutus_cost_model_rejects_partial_bitwise_tail_array() {
+        let mut alonzo = sample_alonzo();
+        alonzo.cost_models.clear();
+
+        let mut conway = sample_conway();
+        conway.plutus_v3_cost_model = Some((0..260).map(|n| n as i64).collect());
+
+        let err = build_plutus_cost_model(&alonzo, Some(&conway))
+            .expect_err("partial 251..302 Conway arrays must be rejected");
+
+        assert!(matches!(
+            err,
+            GenesisCostModelError::UnsupportedConwayV3ArrayLength {
+                actual: 260,
+                supported: &[251, 302],
+            }
+        ));
+    }
+
+    #[test]
+    fn conway_v3_mapping_completeness_guard_rejects_truncation() {
+        let err = ensure_conway_v3_mapping_complete(302, 300)
+            .expect_err("truncated Conway v3 mapping must be rejected");
+
+        assert!(matches!(
+            err,
+            GenesisCostModelError::IncompleteConwayV3Mapping {
+                expected: 302,
+                mapped: 300,
+            }
+        ));
     }
 
     #[test]

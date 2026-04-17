@@ -144,7 +144,7 @@ pub struct NodeTracer {
     trace_option_node_name: Option<String>,
     trace_options: BTreeMap<String, TraceNamespaceConfig>,
     last_emit_ms: Arc<Mutex<BTreeMap<String, u128>>>,
-    forwarder: Option<TraceForwarder>,
+    forwarder: Option<Arc<TraceForwarder>>,
 }
 
 impl Clone for NodeTracer {
@@ -160,7 +160,9 @@ impl Clone for NodeTracer {
                     .expect("node tracer emit-map mutex poisoned")
                     .clone(),
             )),
-            forwarder: None, // Do not clone the forwarder (socket)
+            // Preserve the forwarder transport across runtime task clones so
+            // all spawned loops keep emitting Forwarder backend events.
+            forwarder: self.forwarder.clone(),
         }
     }
 }
@@ -173,9 +175,9 @@ impl NodeTracer {
             .values()
             .any(|cfg| cfg.backends.iter().any(|b| b == "Forwarder"))
         {
-            Some(TraceForwarder::new(
+            Some(Arc::new(TraceForwarder::new(
                 config.trace_option_forwarder.socket_path.clone(),
-            ))
+            )))
         } else {
             None
         };
@@ -1471,6 +1473,34 @@ mod tests {
             backends,
             vec![TraceBackend::Forwarder, TraceBackend::StdoutHumanColoured]
         );
+    }
+
+    #[test]
+    fn clone_preserves_forwarder_transport_when_enabled() {
+        let mut cfg: NodeConfigFile = default_config();
+        cfg.trace_options.insert(
+            "".to_owned(),
+            TraceNamespaceConfig {
+                severity: Some("Notice".to_owned()),
+                detail: None,
+                backends: vec!["Forwarder".to_owned()],
+                max_frequency: None,
+            },
+        );
+
+        let tracer = NodeTracer::from_config(&cfg);
+        let cloned = tracer.clone();
+
+        let original = tracer
+            .forwarder
+            .as_ref()
+            .expect("forwarder should be configured on original tracer");
+        let cloned_forwarder = cloned
+            .forwarder
+            .as_ref()
+            .expect("forwarder should be configured on cloned tracer");
+
+        assert!(Arc::ptr_eq(original, cloned_forwarder));
     }
 
     // -----------------------------------------------------------------------
