@@ -1,0 +1,20 @@
+{
+  "NodeToClientVersion": 23,
+  "Point": {
+    "slot": 0,
+    "hash": "00"
+  },
+  "NetworkMagic": 1,
+  "allLedgerPools": [
+    {
+      "relativeStake": 1.0,
+      "relays": [
+        {
+          "address": "preprod-node.play.dev.cardano.org",
+          "port": 3001
+        }
+      ]
+    }
+  ],
+  "bigLedgerPools": []
+}

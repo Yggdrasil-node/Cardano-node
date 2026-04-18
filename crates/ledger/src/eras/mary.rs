@@ -160,28 +160,83 @@ fn encode_multi_asset(enc: &mut Encoder, ma: &MultiAsset) {
 
 /// Decodes a `MultiAsset` (unsigned quantities) from a CBOR map-of-maps.
 fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, LedgerError> {
-    let policy_count = dec.map()?;
     let mut ma = BTreeMap::new();
-    for _ in 0..policy_count {
-        let policy_raw = dec.bytes()?;
-        let policy: PolicyId =
-            policy_raw
-                .try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 28,
-                    actual: policy_raw.len(),
-                })?;
-        let asset_count = dec.map()?;
-        let mut assets = BTreeMap::new();
-        for _ in 0..asset_count {
-            let name = dec.bytes()?.to_vec();
-            if name.len() > 32 {
-                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+    match dec.map_begin()? {
+        Some(policy_count) => {
+            for _ in 0..policy_count {
+                let policy_raw = dec.bytes()?;
+                let policy: PolicyId =
+                    policy_raw
+                        .try_into()
+                        .map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 28,
+                            actual: policy_raw.len(),
+                        })?;
+                let mut assets = BTreeMap::new();
+                match dec.map_begin()? {
+                    Some(asset_count) => {
+                        for _ in 0..asset_count {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.unsigned()?;
+                            assets.insert(name, qty);
+                        }
+                    }
+                    None => {
+                        while !dec.is_break() {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.unsigned()?;
+                            assets.insert(name, qty);
+                        }
+                        dec.consume_break()?;
+                    }
+                }
+                ma.insert(policy, assets);
             }
-            let qty = dec.unsigned()?;
-            assets.insert(name, qty);
         }
-        ma.insert(policy, assets);
+        None => {
+            while !dec.is_break() {
+                let policy_raw = dec.bytes()?;
+                let policy: PolicyId =
+                    policy_raw
+                        .try_into()
+                        .map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 28,
+                            actual: policy_raw.len(),
+                        })?;
+                let mut assets = BTreeMap::new();
+                match dec.map_begin()? {
+                    Some(asset_count) => {
+                        for _ in 0..asset_count {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.unsigned()?;
+                            assets.insert(name, qty);
+                        }
+                    }
+                    None => {
+                        while !dec.is_break() {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.unsigned()?;
+                            assets.insert(name, qty);
+                        }
+                        dec.consume_break()?;
+                    }
+                }
+                ma.insert(policy, assets);
+            }
+            dec.consume_break()?;
+        }
     }
     Ok(ma)
 }
@@ -201,28 +256,83 @@ pub(crate) fn encode_mint_asset(enc: &mut Encoder, ma: &MintAsset) {
 
 /// Decodes a `MintAsset` (signed quantities) from a CBOR map-of-maps.
 pub(crate) fn decode_mint_asset(dec: &mut Decoder<'_>) -> Result<MintAsset, LedgerError> {
-    let policy_count = dec.map()?;
     let mut ma = BTreeMap::new();
-    for _ in 0..policy_count {
-        let policy_raw = dec.bytes()?;
-        let policy: PolicyId =
-            policy_raw
-                .try_into()
-                .map_err(|_| LedgerError::CborInvalidLength {
-                    expected: 28,
-                    actual: policy_raw.len(),
-                })?;
-        let asset_count = dec.map()?;
-        let mut assets = BTreeMap::new();
-        for _ in 0..asset_count {
-            let name = dec.bytes()?.to_vec();
-            if name.len() > 32 {
-                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+    match dec.map_begin()? {
+        Some(policy_count) => {
+            for _ in 0..policy_count {
+                let policy_raw = dec.bytes()?;
+                let policy: PolicyId =
+                    policy_raw
+                        .try_into()
+                        .map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 28,
+                            actual: policy_raw.len(),
+                        })?;
+                let mut assets = BTreeMap::new();
+                match dec.map_begin()? {
+                    Some(asset_count) => {
+                        for _ in 0..asset_count {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.integer()?;
+                            assets.insert(name, qty);
+                        }
+                    }
+                    None => {
+                        while !dec.is_break() {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.integer()?;
+                            assets.insert(name, qty);
+                        }
+                        dec.consume_break()?;
+                    }
+                }
+                ma.insert(policy, assets);
             }
-            let qty = dec.integer()?;
-            assets.insert(name, qty);
         }
-        ma.insert(policy, assets);
+        None => {
+            while !dec.is_break() {
+                let policy_raw = dec.bytes()?;
+                let policy: PolicyId =
+                    policy_raw
+                        .try_into()
+                        .map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 28,
+                            actual: policy_raw.len(),
+                        })?;
+                let mut assets = BTreeMap::new();
+                match dec.map_begin()? {
+                    Some(asset_count) => {
+                        for _ in 0..asset_count {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.integer()?;
+                            assets.insert(name, qty);
+                        }
+                    }
+                    None => {
+                        while !dec.is_break() {
+                            let name = dec.bytes()?.to_vec();
+                            if name.len() > 32 {
+                                return Err(LedgerError::AssetNameTooLong { actual: name.len() });
+                            }
+                            let qty = dec.integer()?;
+                            assets.insert(name, qty);
+                        }
+                        dec.consume_break()?;
+                    }
+                }
+                ma.insert(policy, assets);
+            }
+            dec.consume_break()?;
+        }
     }
     Ok(ma)
 }

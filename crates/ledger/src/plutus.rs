@@ -224,6 +224,26 @@ impl CborDecode for PlutusData {
                         }
                         Ok(Self::Constr(alt, fields))
                     }
+                    1280..=1400 => {
+                        // Compact constructor tags for alternatives 7..127.
+                        let alt = (tag - 1280) + 7;
+                        let mut fields = Vec::new();
+                        match dec.array_begin()? {
+                            Some(len) => {
+                                fields.reserve(len as usize);
+                                for _ in 0..len {
+                                    fields.push(Self::decode_cbor(dec)?);
+                                }
+                            }
+                            None => {
+                                while !dec.is_break() {
+                                    fields.push(Self::decode_cbor(dec)?);
+                                }
+                                dec.consume_break()?;
+                            }
+                        }
+                        Ok(Self::Constr(alt, fields))
+                    }
                     CONSTR_TAG_GENERAL => {
                         let outer_len = dec.array()?;
                         if outer_len != 2 {

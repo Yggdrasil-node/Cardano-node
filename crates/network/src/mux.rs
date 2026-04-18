@@ -211,7 +211,8 @@ impl ProtocolConfig {
 /// Each registered protocol receives one handle.  The handle's lifetime
 /// is independent from the mux tasks — dropping it signals the muxer that
 /// this protocol has no more outgoing data, and the demuxer will return
-/// [`MuxError::IngressClosed`] if a payload arrives for a dropped handle.
+/// Payloads for dropped protocol handles are discarded without tearing down
+/// the entire connection.
 ///
 /// Backpressure:
 /// - Egress: [`send`](Self::send) checks `pending_egress_bytes` against
@@ -520,6 +521,12 @@ async fn demux_loop<R: tokio::io::AsyncRead + Unpin>(
     )
     .await;
 
+    if std::env::var("YGG_SYNC_DEBUG").is_ok_and(|v| v != "0") {
+        if let Err(ref err) = result {
+            eprintln!("[ygg-sync-debug] demux-exit error={err}");
+        }
+    }
+
     // Signal the writer to shut down when the reader exits with an error.
     if result.is_err() {
         let _ = cancel_tx.send(true);
@@ -599,11 +606,13 @@ async fn demux_loop_inner<R: tokio::io::AsyncRead + Unpin>(
         match ingress.get(&proto) {
             Some(tx) => {
                 if tx.send(payload).await.is_err() {
-                    // Undo byte increment — payload was not delivered.
+                    // The protocol handle was dropped locally. Discard the
+                    // payload and keep the connection alive for other
+                    // protocols.
                     if let Some(counter) = ingress_bytes.get(&proto) {
                         counter.fetch_sub(len, Ordering::Relaxed);
                     }
-                    return Err(MuxError::IngressClosed(proto.0));
+                    continue;
                 }
             }
             None => {
@@ -639,6 +648,12 @@ async fn mux_loop<W: tokio::io::AsyncWrite + Unpin>(
     mut cancel_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), MuxError> {
     let result = mux_loop_inner(&mut writer, &mut slots, role, &notify, &mut cancel_rx).await;
+
+    if std::env::var("YGG_SYNC_DEBUG").is_ok_and(|v| v != "0") {
+        if let Err(ref err) = result {
+            eprintln!("[ygg-sync-debug] mux-exit error={err}");
+        }
+    }
 
     // Signal the reader to shut down when the writer exits with an error.
     if result.is_err() {

@@ -278,6 +278,7 @@ impl CborDecode for ShelleyTxBody {
         let mut outputs: Option<Vec<ShelleyTxOut>> = None;
         let mut fee: Option<u64> = None;
         let mut ttl: Option<u64> = None;
+        let mut validity_interval_start_seen = false;
         let mut certificates: Option<Vec<DCert>> = None;
         let mut withdrawals: Option<BTreeMap<RewardAccount, u64>> = None;
         let mut update: Option<ShelleyUpdate> = None;
@@ -338,6 +339,13 @@ impl CborDecode for ShelleyTxBody {
                         })?;
                     auxiliary_data_hash = Some(hash);
                 }
+                // Allegra/Mary compatibility: key 8 is validity_interval_start.
+                // Shelley does not model it directly, but seeing this key means
+                // key 3 (ttl) may be omitted per upstream Allegra rules.
+                8 => {
+                    let _ = dec.unsigned()?;
+                    validity_interval_start_seen = true;
+                }
                 _ => {
                     // Skip unknown fields for forward compatibility.
                     dec.skip()?;
@@ -358,10 +366,9 @@ impl CborDecode for ShelleyTxBody {
                 expected: 1,
                 actual: 0,
             })?,
-            ttl: ttl.ok_or(LedgerError::CborInvalidLength {
-                expected: 1,
-                actual: 0,
-            })?,
+            // Allegra/Mary allow TTL to be absent. Decode as an open upper
+            // bound so Shelley-family block parsing remains interoperable.
+            ttl: ttl.or_else(|| validity_interval_start_seen.then_some(u64::MAX)).unwrap_or(u64::MAX),
             certificates,
             withdrawals,
             update,
@@ -634,7 +641,24 @@ impl CborEncode for ShelleyWitnessSet {
 
 impl CborDecode for ShelleyWitnessSet {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
-        let map_len = dec.map()?;
+        fn begin_map(dec: &mut Decoder<'_>) -> Result<Option<u64>, LedgerError> {
+            dec.map_begin()
+        }
+
+        fn begin_array_or_set(dec: &mut Decoder<'_>) -> Result<Option<u64>, LedgerError> {
+            if dec.peek_major()? == 6 {
+                let tag = dec.tag()?;
+                if tag != 258 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 258,
+                        actual: tag as usize,
+                    });
+                }
+            }
+            dec.array_begin()
+        }
+
+        let map_len = begin_map(dec)?;
         let mut vkey_witnesses = Vec::new();
         let mut native_scripts = Vec::new();
         let mut bootstrap_witnesses = Vec::new();
@@ -644,37 +668,92 @@ impl CborDecode for ShelleyWitnessSet {
         let mut plutus_v2_scripts = Vec::new();
         let mut plutus_v3_scripts = Vec::new();
 
-        for _ in 0..map_len {
+        loop {
+            if map_len.is_none() && dec.is_break() {
+                dec.consume_break()?;
+                break;
+            }
+            if let Some(remaining) = map_len {
+                if remaining == 0 {
+                    break;
+                }
+            }
+
             let key = dec.unsigned()?;
             match key {
                 0 => {
-                    let count = dec.array_or_set()?;
-                    for _ in 0..count {
-                        vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            for _ in 0..count {
+                                vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                 }
                 1 => {
-                    let count = dec.array_or_set()?;
-                    for _ in 0..count {
-                        native_scripts.push(NativeScript::decode_cbor(dec)?);
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            for _ in 0..count {
+                                native_scripts.push(NativeScript::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                native_scripts.push(NativeScript::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                 }
                 2 => {
-                    let count = dec.array_or_set()?;
-                    for _ in 0..count {
-                        bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            for _ in 0..count {
+                                bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                 }
                 3 => {
-                    let count = dec.array_or_set()?;
-                    for _ in 0..count {
-                        plutus_v1_scripts.push(dec.bytes()?.to_vec());
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            for _ in 0..count {
+                                plutus_v1_scripts.push(dec.bytes()?.to_vec());
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                plutus_v1_scripts.push(dec.bytes()?.to_vec());
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                 }
                 4 => {
-                    let count = dec.array()?;
-                    for _ in 0..count {
-                        plutus_data.push(PlutusData::decode_cbor(dec)?);
+                    match dec.array_begin()? {
+                        Some(count) => {
+                            for _ in 0..count {
+                                plutus_data.push(PlutusData::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                plutus_data.push(PlutusData::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                 }
                 5 => {
@@ -682,37 +761,78 @@ impl CborDecode for ShelleyWitnessSet {
                     // map format { [tag, index] => [data, ex_units] } (Conway).
                     let major = dec.peek_major()?;
                     if major == 4 {
-                        let count = dec.array()?;
-                        for _ in 0..count {
-                            redeemers.push(Redeemer::decode_cbor(dec)?);
+                        match dec.array_begin()? {
+                            Some(count) => {
+                                for _ in 0..count {
+                                    redeemers.push(Redeemer::decode_cbor(dec)?);
+                                }
+                            }
+                            None => {
+                                while !dec.is_break() {
+                                    redeemers.push(Redeemer::decode_cbor(dec)?);
+                                }
+                                dec.consume_break()?;
+                            }
                         }
                     } else if major == 5 {
-                        let count = dec.map()?;
-                        for _ in 0..count {
-                            let kl = dec.array()?;
-                            if kl != 2 {
-                                return Err(LedgerError::CborInvalidLength {
-                                    expected: 2,
-                                    actual: kl as usize,
-                                });
+                        match begin_map(dec)? {
+                            Some(count) => {
+                                for _ in 0..count {
+                                    let kl = dec.array()?;
+                                    if kl != 2 {
+                                        return Err(LedgerError::CborInvalidLength {
+                                            expected: 2,
+                                            actual: kl as usize,
+                                        });
+                                    }
+                                    let tag = dec.unsigned()? as u8;
+                                    let index = dec.unsigned()?;
+                                    let vl = dec.array()?;
+                                    if vl != 2 {
+                                        return Err(LedgerError::CborInvalidLength {
+                                            expected: 2,
+                                            actual: vl as usize,
+                                        });
+                                    }
+                                    let data = PlutusData::decode_cbor(dec)?;
+                                    let ex_units = ExUnits::decode_cbor(dec)?;
+                                    redeemers.push(Redeemer {
+                                        tag,
+                                        index,
+                                        data,
+                                        ex_units,
+                                    });
+                                }
                             }
-                            let tag = dec.unsigned()? as u8;
-                            let index = dec.unsigned()?;
-                            let vl = dec.array()?;
-                            if vl != 2 {
-                                return Err(LedgerError::CborInvalidLength {
-                                    expected: 2,
-                                    actual: vl as usize,
-                                });
+                            None => {
+                                while !dec.is_break() {
+                                    let kl = dec.array()?;
+                                    if kl != 2 {
+                                        return Err(LedgerError::CborInvalidLength {
+                                            expected: 2,
+                                            actual: kl as usize,
+                                        });
+                                    }
+                                    let tag = dec.unsigned()? as u8;
+                                    let index = dec.unsigned()?;
+                                    let vl = dec.array()?;
+                                    if vl != 2 {
+                                        return Err(LedgerError::CborInvalidLength {
+                                            expected: 2,
+                                            actual: vl as usize,
+                                        });
+                                    }
+                                    let data = PlutusData::decode_cbor(dec)?;
+                                    let ex_units = ExUnits::decode_cbor(dec)?;
+                                    redeemers.push(Redeemer {
+                                        tag,
+                                        index,
+                                        data,
+                                        ex_units,
+                                    });
+                                }
+                                dec.consume_break()?;
                             }
-                            let data = PlutusData::decode_cbor(dec)?;
-                            let ex_units = ExUnits::decode_cbor(dec)?;
-                            redeemers.push(Redeemer {
-                                tag,
-                                index,
-                                data,
-                                ex_units,
-                            });
                         }
                     } else {
                         return Err(LedgerError::CborTypeMismatch {
@@ -722,19 +842,43 @@ impl CborDecode for ShelleyWitnessSet {
                     }
                 }
                 6 => {
-                    let count = dec.array_or_set()?;
-                    for _ in 0..count {
-                        plutus_v2_scripts.push(dec.bytes()?.to_vec());
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            for _ in 0..count {
+                                plutus_v2_scripts.push(dec.bytes()?.to_vec());
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                plutus_v2_scripts.push(dec.bytes()?.to_vec());
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                 }
                 7 => {
-                    let count = dec.array_or_set()?;
-                    for _ in 0..count {
-                        plutus_v3_scripts.push(dec.bytes()?.to_vec());
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            for _ in 0..count {
+                                plutus_v3_scripts.push(dec.bytes()?.to_vec());
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                plutus_v3_scripts.push(dec.bytes()?.to_vec());
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                 }
                 _ => {
                     dec.skip()?;
+                }
+            }
+
+            if let Some(remaining) = map_len {
+                if remaining == 1 {
+                    break;
                 }
             }
         }
@@ -1412,7 +1556,7 @@ impl CborEncode for PraosHeaderBody {
 impl CborDecode for PraosHeaderBody {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 14 {
+        if len != 14 && len != 10 {
             return Err(LedgerError::CborInvalidLength {
                 expected: 14,
                 actual: len as usize,
@@ -1465,10 +1609,34 @@ impl CborDecode for PraosHeaderBody {
                     actual: bh_raw.len(),
                 })?;
 
-        let opcert = ShelleyOpCert::decode_fields(dec)?;
+        let (opcert, proto_major, proto_minor) = if len == 14 {
+            let opcert = ShelleyOpCert::decode_fields(dec)?;
+            let proto_major = dec.unsigned()?;
+            let proto_minor = dec.unsigned()?;
+            (opcert, proto_major, proto_minor)
+        } else {
+            // Newer Shelley-family header encodings group opcert/protocol
+            // fields into nested arrays instead of inlining them.
+            let opcert_len = dec.array()?;
+            if opcert_len != 4 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 4,
+                    actual: opcert_len as usize,
+                });
+            }
+            let opcert = ShelleyOpCert::decode_fields(dec)?;
 
-        let proto_major = dec.unsigned()?;
-        let proto_minor = dec.unsigned()?;
+            let proto_len = dec.array()?;
+            if proto_len != 2 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 2,
+                    actual: proto_len as usize,
+                });
+            }
+            let proto_major = dec.unsigned()?;
+            let proto_minor = dec.unsigned()?;
+            (opcert, proto_major, proto_minor)
+        };
 
         Ok(Self {
             block_number,

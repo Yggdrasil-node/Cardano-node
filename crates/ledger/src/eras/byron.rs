@@ -666,30 +666,74 @@ impl ByronBlock {
         // Block body: [tx_payload, ssc_payload, dlg_payload, upd_payload]
         // tx_payload: [[TxAux, ...]]
         // ---------------------------------------------------------------
-        let body_len = dec.array()?;
-        if body_len < 4 {
-            return Err(LedgerError::CborInvalidLength {
-                expected: 4,
-                actual: body_len as usize,
-            });
+        let body_len = dec.array_begin()?;
+        if let Some(len) = body_len {
+            if len < 4 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 4,
+                    actual: len as usize,
+                });
+            }
         }
 
         // tx_payload is a 1-element array wrapping the list of TxAux.
-        let tx_payload_len = dec.array()?;
-        let transactions = if tx_payload_len == 0 {
-            Vec::new()
-        } else {
-            let n_txs = dec.array()?;
-            let mut txs = Vec::with_capacity(n_txs as usize);
-            for _ in 0..n_txs {
-                txs.push(ByronTxAux::decode_cbor(&mut dec)?);
-            }
-            // Skip any remaining elements of the tx_payload envelope.
-            for _ in 1..tx_payload_len {
-                dec.skip()?;
-            }
-            txs
+        let tx_payload_len = dec.array_begin()?;
+        let mut transactions = Vec::new();
+        let tx_payload_is_empty = match tx_payload_len {
+            Some(0) => true,
+            Some(_) => false,
+            None => dec.is_break(),
         };
+
+        if !tx_payload_is_empty {
+            let n_txs = dec.array_begin()?;
+            match n_txs {
+                Some(count) => {
+                    transactions.reserve(count as usize);
+                    for _ in 0..count {
+                        transactions.push(ByronTxAux::decode_cbor(&mut dec)?);
+                    }
+                }
+                None => {
+                    while !dec.is_break() {
+                        transactions.push(ByronTxAux::decode_cbor(&mut dec)?);
+                    }
+                    dec.consume_break()?;
+                }
+            }
+        }
+
+        // Skip any remaining tx_payload envelope elements.
+        match tx_payload_len {
+            Some(len) => {
+                if len > 1 {
+                    for _ in 1..len {
+                        dec.skip()?;
+                    }
+                }
+            }
+            None => {
+                while !dec.is_break() {
+                    dec.skip()?;
+                }
+                dec.consume_break()?;
+            }
+        }
+
+        // Skip remaining block-body elements (ssc, delegation, update payloads).
+        match body_len {
+            Some(len) => {
+                for _ in 1..len {
+                    dec.skip()?;
+                }
+            }
+            None => {
+                while !dec.is_break() {
+                    dec.skip()?;
+                }
+                dec.consume_break()?;
+            }
+        }
 
         Ok(Self::MainBlock {
             epoch,

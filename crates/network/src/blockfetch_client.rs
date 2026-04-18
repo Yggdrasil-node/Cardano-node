@@ -148,8 +148,18 @@ impl BlockFetchClient {
         &mut self,
         range: ChainRange,
     ) -> Result<BatchResponse, BlockFetchClientError> {
-        self.send_msg(&BlockFetchMessage::MsgRequestRange(range))
-            .await?;
+        let msg = BlockFetchMessage::MsgRequestRange(range);
+        if std::env::var("YGG_SYNC_DEBUG").is_ok_and(|v| v != "0") {
+            let bytes = msg.to_cbor();
+            eprintln!(
+                "[ygg-sync-debug] blockfetch-request-cbor={}",
+                bytes
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            );
+        }
+        self.send_msg(&msg).await?;
         let msg = self.recv_msg_timeout(bf_limits::BF_BUSY).await?;
         match msg {
             BlockFetchMessage::MsgStartBatch => Ok(BatchResponse::StartedBatch),

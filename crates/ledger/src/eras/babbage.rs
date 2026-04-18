@@ -485,6 +485,19 @@ impl CborEncode for BabbageTxBody {
 
 impl CborDecode for BabbageTxBody {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        fn begin_array_or_set(dec: &mut Decoder<'_>) -> Result<Option<u64>, LedgerError> {
+            if dec.peek_major()? == 6 {
+                let tag = dec.tag()?;
+                if tag != 258 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 258,
+                        actual: tag as usize,
+                    });
+                }
+            }
+            dec.array_begin()
+        }
+
         let map_len = dec.map()?;
 
         let mut inputs: Option<Vec<ShelleyTxIn>> = None;
@@ -509,18 +522,38 @@ impl CborDecode for BabbageTxBody {
             let key = dec.unsigned()?;
             match key {
                 0 => {
-                    let count = dec.array_or_set()?;
-                    let mut ins = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        ins.push(ShelleyTxIn::decode_cbor(dec)?);
+                    let mut ins = Vec::new();
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            ins.reserve(count as usize);
+                            for _ in 0..count {
+                                ins.push(ShelleyTxIn::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                ins.push(ShelleyTxIn::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                     inputs = Some(ins);
                 }
                 1 => {
-                    let count = dec.array()?;
-                    let mut outs = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        outs.push(BabbageTxOut::decode_cbor(dec)?);
+                    let mut outs = Vec::new();
+                    match dec.array_begin()? {
+                        Some(count) => {
+                            outs.reserve(count as usize);
+                            for _ in 0..count {
+                                outs.push(BabbageTxOut::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                outs.push(BabbageTxOut::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                     outputs = Some(outs);
                 }
@@ -531,10 +564,20 @@ impl CborDecode for BabbageTxBody {
                     ttl = Some(dec.unsigned()?);
                 }
                 4 => {
-                    let count = dec.array_or_set()?;
-                    let mut certs = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        certs.push(DCert::decode_cbor(dec)?);
+                    let mut certs = Vec::new();
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            certs.reserve(count as usize);
+                            for _ in 0..count {
+                                certs.push(DCert::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                certs.push(DCert::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                     certificates = Some(certs);
                 }
@@ -576,26 +619,52 @@ impl CborDecode for BabbageTxBody {
                     script_data_hash = Some(hash);
                 }
                 13 => {
-                    let count = dec.array_or_set()?;
-                    let mut cols = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        cols.push(ShelleyTxIn::decode_cbor(dec)?);
+                    let mut cols = Vec::new();
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            cols.reserve(count as usize);
+                            for _ in 0..count {
+                                cols.push(ShelleyTxIn::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                cols.push(ShelleyTxIn::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                     collateral = Some(cols);
                 }
                 14 => {
-                    let count = dec.array_or_set()?;
-                    let mut sigs = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        let raw = dec.bytes()?;
-                        let hash: [u8; 28] =
-                            raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
-                                expected: 28,
-                                actual: raw.len(),
-                            })?;
-                        sigs.push(hash);
+                    let mut req = Vec::new();
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            req.reserve(count as usize);
+                            for _ in 0..count {
+                                let raw = dec.bytes()?;
+                                let kh: [u8; 28] =
+                                    raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                                        expected: 28,
+                                        actual: raw.len(),
+                                    })?;
+                                req.push(kh);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                let raw = dec.bytes()?;
+                                let kh: [u8; 28] =
+                                    raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                                        expected: 28,
+                                        actual: raw.len(),
+                                    })?;
+                                req.push(kh);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
-                    required_signers = Some(sigs);
+                    required_signers = Some(req);
                 }
                 15 => {
                     network_id = Some(dec.unsigned()? as u8);
@@ -607,10 +676,20 @@ impl CborDecode for BabbageTxBody {
                     total_collateral = Some(dec.unsigned()?);
                 }
                 18 => {
-                    let count = dec.array_or_set()?;
-                    let mut refs = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        refs.push(ShelleyTxIn::decode_cbor(dec)?);
+                    let mut refs = Vec::new();
+                    match begin_array_or_set(dec)? {
+                        Some(count) => {
+                            refs.reserve(count as usize);
+                            for _ in 0..count {
+                                refs.push(ShelleyTxIn::decode_cbor(dec)?);
+                            }
+                        }
+                        None => {
+                            while !dec.is_break() {
+                                refs.push(ShelleyTxIn::decode_cbor(dec)?);
+                            }
+                            dec.consume_break()?;
+                        }
                     }
                     reference_inputs = Some(refs);
                 }
@@ -735,33 +814,78 @@ impl CborDecode for BabbageBlock {
 
         let header = PraosHeader::decode_cbor(dec)?;
 
-        let tb_count = dec.array()?;
-        let mut transaction_bodies = Vec::with_capacity(tb_count as usize);
-        for _ in 0..tb_count {
-            transaction_bodies.push(BabbageTxBody::decode_cbor(dec)?);
+        let mut transaction_bodies = Vec::new();
+        match dec.array_begin()? {
+            Some(tb_count) => {
+                transaction_bodies.reserve(tb_count as usize);
+                for _ in 0..tb_count {
+                    transaction_bodies.push(BabbageTxBody::decode_cbor(dec)?);
+                }
+            }
+            None => {
+                while !dec.is_break() {
+                    transaction_bodies.push(BabbageTxBody::decode_cbor(dec)?);
+                }
+                dec.consume_break()?;
+            }
         }
 
-        let ws_count = dec.array()?;
-        let mut witness_sets = Vec::with_capacity(ws_count as usize);
-        for _ in 0..ws_count {
-            witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
+        let mut witness_sets = Vec::new();
+        match dec.array_begin()? {
+            Some(ws_count) => {
+                witness_sets.reserve(ws_count as usize);
+                for _ in 0..ws_count {
+                    witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
+                }
+            }
+            None => {
+                while !dec.is_break() {
+                    witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
+                }
+                dec.consume_break()?;
+            }
         }
 
-        let meta_count = dec.map()?;
-        let mut transaction_metadata = HashMap::with_capacity(meta_count as usize);
-        for _ in 0..meta_count {
-            let idx = dec.unsigned()?;
-            let start = dec.position();
-            dec.skip()?;
-            let end = dec.position();
-            let raw = dec.slice(start, end)?.to_vec();
-            transaction_metadata.insert(idx, raw);
+        let mut transaction_metadata = HashMap::new();
+        match dec.map_begin()? {
+            Some(meta_count) => {
+                transaction_metadata.reserve(meta_count as usize);
+                for _ in 0..meta_count {
+                    let idx = dec.unsigned()?;
+                    let start = dec.position();
+                    dec.skip()?;
+                    let end = dec.position();
+                    let raw = dec.slice(start, end)?.to_vec();
+                    transaction_metadata.insert(idx, raw);
+                }
+            }
+            None => {
+                while !dec.is_break() {
+                    let idx = dec.unsigned()?;
+                    let start = dec.position();
+                    dec.skip()?;
+                    let end = dec.position();
+                    let raw = dec.slice(start, end)?.to_vec();
+                    transaction_metadata.insert(idx, raw);
+                }
+                dec.consume_break()?;
+            }
         }
 
-        let inv_count = dec.array()?;
-        let mut invalid_transactions = Vec::with_capacity(inv_count as usize);
-        for _ in 0..inv_count {
-            invalid_transactions.push(dec.unsigned()?);
+        let mut invalid_transactions = Vec::new();
+        match dec.array_begin()? {
+            Some(inv_count) => {
+                invalid_transactions.reserve(inv_count as usize);
+                for _ in 0..inv_count {
+                    invalid_transactions.push(dec.unsigned()?);
+                }
+            }
+            None => {
+                while !dec.is_break() {
+                    invalid_transactions.push(dec.unsigned()?);
+                }
+                dec.consume_break()?;
+            }
         }
 
         Ok(Self {

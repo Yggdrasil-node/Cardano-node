@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::sync::{Arc, RwLock};
 
 use yggdrasil_consensus::{
@@ -417,6 +418,245 @@ async fn fetch_range_blocks_decoded(
         .map_err(map_blockfetch_error)
 }
 
+fn normalize_blockfetch_range_points(lower: Point, upper: Point) -> Option<(Point, Point)> {
+    let upper_is_block = matches!(upper, Point::BlockPoint(_, _));
+    if !upper_is_block {
+        return None;
+    }
+
+    if let (Point::BlockPoint(lower_slot, _), Point::BlockPoint(upper_slot, _)) = (lower, upper) {
+        if upper_slot < lower_slot {
+            return None;
+        }
+    }
+
+    let normalized_lower = if matches!(lower, Point::Origin) {
+        upper
+    } else {
+        lower
+    };
+
+    Some((normalized_lower, upper))
+}
+
+fn normalize_blockfetch_range_bytes(lower: Vec<u8>, upper: Vec<u8>) -> Option<(Vec<u8>, Vec<u8>)> {
+    let lower_point = Point::from_cbor_bytes(&lower).ok()?;
+    let upper_point = Point::from_cbor_bytes(&upper).ok()?;
+    let (normalized_lower, normalized_upper) =
+        normalize_blockfetch_range_points(lower_point, upper_point)?;
+    Some((
+        normalized_lower.to_cbor_bytes(),
+        normalized_upper.to_cbor_bytes(),
+    ))
+}
+
+fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
+    fn decode_slot_from_with_origin(value: &[u8]) -> Option<u64> {
+        let mut dec = Decoder::new(value);
+        if let Ok(2) = dec.array() {
+            let tag = dec.unsigned().ok()?;
+            if tag != 0 && tag != 1 {
+                return None;
+            }
+            let slot = dec.unsigned().ok()?;
+            if dec.is_empty() {
+                return Some(slot);
+            }
+        }
+        None
+    }
+
+    fn decode_cbor_in_cbor_bytes(value: &[u8]) -> Option<Vec<u8>> {
+        let mut dec = Decoder::new(value);
+        if let Ok(unwrapped) = dec.wrapped() {
+            if dec.is_empty() {
+                return Some(unwrapped.to_vec());
+            }
+        }
+
+        let mut dec = Decoder::new(value);
+        if let Ok(bytes) = dec.bytes() {
+            if dec.is_empty() {
+                return Some(bytes.to_vec());
+            }
+        }
+
+        None
+    }
+
+    fn byron_main_header_hash(raw_header: &[u8]) -> HeaderHash {
+        // Byron main header hash uses prefix ++ raw annotated header bytes.
+        const MAIN_HASH_PREFIX: [u8; 2] = [0x82, 0x01];
+        let mut bytes = Vec::with_capacity(MAIN_HASH_PREFIX.len() + raw_header.len());
+        bytes.extend_from_slice(&MAIN_HASH_PREFIX);
+        bytes.extend_from_slice(raw_header);
+        HeaderHash(hash_bytes_256(&bytes).0)
+    }
+
+    fn decode_point_from_byron_raw_header(raw_header: &[u8]) -> Option<Point> {
+        let mut dec = Decoder::new(raw_header);
+        if dec.array().ok()? < 5 {
+            return None;
+        }
+
+        // protocol_magic, prev_hash, body_proof
+        dec.skip().ok()?;
+        dec.skip().ok()?;
+        dec.skip().ok()?;
+
+        let consensus_len = dec.array().ok()?;
+        if consensus_len >= 4 {
+            // Main block header consensus_data: [slot_id, pubkey, difficulty, signature]
+            let slot_id_len = dec.array().ok()?;
+            if slot_id_len != 2 {
+                return None;
+            }
+
+            let epoch = dec.unsigned().ok()?;
+            let slot_in_epoch = dec.unsigned().ok()?;
+            let slot = epoch
+                .checked_mul(BYRON_SLOTS_PER_EPOCH)
+                .and_then(|base| base.checked_add(slot_in_epoch))?;
+            return Some(Point::BlockPoint(
+                SlotNo(slot),
+                byron_main_header_hash(raw_header),
+            ));
+        }
+
+        if consensus_len >= 2 {
+            // EBB headers don't carry slot-in-epoch in the same way as main
+            // headers; prefer the outer with-origin slot for those envelopes.
+            return None;
+        }
+
+        None
+    }
+
+    fn decode_header_point_bytes(bytes: &[u8]) -> Option<Point> {
+        if let Ok(header) = ShelleyHeader::from_cbor_bytes(bytes) {
+            return Some(Point::BlockPoint(SlotNo(header.body.slot), header.header_hash()));
+        }
+
+        if let Ok(header) = PraosHeader::from_cbor_bytes(bytes) {
+            return Some(Point::BlockPoint(SlotNo(header.body.slot), header.header_hash()));
+        }
+
+        None
+    }
+
+    fn decode_point_bytes(bytes: &[u8]) -> Option<Point> {
+        Point::from_cbor_bytes(bytes).ok()
+    }
+
+    fn decode_point_from_serialised_header(bytes: &[u8]) -> Option<Point> {
+        let mut dec = Decoder::new(bytes);
+        if let Ok(2) = dec.array() {
+            let first = dec.raw_value().ok()?;
+            let second = dec.raw_value().ok()?;
+            if !dec.is_empty() {
+                return None;
+            }
+
+            // Common serialised-header form: [point, header-bytes]
+            if let Some(point) = Point::from_cbor_bytes(first).ok() {
+                return Some(point);
+            }
+
+            // Some serialised forms store the header in CBOR-in-CBOR.
+            let mut second_dec = Decoder::new(second);
+            if let Ok(unwrapped) = second_dec.wrapped() {
+                if second_dec.is_empty() {
+                    if let Some(point) = decode_header_point_bytes(unwrapped) {
+                        return Some(point);
+                    }
+                }
+            }
+
+            // Fallback: second field might already be a direct header payload.
+            if let Some(point) = decode_header_point_bytes(second) {
+                return Some(point);
+            }
+
+            // Byron serialised-header envelope observed in preprod:
+            // [[withOriginSlot], tag24(rawHeaderBytes)]
+            let raw_header_bytes = decode_cbor_in_cbor_bytes(second)?;
+            if let Some(point) = decode_point_from_byron_raw_header(&raw_header_bytes) {
+                return Some(point);
+            }
+
+            // Last-resort fallback for envelope variants where only slot is
+            // recoverable from the outer with-origin field.
+            let slot = decode_slot_from_with_origin(first)?;
+            Some(Point::BlockPoint(
+                SlotNo(slot),
+                byron_main_header_hash(&raw_header_bytes),
+            ))
+        } else {
+            None
+        }
+    }
+
+    if let Some(point) = decode_header_point_bytes(raw_header) {
+        return Some(point);
+    }
+
+    // ChainSync roll-forward headers may arrive in a 2-element envelope. In
+    // practice we see multiple layouts depending on the negotiated header
+    // flavor (typed header, serialised header, multi-era envelope), so try a
+    // small set of upstream-compatible heuristics.
+    let mut dec = Decoder::new(raw_header);
+    if let Ok(2) = dec.array() {
+        if let (Ok(first), Ok(second)) = (dec.raw_value(), dec.raw_value()) {
+            if dec.is_empty() {
+                // Layout A: [eraTag, headerPayload]
+                let mut first_dec = Decoder::new(first);
+                if first_dec.unsigned().is_ok() {
+                    if first_dec.is_empty() {
+                        if let Some(point) = decode_point_from_serialised_header(second) {
+                            return Some(point);
+                        }
+                        if let Some(point) = decode_header_point_bytes(second) {
+                            return Some(point);
+                        }
+                    }
+                }
+
+                // Layout B: [point, serialised-header-bytes]
+                if let Some(point) = decode_point_bytes(first) {
+                    return Some(point);
+                }
+
+                // Layout C: [serialised-header-bytes, point]
+                if let Some(point) = decode_point_bytes(second) {
+                    return Some(point);
+                }
+
+                // Layout D: [x, headerPayload] or [headerPayload, x]
+                if let Some(point) = decode_point_from_serialised_header(first) {
+                    return Some(point);
+                }
+                if let Some(point) = decode_point_from_serialised_header(second) {
+                    return Some(point);
+                }
+                if let Some(point) = decode_header_point_bytes(first) {
+                    return Some(point);
+                }
+                if let Some(point) = decode_header_point_bytes(second) {
+                    return Some(point);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn point_bytes_from_raw_header_or_tip(raw_header: &[u8], tip: Vec<u8>) -> Vec<u8> {
+    point_from_raw_header(raw_header)
+        .map(|point| point.to_cbor_bytes())
+        .unwrap_or(tip)
+}
+
 /// Execute one sync step:
 /// 1. Request the next ChainSync update.
 /// 2. If roll-forward, request matching blocks via BlockFetch.
@@ -432,7 +672,14 @@ pub async fn sync_step(
     match next {
         NextResponse::RollForward { header, tip }
         | NextResponse::AwaitRollForward { header, tip } => {
-            let blocks = fetch_range_blocks(block_fetch, from_point, tip.clone()).await?;
+            let range_upper = point_bytes_from_raw_header_or_tip(&header, tip.clone());
+            let blocks = if let Some((lower, upper)) =
+                normalize_blockfetch_range_bytes(from_point, range_upper)
+            {
+                fetch_range_blocks(block_fetch, lower, upper).await?
+            } else {
+                Vec::new()
+            };
             Ok(SyncStep::RollForward {
                 header,
                 tip,
@@ -457,9 +704,18 @@ pub async fn sync_step_decoded(
     match next {
         NextResponse::RollForward { header, tip }
         | NextResponse::AwaitRollForward { header, tip } => Ok(DecodedSyncStep::RollForward {
+            blocks: {
+                let range_upper = point_bytes_from_raw_header_or_tip(&header, tip.clone());
+                if let Some((lower, upper)) =
+                    normalize_blockfetch_range_bytes(from_point, range_upper)
+                {
+                    fetch_range_blocks_decoded(block_fetch, lower, upper).await?
+                } else {
+                    Vec::new()
+                }
+            },
             header,
             tip: tip.clone(),
-            blocks: fetch_range_blocks_decoded(block_fetch, from_point, tip).await?,
         }),
         NextResponse::RollBackward { point, tip }
         | NextResponse::AwaitRollBackward { point, tip } => {
@@ -482,7 +738,14 @@ pub async fn sync_step_typed(
     match next {
         DecodedHeaderNextResponse::RollForward { header, tip }
         | DecodedHeaderNextResponse::AwaitRollForward { header, tip } => {
-            let blocks = fetch_range_blocks_typed(block_fetch, from_point, tip).await?;
+            let header_point = Point::BlockPoint(SlotNo(header.body.slot), header.header_hash());
+            let blocks = if let Some((lower, upper)) =
+                normalize_blockfetch_range_points(from_point, header_point)
+            {
+                fetch_range_blocks_typed(block_fetch, lower, upper).await?
+            } else {
+                Vec::new()
+            };
             Ok(TypedSyncStep::RollForward {
                 header: Box::new(header),
                 tip,
@@ -1810,20 +2073,23 @@ mod era_tag {
 /// codec. Babbage (tag 6) and Conway (tag 7) use their own 5-element
 /// block codecs with era-appropriate transaction body types.
 fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
+    fn decode_impl(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
     // Peek at the structure: expect a 2-element array [tag, body].
     use yggdrasil_ledger::cbor::Decoder;
     let mut dec = Decoder::new(raw);
-    let arr_len = dec.array()?;
-    if arr_len != 2 {
-        return Err(LedgerError::CborInvalidLength {
-            expected: 2,
-            actual: arr_len as usize,
-        });
+    let arr_len = dec.array_begin()?;
+    if let Some(len) = arr_len {
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
     }
 
     let tag = dec.unsigned()?;
 
-    match tag {
+    let decoded = match tag {
         era_tag::BYRON_EBB | era_tag::BYRON_MAIN => {
             let body_start = dec.position();
             dec.skip()?;
@@ -1873,6 +2139,56 @@ fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerErro
                 expected: 2, // Shelley era tag
                 actual: unsupported as u8,
             })
+        }
+    };
+
+    if arr_len.is_none() {
+        dec.consume_break()?;
+    }
+
+        decoded
+    }
+
+    match decode_impl(raw) {
+        Ok(block) => Ok(block),
+        Err(err) => {
+            if sync_debug_enabled() {
+                let era_tag = {
+                    let mut d = yggdrasil_ledger::cbor::Decoder::new(raw);
+                    match d.array_begin().and_then(|_| d.unsigned()) {
+                        Ok(tag) => Some(tag),
+                        Err(_) => None,
+                    }
+                };
+                let preview_len = raw.len().min(64);
+                let preview = raw[..preview_len]
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                let full_hex = if raw.len() <= 4096 {
+                    Some(
+                        raw.iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>(),
+                    )
+                } else {
+                    let _ = fs::create_dir_all("tmp");
+                    let _ = fs::write("tmp/last-decode-fail.cbor", raw);
+                    let _ = fs::write(
+                        "tmp/last-decode-fail.hex",
+                        raw.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                    );
+                    None
+                };
+                eprintln!(
+                    "[ygg-sync-debug] decode-multi-era-failed err={err} era_tag={:?} raw_len={} raw_preview={} raw_hex={}",
+                    era_tag,
+                    raw.len(),
+                    preview,
+                    full_hex.unwrap_or_else(|| "<omitted>".to_string())
+                );
+            }
+            Err(err)
         }
     }
 }
@@ -2857,10 +3173,18 @@ pub async fn sync_step_multi_era(
     match next {
         TypedNextResponse::RollForward { header, tip }
         | TypedNextResponse::AwaitRollForward { header, tip } => {
+            let range_upper = point_from_raw_header(&header).unwrap_or_else(|| tip.clone());
+            let blocks = if let Some((lower, upper)) =
+                normalize_blockfetch_range_points(from_point, range_upper)
+            {
+                fetch_range_blocks_multi_era(block_fetch, lower, upper).await?
+            } else {
+                Vec::new()
+            };
             Ok(MultiEraSyncStep::RollForward {
                 raw_header: header,
                 tip,
-                blocks: fetch_range_blocks_multi_era(block_fetch, from_point, tip).await?,
+                blocks,
                 raw_blocks: None,
             })
         }
@@ -3006,6 +3330,11 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
             for (i, b) in blocks.iter().enumerate() {
                 let mut block = multi_era_block_to_block(b);
                 block.raw_cbor = raws.and_then(|r| r.get(i)).cloned();
+                // BlockFetch ranges can overlap at boundaries across peers.
+                // Treat already-present hashes as idempotent replays.
+                if store.get_block(&block.header.hash).is_some() {
+                    continue;
+                }
                 store.add_block(block)?;
             }
         }
@@ -3130,6 +3459,10 @@ fn clear_tentative_trap(tentative_state: &Arc<RwLock<TentativeState>>) {
     }
 }
 
+fn sync_debug_enabled() -> bool {
+    std::env::var("YGG_SYNC_DEBUG").is_ok_and(|v| v != "0")
+}
+
 pub(crate) async fn sync_batch_verified(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
@@ -3169,23 +3502,64 @@ pub(crate) async fn sync_batch_verified_with_tentative(
         let me_step = match next {
             TypedNextResponse::RollForward { header, tip }
             | TypedNextResponse::AwaitRollForward { header, tip } => {
+                let header_point = point_from_raw_header(&header);
+                let range_upper = header_point.unwrap_or(tip);
+                let effective_range = normalize_blockfetch_range_points(from_point, range_upper);
+                let skip_fetch = header_point.is_some() && effective_range.is_none();
+                if sync_debug_enabled() {
+                    let header_hex = header
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>();
+                    eprintln!(
+                        "[ygg-sync-debug] blockfetch-range lower={:?} upper={:?} tip={:?} header_point_decoded={} range_valid={} skip_fetch={} raw_header_len={} raw_header_hex={}",
+                        from_point,
+                        range_upper,
+                        tip,
+                        header_point.is_some(),
+                        effective_range.is_some(),
+                        skip_fetch,
+                        header.len(),
+                        header_hex
+                    );
+                }
                 let tentative_set =
                     tentative_state.is_some_and(|state| try_set_tentative_header(state, &header));
 
-                let raw_and_decoded =
-                    match fetch_range_blocks_multi_era_raw_decoded(block_fetch, from_point, tip)
-                        .await
-                    {
-                        Ok(blocks) => blocks,
-                        Err(err) => {
-                            if tentative_set {
-                                if let Some(state) = tentative_state {
-                                    clear_tentative_trap(state);
+                let raw_and_decoded = if skip_fetch {
+                    Vec::new()
+                } else {
+                    match effective_range {
+                        Some((lower, upper)) => {
+                            match fetch_range_blocks_multi_era_raw_decoded(block_fetch, lower, upper)
+                                .await
+                            {
+                                Ok(mut blocks) => {
+                                    if let Point::BlockPoint(_, lower_hash) = lower {
+                                        while let Some((_, first)) = blocks.first() {
+                                            let first_hash = multi_era_block_to_block(first).header.hash;
+                                            if first_hash == lower_hash {
+                                                blocks.remove(0);
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    blocks
+                                }
+                                Err(err) => {
+                                    if tentative_set {
+                                        if let Some(state) = tentative_state {
+                                            clear_tentative_trap(state);
+                                        }
+                                    }
+                                    return Err(err);
                                 }
                             }
-                            return Err(err);
                         }
-                    };
+                        None => Vec::new(),
+                    }
+                };
 
                 if let Some(config) = verification {
                     if config.verify_body_hash {
@@ -3299,7 +3673,9 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                     }
                 }
 
-                from_point = tip;
+                if let Some((_, upper)) = effective_range {
+                    from_point = upper;
+                }
                 fetched_blocks += decoded_blocks.len();
 
                 MultiEraSyncStep::RollForward {
@@ -3759,5 +4135,39 @@ mod tests {
             validate_protocol_version_for_era(Era::Alonzo, 7, 0, Some(6)),
             Err(SyncError::ProtocolVersionTooHigh { major: 7, max: 6 })
         ));
+    }
+
+    #[test]
+    fn point_from_raw_header_decodes_observed_byron_serialised_header_envelope() {
+        // Captured from preprod ChainSync roll-forward (YGG_SYNC_DEBUG).
+        let raw_header: Vec<u8> = vec![
+            0x82, 0x00, 0x82, 0x82, 0x00, 0x18, 0x53, 0xd8, 0x18, 0x58, 0x4c, 0x85, 0x01, 0x58,
+            0x20, 0xd4, 0xb8, 0xde, 0x7a, 0x11, 0xd9, 0x29, 0xa3, 0x23, 0x37, 0x3c, 0xba, 0xb6,
+            0xc1, 0xa9, 0xbd, 0xc9, 0x31, 0xbe, 0xff, 0xff, 0x11, 0xdb, 0x11, 0x1c, 0xf9, 0xd5,
+            0x73, 0x56, 0xee, 0x19, 0x37, 0x58, 0x20, 0xaf, 0xc0, 0xda, 0x64, 0x18, 0x3b, 0xf2,
+            0x66, 0x4f, 0x3d, 0x4e, 0xec, 0x72, 0x38, 0xd5, 0x24, 0xba, 0x60, 0x7f, 0xae, 0xea,
+            0xb2, 0x4f, 0xc1, 0x00, 0xeb, 0x86, 0x1d, 0xba, 0x69, 0x97, 0x1b, 0x82, 0x00, 0x81,
+            0x00, 0x81, 0xa0,
+        ];
+
+        let expected_hash = HeaderHash(
+            hash_bytes_256(&[
+                [0x82, 0x01].as_slice(),
+                &[
+                    0x85, 0x01, 0x58, 0x20, 0xd4, 0xb8, 0xde, 0x7a, 0x11, 0xd9, 0x29, 0xa3,
+                    0x23, 0x37, 0x3c, 0xba, 0xb6, 0xc1, 0xa9, 0xbd, 0xc9, 0x31, 0xbe, 0xff,
+                    0xff, 0x11, 0xdb, 0x11, 0x1c, 0xf9, 0xd5, 0x73, 0x56, 0xee, 0x19, 0x37,
+                    0x58, 0x20, 0xaf, 0xc0, 0xda, 0x64, 0x18, 0x3b, 0xf2, 0x66, 0x4f, 0x3d,
+                    0x4e, 0xec, 0x72, 0x38, 0xd5, 0x24, 0xba, 0x60, 0x7f, 0xae, 0xea, 0xb2,
+                    0x4f, 0xc1, 0x00, 0xeb, 0x86, 0x1d, 0xba, 0x69, 0x97, 0x1b, 0x82, 0x00,
+                    0x81, 0x00, 0x81, 0xa0,
+                ],
+            ]
+            .concat())
+            .0,
+        );
+
+        let point = point_from_raw_header(&raw_header);
+        assert_eq!(point, Some(Point::BlockPoint(SlotNo(83), expected_hash)));
     }
 }
