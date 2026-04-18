@@ -2,7 +2,6 @@
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
 use std::sync::{Arc, RwLock};
 
 use clap::{Parser, Subcommand};
@@ -161,15 +160,12 @@ enum Command {
     },
     /// Print the default configuration as JSON.
     DefaultConfig,
-    /// Execute selected upstream `cardano-cli` operations via a Rust wrapper.
+    /// Execute selected `cardano-cli` operations via a pure Rust implementation.
     CardanoCli {
-        /// Path to the upstream cardano-cli binary.
-        #[arg(long, default_value = "/tmp/cardano-bin/cardano-cli")]
-        cardano_cli_path: PathBuf,
-        /// Network preset used to resolve upstream reference config.
+        /// Network preset used to resolve reference config.
         #[arg(long, value_parser = clap::value_parser!(NetworkPreset), default_value = "preprod")]
         network: NetworkPreset,
-        /// Root directory for upstream reference configs (contains
+        /// Root directory for reference configs (contains
         /// `mainnet/`, `preprod/`, `preview/`).
         #[arg(long)]
         upstream_config_root: Option<PathBuf>,
@@ -259,14 +255,14 @@ enum QueryCommand {
     DrepStakeDistr,
 }
 
-/// Upstream cardano-cli actions exposed through the Rust wrapper.
+/// cardano-cli actions exposed through the pure Rust command implementation.
 #[derive(Subcommand)]
 enum CardanoCliCommand {
-    /// Print cardano-cli version.
+    /// Print pure-Rust cardano-cli compatibility version info.
     Version,
-    /// Show resolved upstream reference config paths and network magic.
+    /// Show resolved reference config paths and network magic.
     ShowUpstreamConfig,
-    /// Query tip via cardano-cli against a running node socket.
+    /// Query tip against a running node socket.
     QueryTip {
         /// Path to node socket.
         #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
@@ -619,29 +615,19 @@ fn extract_reference_network_magic(config_path: &std::path::Path, network: Netwo
     fallback_magic
 }
 
-/// Run selected upstream cardano-cli operations from the Rust CLI.
+/// Run selected cardano-cli operations from the pure Rust CLI implementation.
 fn run_cardano_cli_command(
-    cardano_cli_path: PathBuf,
     network: NetworkPreset,
     upstream_config_root: Option<PathBuf>,
     action: CardanoCliCommand,
 ) -> Result<()> {
-    if !cardano_cli_path.is_file() {
-        bail!("cardano-cli binary not found at {}", cardano_cli_path.display());
-    }
-
     let (config_path, topology_path) = resolve_upstream_reference_paths(network, upstream_config_root)?;
     let reference_network_magic = extract_reference_network_magic(&config_path, network);
 
     match action {
         CardanoCliCommand::Version => {
-            let status = ProcessCommand::new(&cardano_cli_path)
-                .arg("--version")
-                .status()
-                .wrap_err("failed to execute cardano-cli --version")?;
-            if !status.success() {
-                bail!("cardano-cli --version exited with status {status}");
-            }
+            println!("yggdrasil-cardano-cli (pure-rust) {}", env!("CARGO_PKG_VERSION"));
+            println!("network preset default: {}", network);
             Ok(())
         }
         CardanoCliCommand::ShowUpstreamConfig => {
@@ -658,40 +644,9 @@ fn run_cardano_cli_command(
             socket_path,
             network_magic,
         } => {
-            let socket_path_for_fallback = socket_path.clone();
-            let mut cmd = ProcessCommand::new(&cardano_cli_path);
-            cmd.arg("query")
-                .arg("tip")
-                .arg("--socket-path")
-                .arg(socket_path);
-
             let magic = network_magic.unwrap_or(reference_network_magic);
-            if magic == 764_824_073 {
-                cmd.arg("--mainnet");
-            } else {
-                cmd.arg("--testnet-magic").arg(magic.to_string());
-            }
-
-            let output = cmd
-                .output()
-                .wrap_err("failed to execute cardano-cli query tip")?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                #[cfg(unix)]
-                if stderr.contains("HandshakeError (VersionMismatch") {
-                    // Fallback path for local yggdrasil NtC sockets until full
-                    // upstream NodeToClient version parity is reached.
-                    let rt = tokio::runtime::Runtime::new()?;
-                    return rt.block_on(run_query(socket_path_for_fallback, magic, QueryCommand::Tip));
-                }
-                bail!(
-                    "cardano-cli query tip failed (status {}): {}",
-                    output.status,
-                    stderr.trim()
-                );
-            }
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-            Ok(())
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_query(socket_path, magic, QueryCommand::Tip))
         }
     }
 }
@@ -706,11 +661,10 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::CardanoCli {
-            cardano_cli_path,
             network,
             upstream_config_root,
             action,
-        } => run_cardano_cli_command(cardano_cli_path, network, upstream_config_root, action),
+        } => run_cardano_cli_command(network, upstream_config_root, action),
         Command::ValidateConfig {
             config,
             network,

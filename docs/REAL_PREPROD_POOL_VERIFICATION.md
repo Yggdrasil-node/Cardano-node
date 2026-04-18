@@ -56,7 +56,7 @@ node/scripts/run_preprod_real_pool_producer.sh
 
 ## Rust cardano-cli Integration
 
-`yggdrasil-node` now exposes a Rust-wrapped upstream `cardano-cli` command group that resolves upstream reference config paths by network preset.
+`yggdrasil-node` now exposes a pure-Rust `cardano-cli` command group that resolves reference config paths by network preset.
 
 Examples:
 
