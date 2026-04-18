@@ -609,7 +609,7 @@ impl NodeConfigFile {
             None => None,
         };
 
-        build_plutus_cost_model(&alonzo, conway.as_ref()).map_err(Into::into)
+        build_plutus_cost_model(&alonzo, conway.as_ref())
     }
 
     pub fn topology_config(&self) -> TopologyConfig {
