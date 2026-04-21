@@ -658,7 +658,7 @@ impl CborDecode for ShelleyWitnessSet {
             dec.array_begin()
         }
 
-        let map_len = begin_map(dec)?;
+        let mut map_len = begin_map(dec)?;
         let mut vkey_witnesses = Vec::new();
         let mut native_scripts = Vec::new();
         let mut bootstrap_witnesses = Vec::new();
@@ -876,10 +876,8 @@ impl CborDecode for ShelleyWitnessSet {
                 }
             }
 
-            if let Some(remaining) = map_len {
-                if remaining == 1 {
-                    break;
-                }
+            if let Some(remaining) = map_len.as_mut() {
+                *remaining -= 1;
             }
         }
 
