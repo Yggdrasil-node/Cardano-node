@@ -139,8 +139,37 @@ fn encode_big_int(enc: &mut Encoder, n: i128) {
     }
 }
 
-impl CborDecode for PlutusData {
-    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+impl PlutusData {
+    /// Maximum nesting depth permitted when decoding `PlutusData` from CBOR.
+    ///
+    /// Cardano blocks routinely contain `PlutusData` nesting up to a few
+    /// dozen levels (e.g. nested DAO governance state). This bound is set
+    /// well above any real-world Plutus value while still preventing a
+    /// malicious or malformed CBOR stream from blowing the runtime stack via
+    /// pathological recursion. Exceeding it returns
+    /// [`crate::error::LedgerError::CborNestingTooDeep`] cleanly instead of
+    /// causing a process crash.
+    ///
+    /// Reference: defensive bound. Upstream Haskell relies on its lazy CPS
+    /// CBOR decoder being stack-safe by construction; in Rust we make this
+    /// explicit.
+    pub const MAX_DECODE_DEPTH: usize = 256;
+
+    /// Decode a `PlutusData` value from CBOR with an explicit recursion budget.
+    ///
+    /// `depth_remaining` is decremented at each container boundary (List,
+    /// Map entries, Constr fields). When it would drop below zero the
+    /// decoder returns [`crate::error::LedgerError::CborNestingTooDeep`].
+    fn decode_with_depth(
+        dec: &mut Decoder<'_>,
+        depth_remaining: usize,
+    ) -> Result<Self, LedgerError> {
+        if depth_remaining == 0 {
+            return Err(LedgerError::CborNestingTooDeep {
+                max: Self::MAX_DECODE_DEPTH,
+            });
+        }
+        let next_depth = depth_remaining - 1;
         let major = dec.peek_major()?;
         match major {
             // Unsigned integer (major 0).
@@ -166,12 +195,12 @@ impl CborDecode for PlutusData {
                     Some(len) => {
                         items.reserve(len as usize);
                         for _ in 0..len {
-                            items.push(Self::decode_cbor(dec)?);
+                            items.push(Self::decode_with_depth(dec, next_depth)?);
                         }
                     }
                     None => {
                         while !dec.is_break() {
-                            items.push(Self::decode_cbor(dec)?);
+                            items.push(Self::decode_with_depth(dec, next_depth)?);
                         }
                         dec.consume_break()?;
                     }
@@ -185,15 +214,15 @@ impl CborDecode for PlutusData {
                     Some(len) => {
                         entries.reserve(len as usize);
                         for _ in 0..len {
-                            let k = Self::decode_cbor(dec)?;
-                            let v = Self::decode_cbor(dec)?;
+                            let k = Self::decode_with_depth(dec, next_depth)?;
+                            let v = Self::decode_with_depth(dec, next_depth)?;
                             entries.push((k, v));
                         }
                     }
                     None => {
                         while !dec.is_break() {
-                            let k = Self::decode_cbor(dec)?;
-                            let v = Self::decode_cbor(dec)?;
+                            let k = Self::decode_with_depth(dec, next_depth)?;
+                            let v = Self::decode_with_depth(dec, next_depth)?;
                             entries.push((k, v));
                         }
                         dec.consume_break()?;
@@ -212,12 +241,12 @@ impl CborDecode for PlutusData {
                             Some(len) => {
                                 fields.reserve(len as usize);
                                 for _ in 0..len {
-                                    fields.push(Self::decode_cbor(dec)?);
+                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
                                 }
                             }
                             None => {
                                 while !dec.is_break() {
-                                    fields.push(Self::decode_cbor(dec)?);
+                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
                                 }
                                 dec.consume_break()?;
                             }
@@ -232,12 +261,12 @@ impl CborDecode for PlutusData {
                             Some(len) => {
                                 fields.reserve(len as usize);
                                 for _ in 0..len {
-                                    fields.push(Self::decode_cbor(dec)?);
+                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
                                 }
                             }
                             None => {
                                 while !dec.is_break() {
-                                    fields.push(Self::decode_cbor(dec)?);
+                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
                                 }
                                 dec.consume_break()?;
                             }
@@ -258,12 +287,12 @@ impl CborDecode for PlutusData {
                             Some(len) => {
                                 fields.reserve(len as usize);
                                 for _ in 0..len {
-                                    fields.push(Self::decode_cbor(dec)?);
+                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
                                 }
                             }
                             None => {
                                 while !dec.is_break() {
-                                    fields.push(Self::decode_cbor(dec)?);
+                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
                                 }
                                 dec.consume_break()?;
                             }
@@ -310,6 +339,12 @@ impl CborDecode for PlutusData {
                 actual: major,
             }),
         }
+    }
+}
+
+impl CborDecode for PlutusData {
+    fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
+        Self::decode_with_depth(dec, Self::MAX_DECODE_DEPTH)
     }
 }
 
@@ -668,6 +703,43 @@ mod tests {
         enc.tag(102).array(3).unsigned(0).array(0).unsigned(0);
         let bytes = enc.into_bytes();
         assert!(PlutusData::from_cbor_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn decode_pathologically_deep_list_rejected_without_overflow() {
+        // Encode a list nested `MAX_DECODE_DEPTH + 32` deep; the decoder
+        // must return CborNestingTooDeep cleanly rather than overflowing
+        // the runtime stack. Each `[X]` adds one major-4 array layer.
+        let depth = PlutusData::MAX_DECODE_DEPTH + 32;
+        let mut bytes = vec![0x81_u8; depth]; // CBOR array(1) repeated `depth` times
+        bytes.push(0x00); // CBOR unsigned 0 at the very bottom
+        let res = PlutusData::from_cbor_bytes(&bytes);
+        match res {
+            Err(crate::error::LedgerError::CborNestingTooDeep { max }) => {
+                assert_eq!(max, PlutusData::MAX_DECODE_DEPTH);
+            }
+            other => panic!("expected CborNestingTooDeep, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_list_at_max_depth_succeeds() {
+        // A list nested exactly `MAX_DECODE_DEPTH - 1` times (so the leaf
+        // integer consumes the final depth slot) must decode successfully.
+        let depth = PlutusData::MAX_DECODE_DEPTH - 1;
+        let mut bytes = vec![0x81_u8; depth];
+        bytes.push(0x00);
+        let mut value = PlutusData::from_cbor_bytes(&bytes).expect("should decode at max depth");
+        for _ in 0..depth {
+            match value {
+                PlutusData::List(mut items) => {
+                    assert_eq!(items.len(), 1);
+                    value = items.pop().unwrap();
+                }
+                other => panic!("expected List, got {other:?}"),
+            }
+        }
+        assert_eq!(value, PlutusData::Integer(0));
     }
 
     // ── encode_big_int internals ───────────────────────────────────────

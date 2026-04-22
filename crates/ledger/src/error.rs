@@ -27,6 +27,9 @@ pub enum LedgerError {
     #[error("CBOR: {0}")]
     CborDecodeError(String),
 
+    #[error("CBOR: nesting depth exceeds maximum of {max}")]
+    CborNestingTooDeep { max: usize },
+
     // -- UTxO validation errors ---------------------------------------------
     #[error("block slot {block_slot} does not advance past current tip slot {tip_slot}")]
     SlotNotIncreasing { tip_slot: u64, block_slot: u64 },
