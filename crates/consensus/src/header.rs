@@ -123,6 +123,33 @@ pub fn verify_header(
     slots_per_kes_period: u64,
     max_kes_evolutions: u64,
 ) -> Result<(), ConsensusError> {
+    verify_header_with_signed_bytes(header, slots_per_kes_period, max_kes_evolutions, None)
+}
+
+/// Variant of [`verify_header`] that accepts the canonical signed bytes
+/// for the KES signature, when available.
+///
+/// On the live network, peers serve headers whose KES signature was
+/// computed over the **original CBOR-encoded `BHBody`** preserved by an
+/// upstream `Annotator`.  Re-encoding the decoded body cannot reproduce
+/// those bytes deterministically when any field encoding choice diverges
+/// (definite vs indefinite array, integer minimal-width, etc.).
+///
+/// When `signed_bytes_override` is `Some(slice)` the slice is used as the
+/// KES message, matching upstream
+/// `Cardano.Protocol.TPraos.BHeader.verifyHeader` /
+/// `Cardano.Protocol.Praos.Header.verifyHeader` exactly.
+///
+/// When `signed_bytes_override` is `None` the function falls back to the
+/// in-memory [`HeaderBody::to_signable_bytes`] layout, which is sufficient
+/// for round-trip tests where signing and verification share the same
+/// codec.
+pub fn verify_header_with_signed_bytes(
+    header: &Header,
+    slots_per_kes_period: u64,
+    max_kes_evolutions: u64,
+    signed_bytes_override: Option<&[u8]>,
+) -> Result<(), ConsensusError> {
     // 1. Verify the OpCert cold-key signature.
     header
         .body
@@ -138,7 +165,14 @@ pub fn verify_header(
     )?;
 
     // 3. Verify the KES signature over the header body.
-    let signable = header.body.to_signable_bytes();
+    let synthetic;
+    let signable: &[u8] = match signed_bytes_override {
+        Some(s) => s,
+        None => {
+            synthetic = header.body.to_signable_bytes();
+            &synthetic
+        }
+    };
     let kes_offset = current_kes_period
         .checked_sub(header.body.operational_cert.kes_period)
         .ok_or(ConsensusError::KesPeriodTooEarly {
@@ -151,7 +185,7 @@ pub fn verify_header(
     verify_sum_kes(
         &header.body.operational_cert.hot_vkey,
         kes_period_u32,
-        &signable,
+        signable,
         &header.kes_signature,
     )
     .map_err(|_| ConsensusError::InvalidKesSignature)

@@ -2991,6 +2991,26 @@ pub fn verify_multi_era_block(
     block: &MultiEraBlock,
     config: &VerificationConfig,
 ) -> Result<(), SyncError> {
+    verify_multi_era_block_with_raw(block, None, config)
+}
+
+/// Variant of [`verify_multi_era_block`] that accepts the original raw
+/// multi-era block CBOR bytes.
+///
+/// When provided, the raw bytes are used to extract the *exact* CBOR
+/// encoding of the header body (`BHBody`).  Those bytes are passed to
+/// `verify_header_with_signed_bytes` so the KES signature is verified
+/// against the same message upstream `verifyHeader` uses (an annotated
+/// CBOR slice — re-encoding the decoded body cannot reproduce it
+/// deterministically, see `Cardano.Protocol.Praos.Header.verifyHeader`).
+///
+/// When `raw_block` is `None`, falls back to the synthetic
+/// `to_signable_bytes()` layout used by self-produced blocks and tests.
+pub fn verify_multi_era_block_with_raw(
+    block: &MultiEraBlock,
+    raw_block: Option<&[u8]>,
+    config: &VerificationConfig,
+) -> Result<(), SyncError> {
     // BBODY/BHEAD-level protocol-version check (Shelley+ only).
     validate_block_protocol_version_with_max(block, config.max_major_protocol_version)?;
 
@@ -3007,29 +3027,124 @@ pub fn verify_multi_era_block(
         }
     }
 
+    // Extract the canonical signed CBOR bytes for the header body, when
+    // we have the raw block to slice from.
+    let body_cbor: Option<Vec<u8>> = raw_block
+        .and_then(|raw| extract_header_body_cbor_from_raw_block(raw).ok().flatten());
+
     match block {
-        MultiEraBlock::Shelley(shelley) => verify_shelley_header(
+        MultiEraBlock::Shelley(shelley) => verify_shelley_header_with_body_cbor(
             &shelley.header,
+            body_cbor.as_deref(),
             config.slots_per_kes_period,
             config.max_kes_evolutions,
         ),
-        MultiEraBlock::Alonzo(alonzo) => verify_shelley_header(
+        MultiEraBlock::Alonzo(alonzo) => verify_shelley_header_with_body_cbor(
             &alonzo.header,
+            body_cbor.as_deref(),
             config.slots_per_kes_period,
             config.max_kes_evolutions,
         ),
-        MultiEraBlock::Babbage(babbage) => verify_praos_header(
+        MultiEraBlock::Babbage(babbage) => verify_praos_header_with_body_cbor(
             &babbage.header,
+            body_cbor.as_deref(),
             config.slots_per_kes_period,
             config.max_kes_evolutions,
         ),
-        MultiEraBlock::Conway(conway) => verify_praos_header(
+        MultiEraBlock::Conway(conway) => verify_praos_header_with_body_cbor(
             &conway.header,
+            body_cbor.as_deref(),
             config.slots_per_kes_period,
             config.max_kes_evolutions,
         ),
         MultiEraBlock::Byron { .. } => Ok(()),
     }
+}
+
+/// Extract the raw CBOR bytes of the header body (`BHBody`) from a raw
+/// multi-era block CBOR payload.
+///
+/// The wire format is `[era_tag, [header, ...body_segments...]]` where the
+/// `header` itself is `[header_body, kes_signature]`.  This function walks
+/// that envelope using a CBOR decoder and returns the byte slice of
+/// `header_body` exactly as it appeared on the wire — which is the message
+/// over which the KES signature was computed by the producer.
+///
+/// Returns `Ok(None)` for Byron-era blocks (no Shelley-style header body)
+/// or any era tag we do not recognise; returns `Err` if the structure does
+/// not match the expected envelope.
+pub fn extract_header_body_cbor_from_raw_block(
+    raw: &[u8],
+) -> Result<Option<Vec<u8>>, SyncError> {
+    use yggdrasil_ledger::cbor::Decoder;
+    let mut dec = Decoder::new(raw);
+    let outer_len = dec.array_begin().map_err(SyncError::LedgerDecode)?;
+    if let Some(len) = outer_len {
+        if len != 2 {
+            return Ok(None);
+        }
+    }
+    let era_tag = dec.unsigned().map_err(SyncError::LedgerDecode)?;
+    match era_tag {
+        era_tag::SHELLEY
+        | era_tag::ALLEGRA
+        | era_tag::MARY
+        | era_tag::ALONZO
+        | era_tag::BABBAGE
+        | era_tag::CONWAY => {}
+        _ => return Ok(None),
+    }
+
+    // Inner block array: [header, ...body_segments...]
+    let inner_arr_start = dec.position();
+    let _inner_len = dec.array_begin().map_err(SyncError::LedgerDecode)?;
+    // Element 0: header = [header_body, kes_sig]
+    let header_arr_start = dec.position();
+    let _header_len = dec.array_begin().map_err(SyncError::LedgerDecode)?;
+    // Element 0 of header: header_body
+    let body_start = dec.position();
+    dec.skip().map_err(SyncError::LedgerDecode)?;
+    let body_end = dec.position();
+    let _ = (inner_arr_start, header_arr_start);
+    Ok(Some(raw[body_start..body_end].to_vec()))
+}
+
+/// Variant of [`verify_shelley_header`] that accepts the canonical
+/// CBOR-encoded header body for KES verification.  See
+/// [`verify_multi_era_block_with_raw`] for context.
+pub fn verify_shelley_header_with_body_cbor(
+    header: &ShelleyHeader,
+    body_cbor: Option<&[u8]>,
+    slots_per_kes_period: u64,
+    max_kes_evolutions: u64,
+) -> Result<(), SyncError> {
+    let consensus_hdr = shelley_header_to_consensus(header)?;
+    yggdrasil_consensus::verify_header_with_signed_bytes(
+        &consensus_hdr,
+        slots_per_kes_period,
+        max_kes_evolutions,
+        body_cbor,
+    )?;
+    Ok(())
+}
+
+/// Variant of [`verify_praos_header`] that accepts the canonical
+/// CBOR-encoded header body for KES verification.  See
+/// [`verify_multi_era_block_with_raw`] for context.
+pub fn verify_praos_header_with_body_cbor(
+    header: &PraosHeader,
+    body_cbor: Option<&[u8]>,
+    slots_per_kes_period: u64,
+    max_kes_evolutions: u64,
+) -> Result<(), SyncError> {
+    let consensus_hdr = praos_header_to_consensus(header)?;
+    yggdrasil_consensus::verify_header_with_signed_bytes(
+        &consensus_hdr,
+        slots_per_kes_period,
+        max_kes_evolutions,
+        body_cbor,
+    )?;
+    Ok(())
 }
 
 /// Validate that the declared `block_body_size` in the header matches the
@@ -3621,8 +3736,10 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                     raw_and_decoded.into_iter().unzip();
 
                 if let Some(config) = verification {
-                    for block in &decoded_blocks {
-                        if let Err(err) = verify_multi_era_block(block, config) {
+                    for (raw, block) in raw_bytes.iter().zip(decoded_blocks.iter()) {
+                        if let Err(err) =
+                            verify_multi_era_block_with_raw(block, Some(raw.as_slice()), config)
+                        {
                             if tentative_set {
                                 if let Some(state) = tentative_state {
                                     clear_tentative_trap(state);
