@@ -116,11 +116,28 @@ async fn spawn_verified_batch_responder(
             .remove(&MiniProtocolNum::BLOCK_FETCH)
             .expect("blockfetch handle");
 
-        let cs_req = cs.recv().await.expect("cs recv");
-        let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
-        assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
-
         let tip_obj = Tip::Tip(tip, BlockNo(0));
+        loop {
+            let cs_req = cs.recv().await.expect("cs recv");
+            let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
+            match cs_msg {
+                ChainSyncMessage::MsgFindIntersect { points } => {
+                    let resp = if let Some(point_bytes) = points.first() {
+                        ChainSyncMessage::MsgIntersectFound {
+                            point: point_bytes.clone(),
+                            tip: tip_obj.to_cbor_bytes(),
+                        }
+                    } else {
+                        ChainSyncMessage::MsgIntersectNotFound { tip: tip_obj.to_cbor_bytes() }
+                    };
+                    cs.send(resp.to_cbor()).await.expect("send intersect");
+                    continue;
+                }
+                ChainSyncMessage::MsgRequestNext => break,
+                other => panic!("unexpected ChainSync message: {other:?}"),
+            }
+        }
+
         cs.send(
             ChainSyncMessage::MsgRollForward {
                 header: vec![0x82, 0x00, 0x01],
@@ -178,11 +195,28 @@ async fn spawn_verified_batch_responder_with_header(
             .remove(&MiniProtocolNum::BLOCK_FETCH)
             .expect("blockfetch handle");
 
-        let cs_req = cs.recv().await.expect("cs recv");
-        let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
-        assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
-
         let tip_obj = Tip::Tip(tip, BlockNo(0));
+        loop {
+            let cs_req = cs.recv().await.expect("cs recv");
+            let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
+            match cs_msg {
+                ChainSyncMessage::MsgFindIntersect { points } => {
+                    let resp = if let Some(point_bytes) = points.first() {
+                        ChainSyncMessage::MsgIntersectFound {
+                            point: point_bytes.clone(),
+                            tip: tip_obj.to_cbor_bytes(),
+                        }
+                    } else {
+                        ChainSyncMessage::MsgIntersectNotFound { tip: tip_obj.to_cbor_bytes() }
+                    };
+                    cs.send(resp.to_cbor()).await.expect("send intersect");
+                    continue;
+                }
+                ChainSyncMessage::MsgRequestNext => break,
+                other => panic!("unexpected ChainSync message: {other:?}"),
+            }
+        }
+
         cs.send(
             ChainSyncMessage::MsgRollForward {
                 header,
@@ -291,11 +325,28 @@ async fn spawn_verified_batch_responder_from_point(
             .remove(&MiniProtocolNum::BLOCK_FETCH)
             .expect("blockfetch handle");
 
-        let cs_req = cs.recv().await.expect("cs recv");
-        let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
-        assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
-
         let tip_obj = Tip::Tip(tip, BlockNo(0));
+        loop {
+            let cs_req = cs.recv().await.expect("cs recv");
+            let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request");
+            match cs_msg {
+                ChainSyncMessage::MsgFindIntersect { points } => {
+                    let resp = if let Some(point_bytes) = points.first() {
+                        ChainSyncMessage::MsgIntersectFound {
+                            point: point_bytes.clone(),
+                            tip: tip_obj.to_cbor_bytes(),
+                        }
+                    } else {
+                        ChainSyncMessage::MsgIntersectNotFound { tip: tip_obj.to_cbor_bytes() }
+                    };
+                    cs.send(resp.to_cbor()).await.expect("send intersect");
+                    continue;
+                }
+                ChainSyncMessage::MsgRequestNext => break,
+                other => panic!("unexpected ChainSync message: {other:?}"),
+            }
+        }
+
         cs.send(
             ChainSyncMessage::MsgRollForward {
                 header: vec![0x82, 0x00, 0x01],

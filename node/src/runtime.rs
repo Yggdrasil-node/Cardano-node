@@ -18,11 +18,12 @@ use crate::block_producer::{
 use crate::config::load_peer_snapshot_file;
 use crate::sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
-    MultiEraSyncProgress, MultiEraSyncStep, SyncError, VerifiedSyncServiceConfig,
-    VrfVerificationContext, apply_nonce_evolution_to_progress, apply_verified_progress_to_chaindb,
-    decode_multi_era_block, extract_consumed_inputs, extract_tx_ids, multi_era_block_to_block,
-    recover_ledger_state_chaindb, sync_batch_apply_verified, sync_batch_verified_with_tentative,
-    track_chain_state, validate_block_body_size, validate_block_protocol_version,
+    MultiEraSyncProgress, MultiEraSyncStep, SyncError, TypedIntersectResult,
+    VerifiedSyncServiceConfig, VrfVerificationContext, apply_nonce_evolution_to_progress,
+    apply_verified_progress_to_chaindb, decode_multi_era_block, extract_consumed_inputs,
+    extract_tx_ids, multi_era_block_to_block, recover_ledger_state_chaindb,
+    sync_batch_apply_verified, sync_batch_verified_with_tentative, track_chain_state,
+    typed_find_intersect, validate_block_body_size, validate_block_protocol_version,
     verify_block_body_hash,
 };
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
@@ -3325,6 +3326,63 @@ fn trace_session_established(
     );
 }
 
+/// Synchronize a freshly-connected ChainSync client to the locally-tracked
+/// chain point by issuing `MsgFindIntersect`.
+///
+/// Upstream typed ChainSync requires the client to send `MsgFindIntersect`
+/// before `MsgRequestNext`; otherwise the peer's read pointer stays at its
+/// default position (Origin) and the client is rolled back to genesis on the
+/// first `RollBackward` reply.  Reference:
+/// `Ouroboros.Network.Protocol.ChainSync.Client.chainSyncClientPeer` and
+/// `Ouroboros.Consensus.Network.NodeToNode` (typed ChainSync codec).
+///
+/// When `from_point` is [`Point::Origin`] the call is a no-op because the
+/// peer's default read pointer is already at Origin.  Otherwise this issues a
+/// single-point intersection request; on `Found` the local point is preserved,
+/// on `NotFound` the local `from_point` is reset to [`Point::Origin`] so the
+/// next batch starts a fresh sync from genesis (matching upstream behaviour
+/// when no chain points are recognised by the peer).
+async fn synchronize_chain_sync_to_point(
+    chain_sync: &mut ChainSyncClient,
+    from_point: &mut Point,
+    tracer: &NodeTracer,
+    peer_addr: SocketAddr,
+) -> Result<(), SyncError> {
+    if matches!(from_point, Point::Origin) {
+        return Ok(());
+    }
+    let candidates = vec![*from_point];
+    let result = typed_find_intersect(chain_sync, &candidates).await?;
+    match result {
+        TypedIntersectResult::Found { point, tip } => {
+            tracer.trace_runtime(
+                "ChainSync.Client.FindIntersect",
+                "Info",
+                "intersection found with peer",
+                trace_fields([
+                    ("peer", json!(peer_addr.to_string())),
+                    ("intersectionPoint", json!(format!("{point:?}"))),
+                    ("peerTip", json!(format!("{tip:?}"))),
+                ]),
+            );
+        }
+        TypedIntersectResult::NotFound { tip } => {
+            tracer.trace_runtime(
+                "ChainSync.Client.FindIntersect",
+                "Warning",
+                "no intersection found with peer; restarting from Origin",
+                trace_fields([
+                    ("peer", json!(peer_addr.to_string())),
+                    ("requestedPoint", json!(format!("{from_point:?}"))),
+                    ("peerTip", json!(format!("{tip:?}"))),
+                ]),
+            );
+            *from_point = Point::Origin;
+        }
+    }
+    Ok(())
+}
+
 fn trace_reconnectable_sync_error(
     tracer: &NodeTracer,
     namespace: &'static str,
@@ -3805,6 +3863,27 @@ where
             from_point,
         );
 
+        if let Err(err) = synchronize_chain_sync_to_point(
+            &mut session.chain_sync,
+            &mut from_point,
+            tracer,
+            session.connected_peer_addr,
+        )
+        .await
+        {
+            trace_reconnectable_sync_error(
+                tracer,
+                "ChainSync.Client.FindIntersect",
+                "intersection request failed; retrying after reconnect",
+                session.connected_peer_addr,
+                &err,
+                from_point,
+            );
+            session.mux.abort();
+            run_state.record_reconnect_failure();
+            continue;
+        }
+
         loop {
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
@@ -4180,6 +4259,27 @@ where
             run_state.reconnect_count,
             from_point,
         );
+
+        if let Err(err) = synchronize_chain_sync_to_point(
+            &mut session.chain_sync,
+            &mut from_point,
+            tracer,
+            session.connected_peer_addr,
+        )
+        .await
+        {
+            trace_reconnectable_sync_error(
+                tracer,
+                "ChainSync.Client.FindIntersect",
+                "intersection request failed; retrying after reconnect",
+                session.connected_peer_addr,
+                &err,
+                from_point,
+            );
+            session.mux.abort();
+            run_state.record_reconnect_failure();
+            continue;
+        }
 
         loop {
             let batch_fut = sync_batch_verified_with_tentative(
@@ -4698,6 +4798,27 @@ where
             run_state.reconnect_count,
             from_point,
         );
+
+        if let Err(err) = synchronize_chain_sync_to_point(
+            &mut session.chain_sync,
+            &mut from_point,
+            tracer,
+            session.connected_peer_addr,
+        )
+        .await
+        {
+            trace_reconnectable_sync_error(
+                tracer,
+                "ChainSync.Client.FindIntersect",
+                "intersection request failed; retrying after reconnect",
+                session.connected_peer_addr,
+                &err,
+                from_point,
+            );
+            session.mux.abort();
+            run_state.record_reconnect_failure();
+            continue;
+        }
 
         loop {
             let batch_fut = sync_batch_apply_verified(
