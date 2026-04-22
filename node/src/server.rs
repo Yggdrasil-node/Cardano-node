@@ -857,7 +857,7 @@ pub async fn run_txsubmission_server(
                 if let Some((tx_state, peer_addr)) = &dedup {
                     tx_state.unregister_peer(peer_addr);
                 }
-                return Err(e.into());
+                return Err(e);
             }
         };
         match reply {
@@ -996,9 +996,29 @@ pub async fn run_txsubmission_server(
                     }
                 }
 
-                // Track which txids were successfully received.
+                // Track delivery outcome in the shared dedup state.  When
+                // the peer returned exactly the bodies requested, mark
+                // every requested TxId as received (added to the `known`
+                // ring so no peer re-fetches it).  When the reply was
+                // short (peer dropped some bodies between
+                // `MsgReplyTxIds` and `MsgReplyTxs`, e.g. mempool
+                // expiry), conservatively mark the entire batch as
+                // not-found for THIS peer: the per-peer in-flight
+                // count/byte counters drain, the TxIds are removed from
+                // `global_in_flight` so another peer may supply them,
+                // and `known` is NOT poisoned with TxIds whose body
+                // never arrived.  Mirrors upstream
+                // `Ouroboros.Network.TxSubmission.Inbound.V2.Server`
+                // handling of partial `MsgReplyTxs` replies, which
+                // splits the requested set into delivered vs missing
+                // and routes the missing items back through the
+                // not-acknowledged pathway for re-fetch.
                 if let Some((tx_state, peer_addr)) = &dedup {
-                    tx_state.mark_received(peer_addr, &to_request);
+                    if txs.len() == to_request.len() {
+                        tx_state.mark_received(peer_addr, &to_request);
+                    } else {
+                        tx_state.mark_not_found(peer_addr, &to_request);
+                    }
                 }
 
                 let _accepted = consumer.consume_txs(txs);
