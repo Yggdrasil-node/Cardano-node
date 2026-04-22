@@ -40,7 +40,7 @@ use yggdrasil_ledger::{
 };
 use yggdrasil_mempool::{
     MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
-    SharedMempool, SharedTxSubmissionMempoolReader, TxSubmissionMempoolReader,
+    SharedMempool, SharedTxState, SharedTxSubmissionMempoolReader, TxSubmissionMempoolReader,
 };
 use yggdrasil_network::{
     AbstractState, AcquireOutboundResult, AfterSlot, BlockFetchClient, ChainSyncClient, CmAction,
@@ -2870,6 +2870,13 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     /// Blake2b-224 hash of the block producer's cold verification key,
     /// used to look up the pool's relative stake in the stake distribution.
     pub bp_pool_key_hash: Option<[u8; 28]>,
+    /// Optional shared TxSubmission inbound dedup state.  When present,
+    /// confirmed TxIds from each roll-forward batch are recorded via
+    /// [`SharedTxState::mark_confirmed`] so inbound peers stop re-fetching
+    /// transactions that are already on-chain.  Mirrors upstream
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State` `bufferedTxs`
+    /// population on confirmation.
+    pub inbound_tx_state: Option<SharedTxState>,
 }
 
 impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
@@ -2896,6 +2903,7 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
             tip_notify: None,
             bp_state: None,
             bp_pool_key_hash: None,
+            inbound_tx_state: None,
         }
     }
 
@@ -2962,6 +2970,19 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
         self.bp_pool_key_hash = bp_pool_key_hash;
         self
     }
+
+    /// Attach a shared TxSubmission inbound dedup state so the eviction
+    /// pipeline can call [`SharedTxState::mark_confirmed`] for every
+    /// confirmed roll-forward batch.  Mirrors upstream
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State` `bufferedTxs`
+    /// population on confirmation.
+    pub fn with_inbound_tx_state(
+        mut self,
+        inbound_tx_state: Option<SharedTxState>,
+    ) -> Self {
+        self.inbound_tx_state = inbound_tx_state;
+        self
+    }
 }
 
 type CheckpointTracking = LedgerCheckpointTracking;
@@ -2984,6 +3005,10 @@ struct ReconnectingVerifiedSyncContext<'a> {
     tip_notify: Option<ChainTipNotify>,
     bp_state: Option<Arc<RwLock<SharedBlockProducerState>>>,
     bp_pool_key_hash: Option<[u8; 28]>,
+    /// Optional shared TxSubmission inbound dedup state.  When present,
+    /// the eviction pipeline notifies it of confirmed TxIds so peers that
+    /// re-advertise on-chain transactions are immediately acked.
+    inbound_tx_state: Option<SharedTxState>,
 }
 
 struct ReconnectingVerifiedSyncState {
@@ -3074,6 +3099,13 @@ fn re_admit_rolled_back_tx_ids(
 /// entries are fully re-applied against a scratch copy of the post-block
 /// ledger state.  Entries that fail re-application are evicted.
 ///
+/// When `inbound_tx_state` is provided, the confirmed TxIds are also
+/// recorded in the cross-peer TxSubmission dedup state via
+/// [`SharedTxState::mark_confirmed`] so inbound peers stop re-advertising
+/// transactions that have just been included on-chain.  Mirrors upstream
+/// `Ouroboros.Network.TxSubmission.Inbound.V2.State` `bufferedTxs`
+/// population on block confirmation.
+///
 /// Returns a tuple of `(cached, confirmed, conflicting, expired, revalidated)`.
 fn evict_mempool_after_roll_forward(
     mempool: &SharedMempool,
@@ -3081,6 +3113,7 @@ fn evict_mempool_after_roll_forward(
     tip: &Point,
     recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
     checkpoint_tracking: Option<&LedgerCheckpointTracking>,
+    inbound_tx_state: Option<&SharedTxState>,
 ) -> (usize, usize, usize, usize, usize) {
     let confirmed_ids: Vec<TxId> = blocks.iter().flat_map(extract_tx_ids).collect();
     if confirmed_ids.is_empty() {
@@ -3088,6 +3121,12 @@ fn evict_mempool_after_roll_forward(
     }
     let cached = cache_confirmed_entries(mempool, &confirmed_ids, recently_confirmed);
     let removed = mempool.remove_confirmed(&confirmed_ids);
+    // Notify the cross-peer TxSubmission dedup state that these TxIds are
+    // now on-chain so peers that re-advertise them are immediately acked
+    // without re-fetching the bodies (upstream `bufferedTxs` semantics).
+    if let Some(tx_state) = inbound_tx_state {
+        tx_state.mark_confirmed(&confirmed_ids);
+    }
     // Evict mempool txs whose inputs were consumed by
     // a *different* on-chain tx (double-spend conflict).
     // Reference: syncWithLedger / revalidateTxsFor.
@@ -3884,6 +3923,7 @@ where
         tip_notify,
         bp_state,
         bp_pool_key_hash,
+        inbound_tx_state,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -4334,6 +4374,7 @@ where
         tip_notify,
         bp_state,
         bp_pool_key_hash,
+        inbound_tx_state,
     } = context;
     let ReconnectingVerifiedSyncState {
         mut from_point,
@@ -5226,6 +5267,7 @@ where
         tip_notify,
         bp_state: _,
         bp_pool_key_hash: _,
+        inbound_tx_state: _,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -5279,6 +5321,7 @@ where
             tip_notify,
             bp_state: None,
             bp_pool_key_hash: None,
+            inbound_tx_state: None,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -5337,6 +5380,7 @@ where
         tip_notify,
         bp_state,
         bp_pool_key_hash,
+        inbound_tx_state,
     } = request;
 
     let recovery = {
@@ -5393,6 +5437,7 @@ where
             tip_notify,
             bp_state,
             bp_pool_key_hash,
+            inbound_tx_state,
         },
         ReconnectingVerifiedSyncState {
             from_point: recovery.point,
@@ -5460,6 +5505,7 @@ where
             tip_notify: None,
             bp_state: None,
             bp_pool_key_hash: None,
+            inbound_tx_state: None,
         },
         ReconnectingVerifiedSyncState {
             from_point,
