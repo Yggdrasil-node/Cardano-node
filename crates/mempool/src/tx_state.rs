@@ -313,6 +313,18 @@ impl TxState {
             .unwrap_or(0)
     }
 
+    /// Number of TxIds currently in flight (requested via `MsgRequestTxs`
+    /// but not yet received) from a specific peer.
+    ///
+    /// Mirrors upstream `requestedTxsInflight` set size in
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State.PeerTxState`.
+    pub fn peer_inflight_count(&self, peer: &SocketAddr) -> usize {
+        self.peers
+            .get(peer)
+            .map(|s| s.in_flight.len())
+            .unwrap_or(0)
+    }
+
     /// Number of tracked peers.
     pub fn peer_count(&self) -> usize {
         self.peers.len()
@@ -463,6 +475,14 @@ impl SharedTxState {
             .read()
             .expect("tx state poisoned")
             .peer_unacked_count(peer)
+    }
+
+    /// Number of TxIds currently in flight from a specific peer.
+    pub fn peer_inflight_count(&self, peer: &SocketAddr) -> usize {
+        self.inner
+            .read()
+            .expect("tx state poisoned")
+            .peer_inflight_count(peer)
     }
 }
 
@@ -712,5 +732,47 @@ mod tests {
         let _ = state.filter_advertised(&p2, &[txid(1)]);
         let _ = state.filter_advertised(&p2, &[txid(1)]);
         assert_eq!(state.peer_unacked_count(&p2), 0);
+    }
+
+    #[test]
+    fn peer_inflight_count_tracks_request_lifecycle() {
+        // Mirrors upstream `requestedTxsInflight` set size:
+        // increments on `mark_in_flight*`, decrements on
+        // `mark_received` / `mark_not_found` / `mark_confirmed`,
+        // and `unregister_peer` drops it entirely.
+        let mut state = TxState::default();
+        let p = peer(3000);
+        state.register_peer(p);
+        assert_eq!(state.peer_inflight_count(&p), 0);
+
+        let _ = state.filter_advertised(&p, &[txid(1), txid(2), txid(3)]);
+        state.mark_in_flight_sized(
+            &p,
+            &[(txid(1), 100), (txid(2), 200), (txid(3), 300)],
+        );
+        assert_eq!(state.peer_inflight_count(&p), 3);
+
+        state.mark_received(&p, &[txid(1)]);
+        assert_eq!(state.peer_inflight_count(&p), 2);
+
+        state.mark_not_found(&p, &[txid(2)]);
+        assert_eq!(state.peer_inflight_count(&p), 1);
+
+        // Unrelated confirm does nothing for this peer's count.
+        state.mark_confirmed(&[txid(3)]);
+        assert_eq!(state.peer_inflight_count(&p), 0);
+
+        // Unknown peer reads as 0.
+        assert_eq!(state.peer_inflight_count(&peer(9999)), 0);
+
+        // Shared wrapper exposes the same accessor.
+        let shared = SharedTxState::default();
+        let p2 = peer(4000);
+        shared.register_peer(p2);
+        let _ = shared.filter_advertised(&p2, &[txid(7)]);
+        shared.mark_in_flight_sized(&p2, &[(txid(7), 50)]);
+        assert_eq!(shared.peer_inflight_count(&p2), 1);
+        shared.unregister_peer(&p2);
+        assert_eq!(shared.peer_inflight_count(&p2), 0);
     }
 }

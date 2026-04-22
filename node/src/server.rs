@@ -726,6 +726,29 @@ pub fn select_within_byte_budget(
     (admitted, deferred)
 }
 
+/// Compute the number of TxIds to request from a peer on the next
+/// `MsgRequestTxIds`, clamped against the per-peer outstanding-TxIds cap.
+///
+/// `peer_unacked_count` is the local view of the peer's `unacknowledged`
+/// set length; `ack` is the wire-level acknowledgement we are about to
+/// send (which will reduce the peer's view of unacked by `ack`); `batch`
+/// is the desired (unclamped) batch size; `max_unacked` is the upstream
+/// `maxUnacknowledgedTxIds` policy bound.
+///
+/// The returned value is at least `1` so the loop always makes forward
+/// progress when the peer has any capacity, mirroring upstream
+/// `Ouroboros.Network.TxSubmission.Inbound.V2.Decision.txDecision`.
+pub fn clamp_request_count(
+    peer_unacked_count: usize,
+    ack: u16,
+    batch: u16,
+    max_unacked: u16,
+) -> u16 {
+    let outstanding = peer_unacked_count.saturating_sub(ack as usize);
+    let headroom = (max_unacked as usize).saturating_sub(outstanding);
+    (batch as usize).min(headroom).max(1) as u16
+}
+
 pub async fn run_txsubmission_server(
     mut server: TxSubmissionServer,
     consumer: &dyn TxSubmissionConsumer,
@@ -733,12 +756,21 @@ pub async fn run_txsubmission_server(
 ) -> Result<(), TxSubmissionServerError> {
     const TXSUBMISSION_BATCH_SIZE: u16 = 16;
     /// Per-peer cap on advertised bytes in flight, mirroring upstream
-    /// `maxTxsSizeInflight` from
+    /// `txsSizeInflightPerPeer` from
     /// `Ouroboros.Network.TxSubmission.Inbound.V2.Policy` (default ~64 KiB).
     /// When a peer is at or above this budget, the server defers issuing
     /// further `MsgRequestTxs` until prior fetches complete and decrement
     /// the per-peer byte count.
     const MAX_TXS_SIZE_INFLIGHT_PER_PEER: u64 = 64 * 1024;
+    /// Global cap on advertised bytes in flight across all peers,
+    /// mirroring upstream `maxTxsSizeInflight` from
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.Policy`.  Typically
+    /// `txsSizeInflightPerPeer * numPeers`; we use a fixed multiple
+    /// (64 KiB * 32 = 2 MiB) to bound aggregate memory consumption when
+    /// many peers concurrently advertise large transaction backlogs.
+    /// The effective per-iteration budget is the minimum of per-peer
+    /// remaining and global remaining.
+    const MAX_TXS_SIZE_INFLIGHT_TOTAL: u64 = 64 * 1024 * 32;
     /// Per-peer cap on outstanding (advertised-but-not-yet-finalized)
     /// TxIds, mirroring upstream `maxUnacknowledgedTxIds` from
     /// `Ouroboros.Network.TxSubmission.Inbound.V2.Policy`.  Acts as a
@@ -770,12 +802,12 @@ pub async fn run_txsubmission_server(
         // request at least 1 to guarantee the loop makes forward
         // progress when the peer has capacity.
         let req = if let Some((tx_state, peer_addr)) = &dedup {
-            let outstanding = tx_state
-                .peer_unacked_count(peer_addr)
-                .saturating_sub(ack as usize);
-            let headroom = (MAX_UNACKNOWLEDGED_TXIDS_PER_PEER as usize)
-                .saturating_sub(outstanding);
-            (TXSUBMISSION_BATCH_SIZE as usize).min(headroom).max(1) as u16
+            clamp_request_count(
+                tx_state.peer_unacked_count(peer_addr),
+                ack,
+                TXSUBMISSION_BATCH_SIZE,
+                MAX_UNACKNOWLEDGED_TXIDS_PER_PEER,
+            )
         } else {
             TXSUBMISSION_BATCH_SIZE
         };
@@ -815,17 +847,26 @@ pub async fn run_txsubmission_server(
                         continue;
                     }
                     // Apply per-peer in-flight byte budget (upstream
-                    // `maxTxsSizeInflight`).  Greedily include candidates in
-                    // advertised order while the running total stays at or
-                    // below the budget; always admit at least one so the
-                    // server makes forward progress even when a single tx
-                    // exceeds the cap.  Remaining unfetched candidates are
-                    // counted as `deferred` and are NOT acknowledged on the
-                    // wire so the peer keeps them queued for re-advertisement
-                    // once prior fetches drain.
-                    let current = tx_state.peer_inflight_bytes(peer_addr);
-                    let budget_remaining =
-                        MAX_TXS_SIZE_INFLIGHT_PER_PEER.saturating_sub(current);
+                    // `txsSizeInflightPerPeer`) AND the global aggregate
+                    // byte budget (upstream `maxTxsSizeInflight`).  The
+                    // effective remaining budget is the minimum of the
+                    // two, so any peer is bounded both by its own quota
+                    // and by the shared global quota.  Greedily include
+                    // candidates in advertised order while the running
+                    // total stays at or below the budget; always admit at
+                    // least one so the server makes forward progress even
+                    // when a single tx exceeds the cap.  Remaining
+                    // unfetched candidates are counted as `deferred` and
+                    // are NOT acknowledged on the wire so the peer keeps
+                    // them queued for re-advertisement once prior fetches
+                    // drain.
+                    let per_peer_current = tx_state.peer_inflight_bytes(peer_addr);
+                    let per_peer_remaining =
+                        MAX_TXS_SIZE_INFLIGHT_PER_PEER.saturating_sub(per_peer_current);
+                    let global_current = tx_state.inflight_bytes_total();
+                    let global_remaining =
+                        MAX_TXS_SIZE_INFLIGHT_TOTAL.saturating_sub(global_current);
+                    let budget_remaining = per_peer_remaining.min(global_remaining);
                     let (admitted, deferred) = select_within_byte_budget(
                         &outcome.to_fetch,
                         &advertised_sizes,
@@ -1831,6 +1872,7 @@ mod tests {
     use std::net::SocketAddr;
     use std::sync::{Arc, Mutex, RwLock};
     use yggdrasil_ledger::TxId;
+    use yggdrasil_mempool::SharedTxState;
     use std::time::{Duration, Instant};
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
@@ -1925,6 +1967,102 @@ mod tests {
         // admitted because its size lookup is 0 which fits in budget 0.
         assert_eq!(admitted, vec![a, b]);
         assert_eq!(deferred, 0);
+    }
+
+    #[test]
+    fn clamp_request_count_returns_full_batch_when_headroom_exceeds_batch() {
+        // peer at 10 unacked, ack 2 → outstanding 8, headroom 64-8=56,
+        // batch 16 → request 16.
+        assert_eq!(super::clamp_request_count(10, 2, 16, 64), 16);
+    }
+
+    #[test]
+    fn clamp_request_count_clamps_to_remaining_headroom() {
+        // peer at 60 unacked, ack 2 → outstanding 58, headroom 64-58=6,
+        // batch 16 → request 6.
+        assert_eq!(super::clamp_request_count(60, 2, 16, 64), 6);
+    }
+
+    #[test]
+    fn clamp_request_count_returns_one_at_cap_for_forward_progress() {
+        // peer at 64 unacked, ack 0 → outstanding 64, headroom 0,
+        // batch 16 → request 1 (max(1) floor).
+        assert_eq!(super::clamp_request_count(64, 0, 16, 64), 1);
+    }
+
+    #[test]
+    fn clamp_request_count_ack_widens_headroom() {
+        // peer at 64 unacked, ack 16 → outstanding 48, headroom 16,
+        // batch 16 → request 16.  Without ack subtraction we would
+        // erroneously request only 1.
+        assert_eq!(super::clamp_request_count(64, 16, 16, 64), 16);
+    }
+
+    #[test]
+    fn global_cap_composes_min_with_per_peer_cap() {
+        // Reproduce the in-loop budget computation: take the minimum of
+        // per-peer remaining and global remaining, then call
+        // `select_within_byte_budget`.  Verifies the global aggregate
+        // cap (`maxTxsSizeInflight`) correctly limits a peer that has
+        // ample per-peer headroom but the shared global pool is nearly
+        // full.  Mirrors the runtime wiring in `run_txsubmission_server`.
+        let shared = SharedTxState::default();
+        let _busy_peer = SocketAddr::from(([127, 0, 0, 1], 4000));
+        let quiet_peer = SocketAddr::from(([127, 0, 0, 1], 4001));
+
+        // Saturate the global pool from `busy_peer` up to (TOTAL - 1500),
+        // staying within the per-peer cap by spreading across many small
+        // entries.  We model this directly by marking many small advertised
+        // txs as in-flight.
+        const PER_PEER: u64 = 64 * 1024;
+        const TOTAL: u64 = 64 * 1024 * 32;
+
+        // Drive busy_peer's bytes near per-peer cap (exactly PER_PEER - 1000)
+        // and global bytes via additional sized entries from other simulated
+        // peers — but for the unit test we use SharedTxState's accounting
+        // directly: load up to `target_global_used` via repeated peers.
+        let target_global_used = TOTAL - 1500; // global remaining = 1500
+        let chunk: u32 = 1000;
+        let mut filled: u64 = 0;
+        let mut counter: u32 = 0;
+        while filled + (chunk as u64) <= target_global_used {
+            let p = SocketAddr::from(([127, 0, 0, 1], 5000 + (counter as u16 % 60000)));
+            // Build a unique 32-byte TxId from `counter` so cross-peer
+            // dedup does not silently drop later inserts.
+            let mut id_bytes = [0u8; 32];
+            id_bytes[..4].copy_from_slice(&counter.to_be_bytes());
+            let id = TxId(id_bytes);
+            let _ = shared.filter_advertised(&p, &[id]);
+            shared.mark_in_flight_sized(&p, &[(id, chunk)]);
+            filled += chunk as u64;
+            counter += 1;
+        }
+
+        let per_peer_remaining = PER_PEER.saturating_sub(shared.peer_inflight_bytes(&quiet_peer));
+        let global_remaining = TOTAL.saturating_sub(shared.inflight_bytes_total());
+        let budget_remaining = per_peer_remaining.min(global_remaining);
+
+        // quiet_peer has full per-peer headroom (64 KiB) but global is the
+        // binding constraint at ~1500 bytes.  Verify min() picks global.
+        assert!(per_peer_remaining > global_remaining);
+        assert_eq!(budget_remaining, global_remaining);
+        assert!(budget_remaining <= 1500);
+
+        // Greedy admission with this composed budget defers anything
+        // past ~1500 bytes worth of advertised txs, even though the
+        // per-peer view alone would have admitted ~64 KiB.
+        let a = TxId([0xa1; 32]);
+        let b = TxId([0xa2; 32]);
+        let c = TxId([0xa3; 32]);
+        let mut sizes = HashMap::new();
+        sizes.insert(a, 800u32);
+        sizes.insert(b, 600u32);
+        sizes.insert(c, 800u32);
+        let (admitted, deferred) =
+            super::select_within_byte_budget(&[a, b, c], &sizes, budget_remaining);
+        // a (800) + b (600) = 1400 ≤ ~1500; c (800) exceeds → deferred.
+        assert_eq!(admitted, vec![a, b]);
+        assert_eq!(deferred, 1);
     }
 
     #[tokio::test]
