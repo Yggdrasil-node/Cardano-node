@@ -10,4 +10,4 @@ pub use queue::{
     MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolRelayError,
     MempoolSnapshot, SharedMempool, SharedTxSubmissionMempoolReader, TxSubmissionMempoolReader,
 };
-pub use tx_state::{FilterOutcome, SharedTxState, TxState};
+pub use tx_state::{FilterOutcome, SharedTxState, SizeInBytes, TxState};

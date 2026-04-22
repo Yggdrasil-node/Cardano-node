@@ -10,7 +10,7 @@
 //! Reference: `Ouroboros.Network.TxSubmission.Inbound.V2.State` —
 //! `SharedTxState`, `PeerTxState`, `TxDecision`.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
@@ -22,6 +22,12 @@ use yggdrasil_ledger::TxId;
 /// memory growth as the node processes blocks over time.
 const DEFAULT_KNOWN_CAPACITY: usize = 16_384;
 
+/// Advertised body size, in bytes, of a transaction.
+///
+/// Mirrors upstream `SizeInBytes` from
+/// `Ouroboros.Network.TxSubmission.Inbound.V2.State`.
+pub type SizeInBytes = u32;
+
 /// Per-peer entry tracking which TxIds a peer has advertised and which are
 /// currently being fetched from it.
 ///
@@ -32,6 +38,14 @@ pub struct PeerTxState {
     pub unacknowledged: HashSet<TxId>,
     /// TxIds currently being fetched from this peer.
     pub in_flight: HashSet<TxId>,
+    /// Per-in-flight TxId advertised body size, when known.  Used to
+    /// derive `inflight_bytes` and to decrement totals on completion.
+    ///
+    /// Mirrors upstream `requestedTxsInflightSize` accounting in
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State.PeerTxState`.
+    pub in_flight_sizes: HashMap<TxId, SizeInBytes>,
+    /// Total advertised bytes currently in flight from this peer.
+    pub inflight_bytes: u64,
 }
 
 impl PeerTxState {
@@ -39,6 +53,8 @@ impl PeerTxState {
         Self {
             unacknowledged: HashSet::new(),
             in_flight: HashSet::new(),
+            in_flight_sizes: HashMap::new(),
+            inflight_bytes: 0,
         }
     }
 }
@@ -72,8 +88,13 @@ pub struct TxState {
     known_capacity: usize,
     /// TxIds currently being fetched from any peer.
     global_in_flight: HashSet<TxId>,
+    /// Sum of advertised body sizes of all in-flight TxIds across all peers.
+    ///
+    /// Mirrors upstream `inflightTxsSize` in
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State.SharedTxState`.
+    inflight_bytes_total: u64,
     /// Per-peer tracking keyed by remote address.
-    peers: std::collections::HashMap<SocketAddr, PeerTxState>,
+    peers: HashMap<SocketAddr, PeerTxState>,
 }
 
 impl Default for TxState {
@@ -90,7 +111,8 @@ impl TxState {
             known_order: VecDeque::with_capacity(known_capacity),
             known_capacity,
             global_in_flight: HashSet::new(),
-            peers: std::collections::HashMap::new(),
+            inflight_bytes_total: 0,
+            peers: HashMap::new(),
         }
     }
 
@@ -105,6 +127,10 @@ impl TxState {
             for txid in &state.in_flight {
                 self.global_in_flight.remove(txid);
             }
+            // Subtract this peer's outstanding bytes from the global total.
+            self.inflight_bytes_total = self
+                .inflight_bytes_total
+                .saturating_sub(state.inflight_bytes);
         }
     }
 
@@ -112,6 +138,12 @@ impl TxState {
     ///
     /// Returns a [`FilterOutcome`] indicating which TxIds should actually be
     /// fetched and which are already known or in flight.
+    ///
+    /// Only items in the returned `to_fetch` set are added to the peer's
+    /// `unacknowledged` set; items classified as `already_known` are
+    /// considered immediately processed (they will be acked on the wire
+    /// without entering the per-peer fetch lifecycle), so retaining them
+    /// in `unacknowledged` would leak unboundedly across rounds.
     pub fn filter_advertised(&mut self, peer: &SocketAddr, txids: &[TxId]) -> FilterOutcome {
         let peer_state = self.peers.entry(*peer).or_insert_with(PeerTxState::new);
 
@@ -119,11 +151,10 @@ impl TxState {
         let mut already_known = Vec::new();
 
         for txid in txids {
-            peer_state.unacknowledged.insert(*txid);
-
             if self.known.contains(txid) || self.global_in_flight.contains(txid) {
                 already_known.push(*txid);
             } else {
+                peer_state.unacknowledged.insert(*txid);
                 to_fetch.push(*txid);
             }
         }
@@ -144,12 +175,43 @@ impl TxState {
         }
     }
 
+    /// Mark a set of TxIds as in-flight, recording each TxId's advertised
+    /// body size for per-peer and global byte accounting.
+    ///
+    /// Mirrors upstream `acknowledgedTxs`/`requestedTxsInflightSize` updates
+    /// in `Ouroboros.Network.TxSubmission.Inbound.V2.Decision`.
+    pub fn mark_in_flight_sized(
+        &mut self,
+        peer: &SocketAddr,
+        sized_txids: &[(TxId, SizeInBytes)],
+    ) {
+        if let Some(peer_state) = self.peers.get_mut(peer) {
+            for (txid, size) in sized_txids {
+                if peer_state.in_flight.insert(*txid) {
+                    self.global_in_flight.insert(*txid);
+                    peer_state.in_flight_sizes.insert(*txid, *size);
+                    peer_state.inflight_bytes =
+                        peer_state.inflight_bytes.saturating_add(*size as u64);
+                    self.inflight_bytes_total =
+                        self.inflight_bytes_total.saturating_add(*size as u64);
+                }
+            }
+        }
+    }
+
     /// Mark TxIds as successfully received.  Moves them from in-flight to
     /// known and removes them from the peer's unacknowledged set.
     pub fn mark_received(&mut self, peer: &SocketAddr, txids: &[TxId]) {
         if let Some(peer_state) = self.peers.get_mut(peer) {
             for txid in txids {
-                peer_state.in_flight.remove(txid);
+                if peer_state.in_flight.remove(txid) {
+                    if let Some(size) = peer_state.in_flight_sizes.remove(txid) {
+                        peer_state.inflight_bytes =
+                            peer_state.inflight_bytes.saturating_sub(size as u64);
+                        self.inflight_bytes_total =
+                            self.inflight_bytes_total.saturating_sub(size as u64);
+                    }
+                }
                 peer_state.unacknowledged.remove(txid);
                 self.global_in_flight.remove(txid);
             }
@@ -165,7 +227,14 @@ impl TxState {
     pub fn mark_not_found(&mut self, peer: &SocketAddr, txids: &[TxId]) {
         if let Some(peer_state) = self.peers.get_mut(peer) {
             for txid in txids {
-                peer_state.in_flight.remove(txid);
+                if peer_state.in_flight.remove(txid) {
+                    if let Some(size) = peer_state.in_flight_sizes.remove(txid) {
+                        peer_state.inflight_bytes =
+                            peer_state.inflight_bytes.saturating_sub(size as u64);
+                        self.inflight_bytes_total =
+                            self.inflight_bytes_total.saturating_sub(size as u64);
+                    }
+                }
                 peer_state.unacknowledged.remove(txid);
                 self.global_in_flight.remove(txid);
             }
@@ -182,7 +251,14 @@ impl TxState {
         // Also clean up any per-peer tracking for these txids.
         for peer_state in self.peers.values_mut() {
             for txid in txids {
-                peer_state.in_flight.remove(txid);
+                if peer_state.in_flight.remove(txid) {
+                    if let Some(size) = peer_state.in_flight_sizes.remove(txid) {
+                        peer_state.inflight_bytes =
+                            peer_state.inflight_bytes.saturating_sub(size as u64);
+                        self.inflight_bytes_total =
+                            self.inflight_bytes_total.saturating_sub(size as u64);
+                    }
+                }
                 peer_state.unacknowledged.remove(txid);
             }
         }
@@ -206,6 +282,35 @@ impl TxState {
     /// Number of TxIds globally in flight.
     pub fn in_flight_count(&self) -> usize {
         self.global_in_flight.len()
+    }
+
+    /// Total advertised bytes currently in flight across all peers.
+    ///
+    /// Mirrors upstream `inflightTxsSize` in
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State.SharedTxState`.
+    pub fn inflight_bytes_total(&self) -> u64 {
+        self.inflight_bytes_total
+    }
+
+    /// Total advertised bytes currently in flight from a specific peer.
+    ///
+    /// Mirrors upstream `requestedTxsInflightSize` in
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State.PeerTxState`.
+    pub fn peer_inflight_bytes(&self, peer: &SocketAddr) -> u64 {
+        self.peers.get(peer).map(|s| s.inflight_bytes).unwrap_or(0)
+    }
+
+    /// Number of TxIds the peer has advertised to us that are still
+    /// being tracked through the fetch lifecycle (not yet finalized via
+    /// `mark_received`/`mark_not_found`/`mark_confirmed`).
+    ///
+    /// Mirrors upstream `unacknowledgedTxIds` length in
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.State.PeerTxState`.
+    pub fn peer_unacked_count(&self, peer: &SocketAddr) -> usize {
+        self.peers
+            .get(peer)
+            .map(|s| s.unacknowledged.len())
+            .unwrap_or(0)
     }
 
     /// Number of tracked peers.
@@ -276,6 +381,15 @@ impl SharedTxState {
             .mark_in_flight(peer, txids);
     }
 
+    /// Mark TxIds as in-flight from the given peer with their advertised
+    /// body sizes recorded for per-peer/global byte accounting.
+    pub fn mark_in_flight_sized(&self, peer: &SocketAddr, sized_txids: &[(TxId, SizeInBytes)]) {
+        self.inner
+            .write()
+            .expect("tx state poisoned")
+            .mark_in_flight_sized(peer, sized_txids);
+    }
+
     /// Mark TxIds as successfully received from the given peer.
     pub fn mark_received(&self, peer: &SocketAddr, txids: &[TxId]) {
         self.inner
@@ -324,6 +438,31 @@ impl SharedTxState {
             .read()
             .expect("tx state poisoned")
             .in_flight_count()
+    }
+
+    /// Total advertised bytes currently in flight across all peers.
+    pub fn inflight_bytes_total(&self) -> u64 {
+        self.inner
+            .read()
+            .expect("tx state poisoned")
+            .inflight_bytes_total()
+    }
+
+    /// Total advertised bytes currently in flight from a specific peer.
+    pub fn peer_inflight_bytes(&self, peer: &SocketAddr) -> u64 {
+        self.inner
+            .read()
+            .expect("tx state poisoned")
+            .peer_inflight_bytes(peer)
+    }
+
+    /// Number of TxIds the peer has advertised to us that are still
+    /// being tracked through the fetch lifecycle.
+    pub fn peer_unacked_count(&self, peer: &SocketAddr) -> usize {
+        self.inner
+            .read()
+            .expect("tx state poisoned")
+            .peer_unacked_count(peer)
     }
 }
 
@@ -475,5 +614,103 @@ mod tests {
         let outcome2 = shared.filter_advertised(&p2, &[txid(1), txid(3)]);
         assert_eq!(outcome2.to_fetch, vec![txid(3)]);
         assert_eq!(outcome2.already_known, vec![txid(1)]);
+    }
+
+    #[test]
+    fn sized_in_flight_tracks_per_peer_and_global_bytes() {
+        let mut state = TxState::default();
+        let p1 = peer(1000);
+        let p2 = peer(2000);
+        state.register_peer(p1);
+        state.register_peer(p2);
+
+        let _ = state.filter_advertised(&p1, &[txid(1), txid(2)]);
+        state.mark_in_flight_sized(&p1, &[(txid(1), 100), (txid(2), 250)]);
+        assert_eq!(state.peer_inflight_bytes(&p1), 350);
+        assert_eq!(state.inflight_bytes_total(), 350);
+
+        let _ = state.filter_advertised(&p2, &[txid(3)]);
+        state.mark_in_flight_sized(&p2, &[(txid(3), 1000)]);
+        assert_eq!(state.peer_inflight_bytes(&p2), 1000);
+        assert_eq!(state.inflight_bytes_total(), 1350);
+
+        // Receive completes — bytes decrement.
+        state.mark_received(&p1, &[txid(1)]);
+        assert_eq!(state.peer_inflight_bytes(&p1), 250);
+        assert_eq!(state.inflight_bytes_total(), 1250);
+
+        // Not-found drops remaining bytes for that tx.
+        state.mark_not_found(&p1, &[txid(2)]);
+        assert_eq!(state.peer_inflight_bytes(&p1), 0);
+        assert_eq!(state.inflight_bytes_total(), 1000);
+
+        // Confirmed-in-block drops the rest.
+        state.mark_confirmed(&[txid(3)]);
+        assert_eq!(state.peer_inflight_bytes(&p2), 0);
+        assert_eq!(state.inflight_bytes_total(), 0);
+    }
+
+    #[test]
+    fn unregister_peer_subtracts_inflight_bytes() {
+        let mut state = TxState::default();
+        let p1 = peer(1000);
+        state.register_peer(p1);
+
+        let _ = state.filter_advertised(&p1, &[txid(1), txid(2)]);
+        state.mark_in_flight_sized(&p1, &[(txid(1), 500), (txid(2), 700)]);
+        assert_eq!(state.inflight_bytes_total(), 1200);
+
+        state.unregister_peer(&p1);
+        assert_eq!(state.inflight_bytes_total(), 0);
+        assert_eq!(state.peer_inflight_bytes(&p1), 0);
+    }
+
+    #[test]
+    fn shared_tx_state_sized_round_trip() {
+        let shared = SharedTxState::default();
+        let p = peer(1000);
+        shared.register_peer(p);
+
+        let _ = shared.filter_advertised(&p, &[txid(1)]);
+        shared.mark_in_flight_sized(&p, &[(txid(1), 4096)]);
+        assert_eq!(shared.peer_inflight_bytes(&p), 4096);
+        assert_eq!(shared.inflight_bytes_total(), 4096);
+
+        shared.mark_received(&p, &[txid(1)]);
+        assert_eq!(shared.peer_inflight_bytes(&p), 0);
+        assert_eq!(shared.inflight_bytes_total(), 0);
+    }
+
+    #[test]
+    fn already_known_advertisements_do_not_leak_into_unacknowledged() {
+        // Regression: previously `filter_advertised` inserted EVERY advertised
+        // TxId into `peer_state.unacknowledged`, including items immediately
+        // classified as `already_known`.  Those items are acked on the wire
+        // and never enter the fetch lifecycle, so they were never removed
+        // from `unacknowledged` — the set grew unboundedly across rounds.
+        // After the fix, only `to_fetch` items enter `unacknowledged`.
+        let mut state = TxState::default();
+        let p1 = peer(1000);
+        let p2 = peer(2000);
+        state.register_peer(p1);
+        state.register_peer(p2);
+
+        // p1 advertises and we fetch.
+        let _ = state.filter_advertised(&p1, &[txid(1)]);
+        state.mark_in_flight(&p1, &[txid(1)]);
+        state.mark_confirmed(&[txid(1)]);
+        assert_eq!(state.peer_unacked_count(&p1), 0);
+
+        // p2 then advertises the same TxId — already_known.  It must NOT
+        // accumulate in p2's unacknowledged set.
+        let outcome = state.filter_advertised(&p2, &[txid(1)]);
+        assert_eq!(outcome.to_fetch.len(), 0);
+        assert_eq!(outcome.already_known.len(), 1);
+        assert_eq!(state.peer_unacked_count(&p2), 0);
+
+        // Repeat advertisement also stays clean.
+        let _ = state.filter_advertised(&p2, &[txid(1)]);
+        let _ = state.filter_advertised(&p2, &[txid(1)]);
+        assert_eq!(state.peer_unacked_count(&p2), 0);
     }
 }

@@ -697,12 +697,55 @@ pub async fn run_chainsync_server(
 /// performs cross-peer TxId deduplication: advertised TxIds that are already
 /// known or being fetched from another peer are acknowledged without
 /// downloading, preventing duplicate work across concurrent inbound sessions.
+/// Greedily select a prefix of `candidates` that fits within
+/// `budget_remaining` advertised bytes, looking each entry's size up in
+/// `sizes` (defaulting to 0 for missing entries).  The first candidate is
+/// always admitted to guarantee forward progress even when a single
+/// transaction exceeds the cap, mirroring upstream `collectTxs` behaviour
+/// from `Ouroboros.Network.TxSubmission.Inbound.V2`.
+///
+/// Returns `(admitted, deferred)` where `deferred = candidates.len() -
+/// admitted.len()`.
+pub fn select_within_byte_budget(
+    candidates: &[TxId],
+    sizes: &std::collections::HashMap<TxId, u32>,
+    budget_remaining: u64,
+) -> (Vec<TxId>, usize) {
+    let mut admitted: Vec<TxId> = Vec::with_capacity(candidates.len());
+    let mut remaining = budget_remaining;
+    for t in candidates {
+        let sz = sizes.get(t).copied().unwrap_or(0) as u64;
+        if admitted.is_empty() || sz <= remaining {
+            admitted.push(*t);
+            remaining = remaining.saturating_sub(sz);
+        } else {
+            break;
+        }
+    }
+    let deferred = candidates.len().saturating_sub(admitted.len());
+    (admitted, deferred)
+}
+
 pub async fn run_txsubmission_server(
     mut server: TxSubmissionServer,
     consumer: &dyn TxSubmissionConsumer,
     dedup: Option<(&SharedTxState, SocketAddr)>,
 ) -> Result<(), TxSubmissionServerError> {
     const TXSUBMISSION_BATCH_SIZE: u16 = 16;
+    /// Per-peer cap on advertised bytes in flight, mirroring upstream
+    /// `maxTxsSizeInflight` from
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.Policy` (default ~64 KiB).
+    /// When a peer is at or above this budget, the server defers issuing
+    /// further `MsgRequestTxs` until prior fetches complete and decrement
+    /// the per-peer byte count.
+    const MAX_TXS_SIZE_INFLIGHT_PER_PEER: u64 = 64 * 1024;
+    /// Per-peer cap on outstanding (advertised-but-not-yet-finalized)
+    /// TxIds, mirroring upstream `maxUnacknowledgedTxIds` from
+    /// `Ouroboros.Network.TxSubmission.Inbound.V2.Policy`.  Acts as a
+    /// safety bound on the per-peer `unacknowledged` set so a peer
+    /// cannot indefinitely starve the server's per-peer slot by
+    /// repeatedly advertising deferred txids that never get fetched.
+    const MAX_UNACKNOWLEDGED_TXIDS_PER_PEER: u16 = 64;
 
     server.recv_init().await?;
     let mut ack = 0u16;
@@ -719,10 +762,25 @@ pub async fn run_txsubmission_server(
     // Reference: `Ouroboros.Network.TxSubmission.Inbound.serverPeer`.
 
     loop {
-        match server
-            .request_tx_ids(true, ack, TXSUBMISSION_BATCH_SIZE)
-            .await?
-        {
+        // Clamp the next batch size against the per-peer outstanding
+        // cap (upstream `maxUnacknowledgedTxIds`).  The wire `ack` we are
+        // about to send will reduce the peer's view of unacked by `ack`,
+        // so the post-ack outstanding count is approximately
+        // `peer_unacked_count.saturating_sub(ack as usize)`.  Always
+        // request at least 1 to guarantee the loop makes forward
+        // progress when the peer has capacity.
+        let req = if let Some((tx_state, peer_addr)) = &dedup {
+            let outstanding = tx_state
+                .peer_unacked_count(peer_addr)
+                .saturating_sub(ack as usize);
+            let headroom = (MAX_UNACKNOWLEDGED_TXIDS_PER_PEER as usize)
+                .saturating_sub(outstanding);
+            (TXSUBMISSION_BATCH_SIZE as usize).min(headroom).max(1) as u16
+        } else {
+            TXSUBMISSION_BATCH_SIZE
+        };
+
+        match server.request_tx_ids(true, ack, req).await? {
             TxIdsReply::Done => {
                 if let Some((tx_state, peer_addr)) = &dedup {
                     tx_state.unregister_peer(peer_addr);
@@ -736,26 +794,62 @@ pub async fn run_txsubmission_server(
                 continue;
             }
             TxIdsReply::TxIds(txids) => {
-                ack = txids.len().min(u16::MAX as usize) as u16;
-
                 // Build lookup of advertised sizes for later verification.
                 let advertised_sizes: std::collections::HashMap<TxId, u32> =
                     txids.iter().map(|item| (item.txid, item.size)).collect();
 
+                let advertised_count = txids.len();
                 let all_txids: Vec<_> = txids.into_iter().map(|item| item.txid).collect();
 
                 // Filter through shared state to avoid re-fetching known txids.
-                let to_request = if let Some((tx_state, peer_addr)) = &dedup {
+                // Returns the admitted set actually requested plus the count
+                // deferred due to the per-peer byte budget so that the
+                // wire-level acknowledgement stays consistent with what we
+                // are actually consuming from the peer's outbound queue.
+                let (to_request, deferred) = if let Some((tx_state, peer_addr)) = &dedup {
                     let outcome = tx_state.filter_advertised(peer_addr, &all_txids);
                     if outcome.to_fetch.is_empty() {
-                        // All txids already known — ack them without requesting.
+                        // All txids already known — ack them all without
+                        // requesting and continue.
+                        ack = advertised_count.min(u16::MAX as usize) as u16;
                         continue;
                     }
-                    tx_state.mark_in_flight(peer_addr, &outcome.to_fetch);
-                    outcome.to_fetch
+                    // Apply per-peer in-flight byte budget (upstream
+                    // `maxTxsSizeInflight`).  Greedily include candidates in
+                    // advertised order while the running total stays at or
+                    // below the budget; always admit at least one so the
+                    // server makes forward progress even when a single tx
+                    // exceeds the cap.  Remaining unfetched candidates are
+                    // counted as `deferred` and are NOT acknowledged on the
+                    // wire so the peer keeps them queued for re-advertisement
+                    // once prior fetches drain.
+                    let current = tx_state.peer_inflight_bytes(peer_addr);
+                    let budget_remaining =
+                        MAX_TXS_SIZE_INFLIGHT_PER_PEER.saturating_sub(current);
+                    let (admitted, deferred) = select_within_byte_budget(
+                        &outcome.to_fetch,
+                        &advertised_sizes,
+                        budget_remaining,
+                    );
+                    // Record sizes for per-peer / global byte accounting
+                    // (upstream `requestedTxsInflightSize` /
+                    // `inflightTxsSize`).  Falls back to size 0 if the
+                    // peer omitted the size for an advertised txid.
+                    let sized: Vec<_> = admitted
+                        .iter()
+                        .map(|t| (*t, advertised_sizes.get(t).copied().unwrap_or(0)))
+                        .collect();
+                    tx_state.mark_in_flight_sized(peer_addr, &sized);
+                    (admitted, deferred)
                 } else {
-                    all_txids
+                    (all_txids, 0)
                 };
+
+                // Ack what we are consuming from the peer's queue: all
+                // advertised entries except those deferred for budget.
+                ack = advertised_count
+                    .saturating_sub(deferred)
+                    .min(u16::MAX as usize) as u16;
 
                 let txs = {
                     let timeout = yggdrasil_network::protocol_limits::txsubmission::ST_TXS
@@ -1736,6 +1830,7 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::{Arc, Mutex, RwLock};
+    use yggdrasil_ledger::TxId;
     use std::time::{Duration, Instant};
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
@@ -1766,6 +1861,70 @@ mod tests {
             kes_period: 100,
             sigma: [seed.wrapping_add(2); 64],
         }
+    }
+
+    #[test]
+    fn select_within_byte_budget_admits_first_even_when_oversize() {
+        // Single oversize candidate is always admitted to guarantee
+        // forward progress (matches upstream `collectTxs` semantics).
+        let big = TxId([0x11; 32]);
+        let mut sizes = HashMap::new();
+        sizes.insert(big, 100_000u32);
+        let (admitted, deferred) =
+            super::select_within_byte_budget(&[big], &sizes, 64 * 1024);
+        assert_eq!(admitted, vec![big]);
+        assert_eq!(deferred, 0);
+    }
+
+    #[test]
+    fn select_within_byte_budget_greedy_prefix_then_defers() {
+        // Greedy-prefix: admits while `sz <= remaining`, then breaks.
+        // After admitting 800 + 500 (remaining = 700, then 200), the
+        // 600-byte candidate exceeds remaining 200 so it and any
+        // subsequent items are deferred.
+        let a = TxId([1; 32]);
+        let b = TxId([2; 32]);
+        let c = TxId([3; 32]);
+        let d = TxId([4; 32]);
+        let mut sizes = HashMap::new();
+        sizes.insert(a, 800u32);
+        sizes.insert(b, 500u32);
+        sizes.insert(c, 600u32);
+        sizes.insert(d, 100u32);
+        let (admitted, deferred) =
+            super::select_within_byte_budget(&[a, b, c, d], &sizes, 1500);
+        assert_eq!(admitted, vec![a, b]);
+        assert_eq!(deferred, 2);
+    }
+
+    #[test]
+    fn select_within_byte_budget_zero_budget_admits_one_then_defers() {
+        // Zero remaining budget still admits the first item (forward
+        // progress) but defers everything after it.
+        let a = TxId([1; 32]);
+        let b = TxId([2; 32]);
+        let mut sizes = HashMap::new();
+        sizes.insert(a, 50u32);
+        sizes.insert(b, 50u32);
+        let (admitted, deferred) =
+            super::select_within_byte_budget(&[a, b], &sizes, 0);
+        assert_eq!(admitted, vec![a]);
+        assert_eq!(deferred, 1);
+    }
+
+    #[test]
+    fn select_within_byte_budget_missing_size_treated_as_zero() {
+        // Missing size in the lookup defaults to 0, so an item with no
+        // declared size is always admittable up to the loop's own bound.
+        let a = TxId([1; 32]);
+        let b = TxId([2; 32]);
+        let sizes = HashMap::new();
+        let (admitted, deferred) =
+            super::select_within_byte_budget(&[a, b], &sizes, 0);
+        // Both admitted: a admitted as first (forward progress), b
+        // admitted because its size lookup is 0 which fits in budget 0.
+        assert_eq!(admitted, vec![a, b]);
+        assert_eq!(deferred, 0);
     }
 
     #[tokio::test]
